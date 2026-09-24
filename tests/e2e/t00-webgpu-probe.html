@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WebLabel WebGPU initialization probe</title>
+  </head>
+  <body>
+    <output id="gpu-status" data-state="initializing">Initializing wgpu…</output>
+    <script type="module">
+      const status = document.querySelector('#gpu-status');
+      try {
+        const module = await import('/renderer_wgpu_probe.js');
+        await module.default();
+        const report = await module.initialize_browser_device_probe();
+        const details = Object.fromEntries(report.split('; ').map((part) => part.split('=')));
+        status.dataset.state = 'ready';
+        status.dataset.backend = details.backend ?? 'unknown';
+        status.dataset.deviceType = details.device_type ?? 'unknown';
+        status.textContent = report;
+      } catch (error) {
+        status.dataset.state = 'blocked';
+        status.dataset.error = String(error);
+        status.textContent = `WebGPU initialization failed: ${error}`;
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,59 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+      - run: cargo test --workspace --locked
+  typescript:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:unit
+  wasm:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+      - run: cargo build -p renderer-wgpu --target wasm32-unknown-unknown --locked
+      - run: cargo build -p wasm-bridge --target wasm32-unknown-unknown --locked
+  software-gpu:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+      - run: cargo install wasm-pack --version 0.15.0 --locked
+      - run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install chromium
+      - run: pnpm test:gpu:software

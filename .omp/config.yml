@@ -1,0 +1,9 @@
+# Project-local defaults, verified against current omp settings documentation.
+# Main agent must confirm effective settings in T00; no global approval changes.
+task:
+  maxConcurrency: 4
+  maxRecursionDepth: 1
+  isolation:
+    mode: auto
+    apply: true
+    merge: patch

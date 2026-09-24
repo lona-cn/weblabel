@@ -1,0 +1,32 @@
+{
+  "name": "weblabel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": { "node": "24.15.0" },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "vitest": "5.0.1"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start:local": "node scripts/dev.mjs --start-local",
+    "build": "node scripts/verify.mjs build",
+    "doctor": "node scripts/doctor.mjs",
+    "test:task": "node scripts/task.mjs",
+    "verify:fast": "node scripts/verify.mjs fast",
+    "verify:integration": "node scripts/verify.mjs integration",
+    "verify:browser": "node scripts/verify.mjs browser",
+    "verify:gpu": "node scripts/verify.mjs gpu",
+    "verify:live": "node scripts/verify.mjs live",
+    "verify:release": "node scripts/verify.mjs release",
+    "test:unit": "vitest run",
+    "wasm:probe-build": "node scripts/build-wgpu-probe.mjs",
+    "test:e2e": "node scripts/test-e2e.mjs",
+    "test:gpu:software": "node scripts/test-e2e.mjs --grep @software-gpu --require-device",
+    "contracts:generate": "cargo run -p xtask -- contracts-generate",
+    "contracts:check": "cargo run -p xtask -- contracts-check",
+    "demo:seed": "cargo run -p weblabel-api -- demo-seed"
+  }
+}

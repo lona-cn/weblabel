@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {validateTaskGraph,checkPack} from './check-plan.mjs';
+import {fileURLToPath} from 'node:url';
+const t=(id,deps=[])=>({id,depends_on:deps,locks:['x'],checks:[['node','test.mjs']]});
+test('accepts an acyclic graph',()=>assert.deepEqual(validateTaskGraph([t('T00'),t('T01',['T00'])]),[]));
+test('rejects a cycle',()=>assert.ok(validateTaskGraph([t('T00',['T01']),t('T01',['T00'])]).some(x=>x.includes('cycle'))));
+test('rejects a missing dependency',()=>assert.ok(validateTaskGraph([t('T00',['T99'])]).some(x=>x.includes('unknown dependency'))));
+test('rejects duplicate ids',()=>assert.ok(validateTaskGraph([t('T00'),t('T00')]).some(x=>x.includes('duplicate'))));
+test('rejects empty check arrays',()=>assert.ok(validateTaskGraph([{...t('T00'),checks:[]}]).some(x=>x.includes('checks'))));
+test('validates the actual execution pack',()=>assert.equal(checkPack(fileURLToPath(new URL('../',import.meta.url))).ok,true));

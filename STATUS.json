@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "plan_version": "1.0.0",
+  "application_commit": null,
+  "last_updated_at": null,
+  "tasks": {
+    "T00": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T01": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T02": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T03": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T04": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T05": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T06": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T07": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T08": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T09": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T10": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T11": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T12": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T13": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T14": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T15": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T16": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T17": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T18": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T19": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T20": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T21": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T22": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T23": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T24": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T25": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T26": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T27": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T28": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T29": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T30": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T31": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T32": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T33": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T34": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    },
+    "T35": {
+      "status": "pending",
+      "base_commit": null,
+      "integrated_commit": null,
+      "evidence": [],
+      "blockers": []
+    }
+  },
+  "release": {
+    "state": "not_started",
+    "gates": {
+      "G0": "not_run",
+      "G1": "not_run",
+      "G2": "not_run",
+      "G3": "not_run",
+      "G4": "not_run",
+      "G5": "not_run"
+    }
+  }
+}

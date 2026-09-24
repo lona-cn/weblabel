@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/annotation-domain",
+  "crates/geometry",
+  "crates/editor-core",
+  "crates/renderer-wgpu",
+  "crates/wasm-bridge",
+  "crates/dataset-formats",
+  "crates/weblabel-api",
+  "crates/xtask",
+]
+
+[workspace.package]
+edition = "2021"
+license = "UNLICENSED"
+version = "0.1.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

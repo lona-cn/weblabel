@@ -1,0 +1,1256 @@
+{
+  "schema_version": 1,
+  "project": "weblabel",
+  "plan_version": "1.0.0",
+  "date": "2026-09-25",
+  "scope": "local-first browser wgpu image annotation and AI-assisted attribute review",
+  "max_parallel_writers": 3,
+  "max_parallel_reviewers": 1,
+  "subagent_recursion": false,
+  "shared_write_owner": "main",
+  "tasks": [
+    {
+      "id": "T00",
+      "title": "空目录启动、工具链与可执行测试入口",
+      "owner": "main",
+      "depends_on": [],
+      "locks": [
+        "bootstrap"
+      ],
+      "files": [
+        ".omp/config.yml",
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        ".node-version",
+        ".gitignore",
+        ".env.example",
+        "apps/*/package.json",
+        "crates/*/Cargo.toml",
+        "crates/renderer-wgpu/src/lib.rs",
+        "scripts/{dev,task,verify,doctor}.mjs",
+        "scripts/{verify-plan,build-wgpu-probe,serve-wgpu-probe,test-e2e}.mjs",
+        "tests/bootstrap/{t00.test,stdio-probe}.mjs",
+        "tests/e2e/{t00-webgpu-probe.html,t00-webgpu-probe.spec.ts}",
+        "vitest.config.ts",
+        "playwright.config.ts",
+        ".github/workflows/ci.yml",
+        "docs/{compatibility,verification}.md"
+      ],
+      "checks": [
+        [
+          "node",
+          "--test",
+          "tests/bootstrap/t00.test.mjs"
+        ],
+        [
+          "node",
+          "scripts/verify-plan.mjs"
+        ],
+        [
+          "cargo",
+          "build",
+          "-p",
+          "renderer-wgpu",
+          "--target",
+          "wasm32-unknown-unknown",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "test:e2e"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T00.md",
+      "report_dir": "reports/T00"
+    },
+    {
+      "id": "T01",
+      "title": "领域模型、共享契约、schema与黄金夹具",
+      "owner": "wl-core",
+      "depends_on": [
+        "T00"
+      ],
+      "locks": [
+        "contracts"
+      ],
+      "files": [
+        "crates/annotation-domain/src/{lib,document,ontology,geometry,revision,prediction,hash}.rs",
+        "crates/annotation-domain/tests/t01_contracts.rs",
+        "crates/xtask/src/contracts.rs",
+        "packages/contracts/generated/*",
+        "tests/fixtures/golden/*.json",
+        "tests/fixtures/schema-invalid/*.json"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "annotation-domain",
+          "--test",
+          "t01_contracts",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "contracts:check"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T01.md",
+      "report_dir": "reports/T01"
+    },
+    {
+      "id": "T02",
+      "title": "官方运行时与模型接入探针",
+      "owner": "wl-researcher",
+      "depends_on": [
+        "T00"
+      ],
+      "locks": [
+        "provider-research"
+      ],
+      "files": [
+        "docs/provider-compatibility.md",
+        "docs/adr/0001-provider-runtime-boundaries.md",
+        "tests/fixtures/providers/official-contract-index.json",
+        "reports/T02/*"
+      ],
+      "checks": [
+        [
+          "node",
+          "scripts/verify-plan.mjs",
+          "--provider-evidence",
+          "reports/T02/result.json"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T02.md",
+      "report_dir": "reports/T02"
+    },
+    {
+      "id": "T03",
+      "title": "坐标变换、矩形几何与空间命中",
+      "owner": "wl-core",
+      "depends_on": [
+        "T01"
+      ],
+      "locks": [
+        "geometry"
+      ],
+      "files": [
+        "crates/geometry/src/{lib,viewport,bbox,hit_test,spatial_index}.rs",
+        "crates/geometry/tests/t03_geometry.rs"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "geometry",
+          "--test",
+          "t03_geometry",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T03.md",
+      "report_dir": "reports/T03"
+    },
+    {
+      "id": "T04",
+      "title": "编辑命令、工具状态与单步撤销",
+      "owner": "wl-core",
+      "depends_on": [
+        "T03"
+      ],
+      "locks": [
+        "editor-core"
+      ],
+      "files": [
+        "crates/editor-core/src/{lib,editor,commands,history,tools,selection}.rs",
+        "crates/editor-core/tests/t04_editor.rs"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "editor-core",
+          "--test",
+          "t04_editor",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T04.md",
+      "report_dir": "reports/T04"
+    },
+    {
+      "id": "T05",
+      "title": "真实wgpu图像与实例矩形渲染器",
+      "owner": "wl-renderer",
+      "depends_on": [
+        "T03"
+      ],
+      "locks": [
+        "renderer"
+      ],
+      "files": [
+        "crates/renderer-wgpu/src/{lib,renderer,scene,buffers,image,device}.rs",
+        "crates/renderer-wgpu/shaders/{image,bbox,overlay}.wgsl",
+        "crates/renderer-wgpu/tests/t05_renderer.rs",
+        "tests/render/t05.spec.ts"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "renderer-wgpu",
+          "--test",
+          "t05_renderer",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T05.md",
+      "report_dir": "reports/T05"
+    },
+    {
+      "id": "T06",
+      "title": "SQLite、不可变文件仓库与服务器骨架",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T01"
+      ],
+      "locks": [
+        "backend-storage"
+      ],
+      "files": [
+        "apps/api/src/{lib,main,config}.rs",
+        "apps/api/src/storage/{mod,db,objects,transactions}.rs",
+        "apps/api/migrations/0001_core.sql",
+        "apps/api/tests/t06_storage.rs",
+        "tests/support/app.ts"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t06_storage",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T06.md",
+      "report_dir": "reports/T06"
+    },
+    {
+      "id": "T07",
+      "title": "图片导入、EXIF规范化与有界媒体作业",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T06"
+      ],
+      "locks": [
+        "backend-media",
+        "media-fixtures"
+      ],
+      "files": [
+        "apps/api/src/media/{mod,ingest,canonical,previews,limits}.rs",
+        "apps/api/src/jobs/{mod,queue,worker}.rs",
+        "apps/api/tests/t07_media.rs",
+        "tests/fixtures/media/*",
+        "scripts/generate-media-fixtures.mjs"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t07_media",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T07.md",
+      "report_dir": "reports/T07"
+    },
+    {
+      "id": "T08",
+      "title": "React工作台外壳与虚拟对象列表",
+      "owner": "wl-web",
+      "depends_on": [
+        "T01"
+      ],
+      "locks": [
+        "web-shell"
+      ],
+      "files": [
+        "apps/web/src/app/{App,routes,providers}.tsx",
+        "apps/web/src/features/projects/*",
+        "apps/web/src/features/workbench/{Workbench,Toolbar,ObjectList,AttributePanel}.tsx",
+        "apps/web/src/styles/tokens.css",
+        "apps/web/src/features/workbench/t08_shell.test.tsx"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/web/src/features/workbench/t08_shell.test.tsx"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T08.md",
+      "report_dir": "reports/T08"
+    },
+    {
+      "id": "T09",
+      "title": "WASM facade与浏览器画布生命周期",
+      "owner": "wl-renderer",
+      "depends_on": [
+        "T04",
+        "T05",
+        "T08"
+      ],
+      "locks": [
+        "wasm",
+        "web-canvas"
+      ],
+      "files": [
+        "crates/wasm-bridge/src/{lib,facade,input}.rs",
+        "apps/web/src/lib/editor/{loader,EditorHost}.ts",
+        "apps/web/src/features/workbench/CanvasView.tsx",
+        "apps/web/src/lib/editor/t09_lifecycle.test.ts",
+        "tests/e2e/t09_canvas.spec.ts"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/web/src/lib/editor/t09_lifecycle.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T09.md",
+      "report_dir": "reports/T09"
+    },
+    {
+      "id": "T10",
+      "title": "本地认证、项目角色和不可变标注规范",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T06"
+      ],
+      "locks": [
+        "backend-auth",
+        "project-api"
+      ],
+      "files": [
+        "apps/api/src/auth/{mod,session,password,csrf,policy}.rs",
+        "apps/api/src/projects/{mod,users,ontology}.rs",
+        "apps/api/tests/t10_auth.rs",
+        "tests/integration/t10_auth.test.ts",
+        "tests/support/app.ts"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t10_auth",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t10_auth.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T10.md",
+      "report_dir": "reports/T10"
+    },
+    {
+      "id": "T11",
+      "title": "不可变保存版本、CAS与幂等事务",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T04",
+        "T10"
+      ],
+      "locks": [
+        "annotation-store"
+      ],
+      "files": [
+        "apps/api/src/annotations/{mod,save,revision,idempotency}.rs",
+        "apps/api/tests/t11_save.rs",
+        "tests/integration/t11_save.test.ts"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t11_save",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t11_save.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T11.md",
+      "report_dir": "reports/T11"
+    },
+    {
+      "id": "T12",
+      "title": "矩形编辑、快捷键与密集选择全链路",
+      "owner": "wl-core",
+      "depends_on": [
+        "T09"
+      ],
+      "locks": [
+        "editor-core",
+        "web-workbench"
+      ],
+      "files": [
+        "crates/editor-core/src/tools/*.rs",
+        "apps/web/src/features/workbench/{Keyboard,SelectionLink,NumericGeometry,ToolSettings}.tsx",
+        "crates/editor-core/tests/t12_tools.rs",
+        "tests/e2e/t12_tools.spec.ts"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "editor-core",
+          "--test",
+          "t12_tools",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T12.md",
+      "report_dir": "reports/T12"
+    },
+    {
+      "id": "T13",
+      "title": "IndexedDB恢复与单飞保存队列",
+      "owner": "wl-web",
+      "depends_on": [
+        "T09",
+        "T11"
+      ],
+      "locks": [
+        "web-persistence"
+      ],
+      "files": [
+        "apps/web/src/lib/persistence/{draft-store,save-queue,recovery,types}.ts",
+        "apps/web/src/lib/persistence/t13_queue.test.ts",
+        "apps/web/src/features/workbench/SaveStatus.tsx"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/web/src/lib/persistence/t13_queue.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T13.md",
+      "report_dir": "reports/T13"
+    },
+    {
+      "id": "T14",
+      "title": "原生、YOLO、COCO格式与安全导入预览",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T07",
+        "T10"
+      ],
+      "locks": [
+        "dataset-formats",
+        "import-api"
+      ],
+      "files": [
+        "crates/dataset-formats/src/{lib,native,yolo,coco,report,archive}.rs",
+        "crates/dataset-formats/tests/t14_formats.rs",
+        "apps/api/src/media/import_labels.rs",
+        "tests/fixtures/formats/*"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "dataset-formats",
+          "--test",
+          "t14_formats",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T14.md",
+      "report_dir": "reports/T14"
+    },
+    {
+      "id": "T15",
+      "title": "人工标注最小纵向闭环与第一关卡",
+      "owner": "wl-qa",
+      "depends_on": [
+        "T07",
+        "T09",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14"
+      ],
+      "locks": [
+        "e2e-integration"
+      ],
+      "files": [
+        "tests/e2e/{fixtures,t15_vertical.spec}.ts",
+        "tests/integration/t15_exports.test.ts",
+        "scripts/check-dataset-loader.py",
+        "docs/manual-smoke.md",
+        "reports/T15/*"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "playwright",
+          "test",
+          "tests/e2e/t15_vertical.spec.ts",
+          "--project=chromium-webgpu"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t15_exports.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T15.md",
+      "report_dir": "reports/T15"
+    },
+    {
+      "id": "T16",
+      "title": "安全Agent Host、进程监管与provider抽象",
+      "owner": "wl-ai",
+      "depends_on": [
+        "T01",
+        "T02",
+        "T10"
+      ],
+      "locks": [
+        "agent-host-core",
+        "runtime-protocol"
+      ],
+      "files": [
+        "apps/agent-host/src/{index,registry,protocol}.ts",
+        "apps/agent-host/src/security/{spawn,grants,redaction}.ts",
+        "apps/api/src/runtime/{mod,host,supervisor}.rs",
+        "tests/support/fake-runtime.mjs",
+        "apps/agent-host/test/t16_host.test.ts"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/agent-host/test/t16_host.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T16.md",
+      "report_dir": "reports/T16"
+    },
+    {
+      "id": "T17",
+      "title": "持久化模型作业、预测与事件流",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T11",
+        "T07"
+      ],
+      "locks": [
+        "ai-store",
+        "job-engine"
+      ],
+      "files": [
+        "apps/api/src/ai/{mod,runs,predictions,suggestions,events}.rs",
+        "apps/api/src/jobs/model_jobs.rs",
+        "apps/api/migrations/0002_ai.sql",
+        "apps/api/tests/t17_jobs.rs",
+        "tests/integration/t17_jobs.test.ts"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t17_jobs",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t17_jobs.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T17.md",
+      "report_dir": "reports/T17"
+    },
+    {
+      "id": "T18",
+      "title": "真实CPU检测器与坐标反变换",
+      "owner": "wl-ai",
+      "depends_on": [
+        "T07",
+        "T16"
+      ],
+      "locks": [
+        "detector"
+      ],
+      "files": [
+        "services/detector/pyproject.toml",
+        "services/detector/src/weblabel_detector/{__main__,protocol,model,transforms,labels}.py",
+        "services/detector/tests/test_t18.py",
+        "services/detector/models.lock.json",
+        "apps/agent-host/src/providers/detector-local.ts"
+      ],
+      "checks": [
+        [
+          "uv",
+          "run",
+          "--project",
+          "services/detector",
+          "python",
+          "-m",
+          "pytest",
+          "services/detector/tests/test_t18.py",
+          "-q"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T18.md",
+      "report_dir": "reports/T18"
+    },
+    {
+      "id": "T19",
+      "title": "候选校验、原子接受与可撤销来源",
+      "owner": "wl-core",
+      "depends_on": [
+        "T04",
+        "T17"
+      ],
+      "locks": [
+        "editor-core",
+        "suggestion-contract"
+      ],
+      "files": [
+        "crates/annotation-domain/src/suggestion_validation.rs",
+        "crates/editor-core/src/suggestions.rs",
+        "crates/editor-core/tests/t19_suggestions.rs",
+        "apps/api/src/ai/acceptance.rs"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "editor-core",
+          "--test",
+          "t19_suggestions",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T19.md",
+      "report_dir": "reports/T19"
+    },
+    {
+      "id": "T20",
+      "title": "OpenAI/Luna、Anthropic与MiMo HTTP适配器",
+      "owner": "wl-ai",
+      "depends_on": [
+        "T16"
+      ],
+      "locks": [
+        "http-providers"
+      ],
+      "files": [
+        "apps/agent-host/src/providers/{openai-api,anthropic-api,mimo-api}.ts",
+        "apps/agent-host/src/providers/http/{client,images,errors,usage}.ts",
+        "apps/agent-host/test/t20_http.test.ts",
+        "apps/agent-host/test/fixtures/http/*"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/agent-host/test/t20_http.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T20.md",
+      "report_dir": "reports/T20"
+    },
+    {
+      "id": "T21",
+      "title": "受限MCP语义工具与run级权限",
+      "owner": "wl-ai",
+      "depends_on": [
+        "T16",
+        "T19"
+      ],
+      "locks": [
+        "mcp",
+        "agent-tools-api"
+      ],
+      "files": [
+        "apps/agent-host/src/mcp/{main,server,tools}.ts",
+        "apps/api/src/runtime/{agent_tools,run_tokens}.rs",
+        "apps/agent-host/test/t21_mcp.test.ts",
+        "apps/api/tests/t21_agent_tools.rs"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/agent-host/test/t21_mcp.test.ts"
+        ],
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t21_agent_tools",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T21.md",
+      "report_dir": "reports/T21"
+    },
+    {
+      "id": "T22",
+      "title": "官方Codex订阅运行时适配",
+      "owner": "wl-ai",
+      "depends_on": [
+        "T02",
+        "T21"
+      ],
+      "locks": [
+        "native-runtime",
+        "codex-adapter"
+      ],
+      "files": [
+        "apps/agent-host/src/providers/codex/{adapter,protocol,session,permissions}.ts",
+        "apps/agent-host/test/t22_codex.test.ts",
+        "docs/providers/codex.md"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/agent-host/test/t22_codex.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T22.md",
+      "report_dir": "reports/T22"
+    },
+    {
+      "id": "T23",
+      "title": "官方Claude订阅/Sonnet运行时适配",
+      "owner": "wl-ai",
+      "depends_on": [
+        "T02",
+        "T21"
+      ],
+      "locks": [
+        "native-runtime",
+        "claude-adapter"
+      ],
+      "files": [
+        "apps/agent-host/src/providers/claude/{adapter,protocol,session,permissions}.ts",
+        "apps/agent-host/test/t23_claude.test.ts",
+        "docs/providers/claude.md"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/agent-host/test/t23_claude.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T23.md",
+      "report_dir": "reports/T23"
+    },
+    {
+      "id": "T24",
+      "title": "AI面板、差异预览与按上下文接受",
+      "owner": "wl-web",
+      "depends_on": [
+        "T13",
+        "T19"
+      ],
+      "locks": [
+        "web-ai"
+      ],
+      "files": [
+        "apps/web/src/features/ai/{Panel,ProviderPicker,Consent,RunProgress,CandidateList,DiffView}.tsx",
+        "apps/web/src/features/ai/useRun.ts",
+        "apps/web/src/features/ai/t24_ui.test.tsx"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/web/src/features/ai/t24_ui.test.tsx"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T24.md",
+      "report_dir": "reports/T24"
+    },
+    {
+      "id": "T25",
+      "title": "模型全链路、外发授权与差异化AI关卡",
+      "owner": "wl-ai",
+      "depends_on": [
+        "T18",
+        "T20",
+        "T22",
+        "T23",
+        "T24"
+      ],
+      "locks": [
+        "ai-integration",
+        "consent"
+      ],
+      "files": [
+        "apps/api/src/ai/{consent,orchestrator,acceptance}.rs",
+        "apps/web/src/features/ai/runCoordinator.ts",
+        "tests/integration/t25_ai.test.ts",
+        "tests/e2e/t25_ai.spec.ts",
+        "reports/T25/*"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t25_ai.test.ts"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "playwright",
+          "test",
+          "tests/e2e/t25_ai.spec.ts",
+          "--project=chromium-webgpu"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T25.md",
+      "report_dir": "reports/T25"
+    },
+    {
+      "id": "T26",
+      "title": "任务租约、版本审核与负样本语义",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T15"
+      ],
+      "locks": [
+        "workflow",
+        "annotation-store"
+      ],
+      "files": [
+        "apps/api/src/review/{mod,tasks,leases,submissions,decisions,issues}.rs",
+        "apps/api/migrations/0003_workflow.sql",
+        "apps/web/src/features/review/*",
+        "apps/api/tests/t26_workflow.rs",
+        "tests/integration/t26_review.test.ts"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t26_workflow",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t26_review.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T26.md",
+      "report_dir": "reports/T26"
+    },
+    {
+      "id": "T27",
+      "title": "不可变数据集快照与可校验交付",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T14",
+        "T26"
+      ],
+      "locks": [
+        "datasets",
+        "export-ui"
+      ],
+      "files": [
+        "apps/api/src/datasets/{mod,snapshot,split,export,download}.rs",
+        "apps/api/migrations/0004_datasets.sql",
+        "apps/web/src/features/datasets/*",
+        "apps/api/tests/t27_snapshot.rs",
+        "tests/integration/t27_export.test.ts"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t27_snapshot",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t27_export.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T27.md",
+      "report_dir": "reports/T27"
+    },
+    {
+      "id": "T28",
+      "title": "密集对象性能、按需绘制与资源预算",
+      "owner": "wl-renderer",
+      "depends_on": [
+        "T12",
+        "T13",
+        "T24"
+      ],
+      "locks": [
+        "renderer",
+        "web-perf"
+      ],
+      "files": [
+        "crates/renderer-wgpu/src/{buffers,culling,stats}.rs",
+        "crates/geometry/src/spatial_index.rs",
+        "apps/web/src/features/workbench/perf.ts",
+        "tests/perf/t28_dense.spec.ts",
+        "scripts/generate-dense-fixtures.mjs"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "playwright",
+          "test",
+          "tests/perf/t28_dense.spec.ts",
+          "--project=chromium-webgpu"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T28.md",
+      "report_dir": "reports/T28"
+    },
+    {
+      "id": "T29",
+      "title": "安全攻击面与恶意输入专项验收",
+      "owner": "wl-qa",
+      "depends_on": [
+        "T25",
+        "T27"
+      ],
+      "locks": [
+        "security-tests"
+      ],
+      "files": [
+        "tests/integration/t29_security.test.ts",
+        "apps/agent-host/test/t29_injection.test.ts",
+        "tests/fixtures/security/*",
+        "docs/security-model.md",
+        "reports/T29/*"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t29_security.test.ts"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/agent-host/test/t29_injection.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T29.md",
+      "report_dir": "reports/T29"
+    },
+    {
+      "id": "T30",
+      "title": "故障注入、恢复与长会话一致性",
+      "owner": "wl-qa",
+      "depends_on": [
+        "T25",
+        "T26",
+        "T27",
+        "T28"
+      ],
+      "locks": [
+        "resilience-tests"
+      ],
+      "files": [
+        "tests/integration/t30_faults.test.ts",
+        "tests/e2e/t30_recovery.spec.ts",
+        "tests/support/faults.ts",
+        "reports/T30/*"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t30_faults.test.ts"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "playwright",
+          "test",
+          "tests/e2e/t30_recovery.spec.ts",
+          "--project=chromium-webgpu"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T30.md",
+      "report_dir": "reports/T30"
+    },
+    {
+      "id": "T31",
+      "title": "目标机器真实WebGPU与性能验收",
+      "owner": "wl-qa",
+      "depends_on": [
+        "T30"
+      ],
+      "locks": [
+        "hardware-evidence"
+      ],
+      "files": [
+        "scripts/verify-gpu.mjs",
+        "tests/perf/t31_hardware.spec.ts",
+        "reports/T31/environment.json",
+        "reports/T31/samples.json",
+        "reports/T31/*"
+      ],
+      "checks": [
+        [
+          "node",
+          "scripts/verify-gpu.mjs"
+        ]
+      ],
+      "external_gate": true,
+      "card": "tasks/T31.md",
+      "report_dir": "reports/T31"
+    },
+    {
+      "id": "T32",
+      "title": "真实订阅、Luna/MiMo与检测器验收",
+      "owner": "wl-qa",
+      "depends_on": [
+        "T25",
+        "T29"
+      ],
+      "locks": [
+        "live-provider-evidence"
+      ],
+      "files": [
+        "scripts/verify-live.mjs",
+        "tests/live/t32_provider.spec.ts",
+        "tests/live/manifest.json",
+        "reports/T32/*"
+      ],
+      "checks": [
+        [
+          "node",
+          "scripts/verify-live.mjs",
+          "--check-required"
+        ]
+      ],
+      "external_gate": true,
+      "card": "tasks/T32.md",
+      "report_dir": "reports/T32"
+    },
+    {
+      "id": "T33",
+      "title": "本地发行构建、诊断、备份恢复与使用文档",
+      "owner": "wl-backend",
+      "depends_on": [
+        "T27",
+        "T29",
+        "T30"
+      ],
+      "locks": [
+        "packaging"
+      ],
+      "files": [
+        "scripts/{build,start-local,doctor,backup,restore}.mjs",
+        "tests/integration/t33_packaging.test.ts",
+        "docs/{getting-started,operations,backup-restore,known-limitations}.md",
+        "README.md"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t33_packaging.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T33.md",
+      "report_dir": "reports/T33"
+    },
+    {
+      "id": "T34",
+      "title": "标注效率与质量评估工具",
+      "owner": "wl-web",
+      "depends_on": [
+        "T15",
+        "T24",
+        "T27",
+        "T30"
+      ],
+      "locks": [
+        "measurement"
+      ],
+      "files": [
+        "apps/web/src/features/workbench/activity.ts",
+        "apps/api/src/review/metrics.rs",
+        "tests/integration/t34_metrics.test.ts",
+        "docs/pilot-protocol.md",
+        "scripts/analyze-pilot.mjs"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/integration/t34_metrics.test.ts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T34.md",
+      "report_dir": "reports/T34"
+    },
+    {
+      "id": "T35",
+      "title": "独立总审查、重放验收与发布状态",
+      "owner": "main",
+      "depends_on": [
+        "T31",
+        "T32",
+        "T33",
+        "T34"
+      ],
+      "locks": [
+        "release"
+      ],
+      "files": [
+        "reports/release.json",
+        "reports/release-review.md",
+        "reports/acceptance-matrix.md",
+        "docs/known-limitations.md",
+        "README.md",
+        "STATUS.json"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "verify:release"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/T35.md",
+      "report_dir": "reports/T35"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+/target/
+/node_modules/
+.pnpm-store/
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+playwright-report/
+test-results/
