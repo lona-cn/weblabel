@@ -1,6 +1,7 @@
 {
   "task_id": "T02",
-  "status": "verification_passed_pending_commit",
+  "status": "done",
+  "integrated_commit": "ad69b1d4677c12eaa489b09ecd07a7669f0bc798",
   "base_commit": "c904909df94232dbda1f64ddf4221a09f9879222",
   "dependency": {
     "task_id": "T00",
@@ -46,7 +47,7 @@
       "argv": ["pnpm", "test:task", "T02"],
       "exit_code": 0,
       "tests_passed": 0,
-      "result": "Verifier passed: 36 tasks, 75 dependency edges, no errors. Scope is plan/evidence structure only; no provider protocol or live behavior was tested."
+      "result": "Verifier passed: 36 tasks, 75 dependency edges, no errors. After status integration, ready tasks were T03, T06, and T08. Scope is plan/evidence structure only; no provider protocol or live behavior was tested."
     }
   ],
   "evidence_states": {
