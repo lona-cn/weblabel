@@ -152,6 +152,7 @@
         "geometry"
       ],
       "files": [
+        "crates/geometry/Cargo.toml",
         "crates/geometry/src/{lib,viewport,bbox,hit_test,spatial_index}.rs",
         "crates/geometry/tests/t03_geometry.rs"
       ],
