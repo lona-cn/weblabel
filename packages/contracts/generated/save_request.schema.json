@@ -1,0 +1,323 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SaveRequest",
+  "type": "object",
+  "required": [
+    "base_revision_id",
+    "document",
+    "lease",
+    "operation_id",
+    "suggestion_decisions"
+  ],
+  "properties": {
+    "base_revision_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "document": {
+      "$ref": "#/definitions/AnnotationDocument"
+    },
+    "lease": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SaveLease"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "operation_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "suggestion_decisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SuggestionDecisionIntent"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "AnnotationDocument": {
+      "type": "object",
+      "required": [
+        "asset_revision_id",
+        "completion",
+        "coordinate_space",
+        "objects",
+        "ontology_version_id",
+        "schema_version"
+      ],
+      "properties": {
+        "asset_revision_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "completion": {
+          "$ref": "#/definitions/Completion"
+        },
+        "coordinate_space": {
+          "$ref": "#/definitions/CoordinateSpace"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AnnotationObject"
+          }
+        },
+        "ontology_version_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 1.0,
+          "minimum": 1.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "AnnotationObject": {
+      "type": "object",
+      "required": [
+        "attributes",
+        "geometry",
+        "label_id",
+        "object_id",
+        "origin"
+      ],
+      "properties": {
+        "attributes": {
+          "$ref": "#/definitions/AttributeMap"
+        },
+        "geometry": {
+          "$ref": "#/definitions/BBox"
+        },
+        "label_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "object_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "origin": {
+          "$ref": "#/definitions/Origin"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AttributeMap": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Scalar"
+      },
+      "propertyNames": {
+        "type": "string",
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "BBox": {
+      "type": "object",
+      "required": [
+        "type",
+        "x_max",
+        "x_min",
+        "y_max",
+        "y_min"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/definitions/BBoxType"
+        },
+        "x_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "x_min": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_min": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false
+    },
+    "BBoxType": {
+      "type": "string",
+      "enum": [
+        "bbox_xyxy"
+      ]
+    },
+    "Completion": {
+      "type": "string",
+      "enum": [
+        "unprocessed",
+        "in_progress",
+        "complete",
+        "confirmed_negative"
+      ]
+    },
+    "CoordinateSpace": {
+      "type": "object",
+      "required": [
+        "height",
+        "type",
+        "width"
+      ],
+      "properties": {
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 4294967295.0,
+          "minimum": 1.0
+        },
+        "type": {
+          "$ref": "#/definitions/CoordinateSpaceType"
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 4294967295.0,
+          "minimum": 1.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "CoordinateSpaceType": {
+      "type": "string",
+      "enum": [
+        "canonical_image_pixels"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "Origin": {
+      "type": "object",
+      "required": [
+        "import_batch_id",
+        "model_run_id",
+        "prediction_id",
+        "type"
+      ],
+      "properties": {
+        "import_batch_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prediction_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "$ref": "#/definitions/OriginType"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OriginType": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "import",
+        "prediction"
+      ]
+    },
+    "SaveLease": {
+      "type": "object",
+      "required": [
+        "fencing_token",
+        "task_id"
+      ],
+      "properties": {
+        "fencing_token": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        },
+        "task_id": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Scalar": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4096
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "SuggestionDecision": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "revert"
+      ]
+    },
+    "SuggestionDecisionIntent": {
+      "type": "object",
+      "required": [
+        "change_ids",
+        "decision",
+        "suggestion_set_id"
+      ],
+      "properties": {
+        "change_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        },
+        "decision": {
+          "$ref": "#/definitions/SuggestionDecision"
+        },
+        "suggestion_set_id": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

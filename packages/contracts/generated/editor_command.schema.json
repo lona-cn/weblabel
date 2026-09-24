@@ -1,0 +1,668 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EditorCommand",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "object"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "create"
+          ]
+        },
+        "object": {
+          "$ref": "#/definitions/AnnotationObject"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "geometry",
+        "kind",
+        "object_id"
+      ],
+      "properties": {
+        "geometry": {
+          "$ref": "#/definitions/BBox"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "replace_geometry"
+          ]
+        },
+        "object_id": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "object_ids",
+        "values"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "set_attributes"
+          ]
+        },
+        "object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        },
+        "values": {
+          "$ref": "#/definitions/AttributeMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "label_id",
+        "object_ids"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "set_label"
+          ]
+        },
+        "label_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "object_ids"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "delete"
+          ]
+        },
+        "object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "new_ids",
+        "object_ids"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "duplicate"
+          ]
+        },
+        "new_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        },
+        "object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "completion",
+        "kind"
+      ],
+      "properties": {
+        "completion": {
+          "$ref": "#/definitions/Completion"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "set_completion"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "change_ids",
+        "expected_generation",
+        "kind",
+        "set"
+      ],
+      "properties": {
+        "change_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        },
+        "expected_generation": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "apply_suggestions"
+          ]
+        },
+        "set": {
+          "$ref": "#/definitions/SuggestionSet"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "undo"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "redo"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "AnnotationObject": {
+      "type": "object",
+      "required": [
+        "attributes",
+        "geometry",
+        "label_id",
+        "object_id",
+        "origin"
+      ],
+      "properties": {
+        "attributes": {
+          "$ref": "#/definitions/AttributeMap"
+        },
+        "geometry": {
+          "$ref": "#/definitions/BBox"
+        },
+        "label_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "object_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "origin": {
+          "$ref": "#/definitions/Origin"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AttributeMap": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Scalar"
+      },
+      "propertyNames": {
+        "type": "string",
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "BBox": {
+      "type": "object",
+      "required": [
+        "type",
+        "x_max",
+        "x_min",
+        "y_max",
+        "y_min"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/definitions/BBoxType"
+        },
+        "x_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "x_min": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_min": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false
+    },
+    "BBoxType": {
+      "type": "string",
+      "enum": [
+        "bbox_xyxy"
+      ]
+    },
+    "Change": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "before_hash",
+            "change_id",
+            "kind",
+            "object",
+            "reason"
+          ],
+          "properties": {
+            "before_hash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change_id": {
+              "$ref": "#/definitions/Id"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "create"
+              ]
+            },
+            "object": {
+              "$ref": "#/definitions/AnnotationObject"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "before_hash",
+            "change_id",
+            "kind",
+            "object_id",
+            "reason",
+            "values"
+          ],
+          "properties": {
+            "before_hash": {
+              "type": "string"
+            },
+            "change_id": {
+              "$ref": "#/definitions/Id"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "set_attributes"
+              ]
+            },
+            "object_id": {
+              "$ref": "#/definitions/Id"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "values": {
+              "$ref": "#/definitions/AttributeMap"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "before_hash",
+            "change_id",
+            "kind",
+            "label_id",
+            "object_id",
+            "reason"
+          ],
+          "properties": {
+            "before_hash": {
+              "type": "string"
+            },
+            "change_id": {
+              "$ref": "#/definitions/Id"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "set_label"
+              ]
+            },
+            "label_id": {
+              "$ref": "#/definitions/Id"
+            },
+            "object_id": {
+              "$ref": "#/definitions/Id"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Completion": {
+      "type": "string",
+      "enum": [
+        "unprocessed",
+        "in_progress",
+        "complete",
+        "confirmed_negative"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "Origin": {
+      "type": "object",
+      "required": [
+        "import_batch_id",
+        "model_run_id",
+        "prediction_id",
+        "type"
+      ],
+      "properties": {
+        "import_batch_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prediction_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "$ref": "#/definitions/OriginType"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OriginType": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "import",
+        "prediction"
+      ]
+    },
+    "QualityIssue": {
+      "type": "object",
+      "required": [
+        "code",
+        "issue_id",
+        "message",
+        "object_id",
+        "region"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "issue_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "message": {
+          "type": "string"
+        },
+        "object_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "region": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BBox"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunContext": {
+      "type": "object",
+      "required": [
+        "annotation_revision_id",
+        "asset_revision_id",
+        "canonical_sha256",
+        "draft_generation",
+        "input_fingerprint",
+        "object_hashes",
+        "ontology_version_id",
+        "project_id",
+        "selected_object_ids"
+      ],
+      "properties": {
+        "annotation_revision_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "asset_revision_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "canonical_sha256": {
+          "type": "string"
+        },
+        "draft_generation": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        },
+        "input_fingerprint": {
+          "type": "string"
+        },
+        "object_hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "ontology_version_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "project_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "selected_object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Scalar": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4096
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "SuggestionSet": {
+      "type": "object",
+      "required": [
+        "changes",
+        "context",
+        "issues",
+        "model_run_id",
+        "prediction_id",
+        "score",
+        "state",
+        "suggestion_set_id"
+      ],
+      "properties": {
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Change"
+          }
+        },
+        "context": {
+          "$ref": "#/definitions/RunContext"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/QualityIssue"
+          }
+        },
+        "model_run_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "prediction_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number",
+              "format": "double"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/definitions/SuggestionState"
+        },
+        "suggestion_set_id": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SuggestionState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "stale",
+        "rejected",
+        "partially_accepted",
+        "accepted"
+      ]
+    }
+  }
+}

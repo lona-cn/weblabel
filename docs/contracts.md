@@ -1,6 +1,6 @@
 # 契约 v1：跨 Agent 共同接口
 
-本文件冻结语义。T01 在 crates/annotation-domain 中定义 Rust wire 类型，使用 serde/schemars/ts-rs 生成 JSON Schema 与 TypeScript 到 packages/contracts/generated。以下 TypeScript 为接口设计，不是要求另外手写第二份 DTO。生成命令统一为 `pnpm contracts:generate`；`pnpm contracts:check` 重生成到临时目录并做差异检查。
+本文件冻结语义。T01 在 crates/annotation-domain 中定义 Rust wire 类型，使用 serde/schemars/ts-rs 生成 JSON Schema 与 TypeScript 到 packages/contracts/generated。Node 端通过 `@weblabel/contracts/validate` 直接消费生成的 JSON Schema，不再维护第二套 DTO；`pnpm contracts:check` 重生成到临时目录并做差异检查。
 
 ## C1. 序列化与错误
 

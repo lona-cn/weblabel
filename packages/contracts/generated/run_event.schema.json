@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RunEvent",
+  "type": "object",
+  "required": [
+    "data",
+    "message",
+    "run_id",
+    "seq",
+    "type"
+  ],
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "seq": {
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    },
+    "type": {
+      "$ref": "#/definitions/RunEventType"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "RunEventType": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "started",
+        "progress",
+        "tool_call",
+        "candidate",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ]
+    }
+  }
+}

@@ -1,0 +1,289 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EditorDelta",
+  "type": "object",
+  "required": [
+    "can_redo",
+    "can_undo",
+    "changed_objects",
+    "document_changed",
+    "error",
+    "generation",
+    "removed_object_ids",
+    "repaint",
+    "selected_object_ids",
+    "suggestion_decisions"
+  ],
+  "properties": {
+    "can_redo": {
+      "type": "boolean"
+    },
+    "can_undo": {
+      "type": "boolean"
+    },
+    "changed_objects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AnnotationObject"
+      }
+    },
+    "document_changed": {
+      "type": "boolean"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ApiError"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "generation": {
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    },
+    "removed_object_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Id"
+      }
+    },
+    "repaint": {
+      "type": "boolean"
+    },
+    "selected_object_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Id"
+      }
+    },
+    "suggestion_decisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SuggestionDecisionIntent"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "AnnotationObject": {
+      "type": "object",
+      "required": [
+        "attributes",
+        "geometry",
+        "label_id",
+        "object_id",
+        "origin"
+      ],
+      "properties": {
+        "attributes": {
+          "$ref": "#/definitions/AttributeMap"
+        },
+        "geometry": {
+          "$ref": "#/definitions/BBox"
+        },
+        "label_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "object_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "origin": {
+          "$ref": "#/definitions/Origin"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ApiError": {
+      "type": "object",
+      "required": [
+        "code",
+        "details",
+        "message",
+        "request_id"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "request_id": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AttributeMap": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Scalar"
+      },
+      "propertyNames": {
+        "type": "string",
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "BBox": {
+      "type": "object",
+      "required": [
+        "type",
+        "x_max",
+        "x_min",
+        "y_max",
+        "y_min"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/definitions/BBoxType"
+        },
+        "x_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "x_min": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_min": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false
+    },
+    "BBoxType": {
+      "type": "string",
+      "enum": [
+        "bbox_xyxy"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "Origin": {
+      "type": "object",
+      "required": [
+        "import_batch_id",
+        "model_run_id",
+        "prediction_id",
+        "type"
+      ],
+      "properties": {
+        "import_batch_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prediction_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "$ref": "#/definitions/OriginType"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OriginType": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "import",
+        "prediction"
+      ]
+    },
+    "Scalar": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4096
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "SuggestionDecision": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "revert"
+      ]
+    },
+    "SuggestionDecisionIntent": {
+      "type": "object",
+      "required": [
+        "change_ids",
+        "decision",
+        "suggestion_set_id"
+      ],
+      "properties": {
+        "change_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        },
+        "decision": {
+          "$ref": "#/definitions/SuggestionDecision"
+        },
+        "suggestion_set_id": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

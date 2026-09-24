@@ -1,0 +1,190 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OntologyVersion",
+  "type": "object",
+  "required": [
+    "allow_out_of_bounds",
+    "guidelines_markdown",
+    "labels",
+    "ontology_version_id",
+    "project_id",
+    "version_no"
+  ],
+  "properties": {
+    "allow_out_of_bounds": {
+      "$ref": "#/definitions/False"
+    },
+    "guidelines_markdown": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/LabelDef"
+      }
+    },
+    "ontology_version_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "project_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "version_no": {
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "AllowedGeometryType": {
+      "type": "string",
+      "enum": [
+        "bbox_xyxy"
+      ]
+    },
+    "AttributeDef": {
+      "type": "object",
+      "required": [
+        "default_value",
+        "enum_values",
+        "key",
+        "kind",
+        "max",
+        "min",
+        "required"
+      ],
+      "properties": {
+        "default_value": {
+          "$ref": "#/definitions/Scalar"
+        },
+        "enum_values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "key": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1
+        },
+        "kind": {
+          "$ref": "#/definitions/AttributeKind"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number",
+              "format": "double"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "number",
+              "format": "double"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AttributeKind": {
+      "type": "string",
+      "enum": [
+        "enum",
+        "boolean",
+        "number",
+        "text"
+      ]
+    },
+    "False": {
+      "type": "boolean",
+      "enum": [
+        false
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "LabelDef": {
+      "type": "object",
+      "required": [
+        "allowed_geometry_types",
+        "attributes",
+        "color",
+        "label_id",
+        "name",
+        "shortcut"
+      ],
+      "properties": {
+        "allowed_geometry_types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AllowedGeometryType"
+          }
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AttributeDef"
+          }
+        },
+        "color": {
+          "type": "string"
+        },
+        "label_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1
+        },
+        "shortcut": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Scalar": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4096
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

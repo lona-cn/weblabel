@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ModelProfile",
+  "type": "object",
+  "required": [
+    "auth_kind",
+    "availability",
+    "capabilities",
+    "model_id",
+    "profile_id",
+    "provider_id",
+    "runtime_version",
+    "verification",
+    "verified_at"
+  ],
+  "properties": {
+    "auth_kind": {
+      "$ref": "#/definitions/AuthKind"
+    },
+    "availability": {
+      "$ref": "#/definitions/Availability"
+    },
+    "capabilities": {
+      "$ref": "#/definitions/ModelCapabilities"
+    },
+    "model_id": {
+      "type": "string"
+    },
+    "profile_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "provider_id": {
+      "$ref": "#/definitions/ProviderId"
+    },
+    "runtime_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "verification": {
+      "$ref": "#/definitions/Verification"
+    },
+    "verified_at": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/UtcTimestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "AuthKind": {
+      "type": "string",
+      "enum": [
+        "official_user_login",
+        "api_key",
+        "local_weights",
+        "none"
+      ]
+    },
+    "Availability": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "needs_login",
+        "needs_configuration",
+        "unsupported",
+        "blocked"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "ModelCapabilities": {
+      "type": "object",
+      "required": [
+        "attributes",
+        "bbox_output",
+        "image_input",
+        "structured_output",
+        "tools"
+      ],
+      "properties": {
+        "attributes": {
+          "type": "boolean"
+        },
+        "bbox_output": {
+          "type": "boolean"
+        },
+        "image_input": {
+          "type": "boolean"
+        },
+        "structured_output": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderId": {
+      "type": "string",
+      "enum": [
+        "codex_local",
+        "claude_local",
+        "openai_api",
+        "anthropic_api",
+        "mimo_api",
+        "detector_local",
+        "mock"
+      ]
+    },
+    "UtcTimestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Verification": {
+      "type": "string",
+      "enum": [
+        "not_run",
+        "mock_only",
+        "live_passed",
+        "live_failed"
+      ]
+    }
+  }
+}

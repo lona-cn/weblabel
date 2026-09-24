@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MediaRevision",
+  "type": "object",
+  "required": [
+    "asset_id",
+    "asset_revision_id",
+    "canonical_height",
+    "canonical_sha256",
+    "canonical_width",
+    "exif_orientation",
+    "original_name",
+    "original_sha256",
+    "original_to_canonical",
+    "project_id",
+    "source_group_id"
+  ],
+  "properties": {
+    "asset_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "asset_revision_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "canonical_height": {
+      "type": "integer",
+      "format": "uint32",
+      "maximum": 4294967295.0,
+      "minimum": 1.0
+    },
+    "canonical_sha256": {
+      "type": "string"
+    },
+    "canonical_width": {
+      "type": "integer",
+      "format": "uint32",
+      "maximum": 4294967295.0,
+      "minimum": 1.0
+    },
+    "exif_orientation": {
+      "type": "integer",
+      "format": "uint8",
+      "maximum": 8.0,
+      "minimum": 1.0
+    },
+    "original_name": {
+      "type": "string"
+    },
+    "original_sha256": {
+      "type": "string"
+    },
+    "original_to_canonical": {
+      "type": "array",
+      "items": {
+        "type": "number",
+        "format": "double"
+      },
+      "maxItems": 9,
+      "minItems": 9
+    },
+    "project_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "source_group_id": {
+      "$ref": "#/definitions/Id"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    }
+  }
+}

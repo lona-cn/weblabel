@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StartRunRequest",
+  "type": "object",
+  "required": [
+    "consent_id",
+    "context",
+    "intent",
+    "operation_id",
+    "profile_id",
+    "prompt"
+  ],
+  "properties": {
+    "consent_id": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "context": {
+      "$ref": "#/definitions/RunContext"
+    },
+    "intent": {
+      "$ref": "#/definitions/RunIntent"
+    },
+    "operation_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "profile_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "prompt": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "RunContext": {
+      "type": "object",
+      "required": [
+        "annotation_revision_id",
+        "asset_revision_id",
+        "canonical_sha256",
+        "draft_generation",
+        "input_fingerprint",
+        "object_hashes",
+        "ontology_version_id",
+        "project_id",
+        "selected_object_ids"
+      ],
+      "properties": {
+        "annotation_revision_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "asset_revision_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "canonical_sha256": {
+          "type": "string"
+        },
+        "draft_generation": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        },
+        "input_fingerprint": {
+          "type": "string"
+        },
+        "object_hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "ontology_version_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "project_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "selected_object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunIntent": {
+      "type": "string",
+      "enum": [
+        "detect",
+        "audit_attributes",
+        "find_issues"
+      ]
+    }
+  }
+}

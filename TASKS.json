@@ -80,9 +80,13 @@
       ],
       "files": [
         "crates/annotation-domain/src/{lib,document,ontology,geometry,revision,prediction,hash}.rs",
+        "crates/annotation-domain/src/schema.rs",
         "crates/annotation-domain/tests/t01_contracts.rs",
         "crates/xtask/src/contracts.rs",
         "packages/contracts/generated/*",
+        "packages/contracts/package.json",
+        "packages/contracts/src/validate.js",
+        "tests/contracts-validation.test.mjs",
         "tests/fixtures/golden/*.json",
         "tests/fixtures/schema-invalid/*.json"
       ],
@@ -99,6 +103,10 @@
         [
           "pnpm",
           "contracts:check"
+        ],
+        [
+          "pnpm",
+          "test:contracts"
         ]
       ],
       "external_gate": false,
