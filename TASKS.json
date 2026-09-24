@@ -241,10 +241,10 @@
         "backend-storage"
       ],
       "files": [
-        "apps/api/src/{lib,main,config}.rs",
-        "apps/api/src/storage/{mod,db,objects,transactions}.rs",
-        "apps/api/migrations/0001_core.sql",
-        "apps/api/tests/t06_storage.rs",
+        "crates/weblabel-api/src/{lib,main,config}.rs",
+        "crates/weblabel-api/src/storage/{mod,db,objects,transactions}.rs",
+        "crates/weblabel-api/migrations/0001_core.sql",
+        "crates/weblabel-api/tests/t06_storage.rs",
         "tests/support/app.ts"
       ],
       "checks": [
