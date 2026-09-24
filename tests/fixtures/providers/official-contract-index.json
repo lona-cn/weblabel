@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "access_date": "2026-09-25",
+  "purpose": "Index of official public provider documentation. Entries establish docs_verified only; they are not runtime fixtures or live evidence.",
+  "evidence_states": {
+    "docs_verified": true,
+    "protocol_fixture_tested": false,
+    "live_tested": false
+  },
+  "local_runtime_probes": [
+    {
+      "provider_id": "codex_local",
+      "argv": ["where.exe", "codex"],
+      "exit_code": 1,
+      "result": "No Codex executable was found on PATH. Version, help, schema generation, protocol fixture and live use were not run."
+    },
+    {
+      "provider_id": "claude_local",
+      "argv": ["where.exe", "claude"],
+      "exit_code": 0,
+      "result": "Claude Code executable found on PATH; absolute user-profile path intentionally omitted."
+    },
+    {
+      "provider_id": "claude_local",
+      "argv": ["claude", "--version"],
+      "exit_code": 0,
+      "stdout": "2.1.183 (Claude Code)",
+      "result": "Version probe does not start a session or inspect authentication."
+    },
+    {
+      "provider_id": "claude_local",
+      "argv": ["claude", "--help"],
+      "exit_code": 0,
+      "stdout_summary": "Help lists -p, --output-format, --json-schema, --mcp-config, --strict-mcp-config, --tools, --disallowedTools, --bare and permission-mode. No session was started.",
+      "result": "Flag presence is not proof of runtime behavior, loaded tools, auth mode or model availability."
+    }
+  ],
+  "providers": [
+    {
+      "provider_id": "codex_local",
+      "channel": "Official Codex CLI App Server on local stdio",
+      "auth_modes_documented": ["ChatGPT subscription login", "OpenAI API key usage billing", "enterprise Codex access token"],
+      "model_id": null,
+      "model_id_reason": "thread/start accepts a model parameter; account-entitled value is not universal and no local runtime was available.",
+      "documentation_verified": true,
+      "protocol_fixture_tested": false,
+      "live_tested": false,
+      "safety_status": "blocked_pending_installed_cli_and_generated_schema",
+      "sources": ["codex-app-server", "codex-authentication", "codex-mcp"],
+      "verified_claims": [
+        "stdio uses newline-delimited JSON and JSON-RPC 2.0 messages with the jsonrpc field omitted on the wire",
+        "initialize then initialized is required once per connection before methods",
+        "CLI-version-specific TypeScript and JSON Schema generators are documented",
+        "turn/interrupt requests cancellation; terminal turn status is observable",
+        "thread/shellCommand runs outside the thread sandbox; experimental process/spawn is also outside sandbox",
+        "MCP per-server enabled_tools and disabled_tools controls are documented but do not alone prove effective isolation"
+      ]
+    },
+    {
+      "provider_id": "claude_local",
+      "channel": "Official Claude Code non-interactive -p CLI; intended authentication is the user's official Claude subscription login",
+      "auth_modes_documented": ["Claude subscription login", "Anthropic Console API key billing", "third-party provider credentials"],
+      "installed_cli_version": "2.1.183",
+      "model_id": null,
+      "model_id_reason": "the installed runtime/account effective selection was not observed. Current docs map the Anthropic API sonnet alias to Sonnet 5 but require CLI >=2.1.197; installed CLI is 2.1.183.",
+      "documentation_verified": true,
+      "protocol_fixture_tested": false,
+      "live_tested": false,
+      "safety_status": "blocked_pending_versioned_protocol_and_tool_isolation_probe",
+      "sources": ["claude-headless", "claude-cli", "claude-authentication", "claude-model-config", "claude-mcp", "claude-permissions", "anthropic-models"],
+      "verified_claims": [
+        "-p supports text/json/stream-json output and JSON-schema constrained structured output",
+        "--bare skips automatic configuration discovery and does not use subscription OAuth; its auth modes are API key or apiKeyHelper",
+        "-p without --bare skips workspace-trust prompts, runs project hooks, and connects project .mcp.json servers",
+        "--tools limits built-in tools but not MCP; --allowedTools auto-approves rather than removing tools",
+        "deny rules including mcp__* are documented; CLI command rules do not enforce OS filesystem/network isolation",
+        "mcp_server_errors requires Claude Code >=2.1.219; installed 2.1.183 must not assume this field is present"
+      ]
+    },
+    {
+      "provider_id": "openai_api",
+      "channel": "Direct OpenAI Platform API; not Codex local/subscription auth",
+      "auth_modes_documented": ["OpenAI Platform API key"],
+      "model_id": "gpt-6-luna",
+      "documentation_verified": true,
+      "protocol_fixture_tested": false,
+      "live_tested": false,
+      "safety_status": "blocked_pending_authorized_credential_and_live_capability_test",
+      "sources": ["openai-gpt-6-luna", "openai-production-security"],
+      "verified_claims": ["text and image input", "Responses and Chat Completions endpoints", "Responses is recommended for built-in tools; Chat Completions function calling requires reasoning_effort=none"]
+    },
+    {
+      "provider_id": "anthropic_api",
+      "channel": "Direct Anthropic Platform API; not Claude Code subscription auth",
+      "auth_modes_documented": ["Anthropic Console API key"],
+      "model_id": "claude-sonnet-5",
+      "documentation_verified": true,
+      "protocol_fixture_tested": false,
+      "live_tested": false,
+      "safety_status": "blocked_pending_authorized_credential_and_live_capability_test",
+      "sources": ["anthropic-models"],
+      "verified_claims": ["current API catalog identifies claude-sonnet-5 as Sonnet", "model catalog documents image input and tool use"]
+    },
+    {
+      "provider_id": "mimo_api",
+      "channel": "Direct Xiaomi MiMo API; pay-as-you-go and Token Plan are distinct products",
+      "auth_modes_documented": ["pay-as-you-go API key sk-...", "Token Plan API key tp-..."],
+      "model_ids": ["mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed", "mimo-v2.5-pro", "mimo-v2.5"],
+      "standard_base_url": "https://api.xiaomimimo.com/v1",
+      "token_plan_base_url": null,
+      "token_plan_base_url_reason": "must use the URL displayed in the user's Token Plan console; no account access was used.",
+      "documentation_verified": true,
+      "protocol_fixture_tested": false,
+      "live_tested": false,
+      "safety_status": "blocked_pending_authorized_credential_and_live_capability_test",
+      "sources": ["mimo-chat-completions", "mimo-image-understanding", "mimo-api-faq"],
+      "verified_claims": [
+        "POST /v1/chat/completions; documented api-key and Bearer header forms",
+        "streaming uses server-sent events; response usage may be null",
+        "function strict mode supports a subset of JSON Schema and tool arguments still require validation",
+        "image input supports public URL and Base64 data URL; one image is limited to 50 MB",
+        "real-time local-file upload is unsupported; Token Plan base URL is console-specific",
+        "no documented guarantee that disconnecting a real-time SSE client cancels backend generation or billing"
+      ]
+    }
+  ],
+  "sources": [
+    {"id": "codex-app-server", "title": "Codex App Server", "url": "https://learn.chatgpt.com/docs/app-server", "access_date": "2026-09-25"},
+    {"id": "codex-authentication", "title": "Codex Authentication", "url": "https://learn.chatgpt.com/docs/auth", "access_date": "2026-09-25"},
+    {"id": "codex-mcp", "title": "Codex MCP", "url": "https://learn.chatgpt.com/docs/extend/mcp", "access_date": "2026-09-25"},
+    {"id": "claude-headless", "title": "Claude Code headless", "url": "https://code.claude.com/docs/en/headless", "access_date": "2026-09-25"},
+    {"id": "claude-cli", "title": "Claude Code CLI reference", "url": "https://code.claude.com/docs/en/cli-reference", "access_date": "2026-09-25"},
+    {"id": "claude-authentication", "title": "Claude Code authentication", "url": "https://code.claude.com/docs/en/authentication", "access_date": "2026-09-25"},
+    {"id": "claude-model-config", "title": "Claude Code model configuration", "url": "https://code.claude.com/docs/en/model-config", "access_date": "2026-09-25"},
+    {"id": "claude-permissions", "title": "Claude Code permissions", "url": "https://code.claude.com/docs/en/permissions", "access_date": "2026-09-25"},
+    {"id": "claude-mcp", "title": "Claude Code MCP", "url": "https://code.claude.com/docs/en/mcp", "access_date": "2026-09-25"},
+    {"id": "anthropic-models", "title": "Anthropic Models overview", "url": "https://platform.claude.com/docs/en/models/overview", "access_date": "2026-09-25"},
+    {"id": "openai-gpt-6-luna", "title": "GPT-6 Luna", "url": "https://developers.openai.com/api/docs/models/gpt-6-luna", "access_date": "2026-09-25"},
+    {"id": "openai-production-security", "title": "OpenAI production security best practices", "url": "https://developers.openai.com/api/docs/guides/production-best-practices", "access_date": "2026-09-25"},
+    {"id": "mimo-chat-completions", "title": "MiMo Chat Completions API compatibility", "url": "https://mimo.mi.com/docs/en-US/api/chat/openai-api", "access_date": "2026-09-25"},
+    {"id": "mimo-image-understanding", "title": "MiMo Image Understanding", "url": "https://mimo.mi.com/docs/en-US/quick-start/usage-guide/multimodal-understanding/image-understanding", "access_date": "2026-09-25"},
+    {"id": "mimo-api-faq", "title": "MiMo API Integration FAQ", "url": "https://mimo.mi.com/docs/en-US/quick-start/faq/api-integration", "access_date": "2026-09-25"}
+  ]
+}
