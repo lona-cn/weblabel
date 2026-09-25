@@ -1,0 +1,7 @@
+mod db;
+mod objects;
+mod transactions;
+
+pub use db::Repository;
+pub use objects::{ObjectStore, StagedObject, StoredObject};
+pub use transactions::{ObjectWriteError, WriteTransaction};

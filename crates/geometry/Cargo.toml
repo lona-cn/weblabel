@@ -5,3 +5,8 @@ edition.workspace = true
 license.workspace = true
 [lib]
 path = "src/lib.rs"
+
+
+[dependencies]
+annotation-domain = { path = "../annotation-domain" }
+rstar = "=0.13.0"

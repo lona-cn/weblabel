@@ -5,6 +5,7 @@ export default defineConfig({
     projects: [
       { test: { name: 'unit', include: ['tests/unit/**/*.test.ts'] } },
       { test: { name: 'integration', include: ['tests/integration/**/*.test.ts'] } },
+      { test: { name: 'web', include: ['apps/web/src/features/**/*.test.tsx'], environment: 'jsdom' } },
     ],
     passWithNoTests: false,
   },
