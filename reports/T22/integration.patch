@@ -1,0 +1,37 @@
+--- a/apps/agent-host/src/registry.ts
++++ b/apps/agent-host/src/registry.ts
+@@
+ export interface ProviderAdapter {
++  /**
++   * T22 (codex_local): start_run options for the official Codex CLI App Server
++   * channel, typed structurally in src/providers/codex/adapter.ts. The full
++   * command/exe/args/env mapping is adapter-owned because CLI flags and env
++   * contracts are not part of the shared ProviderAdapter surface.
++   */
++  codexLocal?: {
++    command: string;
++    exe: string | null;
++    args: readonly string[];
++    env: Readonly<Record<string, string | null>>;
++    cwd: string | null;
++    experimentalTools: boolean;
++  };
+   probe(): Promise<ModelProfile[]>;
+   run(input: StartRunRequest, ctx: RuntimeContext, signal: AbortSignal): AsyncIterable<RunEvent>;
+ }
+
+# Registration snippet (no production entry constructs a ProviderRegistry yet — same
+# situation T18/T20 reported; wire this when the host entry exists, keep `mock: false`):
+#
+#   import { createCodexLocalAdapter } from './providers/codex/adapter';
+#   registry.register('codex_local', createCodexLocalAdapter({
+#     permissions: codexPermissionsConfig,   // private runRoot, forbiddenCwdRoots, minimal envAllowlist
+#     transport: createStdioCodexTransport,
+#     imageSource: <consent-layer grant resolver>,
+#     runToken: <run-scoped token issuer>,
+#     schemaArtifactPath: <T32 CLI-generated schema artifact>,
+#   }));
+#
+# The adapter is NOT a mock registration: its honest `not_run` verification passes
+# probeAll's mock-honesty rules; availability is needs_configuration/blocked until
+# T32 supplies real CLI + schema evidence.

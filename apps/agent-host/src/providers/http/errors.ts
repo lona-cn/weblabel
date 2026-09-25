@@ -41,6 +41,7 @@ export type ProviderErrorCode =
   | 'image_invalid'
   | 'invalid_tool_call'
   | 'candidate_invalid'
+  | 'method_not_permitted'
   | 'adapter_error';
 
 export class ProviderError extends Error {
