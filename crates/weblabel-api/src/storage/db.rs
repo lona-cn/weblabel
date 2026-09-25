@@ -31,6 +31,33 @@ impl Repository {
         sqlx::raw_sql(include_str!("../../migrations/0001_core.sql"))
             .execute(&pool)
             .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (\
+             version TEXT PRIMARY KEY NOT NULL,\
+             applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        )
+        .execute(&pool)
+        .await?;
+        for (version, migration) in [(
+            "0005_media",
+            include_str!("../../migrations/0005_media.sql"),
+        )] {
+            let mut tx = begin_immediate(&pool, write_timeout).await?;
+            let applied: i64 = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)",
+            )
+            .bind(version)
+            .fetch_one(tx.connection())
+            .await?;
+            if applied == 0 {
+                sqlx::raw_sql(migration).execute(tx.connection()).await?;
+                sqlx::query("INSERT INTO schema_migrations(version) VALUES (?)")
+                    .bind(version)
+                    .execute(tx.connection())
+                    .await?;
+            }
+            tx.commit().await?;
+        }
         let objects =
             ObjectStore::new(object_root.as_ref().to_path_buf()).map_err(sqlx::Error::Io)?;
         Ok(Self {

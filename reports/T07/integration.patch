@@ -1,0 +1,61 @@
+# T07 integration requests (main-owned; not applied by worker)
+# Repo/card mismatch resolution: the T06 API crate is crates/weblabel-api, not apps/api.
+# Register modules in crates/weblabel-api/src/lib.rs:
+#   pub mod jobs;
+#   pub mod media;
+# Add the following crate dependencies to crates/weblabel-api/Cargo.toml and resolve them in the root lockfile:
+#   chrono = { version = "=0.4.42", default-features = false, features = ["clock", "std"] }
+#   exif = { package = "kamadak-exif", version = "=0.6.1" }
+#   image = { version = "=0.25.8", default-features = false, features = ["jpeg", "png"] }
+#   uuid = { version = "=1.18.1", features = ["v4"] }
+# Add "sync" to the existing tokio feature set for Tokio Semaphore.
+# Add root devDependency sharp = "0.34.4" (exact pin) and optional script:
+#   "media:fixtures": "node scripts/generate-media-fixtures.mjs"
+# These pins are explicit candidate pins only; worker policy forbade Cargo/pnpm resolution.
+# Parent must resolve actual registry versions and reconcile lockfiles before --locked tests.
+
+# Additive SQLite SQL for a parent-assigned migration number/name.
+# Repository::open must apply this after 0001_core; do not reassign reserved 0002/0003/0004 here.
+ALTER TABLE jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0);
+ALTER TABLE jobs ADD COLUMN worker_id TEXT;
+ALTER TABLE jobs ADD COLUMN lease_until TEXT;
+ALTER TABLE jobs ADD COLUMN fencing_token INTEGER NOT NULL DEFAULT 0 CHECK (fencing_token >= 0);
+ALTER TABLE jobs ADD COLUMN progress_completed INTEGER NOT NULL DEFAULT 0 CHECK (progress_completed >= 0);
+ALTER TABLE jobs ADD COLUMN progress_total INTEGER NOT NULL DEFAULT 0 CHECK (progress_total >= 0 AND (progress_total = 0 OR progress_completed <= progress_total));
+ALTER TABLE jobs ADD COLUMN progress_json TEXT CHECK (progress_json IS NULL OR json_valid(progress_json));
+CREATE INDEX jobs_lease_scan ON jobs(state, lease_until, created_at, job_id);
+
+CREATE TABLE job_idempotency (
+    scope_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE CASCADE,
+    request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope_id, operation_id, kind)
+);
+
+CREATE TABLE media_metadata (
+    asset_revision_id TEXT PRIMARY KEY NOT NULL REFERENCES media_revisions(asset_revision_id) ON DELETE CASCADE,
+    canonical_width INTEGER NOT NULL CHECK (canonical_width BETWEEN 1 AND 4096),
+    canonical_height INTEGER NOT NULL CHECK (canonical_height BETWEEN 1 AND 4096),
+    exif_orientation INTEGER NOT NULL CHECK (exif_orientation BETWEEN 1 AND 8),
+    original_to_canonical_json TEXT NOT NULL CHECK (json_valid(original_to_canonical_json) AND json_array_length(original_to_canonical_json) = 9),
+    source_group_id TEXT NOT NULL CHECK (length(source_group_id) BETWEEN 1 AND 128),
+    original_object_sha256 TEXT NOT NULL CHECK (length(original_object_sha256) = 64),
+    canonical_object_sha256 TEXT NOT NULL CHECK (length(canonical_object_sha256) = 64),
+    preview_object_sha256 TEXT NOT NULL CHECK (length(preview_object_sha256) = 64),
+    FOREIGN KEY (asset_revision_id, original_object_sha256) REFERENCES media_object_refs(asset_revision_id, sha256) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (asset_revision_id, canonical_object_sha256) REFERENCES media_object_refs(asset_revision_id, sha256) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (asset_revision_id, preview_object_sha256) REFERENCES media_object_refs(asset_revision_id, sha256) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE INDEX jobs_project_status_page ON jobs(project_id, created_at, job_id);
+
+# Rationale: C2 persists canonical coordinate dimensions, EXIF orientation, the exact 9-element
+# original-to-canonical transform, source_group_id, and immutable object hashes. Deferred composite
+# FKs permit one transaction to create media metadata before its three immutable object references,
+# while commit still requires all references. Jobs need bounded lease/fencing/progress fields and a
+# project-scoped request-hash key; job result_json stores per-input outcomes (including mixed success).
+# No unauthenticated routes are requested. T10 must authenticate + authorize project scope before
+# invoking list_media/load_canonical_png/JobQueue::status.

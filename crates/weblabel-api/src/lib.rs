@@ -1,6 +1,8 @@
 //! Local Axum service and its SQLite/object-store state.
 
 pub mod config;
+pub mod jobs;
+pub mod media;
 pub mod storage;
 
 use std::sync::atomic::{AtomicU64, Ordering};

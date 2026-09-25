@@ -25,6 +25,7 @@
     "verify:live": "node scripts/verify.mjs live",
     "verify:release": "node scripts/verify.mjs release",
     "test:unit": "vitest run",
+    "media:fixtures": "node scripts/generate-media-fixtures.mjs",
     "wasm:probe-build": "node scripts/build-wgpu-probe.mjs",
     "test:e2e": "node scripts/test-e2e.mjs",
     "test:gpu:software": "node scripts/test-e2e.mjs --grep @software-gpu --require-device",
