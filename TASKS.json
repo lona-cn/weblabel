@@ -608,7 +608,7 @@
       "files": [
         "apps/agent-host/src/{index,registry,protocol}.ts",
         "apps/agent-host/src/security/{spawn,grants,redaction}.ts",
-        "apps/api/src/runtime/{mod,host,supervisor}.rs",
+        "crates/weblabel-api/src/runtime/{mod,host,supervisor}.rs",
         "tests/support/fake-runtime.mjs",
         "apps/agent-host/test/t16_host.test.ts"
       ],
@@ -638,10 +638,10 @@
         "job-engine"
       ],
       "files": [
-        "apps/api/src/ai/{mod,runs,predictions,suggestions,events}.rs",
-        "apps/api/src/jobs/model_jobs.rs",
-        "apps/api/migrations/0002_ai.sql",
-        "apps/api/tests/t17_jobs.rs",
+        "crates/weblabel-api/src/ai/{mod,runs,predictions,suggestions,events}.rs",
+        "crates/weblabel-api/src/jobs/model_jobs.rs",
+        "crates/weblabel-api/migrations/0008_ai.sql",
+        "crates/weblabel-api/tests/t17_jobs.rs",
         "tests/integration/t17_jobs.test.ts"
       ],
       "checks": [

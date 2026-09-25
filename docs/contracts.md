@@ -313,7 +313,7 @@ POST /api/users 与 GET /api/users 的管理员接口由 testing-contracts.md §
 
 ## C7. SQLite 表与不可变对象
 
-T06 预留 migrations 0001_core：users/sessions/projects/memberships/ontology_versions/media_assets/media_revisions/annotation_revisions/annotation_heads/idempotency_keys/jobs/job_items。T17 增加 0002_ai：model_profiles/model_runs/predictions/suggestion_sets/suggestion_decisions/run_events/consents。T26 增加 0003_workflow：tasks/task_items/task_leases/review_requests/review_decisions/review_issues。T27 增加 0004_datasets：dataset_versions/dataset_items/export_jobs。禁止多个 Agent 同时分配 migration 编号。
+T06 预留 migrations 0001_core：users/sessions/projects/memberships/ontology_versions/media_assets/media_revisions/annotation_revisions/annotation_heads/idempotency_keys/jobs/job_items。T17 增加 0008_ai（主Agent按仓库实际序号分配，覆盖草案中的0002_ai）：model_profiles/model_runs/predictions/suggestion_sets/suggestion_decisions/run_events/consents。T26 增加 0003_workflow：tasks/task_items/task_leases/review_requests/review_decisions/review_issues。T27 增加 0004_datasets：dataset_versions/dataset_items/export_jobs。禁止多个 Agent 同时分配 migration 编号。
 T14 migration 0007增加不可变annotation_import_batches与annotation_exports，preview记录base head及loss report；commit与revision同一事务。
 
 外键开启；关键关联包含 project_id 校验，head unique(asset_revision_id,ontology_version_id)。idempotency unique(actor_id,operation_id,operation_kind)。作业 lease 与任务租约分开；重启恢复 running job 为 interrupted/retryable，并且模型调用存在费用不确定性时要求显式重试。
