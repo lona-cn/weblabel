@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plan_version": "1.0.0",
   "application_commit": "deeb2f7",
-  "last_updated_at": "2026-09-25T20:41:25Z",
+  "last_updated_at": "2026-09-25T20:43:22Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -252,8 +252,8 @@
       "blockers": []
     },
     "T23": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "bcac566",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
