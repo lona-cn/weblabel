@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "85f2a48",
-  "last_updated_at": "2026-09-25T13:30:07Z",
+  "application_commit": "32012a4",
+  "last_updated_at": "2026-09-25T13:34:46Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -19,77 +19,123 @@
       "status": "done",
       "base_commit": "c904909df94232dbda1f64ddf4221a09f9879222",
       "integrated_commit": "b0531eaab0ff4924e0419d9053eda21bcbd477fb",
-      "evidence": ["reports/T01/result.json", "reports/T01/tests.log", "reports/T01/review.md"],
+      "evidence": [
+        "reports/T01/result.json",
+        "reports/T01/tests.log",
+        "reports/T01/review.md"
+      ],
       "blockers": []
     },
     "T02": {
       "status": "done",
       "base_commit": "c904909df94232dbda1f64ddf4221a09f9879222",
       "integrated_commit": "ad69b1d4677c12eaa489b09ecd07a7669f0bc798",
-      "evidence": ["reports/T02/result.json", "reports/T02/tests.log", "reports/T02/review.md"],
+      "evidence": [
+        "reports/T02/result.json",
+        "reports/T02/tests.log",
+        "reports/T02/review.md"
+      ],
       "blockers": []
     },
     "T03": {
       "status": "done",
       "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
       "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
-      "evidence": ["reports/T03/result.json", "reports/T03/tests.log", "reports/T03/review.md"],
+      "evidence": [
+        "reports/T03/result.json",
+        "reports/T03/tests.log",
+        "reports/T03/review.md"
+      ],
       "blockers": []
     },
     "T04": {
       "status": "done",
       "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
       "integrated_commit": "f3f066b",
-      "evidence": ["reports/T04/"],
+      "evidence": [
+        "reports/T04/"
+      ],
       "blockers": []
     },
     "T05": {
       "status": "blocked",
       "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
       "integrated_commit": "60bceb9",
-      "evidence": ["reports/T05/result.json", "reports/T05/tests.log", "reports/T05/review.md"],
-      "blockers": ["No WebGPU adapter available; actual image/bbox pixel assertions and device-loss recovery require a target with real WebGPU."]
+      "evidence": [
+        "reports/T05/result.json",
+        "reports/T05/tests.log",
+        "reports/T05/review.md"
+      ],
+      "blockers": [
+        "No WebGPU adapter available; actual image/bbox pixel assertions and device-loss recovery require a target with real WebGPU."
+      ]
     },
     "T06": {
       "status": "done",
       "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
       "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
-      "evidence": ["reports/T06/result.json", "reports/T06/tests.log", "reports/T06/review.md"],
+      "evidence": [
+        "reports/T06/result.json",
+        "reports/T06/tests.log",
+        "reports/T06/review.md"
+      ],
       "blockers": []
     },
     "T07": {
       "status": "done",
       "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
       "integrated_commit": "bb6e9f81bfe301337291a8439e7d1dce91f5bdb9",
-      "evidence": ["reports/T07/result.json", "reports/T07/tests.log", "reports/T07/review.md"],
+      "evidence": [
+        "reports/T07/result.json",
+        "reports/T07/tests.log",
+        "reports/T07/review.md"
+      ],
       "blockers": []
     },
     "T08": {
       "status": "done",
       "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
       "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
-      "evidence": ["reports/T08/result.json", "reports/T08/tests.log", "reports/T08/review.md"],
+      "evidence": [
+        "reports/T08/result.json",
+        "reports/T08/tests.log",
+        "reports/T08/review.md"
+      ],
       "blockers": []
     },
     "T09": {
       "status": "blocked",
       "base_commit": null,
       "integrated_commit": null,
-      "evidence": ["reports/T05/result.json", "reports/T05/tests.log", "reports/T05/review.md"],
-      "blockers": ["Blocked by T05's required real-WebGPU gate: no adapter was available for actual render, pixel assertions, or device-loss recovery."]
+      "evidence": [
+        "reports/T05/result.json",
+        "reports/T05/tests.log",
+        "reports/T05/review.md"
+      ],
+      "blockers": [
+        "Blocked by T05's required real-WebGPU gate: no adapter was available for actual render, pixel assertions, or device-loss recovery."
+      ]
     },
     "T10": {
       "status": "done",
       "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
       "integrated_commit": "8261e3590c1d462cdb001987ce9f34470e035ac6",
-      "evidence": ["reports/T10/result.json", "reports/T10/tests.log", "reports/T10/review.md"],
+      "evidence": [
+        "reports/T10/result.json",
+        "reports/T10/tests.log",
+        "reports/T10/review.md"
+      ],
       "blockers": []
     },
     "T11": {
       "status": "done",
       "base_commit": "1f30860936fe1d1b868c0428ee89a23c79c06fa0",
       "integrated_commit": "e26769d11c53be2f991ced3faae6d43b780a3e37",
-      "evidence": ["reports/T11/result.json", "reports/T11/tests.log", "reports/T11/review.md"],
+      "evidence": [
+        "reports/T11/result.json",
+        "reports/T11/tests.log",
+        "reports/T11/review.md"
+      ],
       "blockers": []
     },
     "T12": {
@@ -97,14 +143,18 @@
       "base_commit": null,
       "integrated_commit": null,
       "evidence": [],
-      "blockers": ["Blocked by T09; T09 requires T05's real-WebGPU adapter/pixel/device-loss evidence before T12 can start."]
+      "blockers": [
+        "Blocked by T09; T09 requires T05's real-WebGPU adapter/pixel/device-loss evidence before T12 can start."
+      ]
     },
     "T13": {
       "status": "blocked",
       "base_commit": null,
       "integrated_commit": null,
       "evidence": [],
-      "blockers": ["Blocked by T09; T09 requires T05's real-WebGPU adapter/pixel/device-loss evidence before T13 can start."]
+      "blockers": [
+        "Blocked by T09; T09 requires T05's real-WebGPU adapter/pixel/device-loss evidence before T13 can start."
+      ]
     },
     "T14": {
       "status": "done",
@@ -147,22 +197,22 @@
       "blockers": []
     },
     "T18": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
     },
     "T19": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
     },
     "T20": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
