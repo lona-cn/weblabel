@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "deeb2f7",
-  "last_updated_at": "2026-09-25T20:43:22Z",
+  "application_commit": "cad3ce8",
+  "last_updated_at": "2026-09-25T22:36:28Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -252,10 +252,14 @@
       "blockers": []
     },
     "T23": {
-      "status": "running",
+      "status": "done",
       "base_commit": "bcac566",
-      "integrated_commit": null,
-      "evidence": [],
+      "integrated_commit": "cad3ce8a4bd08217f35299c1b5e4e1ca4474d143",
+      "evidence": [
+        "reports/T23/result.json",
+        "reports/T23/tests.log",
+        "reports/T23/review.md"
+      ],
       "blockers": []
     },
     "T24": {
