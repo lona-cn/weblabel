@@ -1,0 +1,14 @@
+diff --git a/crates/editor-core/Cargo.toml b/crates/editor-core/Cargo.toml
+--- a/crates/editor-core/Cargo.toml
++++ b/crates/editor-core/Cargo.toml
+@@ -5,3 +5,13 @@ license.workspace = true
+ [lib]
+ path = "src/lib.rs"
++
++[dependencies]
++annotation-domain = { path = "../annotation-domain" }
++geometry = { path = "../geometry" }
++uuid = { version = "=1.18.1", features = ["v4"] }
++
++[dev-dependencies]
++serde_json = "=1.0.147"
