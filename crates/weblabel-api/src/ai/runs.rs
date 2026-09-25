@@ -1024,6 +1024,7 @@ async fn validate_context(
 /// never appends a second cancellation event or moves a terminal run.
 pub async fn cancel(
     repository: &Repository,
+    run_tokens: &crate::runtime::run_tokens::RunTokenStore,
     run_id: &str,
     actor_id: &str,
     reason: &str,
@@ -1121,6 +1122,10 @@ pub async fn cancel(
     tx.commit()
         .await
         .map_err(|_| storage_failure("RUN_CANCEL_FAILED", "Could not cancel the model run"))?;
+    // User cancel invalidates the run's bearer tokens immediately (C5): the
+    // tool endpoint also re-checks run state per call, but the token itself
+    // must die here, wherever the cancel came from.
+    run_tokens.revoke_run(run_id);
     let mut record = record;
     record.state = RunState::Cancelled;
     record.cancel_requested = true;
@@ -1131,7 +1136,10 @@ pub async fn cancel(
 
 /// Startup recovery: runs left in flight by a crash become `interrupted` and
 /// their cost display becomes `unknown`. Interrupted runs are never resent.
-pub async fn recover_interrupted(repository: &Repository) -> Result<u64, sqlx::Error> {
+pub async fn recover_interrupted(
+    repository: &Repository,
+    run_tokens: &crate::runtime::run_tokens::RunTokenStore,
+) -> Result<u64, sqlx::Error> {
     let mut tx = repository.begin_write().await?;
     let now = now_rfc3339();
     sqlx::query(
@@ -1187,6 +1195,8 @@ pub async fn recover_interrupted(repository: &Repository) -> Result<u64, sqlx::E
             },
         )
         .await?;
+        // An interrupted run is terminal: its bearer tokens die with it.
+        run_tokens.revoke_run(&run_id);
         recovered += 1;
     }
     tx.commit().await?;
@@ -1234,6 +1244,16 @@ pub(super) async fn create(
     {
         Ok(outcome) => {
             let summary = &outcome.runs[0];
+            // Exactly one run-scoped bearer token per run, minted at run start
+            // and never returned here (C5: tokens travel only via the private
+            // child-env channel). Replays and crash retries do not mint again.
+            if !outcome.idempotent_replay {
+                state.run_tokens.issue_once(
+                    &summary.run_id,
+                    &summary.project_id,
+                    crate::runtime::run_tokens::DEFAULT_TOKEN_TTL,
+                );
+            }
             (
                 StatusCode::ACCEPTED,
                 Json(json!({
@@ -1273,6 +1293,7 @@ pub(super) async fn cancel_route(
     let _ = to_bytes(request.into_body(), 4096).await;
     match cancel(
         &state.repository,
+        &state.run_tokens,
         &run_id,
         &principal.user_id,
         "user requested",

@@ -30,12 +30,20 @@ pub(crate) struct AiState {
     pub(crate) repository: Repository,
     /// The built-in labeled mock source is only resolvable outside production.
     pub(crate) allow_mock_runs: bool,
+    /// Run-scoped bearer tokens for `/internal/agent-tools/{tool}` (C5).
+    pub(crate) run_tokens: crate::runtime::run_tokens::RunTokenStore,
 }
 
-pub fn router(repository: Repository, auth: AuthState, allow_mock_runs: bool) -> Router {
+pub fn router(
+    repository: Repository,
+    auth: AuthState,
+    allow_mock_runs: bool,
+    run_tokens: crate::runtime::run_tokens::RunTokenStore,
+) -> Router {
     let state = AiState {
         repository,
         allow_mock_runs,
+        run_tokens,
     };
     let mut app = Router::new()
         .route("/api/ai/runs", post(runs::create))

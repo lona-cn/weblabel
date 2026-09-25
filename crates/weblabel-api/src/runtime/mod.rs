@@ -5,7 +5,9 @@
 //! failures for truncation, multi-line input, unknown methods and duplicate
 //! request ids.
 
+pub mod agent_tools;
 pub mod host;
+pub mod run_tokens;
 pub mod supervisor;
 
 use std::collections::HashSet;

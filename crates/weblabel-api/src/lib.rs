@@ -34,6 +34,8 @@ pub struct AppState {
     /// False in production builds: the built-in mock model source is only
     /// available to development and test builds.
     pub allow_mock_runs: bool,
+    /// Run-scoped bearer tokens for `/internal/agent-tools/{tool}` (T21, C5).
+    pub run_tokens: crate::runtime::run_tokens::RunTokenStore,
 }
 
 impl AppState {
@@ -77,11 +79,13 @@ impl AppState {
             .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
         // Restart recovery: model runs left in flight are interrupted with
         // unknown cost and are never resent automatically.
-        crate::ai::runs::recover_interrupted(&repository).await?;
+        let run_tokens = crate::runtime::run_tokens::RunTokenStore::new();
+        crate::ai::runs::recover_interrupted(&repository, &run_tokens).await?;
         Ok(Self {
             repository,
             auth,
             allow_mock_runs: !config.production,
+            run_tokens,
         })
     }
 }
@@ -96,12 +100,17 @@ pub fn router(state: AppState) -> Router {
             state.repository.clone(),
             state.auth.clone(),
             state.allow_mock_runs,
+            state.run_tokens.clone(),
         ))
         .merge(annotations::router(
             state.repository.clone(),
             state.auth.clone(),
         ))
         .merge(media::routes::router(state.repository.clone(), state.auth))
+        .merge(crate::runtime::agent_tools::router(
+            state.repository.clone(),
+            state.run_tokens.clone(),
+        ))
         .fallback(not_found)
         .layer(middleware::from_fn(request_id))
 }

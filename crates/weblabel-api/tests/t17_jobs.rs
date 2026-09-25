@@ -727,6 +727,7 @@ async fn provider_events_normalize_to_monotonic_seq_and_page_by_after() {
 async fn cancel_is_idempotent_and_quarantines_late_candidates() {
     struct CancelMidRun {
         repository: weblabel_api::storage::Repository,
+        run_tokens: weblabel_api::runtime::run_tokens::RunTokenStore,
         actor_id: String,
     }
     impl RunRunner for CancelMidRun {
@@ -748,6 +749,7 @@ async fn cancel_is_idempotent_and_quarantines_late_candidates() {
                 // The user cancels while the provider is still streaming.
                 runs::cancel(
                     &self.repository,
+                    &self.run_tokens,
                     driver.run_id(),
                     &self.actor_id,
                     "user cancelled",
@@ -790,6 +792,7 @@ async fn cancel_is_idempotent_and_quarantines_late_candidates() {
     let queue = JobQueue::new(fixture.repository.clone());
     let runner = CancelMidRun {
         repository: fixture.repository.clone(),
+        run_tokens: fixture.state.run_tokens.clone(),
         actor_id: fixture.user_id.clone(),
     };
     let processed = model_jobs::process_next(
