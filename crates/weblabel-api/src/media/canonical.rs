@@ -1,7 +1,7 @@
 use std::io::{BufReader, Cursor};
 
 use exif::{In, Reader as ExifReader, Tag};
-use image::{codecs::png::PngEncoder, ImageEncoder, ImageReader, RgbaImage};
+use image::{codecs::png::PngEncoder, ImageEncoder, RgbaImage};
 use sha2::{Digest, Sha256};
 
 use super::limits::{bounded_reader, inspect, MediaError};

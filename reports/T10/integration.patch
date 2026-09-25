@@ -1,0 +1,67 @@
+# T10 worker integration request (parent integration completed)
+# Base: 70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19; applied in current integrated worktree.
+# Parent assigned migration 0006_auth.sql, resolved manifests/lockfile, and mounted auth/projects/media routes.
+
+## New auth migration (filename/number assigned by parent after reserved 0002-0004)
+# C7 reserves `0002_ai.sql`, `0003_workflow.sql` and `0004_datasets.sql`; parent owns next migration number.
+ALTER TABLE users ADD COLUMN platform_admin INTEGER NOT NULL DEFAULT 0 CHECK (platform_admin IN (0, 1));
+ALTER TABLE sessions ADD COLUMN csrf_hash TEXT NOT NULL DEFAULT '';
+CREATE INDEX sessions_expiry_idx ON sessions(expires_at);
+CREATE TRIGGER ontology_versions_no_update
+BEFORE UPDATE ON ontology_versions
+BEGIN
+    SELECT RAISE(ABORT, 'ontology versions are immutable');
+END;
+CREATE TRIGGER ontology_versions_no_delete
+BEFORE DELETE ON ontology_versions
+BEGIN
+    SELECT RAISE(ABORT, 'ontology versions are immutable');
+END;
+
+# Apply the auth migration only after 0001_core.sql has been installed. Keep the new migration
+# in the existing schema initialization path; do not renumber 0002_ai / 0003_workflow / 0004_datasets.
+
+## Resolved crates/weblabel-api/Cargo.toml dependencies
+# The parent resolved and committed the following exact direct dependencies:
+argon2 = { version = "=0.5.3", features = ["std"] } # Argon2id password hashing and password-hash API
+rand = { version = "=0.8.5", features = ["getrandom"] } # OsRng for opaque session/CSRF/bootstrap entropy
+uuid = { version = "=1.18.1", features = ["v4", "v5"] } # UUIDs plus deterministic import-group IDs
+# Tokio sync feature added; axum multipart feature added for bounded upload routes.
+# Existing sqlx features runtime-tokio + sqlite and sha2 0.10.9 suffice; no network/distributed service.
+
+## crates/weblabel-api/src/lib.rs
+# Add public module declarations:
+pub mod auth;
+pub mod projects;
+# Add an AuthState field to AppState and initialize it in AppState::open from a second SQLite pool
+# connected to the exact same configured database (foreign_keys=true, WAL, busy_timeout). Repository's
+# pool is private, so do not create an independent in-memory database. Open auth pool after core schema
+# and T10 migration are installed. The state field is `pub auth: auth::AuthState`.
+# Merge `auth::router(state.auth.clone())` and `projects::router(state.auth)` into the top-level router.
+# Wrap every T07 media/job route before exposing it: authenticated session middleware plus host/origin/CSRF
+# middleware, and in each service check the resolved project membership before loading a resource or
+# returning/download-streaming bytes. Use 404 for absent and cross-project IDs; do not trust path project IDs.
+# T07 writes additionally call `projects::project_role` and require Role::Admin/Role::Annotator as appropriate;
+# reviewer/viewer are read-only. Preserve health and request-id behavior.
+
+## crates/weblabel-api/src/main.rs
+# Before serving, generate a 32-byte OsRng launch code, print only `WEBLABEL_BOOTSTRAP_CODE=<code>` to
+# the local terminal/stdout (never tracing, URL, cookie, or application response other than bootstrap's
+# one-time session response), compute SHA-256 hex, and pass only the digest to AuthConfig.launch_code.
+# Set AuthConfig.launch_code_expires_at = current Unix seconds + 600. Never create an administrator just
+# because a visitor connected; only successful launch-code exchange creates the platform administrator.
+# Configure AuthConfig.allowed_hosts with exact loopback host:port entries for the configured bind port
+# (127.0.0.1, localhost, and ::1 only when the listener supports it); allowed_origins with exact local API
+# origins and the configured Vite origins http://127.0.0.1:5173 and http://localhost:5173. No wildcard.
+# Parse WEBLABEL_COOKIE_SECURE explicitly as true/false; tests set false for loopback HTTP, HTTPS sets true.
+# Do not add any test-auth bypass or production switch that skips auth.
+# AuthConfig stores the hash, expiration, cookie_secure and exact host/origin allowlists. The public
+# bootstrap code itself stays in the startup terminal channel only.
+
+# `AuthState::new(sqlite_pool, auth_config)` builds the dummy Argon2id hash used to keep missing-user
+# login verification on the same expensive path; propagate its password-hash error during startup.
+# Only construct the bootstrap channel when the configured database has no users. The route performs
+# its own transactional emptiness check and accepts the launch code only through POST JSON.
+
+# `auth::hash_launch_code(&raw_code)` produces the SHA-256 digest passed to AuthConfig; do not store
+# the raw launch code in AuthConfig or emit it through tracing.

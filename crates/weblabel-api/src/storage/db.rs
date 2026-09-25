@@ -38,10 +38,13 @@ impl Repository {
         )
         .execute(&pool)
         .await?;
-        for (version, migration) in [(
-            "0005_media",
-            include_str!("../../migrations/0005_media.sql"),
-        )] {
+        for (version, migration) in [
+            (
+                "0005_media",
+                include_str!("../../migrations/0005_media.sql"),
+            ),
+            ("0006_auth", include_str!("../../migrations/0006_auth.sql")),
+        ] {
             let mut tx = begin_immediate(&pool, write_timeout).await?;
             let applied: i64 = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)",

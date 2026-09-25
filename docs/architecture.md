@@ -64,6 +64,8 @@ Rust API: auth/project/media/revision/jobs/review/export
 
 正式本地启动只绑定 loopback。Host 与 Origin 精确白名单，不允许 `*`。服务必须有本地启动认证，不可认为“localhost 就不需要认证”。初始管理员通过一次性启动码换取 session；启动码从本地终端交给用户，不放 URL query、日志或前端包。会话用 HttpOnly、SameSite=Strict cookie；HTTPS 时设置 Secure，loopback HTTP 单独明确配置。写操作要求 CSRF token/Origin 验证，登出撤销会话。生产拒绝测试认证开关。
 
+API启动必须显式提供 `WEBLABEL_COOKIE_SECURE=true|false`；`scripts/dev.mjs` 对 loopback HTTP 设置 `false`，通过 HTTPS 访问时设置 `true`。首次空数据库启动时，API仅向本地终端输出 `WEBLABEL_BOOTSTRAP_CODE`，有效期10分钟且只能换取一次初始管理员 session；bootstrap 同时要求用户设置不少于12字节的初始密码，密码只存 Argon2id 哈希，使管理员可在 session 撤销/过期后重新登录。已有用户时不输出启动码。Host/Origin 白名单按绑定 loopback 地址、API端口和 Vite 开发端口精确生成。
+
 v0.1 的订阅模式仅供本机最终用户本人运行。把服务改为非 loopback 监听不是受支持的上线方式。团队/远程 SaaS 的本地伴随程序配对、租户计费和公网运维另立方案，不可让远端用户消耗服务器所有者的订阅凭证。
 
 ## 5. 状态的唯一来源

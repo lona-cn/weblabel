@@ -10,7 +10,7 @@ export type Role = 'admin' | 'annotator' | 'reviewer' | 'viewer';
 export interface ApiResponse<T = unknown> { status: number; json: T; headers: Headers }
 export interface ApiClient {
   request<T = unknown>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>>;
-  upload<T = unknown>(path: string, bytes: Uint8Array, filename: string): Promise<ApiResponse<T>>;
+  upload<T = unknown>(path: string, bytes: Uint8Array, filename: string, idempotencyKey?: string): Promise<ApiResponse<T>>;
 }
 export interface TestApp {
   base_url: string;
@@ -20,6 +20,9 @@ export interface TestApp {
 
 type JsonRecord = Record<string, unknown>;
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const bootstrapReplays = new WeakMap<TestApp, () => Promise<number>>();
+const bootstrapClients = new WeakMap<TestApp, () => Promise<ApiClient>>();
+const bootstrapLogins = new WeakMap<TestApp, () => Promise<ApiClient>>();
 
 async function freeLoopbackPort(): Promise<number> {
   const server = createServer();
@@ -52,13 +55,15 @@ function responseClient(
   csrf: () => string,
   onCookie?: (cookie: string) => void,
 ): ApiClient {
-  async function send<T>(method: string, path: string, body: BodyInit | undefined, contentType?: string): Promise<ApiResponse<T>> {
+  async function send<T>(method: string, path: string, body: BodyInit | undefined, contentType?: string, idempotencyKey?: string): Promise<ApiResponse<T>> {
     const headers = new Headers();
     const activeCookie = cookie();
     if (activeCookie) headers.set('cookie', activeCookie);
     const token = csrf();
     if (token && !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) headers.set('x-csrf-token', token);
+    headers.set('origin', baseUrl);
     if (contentType) headers.set('content-type', contentType);
+    if (idempotencyKey) headers.set('idempotency-key', idempotencyKey);
     const response = await fetch(new URL(path, baseUrl), { method, headers, body });
     const setCookie = response.headers.get('set-cookie');
     if (setCookie) onCookie?.(setCookie.split(';', 1)[0] ?? '');
@@ -75,15 +80,16 @@ function responseClient(
     request<T = unknown>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>> {
       return send<T>(method, path, body === undefined ? undefined : JSON.stringify(body), body === undefined ? undefined : 'application/json');
     },
-    async upload<T = unknown>(path: string, bytes: Uint8Array, filename: string): Promise<ApiResponse<T>> {
+    async upload<T = unknown>(path: string, bytes: Uint8Array, filename: string, idempotencyKey = crypto.randomUUID()): Promise<ApiResponse<T>> {
       const form = new FormData();
-      form.append('file', new Blob([bytes]), filename);
-      return send<T>('POST', path, form);
+      const buffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(buffer).set(bytes);
+      form.append('images', new Blob([buffer]), filename);
+      return send<T>('POST', path, form, undefined, idempotencyKey);
     },
   };
 }
-
-export async function start_test_app(): Promise<TestApp> {
+export async function start_test_app(cookieSecure: 'true' | 'false' = 'false'): Promise<TestApp> {
   const configuredBinary = process.env.WEBLABEL_API_BINARY;
   const targetDirectory = resolve(repoRoot, process.env.CARGO_TARGET_DIR ?? 'target');
   const binary = configuredBinary ?? resolve(targetDirectory, 'debug', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
@@ -93,7 +99,7 @@ export async function start_test_app(): Promise<TestApp> {
       stdio: 'inherit',
     });
   }
-  const root = await mkdtemp(resolve(tmpdir(), 'weblabel-t06-'));
+  const root = await mkdtemp(resolve(tmpdir(), 'weblabel-t10-'));
   const port = await freeLoopbackPort();
   const base_url = `http://127.0.0.1:${port}`;
   const child: ChildProcess = spawn(binary, [], {
@@ -104,6 +110,7 @@ export async function start_test_app(): Promise<TestApp> {
       WEBLABEL_DATABASE_URL: `sqlite:${resolve(root, 'api.sqlite')}`,
       WEBLABEL_OBJECT_ROOT: resolve(root, 'objects'),
       WEBLABEL_ENV: 'development',
+      WEBLABEL_COOKIE_SECURE: cookieSecure,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -171,36 +178,39 @@ export async function start_test_app(): Promise<TestApp> {
       clearTimeout(timer);
     }
   }
-
   let bootstrapClientPromise: Promise<ApiClient> | undefined;
+  let bootstrapPassword = '';
   async function getBootstrapClient(): Promise<ApiClient> {
     if (!bootstrapClientPromise) {
       bootstrapClientPromise = (async () => {
         const launchCode = await readLaunchCode();
+        bootstrapPassword = `${crypto.randomUUID()}${crypto.randomUUID()}`;
         let sessionCookie = '';
         let csrfToken = '';
         const client = responseClient(base_url, () => sessionCookie, () => csrfToken, value => { sessionCookie = value; });
-        const result = await client.request<JsonRecord>('POST', '/api/session/bootstrap', { launch_code: launchCode });
+        const result = await client.request<JsonRecord>('POST', '/api/session/bootstrap', { launch_code: launchCode, password: bootstrapPassword });
         if (result.status < 200 || result.status >= 300) throw new Error(`Real bootstrap failed (${result.status}): ${JSON.stringify(result.json)}`);
-        csrfToken = fieldString(record(result.json, 'bootstrap'), 'csrf_token');
+        const bootstrapResponse = record(result.json, 'bootstrap');
+        if (Object.hasOwn(bootstrapResponse, 'password')) throw new Error('Bootstrap response exposed the chosen password');
+        if (fieldString(bootstrapResponse, 'username') !== 'local-admin') throw new Error('Bootstrap administrator username was not returned');
+        csrfToken = fieldString(bootstrapResponse, 'csrf_token');
         return client;
       })();
     }
     return bootstrapClientPromise;
   }
-
-  return {
+  const app: TestApp = {
     base_url,
     async as_user(role: Role): Promise<ApiClient> {
       try {
         const bootstrapClient = await getBootstrapClient();
         const password = crypto.randomUUID();
-        const username = `t06-${crypto.randomUUID()}`;
+        const username = `t10-${crypto.randomUUID()}`;
         const created = await bootstrapClient.request<JsonRecord>('POST', '/api/users', { username, password });
         if (created.status < 200 || created.status >= 300) throw new Error(`Real user creation failed (${created.status}): ${JSON.stringify(created.json)}`);
         const userId = fieldString(record(created.json, 'user creation'), 'user_id', 'id');
         const projectResponse = await bootstrapClient.request<JsonRecord>('POST', '/api/projects', {
-          name: `T06 ${role} ${crypto.randomUUID()}`,
+          name: `T10 ${role} ${crypto.randomUUID()}`,
           description: 'Ephemeral isolated API test project',
           allow_self_review: false,
         });
@@ -213,7 +223,11 @@ export async function start_test_app(): Promise<TestApp> {
           'POST', '/api/session/login', { username, password },
         );
         if (login.status < 200 || login.status >= 300) throw new Error(`Real login failed (${login.status}): ${JSON.stringify(login.json)}`);
-        let userCookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+        const setCookie = login.headers.get('set-cookie') ?? '';
+        if (setCookie.includes('; Secure') !== (cookieSecure === 'true')) {
+          throw new Error('API session cookie Secure attribute did not match WEBLABEL_COOKIE_SECURE');
+        }
+        let userCookie = setCookie.split(';', 1)[0] ?? '';
         let userCsrf = fieldString(record(login.json, 'login'), 'csrf_token');
         return responseClient(base_url, () => userCookie, () => userCsrf, value => { userCookie = value; });
       } catch (error) {
@@ -223,4 +237,49 @@ export async function start_test_app(): Promise<TestApp> {
     },
     stop,
   };
+  bootstrapClients.set(app, getBootstrapClient);
+  bootstrapLogins.set(app, async () => {
+    await getBootstrapClient();
+    const login = await responseClient(base_url, () => '', () => '').request<JsonRecord>(
+      'POST',
+      '/api/session/login',
+      { username: 'local-admin', password: bootstrapPassword },
+    );
+    if (login.status < 200 || login.status >= 300) throw new Error(`Bootstrap administrator login failed (${login.status})`);
+    const setCookie = login.headers.get('set-cookie') ?? '';
+    if (setCookie.includes('; Secure') !== (cookieSecure === 'true')) {
+      throw new Error('API session cookie Secure attribute did not match WEBLABEL_COOKIE_SECURE');
+    }
+    let sessionCookie = setCookie.split(';', 1)[0] ?? '';
+    let csrfToken = fieldString(record(login.json, 'bootstrap administrator login'), 'csrf_token');
+    return responseClient(base_url, () => sessionCookie, () => csrfToken, value => { sessionCookie = value; });
+  });
+  bootstrapReplays.set(app, async () => {
+    await getBootstrapClient();
+    const launchCode = await readLaunchCode();
+    const response = await fetch(`${base_url}/api/session/bootstrap`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ launch_code: launchCode, password: bootstrapPassword }),
+    });
+    return response.status;
+  });
+  return app;
+}
+
+export async function replay_bootstrap_code_for_test(app: TestApp): Promise<number> {
+  const replay = bootstrapReplays.get(app);
+  if (!replay) throw new Error('TestApp was not created by this test helper');
+  return replay();
+}
+
+export async function bootstrap_admin_for_test(app: TestApp): Promise<ApiClient> {
+  const getClient = bootstrapClients.get(app);
+  if (!getClient) throw new Error('TestApp was not created by this test helper');
+  return getClient();
+}
+
+export async function relogin_bootstrap_admin_for_test(app: TestApp): Promise<ApiClient> {
+  const login = bootstrapLogins.get(app);
+  if (!login) throw new Error('TestApp was not created by this test helper');
+  return login();
 }

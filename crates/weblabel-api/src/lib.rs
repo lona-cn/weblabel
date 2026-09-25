@@ -1,13 +1,19 @@
 //! Local Axum service and its SQLite/object-store state.
 
+pub mod auth;
 pub mod config;
 pub mod jobs;
 pub mod media;
+pub mod projects;
 pub mod storage;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{config::ServerConfig, storage::Repository};
+use crate::{
+    auth::{AuthConfig, AuthState},
+    config::ServerConfig,
+    storage::Repository,
+};
 use annotation_domain::{ApiError, Id};
 use axum::{
     extract::{Extension, State},
@@ -21,25 +27,60 @@ use axum::{
 #[derive(Clone)]
 pub struct AppState {
     pub repository: Repository,
+    pub auth: AuthState,
 }
 
 impl AppState {
     pub async fn open(config: &ServerConfig) -> Result<Self, sqlx::Error> {
+        let auth = AuthConfig {
+            bind: config.bind,
+            cookie_secure: false,
+            allowed_origins: Vec::new(),
+            allowed_hosts: Vec::new(),
+            launch_code: String::new(),
+            launch_code_expires_at: 0,
+        };
+        Self::open_with_auth(config, auth).await
+    }
+
+    pub async fn open_with_auth(
+        config: &ServerConfig,
+        auth_config: AuthConfig,
+    ) -> Result<Self, sqlx::Error> {
         let repository = Repository::open(
             &config.database_url,
             &config.object_root,
             config.write_timeout,
         )
         .await?;
-        Ok(Self { repository })
+        let filename = config
+            .database_url
+            .strip_prefix("sqlite:")
+            .unwrap_or(&config.database_url);
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(filename)
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(config.write_timeout);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(options)
+            .await?;
+        let auth = AuthState::new(pool, auth_config)
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        Ok(Self { repository, auth })
     }
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .with_state(state.clone())
+        .merge(auth::router(state.auth.clone()))
+        .merge(projects::router(state.auth.clone()))
+        .merge(media::routes::router(state.repository.clone(), state.auth))
         .fallback(not_found)
-        .with_state(state)
         .layer(middleware::from_fn(request_id))
 }
 

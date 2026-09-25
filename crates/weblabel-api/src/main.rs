@@ -1,6 +1,11 @@
 use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
 
-use weblabel_api::{config::ServerConfig, router, AppState};
+use rand::{rngs::OsRng, RngCore};
+use weblabel_api::{
+    auth::{hash_launch_code, AuthConfig},
+    config::ServerConfig,
+    router, AppState,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,9 +41,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{}: {}", error.code, error.message),
         )
     })?;
-    let state = AppState::open(&config).await?;
+
+    let cookie_secure = match env::var("WEBLABEL_COOKIE_SECURE")?.as_str() {
+        "true" => true,
+        "false" => false,
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "WEBLABEL_COOKIE_SECURE must be exactly true or false",
+            )
+            .into());
+        }
+    };
+    let launch_code = {
+        let mut bytes = [0_u8; 32];
+        OsRng.fill_bytes(&mut bytes);
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let port = config.bind.port();
+    let mut hosts = Vec::new();
+    let mut origins = Vec::new();
+    if config.bind.ip().is_ipv4() {
+        hosts.push(format!("127.0.0.1:{port}"));
+        hosts.push(format!("localhost:{port}"));
+        origins.push(format!("http://127.0.0.1:{port}"));
+        origins.push(format!("http://localhost:{port}"));
+        origins.push("http://127.0.0.1:5173".to_owned());
+        origins.push("http://localhost:5173".to_owned());
+    } else {
+        hosts.push(format!("[::1]:{port}"));
+        hosts.push(format!("localhost:{port}"));
+        origins.push(format!("http://[::1]:{port}"));
+        origins.push(format!("http://localhost:{port}"));
+        origins.push("http://[::1]:5173".to_owned());
+        origins.push("http://localhost:5173".to_owned());
+    }
+    let auth_config = AuthConfig {
+        bind: config.bind,
+        cookie_secure,
+        allowed_origins: origins,
+        allowed_hosts: hosts,
+        launch_code: hash_launch_code(&launch_code),
+        launch_code_expires_at: unix_now() + 600,
+    };
+    let state = AppState::open_with_auth(&config, auth_config).await?;
+    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.auth.pool)
+        .await?;
+    if user_count == 0 {
+        println!("WEBLABEL_BOOTSTRAP_CODE={launch_code}");
+    }
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     tracing::info!(address = %config.bind, "WebLabel API listening");
     axum::serve(listener, router(state)).await?;
     Ok(())
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
