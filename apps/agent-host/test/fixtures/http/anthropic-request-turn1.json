@@ -1,0 +1,151 @@
+{
+  "fixture_kind": "synthetic_protocol",
+  "provider": "anthropic_api",
+  "kind": "request_body",
+  "turn": 1,
+  "endpoint": "POST /v1/messages",
+  "description": "Anthropic Messages API request: top-level system field, user/assistant content blocks, image source blocks, and tools with input_schema.",
+  "wire": {
+    "model": "claude-sonnet-5",
+    "max_tokens": 2048,
+    "system": "You are a WebLabel annotation assistant. Use the provided tools to inspect regions and propose changes.",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Audit helmet_state for the selected person."
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR42mP4z8DwH4QZYAwAR8oH+Rq28akAAAAASUVORK5CYII="
+            }
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAADklEQVR42mNg+A+FMAYAQ84H+erKrJkAAAAASUVORK5CYII="
+            }
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "name": "read_region",
+        "description": "Read an authorized image region as a PNG crop. region=null reads the full image. The crop is attached to the next message; this call returns transform metadata only.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "region": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "bbox_xyxy"
+                    },
+                    "x_min": {
+                      "type": "number"
+                    },
+                    "y_min": {
+                      "type": "number"
+                    },
+                    "x_max": {
+                      "type": "number"
+                    },
+                    "y_max": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "x_min",
+                    "y_min",
+                    "x_max",
+                    "y_max"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "region"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "propose_changes",
+        "description": "Submit proposed annotation changes and quality issues. The server validates every field strictly before anything is stored.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "change_id",
+                  "reason"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "score": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "changes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "report_issues",
+        "description": "Report suspected quality issues without proposing annotation changes.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "required": [
+            "issues"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "stream": true
+  }
+}

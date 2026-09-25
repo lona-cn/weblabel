@@ -1,0 +1,14 @@
+: fixture_kind: synthetic_protocol
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_t20_2","call_id":"call_propose_1","name":"propose_changes","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_t20_2","output_index":0,"delta":"{\"changes\":[{\"kind\":\"set_attributes\",\"change_id\":\"change_t20_001\",\"object_id\":\"object_person_001\",\"values\":{\"helmet_state\":\"not_wearing\"},\"before_hash\":\"h1\",\"reason\":\"Helmet is not visible in the crop.\"}],\"issues\":[],\"score\":null}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_t20_2","output_index":0,"arguments":"{\"changes\":[{\"kind\":\"set_attributes\",\"change_id\":\"change_t20_001\",\"object_id\":\"object_person_001\",\"values\":{\"helmet_state\":\"not_wearing\"},\"before_hash\":\"h1\",\"reason\":\"Helmet is not visible in the crop.\"}],\"issues\":[],\"score\":null}"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_t20_2","usage":{"input_tokens":240,"output_tokens":31}}}
+

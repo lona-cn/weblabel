@@ -1,0 +1,173 @@
+{
+  "fixture_kind": "synthetic_protocol",
+  "provider": "openai_api",
+  "kind": "request_body",
+  "turn": 2,
+  "endpoint": "POST /v1/responses",
+  "description": "OpenAI Responses API continuation: function_call item, function_call_output item, and the tool-returned crop as a new user input_image item.",
+  "wire": {
+    "model": "gpt-6-luna",
+    "stream": true,
+    "max_output_tokens": 2048,
+    "instructions": "You are a WebLabel annotation assistant. Use the provided tools to inspect regions and propose changes.",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Audit helmet_state for the selected person."
+          },
+          {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR42mP4z8DwH4QZYAwAR8oH+Rq28akAAAAASUVORK5CYII=",
+            "detail": "auto"
+          },
+          {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAADklEQVR42mNg+A+FMAYAQ84H+erKrJkAAAAASUVORK5CYII=",
+            "detail": "auto"
+          }
+        ]
+      },
+      {
+        "type": "function_call",
+        "call_id": "call_read_1",
+        "name": "read_region",
+        "arguments": "{\"region\":{\"type\":\"bbox_xyxy\",\"x_min\":20,\"y_min\":30,\"x_max\":60,\"y_max\":90}}"
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "call_read_1",
+        "output": "{\"kind\":\"crop\",\"region\":{\"type\":\"bbox_xyxy\",\"x_min\":20,\"y_min\":30,\"x_max\":60,\"y_max\":90},\"width\":2,\"height\":2,\"transform_to_canonical\":[1,0,20,0,1,30,0,0,1],\"mime\":\"image/png\"}"
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAADklEQVR42mNg+A+FMAYAQ84H+erKrJkAAAAASUVORK5CYII=",
+            "detail": "auto"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "read_region",
+        "description": "Read an authorized image region as a PNG crop. region=null reads the full image. The crop is attached to the next message; this call returns transform metadata only.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "region": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "bbox_xyxy"
+                    },
+                    "x_min": {
+                      "type": "number"
+                    },
+                    "y_min": {
+                      "type": "number"
+                    },
+                    "x_max": {
+                      "type": "number"
+                    },
+                    "y_max": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "x_min",
+                    "y_min",
+                    "x_max",
+                    "y_max"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "region"
+          ],
+          "additionalProperties": false
+        },
+        "strict": true
+      },
+      {
+        "type": "function",
+        "name": "propose_changes",
+        "description": "Submit proposed annotation changes and quality issues. The server validates every field strictly before anything is stored.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "change_id",
+                  "reason"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "score": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "changes"
+          ],
+          "additionalProperties": false
+        },
+        "strict": true
+      },
+      {
+        "type": "function",
+        "name": "report_issues",
+        "description": "Report suspected quality issues without proposing annotation changes.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "required": [
+            "issues"
+          ],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    ],
+    "tool_choice": "auto"
+  }
+}

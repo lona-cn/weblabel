@@ -1,0 +1,17 @@
+: fixture_kind: synthetic_protocol
+
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_t20_1","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_t20_1","call_id":"call_read_1","name":"read_region","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_t20_1","output_index":0,"delta":"{\"region\":{\"type\":\"bbox_xyxy\",\"x_min\":20,\"y_min\":30,\"x_max\":60,\"y_max\":90}}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_t20_1","output_index":0,"arguments":"{\"region\":{\"type\":\"bbox_xyxy\",\"x_min\":20,\"y_min\":30,\"x_max\":60,\"y_max\":90}}"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_t20_1","usage":{"input_tokens":210,"output_tokens":12}}}
+

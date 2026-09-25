@@ -1,0 +1,8 @@
+: fixture_kind: synthetic_protocol
+
+data: {"id":"chatcmpl_t20_text","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"{\"changes\":[{\"kind\":\"set_attributes\",\"change_id\":\"change_t20_text\",\"object_id\":\"object_person_001\",\"values\":{\"helmet_state\":\"wearing\"},\"before_hash\":\"h1\",\"reason\":\"Helmet strap is visible.\"}],\"issues\":[],\"score\":null}"},"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl_t20_text","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+
+data: [DONE]
+

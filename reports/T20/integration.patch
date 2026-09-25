@@ -1,0 +1,57 @@
+# T20 integration request (main-agent-owned files only)
+# Base: 32012a49f41e0eb603d224fd0329ccc0c82d7b57
+#
+# No mandatory shared-file hunks: the T20 acceptance ran without touching any
+# main-agent-owned file. TASKS.json already registers T20's check argv
+# (`pnpm exec vitest run apps/agent-host/test/t20_http.test.ts`), vitest.config.ts
+# already collects apps/agent-host/test/**/*.test.ts (T16's hunk), and the task
+# adds no dependencies (node builtins + type-only imports from
+# packages/contracts/generated via relative paths, exactly like T16).
+#
+# The hunks below are OPTIONAL wiring suggestions for the registration site the
+# main agent owns (registry population / host entry assembly). They are not
+# applied in the worktree because no such site exists yet in the tree.
+
+## apps/agent-host/src/registry.ts (or the entry that builds the ProviderRegistry)
+## — suggested registration snippet once an assembly site exists (T25/main):
+#
+#   import { createOpenAiApiAdapter } from './providers/openai-api';
+#   import { createAnthropicApiAdapter } from './providers/anthropic-api';
+#   import { createMiMoApiAdapter } from './providers/mimo-api';
+#
+#   registry.register('openai_api', createOpenAiApiAdapter(openaiConfig));
+#   registry.register('anthropic_api', createAnthropicApiAdapter(anthropicConfig));
+#   registry.register('mimo_api', createMiMoApiAdapter(mimoConfig));
+#
+# Config requirements enforced by the adapters (fail closed):
+#   - profile_id and the exact account-available model_id (no aliases, no defaults)
+#   - credential: { secret_ref: 'env:NAME' } — env/secret refs only, never inline
+#   - api_base optional (defaults to the official base); ANY other base needs
+#     base_approval { approved: true, approved_by: <trusted local admin>, approved_at }
+#     and the approver must be listed in local_admins; private/loopback bases also
+#     need allow_private_network, plain http also needs allow_insecure_http
+#   - account_model_verified: true before probe() reports anything but 'blocked'
+#   - capabilities: explicit evidence booleans (never inferred from model names)
+
+## Contract-additive interfaces the run host must satisfy (see result.json contract_changes)
+#
+# 1. apps/agent-host/src/providers/http/images.ts declares
+#      export interface ImageGrantContext { readonly approved_grant_ids: readonly Id[] }
+#    The host-side RuntimeContext for HTTP providers must carry `approved_grant_ids`
+#    (the consent-approved run-scoped image grants from T25's consent record).
+#    Adapters call ctx.read_region(grantIds[0], region) and fail closed with
+#    ProviderError('image_grant_missing') when the channel is absent. The frozen C5
+#    RuntimeContext shape is unchanged (this is an additive superset the adapters
+#    read via structural check).
+#
+# 2. Candidate drafts submitted via ctx.submit_candidates are
+#      { changes: Change[]; issues: QualityIssue[]; score: number | null }
+#    after strict adapter-side schema+domain validation. T17/T25 keep the
+#    authoritative JSON-Schema validation at the contract entry.
+
+## Notes
+# - No dependency/manifest/lockfile changes (worktree node_modules were installed
+#   with `pnpm install --frozen-lockfile --offline`; lockfile untouched).
+# - TASKS.json / STATUS.json / docs untouched (main agent owns them).
+# - All provider behavior is fixture-proven only; live capture/entitlement is the
+#   T32 gate. Do not mark any provider live_passed from this task's evidence.

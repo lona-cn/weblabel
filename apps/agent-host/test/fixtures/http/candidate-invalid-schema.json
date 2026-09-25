@@ -1,0 +1,29 @@
+{
+  "fixture_kind": "synthetic_protocol",
+  "provider": null,
+  "kind": "candidate_draft",
+  "description": "Schema-invalid draft: the set_attributes change smuggles a geometry field and a NaN-like string is not used; unknown keys must be rejected.",
+  "wire": {
+    "changes": [
+      {
+        "kind": "set_attributes",
+        "change_id": "change_t20_bad",
+        "object_id": "object_person_001",
+        "values": {
+          "helmet_state": "not_wearing"
+        },
+        "geometry": {
+          "type": "bbox_xyxy",
+          "x_min": 0,
+          "y_min": 0,
+          "x_max": 10,
+          "y_max": 10
+        },
+        "before_hash": "h1",
+        "reason": "Sneaks a geometry change past the schema."
+      }
+    ],
+    "issues": [],
+    "score": null
+  }
+}

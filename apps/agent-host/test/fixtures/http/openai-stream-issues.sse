@@ -1,0 +1,17 @@
+: fixture_kind: synthetic_protocol
+
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_t20_i1","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_t20_i1","call_id":"call_issues_1","name":"report_issues","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_t20_i1","output_index":0,"delta":"{\"issues\":[{\"issue_id\":\"issue_t20_1\",\"object_id\":null,\"code\":\"review_note\",\"message\":\"Helmet state uncertain in the crop.\",\"region\":null}]}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_t20_i1","output_index":0,"arguments":"{\"issues\":[{\"issue_id\":\"issue_t20_1\",\"object_id\":null,\"code\":\"review_note\",\"message\":\"Helmet state uncertain in the crop.\",\"region\":null}]}"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_t20_i1","usage":{"input_tokens":120,"output_tokens":9}}}
+

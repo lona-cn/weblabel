@@ -1,0 +1,8 @@
+: fixture_kind: synthetic_protocol
+
+data: {"id":"chatcmpl_t20_text","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"{\"changes\":[{\"kind\":\"create\",\"change_id\":\"change_t20_create\",\"object\":{\"object_id\":\"object_person_002\",\"label_id\":\"label_person\",\"geometry\":{\"type\":\"bbox_xyxy\",\"x_min\":100,\"y_min\":100,\"x_max\":140,\"y_max\":160},\"attributes\":{\"helmet_state\":\"unknown\"},\"origin\":{\"type\":\"prediction\",\"prediction_id\":null,\"model_run_id\":null,\"import_batch_id\":null}},\"before_hash\":null,\"reason\":\"Invents a new object during attribute audit.\"}],\"issues\":[],\"score\":null}"},"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl_t20_text","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+
+data: [DONE]
+

@@ -1,0 +1,10 @@
+: fixture_kind: synthetic_protocol
+
+data: {"id":"chatcmpl_t20_2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_propose_1","type":"function","function":{"name":"propose_changes","arguments":""}}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl_t20_2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"changes\":[{\"kind\":\"set_attributes\",\"change_id\":\"change_t20_001\",\"object_id\":\"object_person_001\",\"values\":{\"helmet_state\":\"not_wearing\"},\"before_hash\":\"h1\",\"reason\":\"Helmet is not visible in the crop.\"}],\"issues\":[],\"score\":null}"}}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl_t20_2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null}
+
+data: [DONE]
+

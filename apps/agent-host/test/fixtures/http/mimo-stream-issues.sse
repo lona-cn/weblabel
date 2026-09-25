@@ -1,0 +1,10 @@
+: fixture_kind: synthetic_protocol
+
+data: {"id":"chatcmpl_t20_i1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_issues_1","type":"function","function":{"name":"report_issues","arguments":""}}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl_t20_i1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"issues\":[{\"issue_id\":\"issue_t20_1\",\"object_id\":null,\"code\":\"review_note\",\"message\":\"Helmet state uncertain in the crop.\",\"region\":null}]}"}}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl_t20_i1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":120,"completion_tokens":9,"total_tokens":129}}
+
+data: [DONE]
+

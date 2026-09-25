@@ -1,0 +1,22 @@
+{
+  "fixture_kind": "synthetic_protocol",
+  "provider": null,
+  "kind": "synthetic_image_bytes",
+  "description": "Programmatically generated 2x2 RGBA PNGs used as image payload bytes. Synthetic test bytes only: no real or user media exists in these fixtures.",
+  "images": {
+    "full": {
+      "width": 2,
+      "height": 2,
+      "mime": "image/png",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR42mP4z8DwH4QZYAwAR8oH+Rq28akAAAAASUVORK5CYII=",
+      "data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR42mP4z8DwH4QZYAwAR8oH+Rq28akAAAAASUVORK5CYII="
+    },
+    "crop": {
+      "width": 2,
+      "height": 2,
+      "mime": "image/png",
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAADklEQVR42mNg+A+FMAYAQ84H+erKrJkAAAAASUVORK5CYII=",
+      "data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAADklEQVR42mNg+A+FMAYAQ84H+erKrJkAAAAASUVORK5CYII="
+    }
+  }
+}

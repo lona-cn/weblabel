@@ -1,0 +1,110 @@
+{
+  "fixture_kind": "synthetic_protocol",
+  "provider": null,
+  "kind": "candidate_draft",
+  "description": "Domain-invalid drafts against the golden document/ontology: out-of-bounds bbox, unknown label, unknown attribute key, bad enum value, duplicate change ids.",
+  "wire": {
+    "out_of_bounds": {
+      "changes": [
+        {
+          "kind": "set_attributes",
+          "change_id": "change_oob",
+          "object_id": "object_person_001",
+          "values": {
+            "helmet_state": "wearing"
+          },
+          "before_hash": "h1",
+          "reason": "ok change but the issue region below is out of bounds"
+        }
+      ],
+      "issues": [
+        {
+          "issue_id": "issue_oob",
+          "object_id": null,
+          "code": "geometry_out_of_bounds",
+          "message": "region escapes the image",
+          "region": {
+            "type": "bbox_xyxy",
+            "x_min": -5,
+            "y_min": 0,
+            "x_max": 700,
+            "y_max": 480
+          }
+        }
+      ],
+      "score": null
+    },
+    "unknown_label": {
+      "changes": [
+        {
+          "kind": "set_label",
+          "change_id": "change_label",
+          "object_id": "object_person_001",
+          "label_id": "label_dog",
+          "before_hash": "h1",
+          "reason": "relabels to an ontology-unknown label"
+        }
+      ],
+      "issues": [],
+      "score": null
+    },
+    "unknown_attribute": {
+      "changes": [
+        {
+          "kind": "set_attributes",
+          "change_id": "change_attr",
+          "object_id": "object_person_001",
+          "values": {
+            "helmet_colour": "red"
+          },
+          "before_hash": "h1",
+          "reason": "uses an attribute key that is not in the ontology"
+        }
+      ],
+      "issues": [],
+      "score": null
+    },
+    "bad_enum": {
+      "changes": [
+        {
+          "kind": "set_attributes",
+          "change_id": "change_enum",
+          "object_id": "object_person_001",
+          "values": {
+            "helmet_state": "shiny"
+          },
+          "before_hash": "h1",
+          "reason": "uses an enum value outside enum_values"
+        }
+      ],
+      "issues": [],
+      "score": null
+    },
+    "duplicate_ids": {
+      "changes": [
+        {
+          "kind": "set_attributes",
+          "change_id": "change_dup",
+          "object_id": "object_person_001",
+          "values": {
+            "helmet_state": "wearing"
+          },
+          "before_hash": "h1",
+          "reason": "first"
+        },
+        {
+          "kind": "set_attributes",
+          "change_id": "change_dup",
+          "object_id": "object_person_001",
+          "values": {
+            "helmet_state": "unknown"
+          },
+          "before_hash": "h1",
+          "reason": "duplicate change_id"
+        }
+      ],
+      "issues": [],
+      "score": null
+    }
+  }
+}
