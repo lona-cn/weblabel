@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plan_version": "1.0.0",
   "application_commit": "e26769d",
-  "last_updated_at": "2026-09-25T05:25:28Z",
+  "last_updated_at": "2026-09-25T05:28:24Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -93,22 +93,22 @@
       "blockers": []
     },
     "T12": {
-      "status": "pending",
+      "status": "blocked",
       "base_commit": null,
       "integrated_commit": null,
       "evidence": [],
-      "blockers": []
+      "blockers": ["Blocked by T09; T09 requires T05's real-WebGPU adapter/pixel/device-loss evidence before T12 can start."]
     },
     "T13": {
-      "status": "pending",
+      "status": "blocked",
       "base_commit": null,
       "integrated_commit": null,
       "evidence": [],
-      "blockers": []
+      "blockers": ["Blocked by T09; T09 requires T05's real-WebGPU adapter/pixel/device-loss evidence before T13 can start."]
     },
     "T14": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "6723f4ec27be7c043680610f7bf89b04d8d0013d",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
