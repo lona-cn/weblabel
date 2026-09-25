@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "8261e35",
-  "last_updated_at": "2026-09-25T04:53:35Z",
+  "application_commit": "e26769d",
+  "last_updated_at": "2026-09-25T05:25:28Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -86,10 +86,10 @@
       "blockers": []
     },
     "T11": {
-      "status": "running",
+      "status": "done",
       "base_commit": "1f30860936fe1d1b868c0428ee89a23c79c06fa0",
-      "integrated_commit": null,
-      "evidence": [],
+      "integrated_commit": "e26769d11c53be2f991ced3faae6d43b780a3e37",
+      "evidence": ["reports/T11/result.json", "reports/T11/tests.log", "reports/T11/review.md"],
       "blockers": []
     },
     "T12": {
