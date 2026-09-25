@@ -1,5 +1,6 @@
 //! Local Axum service and its SQLite/object-store state.
 
+pub mod ai;
 pub mod annotations;
 pub mod auth;
 pub mod config;
@@ -29,6 +30,9 @@ use axum::{
 pub struct AppState {
     pub repository: Repository,
     pub auth: AuthState,
+    /// False in production builds: the built-in mock model source is only
+    /// available to development and test builds.
+    pub allow_mock_runs: bool,
 }
 
 impl AppState {
@@ -70,7 +74,14 @@ impl AppState {
             .await?;
         let auth = AuthState::new(pool, auth_config)
             .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
-        Ok(Self { repository, auth })
+        // Restart recovery: model runs left in flight are interrupted with
+        // unknown cost and are never resent automatically.
+        crate::ai::runs::recover_interrupted(&repository).await?;
+        Ok(Self {
+            repository,
+            auth,
+            allow_mock_runs: !config.production,
+        })
     }
 }
 
@@ -80,6 +91,11 @@ pub fn router(state: AppState) -> Router {
         .with_state(state.clone())
         .merge(auth::router(state.auth.clone()))
         .merge(projects::router(state.auth.clone()))
+        .merge(ai::router(
+            state.repository.clone(),
+            state.auth.clone(),
+            state.allow_mock_runs,
+        ))
         .merge(annotations::router(
             state.repository.clone(),
             state.auth.clone(),

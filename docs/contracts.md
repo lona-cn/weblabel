@@ -286,10 +286,10 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | GET /api/jobs/{id} | 作业状态、逐资产结果 | T17 |
 | GET /api/model-profiles | 配置/能力/验证状态，不返回密钥 | T16 |
 | POST /api/ai/consents | {profile_id,input_fingerprint,approved_grants} → consent_id | T25 |
-| POST /api/ai/runs | StartRunRequest → run_id | T25 |
+| POST /api/ai/runs | StartRunRequest → run_id；T17实现幂等创建/状态机，T25叠加consent与外发门 | T17/T25 |
 | GET /api/ai/runs/{id}/events | after=seq → 事件分页 | T17 |
 | GET /api/ai/runs/{id}/suggestions | 候选集合 | T17 |
-| POST /api/ai/runs/{id}/cancel | 幂等取消 | T25 |
+| POST /api/ai/runs/{id}/cancel | 幂等取消；T17实现取消/隔离审计，T25叠加授权语义 | T17/T25 |
 | POST /api/ai/suggestions/{id}/decision | 拒绝/幂等确认；接受必须随SaveRequest同事务 | T19/T25 |
 | POST/GET /api/projects/{id}/tasks | 创建/列出任务 | T26 |
 | POST /api/tasks/{id}/lease | acquire/renew/release + fencing token | T26 |
@@ -308,6 +308,8 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 v0.1 使用 polling，active job/run 每 500ms，后台/idle 2s；支持 after seq，取消轮询并按 asset/run 隔离缓存。不同时实现 SSE/WebSocket。停止/恢复轮询不能重新提交模型请求。
 
 T14单图导出同步生成单个不可变revision的native/YOLO/COCO产物并持久化对象与损失报告，不假称DatasetVersion或异步job。T27才添加固定多图快照；两种导出共用鉴权下载路径，不建立临时无鉴权下载路径。
+
+T17响应形状（主Agent已批准）：`POST /api/ai/runs` 返回RunSummary数组+`idempotent_replay`（与T11 SaveResponse惯例一致）；`GET /api/ai/runs/{id}/events`与`/suggestions`返回`{run,items,next_cursor}`（run摘要使UI可见interrupted与cost_display=unknown）；`GET /api/jobs/{id}`返回作业状态与`items`逐asset结果。Interrupted无对应RunEventType（C4冻结8值），恢复事件以`failed`+`data:{interrupted:true,cost_display}`表达。`POST /internal/test/jobs/drain`为debug构建专用测试通道（cfg(debug_assertions)+平台管理员），生产不编译。
 
 POST /api/users 与 GET /api/users 的管理员接口由 testing-contracts.md §6定义，T10实现。
 

@@ -48,6 +48,7 @@ impl Repository {
                 "0007_dataset_formats",
                 include_str!("../../migrations/0007_dataset_formats.sql"),
             ),
+            ("0008_ai", include_str!("../../migrations/0008_ai.sql")),
         ] {
             let mut tx = begin_immediate(&pool, write_timeout).await?;
             let applied: i64 = sqlx::query_scalar(
