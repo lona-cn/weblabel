@@ -1,0 +1,43 @@
+# T23 integration.patch — claude_local ProviderAdapter
+#
+# No shared-file hunks: nothing outside the task's writable scope changed.
+#  - TASKS.json already registers T23 and its check
+#    ("pnpm","exec","vitest","run","apps/agent-host/test/t23_claude.test.ts").
+#  - registry.ts is intentionally untouched: a ProviderAdapter.claudeLocal
+#    option field would be dead surface (adjudicated the same way in T22 F10);
+#    the launch plan stays adapter-owned (ClaudeLaunchPlan, like CodexLaunchPlan).
+#  - No root manifests, lockfiles, migrations, routes or generated contracts
+#    are affected; no new dependencies.
+#
+# Files to integrate by content (all new):
+#   apps/agent-host/src/providers/claude/protocol.ts
+#   apps/agent-host/src/providers/claude/permissions.ts
+#   apps/agent-host/src/providers/claude/session.ts
+#   apps/agent-host/src/providers/claude/adapter.ts
+#   apps/agent-host/test/t23_claude.test.ts
+#   docs/providers/claude.md
+#   reports/T23/* (report + raw command logs)
+#
+# Registration snippet (no production entry constructs a ProviderRegistry yet —
+# same situation T18/T20/T22 reported; wire this when the host entry exists,
+# keep `mock: false`):
+#
+#   import { createClaudeLocalAdapter } from './providers/claude/adapter';
+#   import { createStdioClaudeTransport } from './providers/claude/adapter';
+#   registry.register('claude_local', createClaudeLocalAdapter({
+#     permissions: claudePermissionsConfig,   // private runRoot, forbiddenCwdRoots (user repos/workspace),
+#                                             // envAllowlist (minimal; credential vars and NODE_OPTIONS are
+#                                             // hard-denied), command/mcpCommand point at the official CLI
+#                                             // and apps/agent-host/src/mcp/main.ts, model: null or the
+#                                             // requested id/alias
+#     transport: createStdioClaudeTransport,
+#     imageSource: <consent-layer grant resolver>,
+#     runToken: <run-scoped token issuer>,
+#     schemaArtifactPath: <T32 pinned-runtime stream-json protocol fixture>,
+#   }));
+#
+# The adapter is NOT a mock registration: its honest `not_run` verification
+# passes probeAll's mock-honesty rules; availability is needs_configuration
+# (CLI absent) or blocked until T32 supplies pinned-runtime protocol + tool
+# isolation + live evidence (ADR 0001). model_id stays 'unknown' until an
+# authorized run observes the effective model.
