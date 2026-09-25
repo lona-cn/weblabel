@@ -5,6 +5,7 @@ use annotation_domain::{
     document::{
         AnnotationDocument, Completion, CoordinateSpace, CoordinateSpaceType, Id, MediaRevision,
     },
+    hash::serialize_document,
     DomainError,
 };
 use serde_json::{json, Value};
@@ -13,7 +14,6 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::{
-    canonical::sha256_hex,
     limits::{check_filename, MediaError, MAX_UPLOAD_BYTES},
     previews::make_preview,
 };
@@ -224,8 +224,10 @@ async fn import_one_internal(
     document
         .validate_shape()
         .map_err(|_| MediaError::InvalidImage)?;
-    let document_json = serde_json::to_string(&document).map_err(|_| MediaError::InvalidImage)?;
-    let content_hash = sha256_hex(document_json.as_bytes());
+    let serialized_document =
+        serialize_document(&document).map_err(|_| MediaError::InvalidImage)?;
+    let document_json = serialized_document.json;
+    let content_hash = serialized_document.content_hash;
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let mut tx = repository.begin_write().await?;
     if let Some((lease, _, _)) = job_item {

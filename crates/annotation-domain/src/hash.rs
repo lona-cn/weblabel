@@ -44,6 +44,26 @@ pub fn object_hash(object: &AnnotationObject) -> String {
     };
     let bytes = serde_json::to_vec(&canonical)
         .expect("canonical object contains only serializable finite scalar values");
+    hash_bytes(&bytes)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SerializedDocument {
+    pub json: String,
+    pub content_hash: String,
+}
+
+/// Serialize a validated document once and compute the persisted revision hash over those exact bytes.
+pub fn serialize_document(
+    document: &crate::document::AnnotationDocument,
+) -> Result<SerializedDocument, serde_json::Error> {
+    let bytes = serde_json::to_vec(document)?;
+    let content_hash = hash_bytes(&bytes);
+    let json = String::from_utf8(bytes).expect("serde_json output is valid UTF-8");
+    Ok(SerializedDocument { json, content_hash })
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut output = String::with_capacity(64);
     for byte in digest {

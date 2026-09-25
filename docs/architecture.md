@@ -147,6 +147,8 @@ v0.1 接收静态 PNG 和 JPEG，单文件 ≤64 MiB、宽高分别 ≤4096、�
 
 AnnotationRevision 不可变，head 单独引用。保存携带 operation_id、base_revision_id、document；服务器在单事务中先核查幂等，再比较 head，写新 revision 并原子替换 head。相同 operation_id + 相同请求哈希返回原结果；不同负载复用 operation_id 返回 409 IDEMPOTENCY_KEY_REUSE；版本不匹配返回 409 REVISION_CONFLICT。
 
+`GET /api/assets/{asset_revision_id}/annotation` 必须显式指定 `ontology_version_id`；历史 revision 通过 `GET /api/annotation-revisions/{id}` 只读访问。PUT 在 SQLite 写事务内以 actor/operation/kind 查询幂等记录，再检查项目写权限、canonical 尺寸、ontology、几何/负样本和来源；非空 suggestion_decisions 与非空 lease 在对应事务能力落地前明确拒绝。revision、CAS head 更新和幂等 ACK 同事务提交，冲突不留下半写 revision。
+
 客户端每 asset 只有一个保存请求在途；本地事务成功后才显示“已保存本地”。收到旧 generation 的 ACK 不能把更新中的文档显示为已同步。逻辑操作结束后防抖 400ms；提交审核、AI 启动、切图前执行 flush；失败时保留草稿和可下载恢复包。切图可以完成，但不得丢弃原图片的保存队列。
 
 IndexedDB 保存 {asset_revision_id, ontology_version_id, base_revision_id, draft_generation, document, pending_operation_id}。恢复时只有 base=head 才自动恢复；否则进入比较/另存分支/显式舍弃流程，不执行 last-write-wins。浏览器配额失败必须可见。撤销已同步变更会保存新 revision，不删除历史。

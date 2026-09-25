@@ -1,5 +1,6 @@
 //! Local Axum service and its SQLite/object-store state.
 
+pub mod annotations;
 pub mod auth;
 pub mod config;
 pub mod jobs;
@@ -79,6 +80,10 @@ pub fn router(state: AppState) -> Router {
         .with_state(state.clone())
         .merge(auth::router(state.auth.clone()))
         .merge(projects::router(state.auth.clone()))
+        .merge(annotations::router(
+            state.repository.clone(),
+            state.auth.clone(),
+        ))
         .merge(media::routes::router(state.repository.clone(), state.auth))
         .fallback(not_found)
         .layer(middleware::from_fn(request_id))
