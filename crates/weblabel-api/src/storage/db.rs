@@ -44,6 +44,10 @@ impl Repository {
                 include_str!("../../migrations/0005_media.sql"),
             ),
             ("0006_auth", include_str!("../../migrations/0006_auth.sql")),
+            (
+                "0007_dataset_formats",
+                include_str!("../../migrations/0007_dataset_formats.sql"),
+            ),
         ] {
             let mut tx = begin_immediate(&pool, write_timeout).await?;
             let applied: i64 = sqlx::query_scalar(

@@ -27,6 +27,7 @@ struct Fixture {
     _directory: tempfile::TempDir,
     cookie: String,
     csrf: String,
+    project_id: String,
     ontology_id: String,
     asset_revision_id: String,
     initial_revision_id: String,
@@ -212,7 +213,7 @@ async fn fixture() -> Fixture {
         &state.repository,
         &MediaWorker::new(),
         ImportInput {
-            project_id,
+            project_id: project_id.clone(),
             ontology_version_id: ontology_id.clone(),
             actor_id: boot["user_id"].as_str().unwrap().to_owned(),
             source_group_id: "t11-fixture-source".to_owned(),
@@ -229,10 +230,339 @@ async fn fixture() -> Fixture {
         _directory: directory,
         cookie,
         csrf,
+        project_id,
         ontology_id,
         asset_revision_id: imported.asset_revision_id,
         initial_revision_id: imported.annotation_revision_id,
     }
+}
+
+#[tokio::test]
+async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
+    let fixture = fixture().await;
+    let (status, ontology) = fixture
+        .request(
+            "POST",
+            &format!("/api/projects/{}/ontologies", fixture.project_id),
+            Some(json!({
+                "labels": [{
+                    "label_id": "vehicle",
+                    "name": "Vehicle",
+                    "color": "#0099ff",
+                    "attributes": [],
+                    "shortcut": null,
+                    "allowed_geometry_types": ["bbox_xyxy"]
+                }],
+                "guidelines_markdown": "T14 ontology without an annotation head."
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{ontology}");
+    let target_ontology_id = ontology["ontology_version_id"].as_str().unwrap();
+    let boundary = "t14-boundary";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\ncoco\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"ontology_version_id\"\r\n\r\n{target_ontology_id}\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"data\"; filename=\"annotations.json\"\r\nContent-Type: application/json\r\n\r\n"
+    );
+    body.push_str(
+        &json!({
+            "images":[{"id":17,"file_name":"same.png","width":32,"height":24}],
+            "categories":[{"id":90,"name":"Vehicle","label_id":"vehicle","custom_attribute":"present"}],
+            "annotations":[{"id":1,"image_id":17,"category_id":90,"bbox":[8.0,6.0,16.0,12.0],"segmentation":[[8,6,24,6,24,18,8,18]],"iscrowd":0}]
+        })
+        .to_string(),
+    );
+    body.push_str(&format!("\r\n--{boundary}--\r\n"));
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/assets/{}/annotation-import-previews",
+                    fixture.asset_revision_id
+                ))
+                .header("host", HOST)
+                .header("origin", ORIGIN)
+                .header("cookie", &fixture.cookie)
+                .header("x-csrf-token", &fixture.csrf)
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let preview: Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let batch_id = preview["import_batch_id"].as_str().unwrap();
+    assert!(preview["base_revision_id"].is_null());
+    assert_eq!(preview["document"]["completion"], "in_progress");
+    assert_eq!(
+        preview["document"]["objects"][0]["origin"]["type"],
+        "import"
+    );
+    assert_eq!(
+        preview["document"]["objects"][0]["origin"]["import_batch_id"],
+        batch_id
+    );
+
+    assert_eq!(
+        preview["loss_report"]["losses"][0]["field"],
+        "unsupported_fields"
+    );
+    assert!(preview["loss_report"]["losses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|loss| loss["field"] == "segmentation"));
+    let operation_id = "b7d69d86-0d8e-4b75-b1fd-59e3cd3e0845";
+    let commit_path = format!("/api/annotation-import-previews/{batch_id}/commit");
+    let (rejected_status, rejected) = fixture
+        .request(
+            "POST",
+            &commit_path,
+            Some(json!({"loss_ack":false,"operation_id":operation_id})),
+        )
+        .await;
+    assert_eq!(
+        rejected_status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{rejected}"
+    );
+    assert_eq!(rejected["code"], "LOSS_ACK_REQUIRED");
+    let (status, committed) = fixture
+        .request(
+            "POST",
+            &commit_path,
+            Some(json!({"loss_ack":true,"operation_id":operation_id})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{committed}");
+    assert_eq!(committed["revision"]["revision_no"], 1);
+    assert!(committed["revision"]["parent_revision_id"].is_null());
+    assert_eq!(
+        committed["revision"]["document"]["objects"][0]["origin"]["type"],
+        "import"
+    );
+    let (replay_status, replay) = fixture
+        .request(
+            "POST",
+            &commit_path,
+            Some(json!({"loss_ack":true,"operation_id":operation_id})),
+        )
+        .await;
+    assert_eq!(replay_status, StatusCode::OK, "{replay}");
+    assert_eq!(
+        replay["revision"]["annotation_revision_id"],
+        committed["revision"]["annotation_revision_id"]
+    );
+
+    let revision_id = committed["revision"]["annotation_revision_id"]
+        .as_str()
+        .unwrap();
+    let (status, rejected) = fixture
+        .request(
+            "POST",
+            &format!("/api/annotation-revisions/{revision_id}/exports"),
+            Some(json!({
+                "format":"coco",
+                "loss_ack":false,
+                "operation_id":"b7d69d86-0d8e-4b75-b1fd-59e3cd3e0846"
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rejected}");
+    assert_eq!(rejected["code"], "LOSS_ACK_REQUIRED");
+    let (status, exported) = fixture
+        .request(
+            "POST",
+            &format!("/api/annotation-revisions/{revision_id}/exports"),
+            Some(json!({
+                "format":"coco",
+                "loss_ack":true,
+                "operation_id":"b7d69d86-0d8e-4b75-b1fd-59e3cd3e0847"
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{exported}");
+    let (status, downloaded) = fixture
+        .request("GET", exported["download_url"].as_str().unwrap(), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{downloaded}");
+    assert_eq!(downloaded["images"][0]["width"], 32);
+    assert_eq!(
+        downloaded["annotations"][0]["bbox"],
+        json!([8.0, 6.0, 16.0, 12.0])
+    );
+    let report_response = fixture
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(exported["download_url"].as_str().unwrap())
+                .header("host", HOST)
+                .header("origin", ORIGIN)
+                .header("cookie", &fixture.cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let report: Value = serde_json::from_str(
+        report_response
+            .headers()
+            .get("x-weblabel-loss-report")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report["losses"][0]["field"], "object_ids");
+    let next_save = fixture.save_request(
+        "b7d69d86-0d8e-4b75-b1fd-59e3cd3e0848",
+        revision_id,
+        committed["revision"]["document"].clone(),
+    );
+    let (save_status, saved) = fixture
+        .request("PUT", &fixture.annotation_path(), Some(next_save))
+        .await;
+    assert_eq!(save_status, StatusCode::OK, "{saved}");
+    let saved_revision_id = saved["revision"]["annotation_revision_id"]
+        .as_str()
+        .unwrap();
+    let mut unverified_import = saved["revision"]["document"].clone();
+    unverified_import["objects"][0]["origin"]["import_batch_id"] =
+        json!("b7d69d86-0d8e-4b75-b1fd-59e3cd3e08ff");
+    let unverified_save = fixture.save_request(
+        "b7d69d86-0d8e-4b75-b1fd-59e3cd3e0852",
+        saved_revision_id,
+        unverified_import,
+    );
+    let (unverified_status, unverified_error) = fixture
+        .request("PUT", &fixture.annotation_path(), Some(unverified_save))
+        .await;
+    assert_eq!(
+        unverified_status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{unverified_error}"
+    );
+    assert_eq!(unverified_error["code"], "UNVERIFIED_PROVENANCE");
+    let (status, native_export) = fixture
+        .request(
+            "POST",
+            &format!("/api/annotation-revisions/{saved_revision_id}/exports"),
+            Some(json!({
+                "format":"native",
+                "loss_ack":false,
+                "operation_id":"b7d69d86-0d8e-4b75-b1fd-59e3cd3e0850"
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{native_export}");
+    let download = fixture
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(native_export["download_url"].as_str().unwrap())
+                .header("host", HOST)
+                .header("origin", ORIGIN)
+                .header("cookie", &fixture.cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(download.status(), StatusCode::OK);
+    let native_bytes = to_bytes(download.into_body(), 32 * 1024 * 1024)
+        .await
+        .unwrap();
+    let native_boundary = "t14-native-boundary";
+    let mut native_body = format!(
+        "--{native_boundary}\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\nnative\r\n\
+         --{native_boundary}\r\nContent-Disposition: form-data; name=\"ontology_version_id\"\r\n\r\n{target_ontology_id}\r\n\
+         --{native_boundary}\r\nContent-Disposition: form-data; name=\"data\"; filename=\"bundle.zip\"\r\nContent-Type: application/zip\r\n\r\n"
+    )
+    .into_bytes();
+    native_body.extend_from_slice(&native_bytes);
+    native_body.extend_from_slice(format!("\r\n--{native_boundary}--\r\n").as_bytes());
+    let native_preview_response = fixture
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/assets/{}/annotation-import-previews",
+                    fixture.asset_revision_id
+                ))
+                .header("host", HOST)
+                .header("origin", ORIGIN)
+                .header("cookie", &fixture.cookie)
+                .header("x-csrf-token", &fixture.csrf)
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={native_boundary}"),
+                )
+                .body(Body::from(native_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let native_preview_status = native_preview_response.status();
+    let native_preview: Value = serde_json::from_slice(
+        &to_bytes(native_preview_response.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(native_preview_status, StatusCode::OK, "{native_preview}");
+    assert!(native_preview["loss_report"]["losses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|loss| loss["field"] == "provenance"));
+    let native_batch_id = native_preview["import_batch_id"].as_str().unwrap();
+    let native_commit_path = format!("/api/annotation-import-previews/{native_batch_id}/commit");
+    let (native_rejected_status, native_rejected) = fixture
+        .request(
+            "POST",
+            &native_commit_path,
+            Some(json!({
+                "loss_ack":false,
+                "operation_id":"b7d69d86-0d8e-4b75-b1fd-59e3cd3e0851"
+            })),
+        )
+        .await;
+    assert_eq!(
+        native_rejected_status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{native_rejected}"
+    );
+    let (native_commit_status, native_committed) = fixture
+        .request(
+            "POST",
+            &native_commit_path,
+            Some(json!({
+                "loss_ack":true,
+                "operation_id":"b7d69d86-0d8e-4b75-b1fd-59e3cd3e0851"
+            })),
+        )
+        .await;
+    assert_eq!(native_commit_status, StatusCode::OK, "{native_committed}");
 }
 
 #[tokio::test]

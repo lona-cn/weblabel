@@ -1,7 +1,8 @@
+mod exports;
 mod idempotency;
+mod imports;
 mod revision;
 mod save;
-
 use axum::{extract::DefaultBodyLimit, middleware, routing::get, Router};
 
 use crate::{auth::AuthState, storage::Repository};
@@ -28,6 +29,19 @@ pub fn router(repository: Repository, auth: AuthState) -> Router {
             "/api/annotation-revisions/{annotation_revision_id}",
             get(revision::historical),
         )
+        .route(
+            "/api/assets/{asset_revision_id}/annotation-import-previews",
+            axum::routing::post(imports::preview),
+        )
+        .route(
+            "/api/annotation-import-previews/{import_batch_id}/commit",
+            axum::routing::post(imports::commit),
+        )
+        .route(
+            "/api/annotation-revisions/{annotation_revision_id}/exports",
+            axum::routing::post(exports::create),
+        )
+        .route("/api/exports/{export_id}/download", get(exports::download))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             crate::auth::authenticate,

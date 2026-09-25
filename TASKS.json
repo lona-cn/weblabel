@@ -514,10 +514,14 @@
         "import-api"
       ],
       "files": [
-        "crates/dataset-formats/src/{lib,native,yolo,coco,report,archive}.rs",
+        "crates/dataset-formats/src/{lib,native,yolo,coco,archive}.rs",
         "crates/dataset-formats/tests/t14_formats.rs",
-        "apps/api/src/media/import_labels.rs",
-        "tests/fixtures/formats/*"
+        "crates/weblabel-api/src/annotations/{imports,exports,mod,save}.rs",
+        "crates/weblabel-api/src/storage/db.rs",
+        "crates/weblabel-api/migrations/0007_dataset_formats.sql",
+        "crates/weblabel-api/tests/t11_save.rs",
+        "crates/weblabel-api/Cargo.toml",
+        "docs/contracts.md"
       ],
       "checks": [
         [
@@ -527,6 +531,16 @@
           "dataset-formats",
           "--test",
           "t14_formats",
+          "--locked"
+        ],
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t11_save",
+          "t14_import_preview_commit_export_and_download_are_bound_to_revision",
           "--locked"
         ]
       ],

@@ -283,8 +283,6 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | GET /api/assets/{asset_revision_id}/annotation | query ontology_version_id，读取指定规范的head | T11 |
 | GET /api/annotation-revisions/{id} | 鉴权不可变历史版本，审核使用 | T11 |
 | PUT /api/assets/{asset_revision_id}/annotation | SaveRequest → SaveResponse | T11 |
-| POST /api/projects/{id}/imports/preview | 文件/映射 → report_id | T14 |
-| POST /api/projects/{id}/imports/commit | {report_id,operation_id,loss_ack} → job_id | T14 |
 | GET /api/jobs/{id} | 作业状态、逐资产结果 | T17 |
 | GET /api/model-profiles | 配置/能力/验证状态，不返回密钥 | T16 |
 | POST /api/ai/consents | {profile_id,input_fingerprint,approved_grants} → consent_id | T25 |
@@ -299,21 +297,24 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | POST /api/reviews/{id}/decision | approve/reject + reason + revision IDs | T26 |
 | POST /api/projects/{id}/dataset-versions | 指定 revisions/split → immutable snapshot | T27 |
 | POST /api/dataset-versions/{id}/exports | format,loss_ack,operation_id → export job | T27 |
-| POST /api/annotation-revisions/{id}/exports | 单个不可变版本的检测导出，format/loss_ack/operation_id | T14 |
-| GET /api/exports/{id}/download | 鉴权文件 + 报告；T27扩展数据集输出 | T14/T27 |
+| POST /api/assets/{asset_revision_id}/annotation-import-previews | multipart format/ontology/data/显式映射 → 不可变预览、损失报告与base head，不改head | T14 |
+| POST /api/annotation-import-previews/{id}/commit | loss_ack/operation_id → CAS提交一个revision，重复operation重放 | T14 |
+| POST /api/annotation-revisions/{id}/exports | 单个不可变版本的native/YOLO/COCO导出，format/loss_ack/operation_id | T14 |
+| GET /api/exports/{id}/download | 项目成员鉴权文件，响应头 X-WebLabel-Loss-Report 携带损失报告 | T14/T27 |
 | POST /internal/agent-tools/{tool} | run-scoped token，不接受 session cookie | T21 |
 
 `/api/jobs` 由 T07 临时实现通用 schema 的 media job，T17 扩展同一 job engine，不能另外做两种互不兼容的 job。T07 不提前增加模型队列逻辑。
 
 v0.1 使用 polling，active job/run 每 500ms，后台/idle 2s；支持 after seq，取消轮询并按 asset/run 隔离缓存。不同时实现 SSE/WebSocket。停止/恢复轮询不能重新提交模型请求。
 
-T14的单图导出用于G1，读取一个不可变revision并将产物引用存入通用jobs结果，不假称DatasetVersion。T27才添加固定多图快照；两种导出共用安全下载服务，不建立临时无鉴权下载路径。
+T14单图导出同步生成单个不可变revision的native/YOLO/COCO产物并持久化对象与损失报告，不假称DatasetVersion或异步job。T27才添加固定多图快照；两种导出共用鉴权下载路径，不建立临时无鉴权下载路径。
 
 POST /api/users 与 GET /api/users 的管理员接口由 testing-contracts.md §6定义，T10实现。
 
 ## C7. SQLite 表与不可变对象
 
 T06 预留 migrations 0001_core：users/sessions/projects/memberships/ontology_versions/media_assets/media_revisions/annotation_revisions/annotation_heads/idempotency_keys/jobs/job_items。T17 增加 0002_ai：model_profiles/model_runs/predictions/suggestion_sets/suggestion_decisions/run_events/consents。T26 增加 0003_workflow：tasks/task_items/task_leases/review_requests/review_decisions/review_issues。T27 增加 0004_datasets：dataset_versions/dataset_items/export_jobs。禁止多个 Agent 同时分配 migration 编号。
+T14 migration 0007增加不可变annotation_import_batches与annotation_exports，preview记录base head及loss report；commit与revision同一事务。
 
 外键开启；关键关联包含 project_id 校验，head unique(asset_revision_id,ontology_version_id)。idempotency unique(actor_id,operation_id,operation_kind)。作业 lease 与任务租约分开；重启恢复 running job 为 interrupted/retryable，并且模型调用存在费用不确定性时要求显式重试。
 
@@ -322,6 +323,9 @@ T06 预留 migrations 0001_core：users/sessions/projects/memberships/ontology_v
 ## C8. 固定测试向量
 
 Golden image：W=640,H=480；bbox=[10,20,110,220]。YOLO 输出 center=(0.09375,0.25), size=(0.15625,0.4166666666666667)；COCO=[10,20,100,200]。导出再导入的最大绝对坐标误差 ≤1e-6 pixel（文本保留足够有效位）。
+COCO 导入必须为每个 category 提供有效的 WebLabel `label_id` 扩展；不按 category_id 的数组位置或同名类别自动映射。多图 COCO 必须显式给 source_image_id。空检测文件映射为 Unprocessed，不是 negative。
+T14 ZIP 成员名仅接受 ASCII 安全相对路径；路径、符号链接、casefold 重复及条目数/总解压量超限均拒绝。
+Native 格式 pure conversion保留revision内容与provenance；API导入会绑定显式目标并创建本地新revision，来源revision history/对象provenance重绑会列入LossReport，必须确认后commit。
 
 Viewport：scale=2,tx=13,ty=-7，image(10,20)→CSS(33,33)；DPR=1/1.25/2/3 不改变此结果。当前鼠标 CSS(33,33)，缩放到 scale=4 后 translation=(-7,-47)，锚点仍是 image(10,20)。
 

@@ -182,17 +182,43 @@ async fn save_in_transaction(
             "Document dimensions must match the canonical media revision",
         ));
     }
-    if request
-        .document
-        .objects
-        .iter()
-        .any(|object| object.origin.kind != OriginType::Manual)
-    {
-        return Err(Failure::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "UNVERIFIED_PROVENANCE",
-            "Only manual object provenance is currently verifiable for annotation saves",
-        ));
+    for object in &request.document.objects {
+        match object.origin.kind {
+            OriginType::Manual => {}
+            OriginType::Import => {
+                let Some(import_batch_id) = object.origin.import_batch_id.as_ref() else {
+                    return Err(Failure::new(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "UNVERIFIED_PROVENANCE",
+                        "Imported objects must reference a committed import batch",
+                    ));
+                };
+                let committed: i64 = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM annotation_import_batches \
+                     WHERE import_batch_id=? AND project_id=? AND asset_revision_id=? AND status='committed')",
+                )
+                .bind(&**import_batch_id)
+                .bind(&asset.project_id)
+                .bind(asset_revision_id)
+                .fetch_one(transaction.connection())
+                .await
+                .map_err(|_| storage_failure())?;
+                if committed == 0 {
+                    return Err(Failure::new(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "UNVERIFIED_PROVENANCE",
+                        "Imported objects must reference a committed import batch for this asset",
+                    ));
+                }
+            }
+            _ => {
+                return Err(Failure::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "UNVERIFIED_PROVENANCE",
+                    "Prediction provenance is not verifiable for annotation saves",
+                ));
+            }
+        }
     }
 
     let ontology_json: Option<String> = sqlx::query_scalar(
