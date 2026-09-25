@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "52ac6e6",
-  "last_updated_at": "2026-09-25T09:48:27Z",
+  "application_commit": "85f2a48",
+  "last_updated_at": "2026-09-25T13:30:07Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -125,17 +125,25 @@
       "blockers": []
     },
     "T16": {
-      "status": "pending",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
+      "status": "done",
+      "base_commit": "5eebf38518f6418a6d4ee112f84043cc4eba03ab",
+      "integrated_commit": "85f2a48d5710906115a71ec88739ca00c48a2e67",
+      "evidence": [
+        "reports/T16/result.json",
+        "reports/T16/tests.log",
+        "reports/T16/review.md"
+      ],
       "blockers": []
     },
     "T17": {
-      "status": "pending",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
+      "status": "done",
+      "base_commit": "5eebf38518f6418a6d4ee112f84043cc4eba03ab",
+      "integrated_commit": "53e41ddc41ab423fdceeae8414784618a736a515",
+      "evidence": [
+        "reports/T17/result.json",
+        "reports/T17/tests.log",
+        "reports/T17/review.md"
+      ],
       "blockers": []
     },
     "T18": {
