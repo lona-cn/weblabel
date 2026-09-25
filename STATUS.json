@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "32012a4",
-  "last_updated_at": "2026-09-25T13:34:46Z",
+  "application_commit": "7a630af",
+  "last_updated_at": "2026-09-25T16:47:17Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -197,24 +197,36 @@
       "blockers": []
     },
     "T18": {
-      "status": "running",
+      "status": "done",
       "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
-      "integrated_commit": null,
-      "evidence": [],
+      "integrated_commit": "00cc0ccc265e861095973a2273011e908be3460a",
+      "evidence": [
+        "reports/T18/result.json",
+        "reports/T18/tests.log",
+        "reports/T18/review.md"
+      ],
       "blockers": []
     },
     "T19": {
-      "status": "running",
+      "status": "done",
       "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
-      "integrated_commit": null,
-      "evidence": [],
+      "integrated_commit": "523bbfdada50ada9520041e7248b968bc44afcaa",
+      "evidence": [
+        "reports/T19/result.json",
+        "reports/T19/tests.log",
+        "reports/T19/review.md"
+      ],
       "blockers": []
     },
     "T20": {
-      "status": "running",
+      "status": "done",
       "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
-      "integrated_commit": null,
-      "evidence": [],
+      "integrated_commit": "7a630af334120a39a6d2d561ff9292de1d79b70f",
+      "evidence": [
+        "reports/T20/result.json",
+        "reports/T20/tests.log",
+        "reports/T20/review.md"
+      ],
       "blockers": []
     },
     "T21": {
