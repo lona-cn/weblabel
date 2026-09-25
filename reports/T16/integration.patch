@@ -1,0 +1,44 @@
+# T16 integration request (main-agent-owned files only)
+# Base: 5eebf38518f6418a6d4ee112f84043cc4eba03ab
+# These two files are outside the T16 writable set; the hunks were applied locally
+# ONLY to compile and run the verification commands. Apply/re-own them at integration.
+
+## crates/weblabel-api/src/lib.rs — module registration for the new runtime module
+# (route registration intentionally absent: per dispatch scope T16 builds the
+#  host/supervisor/probe abstraction only; T25/main assemble /api/model-profiles
+#  and the AI run routes on top of crates/weblabel-api/src/runtime/*.)
+
+diff --git a/crates/weblabel-api/src/lib.rs b/crates/weblabel-api/src/lib.rs
+--- a/crates/weblabel-api/src/lib.rs
++++ b/crates/weblabel-api/src/lib.rs
+@@ -6,6 +6,7 @@ pub mod config;
+ pub mod jobs;
+ pub mod media;
+ pub mod projects;
++pub mod runtime;
+ pub mod storage;
+
+## vitest.config.ts — register the agent-host test project so the acceptance
+## command `pnpm exec vitest run apps/agent-host/test/t16_host.test.ts` collects
+## the suite (root test-script registration is main-agent-owned).
+
+diff --git a/vitest.config.ts b/vitest.config.ts
+--- a/vitest.config.ts
++++ b/vitest.config.ts
+@@ -6,6 +6,7 @@ export default defineConfig({
+       { test: { name: 'unit', include: ['tests/unit/**/*.test.ts'] } },
+       { test: { name: 'integration', include: ['tests/integration/**/*.test.ts'] } },
+       { test: { name: 'web', include: ['apps/web/src/features/**/*.test.tsx'], environment: 'jsdom' } },
++      { test: { name: 'agent-host', include: ['apps/agent-host/test/**/*.test.ts'] } },
+     ],
+     passWithNoTests: false,
+   },
+
+## Notes
+# - No dependency/manifest/lockfile changes: none needed (type-only imports from
+#   packages/contracts/generated resolve via relative paths from apps/agent-host;
+#   node: builtins and already-declared vitest/typescript tooling only).
+# - TASKS.json / STATUS.json / docs untouched (main agent owns them).
+# - Optional follow-up for the owner (NOT applied): EOL policy for
+#   packages/contracts/generated or an EOL-normalized contracts:check comparison —
+#   see reports/T16/tests.log section 9 for the CRLF evidence.

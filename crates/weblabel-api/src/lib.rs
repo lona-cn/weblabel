@@ -7,6 +7,7 @@ pub mod config;
 pub mod jobs;
 pub mod media;
 pub mod projects;
+pub mod runtime;
 pub mod storage;
 
 use std::sync::atomic::{AtomicU64, Ordering};
