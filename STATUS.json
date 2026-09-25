@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": null,
-  "last_updated_at": "2026-09-24T22:51:11Z",
+  "application_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+  "last_updated_at": "2026-09-25T01:37:23Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -30,10 +30,10 @@
       "blockers": []
     },
     "T03": {
-      "status": "pending",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
+      "status": "done",
+      "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "evidence": ["reports/T03/result.json", "reports/T03/tests.log", "reports/T03/review.md"],
       "blockers": []
     },
     "T04": {
@@ -51,10 +51,10 @@
       "blockers": []
     },
     "T06": {
-      "status": "pending",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
+      "status": "done",
+      "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "evidence": ["reports/T06/result.json", "reports/T06/tests.log", "reports/T06/review.md"],
       "blockers": []
     },
     "T07": {
@@ -65,10 +65,10 @@
       "blockers": []
     },
     "T08": {
-      "status": "pending",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
+      "status": "done",
+      "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "evidence": ["reports/T08/result.json", "reports/T08/tests.log", "reports/T08/review.md"],
       "blockers": []
     },
     "T09": {

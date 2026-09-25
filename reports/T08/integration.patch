@@ -1,0 +1,25 @@
+T08 parent integration proposal (apply only in the parent integration checkout)
+
+1. apps/web/package.json is already changed by T08. Install the exact declared web dependencies and update the parent-owned pnpm-lock.yaml; do not hand-edit the lockfile.
+
+2. Extend the projects array in root vitest.config.ts with:
+
+      { test: {
+          name: 'web',
+          include: ['apps/web/src/features/**/*.test.tsx'],
+          environment: 'jsdom'
+        } },
+
+   This discovery entry is required because the current root config includes only tests/unit/**/*.test.ts and tests/integration/**/*.test.ts. Keep passWithNoTests false and do not widen or remove existing project boundaries.
+
+3. Exact narrow feature command after lockfile and discovery integration:
+
+      pnpm exec vitest run apps/web/src/features/workbench/t08_shell.test.tsx
+
+4. Actual-browser smoke (manual Chromium/Chrome/Edge, not a mock browser assertion):
+
+      pnpm --filter @weblabel/web dev
+
+   Open http://127.0.0.1:5173 in a desktop browser. Confirm the address is loopback, tab from the brand through navigation to the tool buttons, activate the rectangle tool with Enter/Space, select an object, and observe the schema-driven read-only attributes. Resize the left sidebar, media strip, toolbar, and central canvas using their native resize grips. Confirm long Chinese labels wrap without covering the canvas, only a viewport-sized slice of objects is in the DOM, the DEV MOCK badge/disclaimer is visible, and no page claims backend persistence/auth or real AI. Record the actual browser/version and observed results in the parent integration evidence; T08 did not run this smoke.
+
+No root package manifest, lockfile, Vitest config, scripts, router assembly, or navigation file was changed by T08.
