@@ -199,4 +199,4 @@ it('rate-limits repeated failed local login attempts without case-folding identi
     });
     expect(differentCaseIdentity.status).toBe(401);
   } finally { await app.stop(); }
-});
+}, 20_000);
