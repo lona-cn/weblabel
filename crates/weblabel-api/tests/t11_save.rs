@@ -535,6 +535,11 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
         .unwrap()
         .iter()
         .any(|loss| loss["field"] == "provenance"));
+    assert!(native_preview["loss_report"]["losses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|loss| loss["field"] == "revision_history"));
     let native_batch_id = native_preview["import_batch_id"].as_str().unwrap();
     let native_commit_path = format!("/api/annotation-import-previews/{native_batch_id}/commit");
     let (native_rejected_status, native_rejected) = fixture
@@ -552,6 +557,7 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
         StatusCode::UNPROCESSABLE_ENTITY,
         "{native_rejected}"
     );
+    assert_eq!(native_rejected["code"], "LOSS_ACK_REQUIRED");
     let (native_commit_status, native_committed) = fixture
         .request(
             "POST",
