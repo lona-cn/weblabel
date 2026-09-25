@@ -8,3 +8,8 @@ node_modules/
 Thumbs.db
 playwright-report/
 test-results/
+# Python detector service (services/detector, T18)
+__pycache__/
+.pytest_cache/
+/services/detector/.venv/
+*.egg-info/

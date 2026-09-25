@@ -1,0 +1,14 @@
+diff --git a/.gitignore b/.gitignore
+index 1c0eb48..0000000 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,4 +7,9 @@ node_modules/
+ .DS_Store
+ Thumbs.db
+ playwright-report/
+ test-results/
++# Python detector service (services/detector, T18)
++__pycache__/
++.pytest_cache/
++/services/detector/.venv/
++*.egg-info/

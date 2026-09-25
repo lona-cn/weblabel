@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "model_id": "PekingU/rtdetr_v2_r18vd@5650961749fa93567c0d46fc7f43ea4f9e914107",
+  "source": {
+    "host": "huggingface.co",
+    "repo": "PekingU/rtdetr_v2_r18vd",
+    "revision": "5650961749fa93567c0d46fc7f43ea4f9e914107",
+    "resolved_at": "2026-09-25",
+    "evidence": "GET https://huggingface.co/api/models/PekingU/rtdetr_v2_r18vd and /tree/main (metadata only, no weight bytes) on 2026-09-25; revision is the repository git commit sha reported by the official API."
+  },
+  "license": {
+    "id": "apache-2.0",
+    "evidence": "model card metadata cardData.license and repo tag license:apache-2.0; README.md bytes are hash-pinned below as license text evidence"
+  },
+  "download": {
+    "weights_downloaded": false,
+    "policy": "downloading model.safetensors requires explicit user authorization and is gated to T32; every file below must match its sha256 before the worker loads it; offline tests never download",
+    "hash_evidence": {
+      "model.safetensors": "huggingface LFS oid from /tree/main (the LFS oid IS the sha256 of the file content); the 80904640 weight bytes were NOT fetched when this lock was written",
+      "config.json": "sha256 computed locally over the bytes fetched from the pinned revision URL (5437 bytes, configuration metadata only, not weights)",
+      "preprocessor_config.json": "sha256 computed locally over the bytes fetched from the pinned revision URL (444 bytes, configuration metadata only, not weights)",
+      "README.md": "sha256 computed locally over the bytes fetched from the pinned revision URL (3542 bytes, model card text)"
+    }
+  },
+  "files": [
+    {
+      "path": "model.safetensors",
+      "role": "weights",
+      "bytes": 80904640,
+      "sha256": "d18309d0d7ea57048138885c4c6ecfcb1e24506fc6153b94ad484f8ab62c7115"
+    },
+    {
+      "path": "config.json",
+      "role": "model_config",
+      "bytes": 5437,
+      "sha256": "ed051ec77cb41c5d9d5e3af21a979b1e890599dfd68434d7636ff82ded4c1527"
+    },
+    {
+      "path": "preprocessor_config.json",
+      "role": "preprocessor_config",
+      "bytes": 444,
+      "sha256": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
+    },
+    {
+      "path": "README.md",
+      "role": "model_card",
+      "bytes": 3542,
+      "sha256": "4a26a3a6de73500f181e4edbc75b3f3f19ca6dde0fdaceeeb78167f223973305"
+    }
+  ],
+  "preprocessing": {
+    "mode": "resize_stretch",
+    "evidence": "pinned preprocessor_config.json: image_processor_type=RTDetrImageProcessor, size={height:640,width:640}, do_pad=false, do_rescale=true, rescale_factor=0.00392156862745098, do_normalize=false, resample=2(bilinear); verified against the official transformers RTDetrImageProcessor.resize semantics ({height,width} resizes to the exact size and does NOT keep the aspect ratio)",
+    "input_width": 640,
+    "input_height": 640,
+    "do_pad": false,
+    "do_rescale": true,
+    "rescale_factor": 0.00392156862745098,
+    "do_normalize": false,
+    "resample": "bilinear",
+    "inverse_rule": "exactly one inverse scaling point: raw normalized boxes decode to model-input pixels and are mapped back to original pixels through weblabel_detector.transforms.inverse_resize; the canonical mapping is then applied through transform_to_canonical; never combine this with a second post-process target_sizes scaling"
+  },
+  "postprocess": {
+    "score_activation": "sigmoid",
+    "box_format": "normalized_cxcywh",
+    "num_queries": 300,
+    "num_classes": 80,
+    "score_threshold": 0.5,
+    "max_detections": 300
+  },
+  "runtime": {
+    "python": ">=3.12",
+    "implementation_note": "real inference additionally needs the torch/transformers runtime declared as the 'real' extra of pyproject.toml; the worker reports needs_configuration when they are absent and never fakes output"
+  }
+}

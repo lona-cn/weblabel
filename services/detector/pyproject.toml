@@ -1,0 +1,28 @@
+[project]
+name = "weblabel-detector"
+version = "0.1.0"
+description = "Optional local CPU detector worker for WebLabel (RT-DETR v2, NDJSON stdio protocol)."
+requires-python = ">=3.12"
+dependencies = []
+
+# Real RT-DETR v2 inference additionally needs this extra. It is NOT installed
+# by default: the offline test suite exercises transforms, label mapping and
+# post-processing only. Executing the pinned weights is T32's gate.
+[project.optional-dependencies]
+real = ["torch>=2.4", "transformers>=4.47"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = [
+  "mock_tensor: post-processing tests driven by synthetic mock tensors; they are NOT real inference evidence (real weight execution is T32's gate)",
+]
