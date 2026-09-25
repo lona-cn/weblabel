@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "bb6e9f8",
-  "last_updated_at": "2026-09-25T03:16:17Z",
+  "application_commit": "8261e35",
+  "last_updated_at": "2026-09-25T04:41:31Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -72,17 +72,17 @@
       "blockers": []
     },
     "T09": {
-      "status": "pending",
+      "status": "blocked",
       "base_commit": null,
       "integrated_commit": null,
-      "evidence": [],
-      "blockers": []
+      "evidence": ["reports/T05/result.json", "reports/T05/tests.log", "reports/T05/review.md"],
+      "blockers": ["Blocked by T05's required real-WebGPU gate: no adapter was available for actual render, pixel assertions, or device-loss recovery."]
     },
     "T10": {
-      "status": "pending",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
+      "status": "done",
+      "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "integrated_commit": "8261e3590c1d462cdb001987ce9f34470e035ac6",
+      "evidence": ["reports/T10/result.json", "reports/T10/tests.log", "reports/T10/review.md"],
       "blockers": []
     },
     "T11": {
