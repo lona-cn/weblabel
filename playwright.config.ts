@@ -1,7 +1,15 @@
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './tests/e2e',
+  projects: [
+    { name: 'e2e', testDir: './tests/e2e' },
+    {
+      name: 't05-render',
+      testDir: './tests/render',
+      // Override the global software adapter argument for the real-device probe.
+      use: { launchOptions: { args: ['--enable-unsafe-webgpu'] } },
+    },
+  ],
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,

@@ -129,6 +129,7 @@ T00 创建 workspace 必需的 package/crate 空壳和脚本，不创建几十�
 工具：选择、框选、拖动创建矩形、四边/四角 resize、移动、多选、重复、删除、改类别/属性、平移、缩放。Esc 取消预览；pointercancel、失焦和切图都不生成半成品；pointer capture 与释放必须配对。中文输入法 composition 和文本框聚焦时禁用编辑快捷键。一次拖动/批量接受=一个撤销单元。最小交互框边长 2 CSS px，提交还需图像空间正面积。
 
 Renderer 用批量实例矩形、缓存 image texture、增量更新、按需重绘。预览与正式对象分层。画布标签只显示选中/悬停及视口前 100 个对象，其余通过 DOM 虚拟列表查看，不能生成万级 DOM 标签。CPU 空间索引 + 明确排序实现重叠循环选择，不做同步 GPU 回读命中。
+WASM Renderer 的 `update_viewport` 专供 pan/zoom/resize，仅更新 uniform；`update_objects` 只接收 objects/overlays projection，并将连续差异写入 instance buffer；`update_scene` 用于完整 scene/image 替换，不应被普通 pointermove 调用。
 
 无 WebGPU 显示诊断和导出/查看列表入口，不静默换 Canvas2D 并宣称完成 wgpu；WebGL 降级不在 v0.1。设备丢失时保留 CPU 文档、本地保存与错误状态，重建资源成功才恢复编辑；零尺寸 Canvas 暂停 configure/render。
 

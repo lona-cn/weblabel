@@ -1,0 +1,39 @@
+--- a/crates/renderer-wgpu/Cargo.toml
++++ b/crates/renderer-wgpu/Cargo.toml
+@@ -6,4 +6,7 @@
+ [lib]
+ crate-type = ["cdylib", "rlib"]
+ path = "src/lib.rs"
+ 
++[dependencies]
++serde = { version = "=1.0.229", features = ["derive"] }
++
+@@ -10,4 +13,6 @@
+ [target.'cfg(target_arch = "wasm32")'.dependencies]
+ wgpu = { version = "30.0.1", default-features = false, features = ["webgpu", "wgsl"] }
+ wasm-bindgen = "=0.2.128"
+ wasm-bindgen-futures = "=0.4.78"
++serde-wasm-bindgen = "=0.6.5"
++web-sys = { version = "=0.3.105", features = ["HtmlCanvasElement", "Window"] }
+--- a/playwright.config.ts
++++ b/playwright.config.ts
+@@ -1,6 +1,15 @@
+ import { defineConfig } from '@playwright/test';
+ 
+ export default defineConfig({
+   testDir: './tests/e2e',
++  projects: [
++    { name: 'e2e', testDir: './tests/e2e' },
++    {
++      name: 't05-render',
++      testDir: './tests/render',
++      // Override the global software adapter argument for the real-device probe.
++      use: { launchOptions: { args: ['--enable-unsafe-webgpu'] } },
++    },
++  ],
+   fullyParallel: false,
+# Parent integration: exact Cargo dependencies were resolved in Cargo.lock; `pnpm wasm:probe-build` compiled the generated WASM package.
+# Root `package.json`/`pnpm-lock.yaml` add exact `sharp@0.34.4` for screenshot pixel sampling; the test imports the generated Rust renderer.
+# `docs/architecture.md` documents `update_viewport`/`update_objects` fast paths.
+# Browser test now submits the asymmetric image plus bbox, zooms, zero-resizes/restores, calls `recover`, and asserts screenshot pixels when an adapter exists.
+# Current host has no WebGPU adapter; actual draw/pixel assertions/device-loss recovery remain unverified.
