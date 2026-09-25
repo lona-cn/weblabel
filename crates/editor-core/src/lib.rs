@@ -6,6 +6,8 @@ mod history;
 mod selection;
 mod tools;
 
+pub mod suggestions;
+
 pub use annotation_domain::{ApiError, DomainError, EditorCommand, EditorDelta};
 pub use editor::Editor;
 pub use geometry::Viewport;

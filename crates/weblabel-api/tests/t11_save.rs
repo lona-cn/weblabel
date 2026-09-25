@@ -653,7 +653,7 @@ async fn save_cas_replay_conflict_and_history_are_atomic() {
 }
 
 #[tokio::test]
-async fn save_rejects_invalid_domain_data_and_unavailable_decisions() {
+async fn save_rejects_invalid_domain_data_and_unknown_decisions() {
     let fixture = fixture().await;
     let path = fixture.annotation_path();
     let object = json!({
@@ -747,8 +747,8 @@ async fn save_rejects_invalid_domain_data_and_unavailable_decisions() {
         "decision": "accept"
     }]);
     let (status, error) = fixture.request("PUT", &path, Some(request)).await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{error}");
-    assert_eq!(error["code"], "SUGGESTION_DECISIONS_UNSUPPORTED");
+    assert_eq!(status, StatusCode::NOT_FOUND, "{error}");
+    assert_eq!(error["code"], "SUGGESTION_SET_NOT_FOUND");
 
     let (status, head) = fixture.request("GET", &path, None).await;
     assert_eq!(status, StatusCode::OK, "{head}");
@@ -797,4 +797,252 @@ async fn same_base_concurrent_saves_create_only_one_revision() {
             .unwrap();
     transaction.commit().await.unwrap();
     assert_eq!(revision_count, 2);
+}
+
+#[tokio::test]
+async fn save_journals_decisions_with_the_revision_atomically_and_idempotently() {
+    use sqlx::Row;
+
+    // Seed the AI rows directly: the job engine fixtures live in t17, this
+    // test exercises the real save handler with real decision intents.
+    let fixture = fixture().await;
+    let path = fixture.annotation_path();
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let user_id: String = sqlx::query_scalar("SELECT user_id FROM users LIMIT 1")
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+    let canonical_sha256: String = sqlx::query_scalar(
+        "SELECT canonical_sha256 FROM media_revisions WHERE asset_revision_id=?",
+    )
+    .bind(&fixture.asset_revision_id)
+    .fetch_one(tx.connection())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO jobs(job_id, project_id, kind, state, payload_json, created_at, updated_at) \
+         VALUES ('job-e2e', ?, 'model', 'succeeded', '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')",
+    )
+    .bind(&fixture.project_id)
+    .execute(tx.connection())
+    .await
+    .unwrap();
+    let profile = json!({
+        "profile_id": "profile-e2e",
+        "provider_id": "detector_local",
+        "model_id": "detector-e2e",
+        "auth_kind": "local_weights",
+        "capabilities": {
+            "image_input": true, "tools": false, "structured_output": true,
+            "bbox_output": true, "attributes": true
+        },
+        "availability": "ready",
+        "verification": "mock_only",
+        "runtime_version": null,
+        "verified_at": null
+    });
+    let context = json!({
+        "project_id": fixture.project_id,
+        "asset_revision_id": fixture.asset_revision_id,
+        "annotation_revision_id": fixture.initial_revision_id,
+        "ontology_version_id": fixture.ontology_id,
+        "draft_generation": 0,
+        "canonical_sha256": canonical_sha256,
+        "selected_object_ids": [],
+        "object_hashes": {},
+        "input_fingerprint": "fp-e2e"
+    });
+    sqlx::query(
+        "INSERT INTO model_runs(run_id, operation_id, project_id, asset_revision_id, annotation_revision_id, \
+         ontology_version_id, actor_id, job_id, profile_id, profile_snapshot_json, provider_id, source, intent, \
+         prompt, consent_id, context_json, input_fingerprint, request_hash, state, cancel_requested, cost_display, \
+         usage_json, created_at, started_at, finished_at) \
+         VALUES ('run-e2e','op-run-e2e',?,?,?,? ,?,'job-e2e','profile-e2e',?,'detector_local','mock','detect', \
+         'detect vehicles',NULL,?,'fp-e2e',?,'succeeded',0,'none',NULL, \
+         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z')",
+    )
+    .bind(&fixture.project_id)
+    .bind(&fixture.asset_revision_id)
+    .bind(&fixture.initial_revision_id)
+    .bind(&fixture.ontology_id)
+    .bind(&user_id)
+    .bind(profile.to_string())
+    .bind(context.to_string())
+    .bind("2222222222222222222222222222222222222222222222222222222222222222")
+    .execute(tx.connection())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO predictions(prediction_id, run_id, project_id, asset_revision_id, source, raw_output_json, \
+         raw_output_bytes, usage_json, created_at) \
+         VALUES ('prediction-e2e','run-e2e',?,?,'mock','{}',2,NULL,'2026-01-01T00:00:00.000Z')",
+    )
+    .bind(&fixture.project_id)
+    .bind(&fixture.asset_revision_id)
+    .execute(tx.connection())
+    .await
+    .unwrap();
+    let created_object = json!({
+        "object_id": "object_pred_1",
+        "label_id": "vehicle",
+        "geometry": {"type": "bbox_xyxy", "x_min": 2.0, "y_min": 3.0, "x_max": 20.0, "y_max": 18.0},
+        "attributes": {},
+        "origin": {"type": "prediction", "prediction_id": "prediction-e2e", "model_run_id": "run-e2e", "import_batch_id": null}
+    });
+    let change = json!({
+        "kind": "create",
+        "change_id": "change-e2e",
+        "object": created_object,
+        "before_hash": null,
+        "reason": "detector candidate"
+    });
+    sqlx::query(
+        "INSERT INTO suggestion_sets(suggestion_set_id, run_id, prediction_id, project_id, asset_revision_id, \
+         changes_json, issues_json, score, created_at) \
+         VALUES ('suggestion-e2e','run-e2e','prediction-e2e',?,?,?,'[]',NULL,'2026-01-01T00:00:00.000Z')",
+    )
+    .bind(&fixture.project_id)
+    .bind(&fixture.asset_revision_id)
+    .bind(json!([change]).to_string())
+    .execute(tx.connection())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    // Accept: the journal row, the new revision and the head move commit
+    // together in one save transaction.
+    let mut accepted_document = fixture.document();
+    accepted_document["objects"] = json!([created_object.clone()]);
+    let mut request = fixture.save_request(
+        "op-e2e-accept",
+        &fixture.initial_revision_id,
+        accepted_document,
+    );
+    request["suggestion_decisions"] = json!([{
+        "suggestion_set_id": "suggestion-e2e",
+        "change_ids": ["change-e2e"],
+        "decision": "accept"
+    }]);
+    let (status, saved) = fixture.request("PUT", &path, Some(request.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["idempotent_replay"], false);
+    let revision_id = saved["revision"]["annotation_revision_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let rows: Vec<(String, String)> =
+        sqlx::query("SELECT decision, bound_revision_id FROM suggestion_decisions ORDER BY rowid")
+            .map(|row: sqlx::sqlite::SqliteRow| {
+                (
+                    row.try_get::<String, _>(0).unwrap(),
+                    row.try_get::<String, _>(1).unwrap(),
+                )
+            })
+            .fetch_all(tx.connection())
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![("accept".to_owned(), revision_id.clone())]);
+    let head: String = sqlx::query_scalar(
+        "SELECT annotation_revision_id FROM annotation_heads WHERE asset_revision_id=?",
+    )
+    .bind(&fixture.asset_revision_id)
+    .fetch_one(tx.connection())
+    .await
+    .unwrap();
+    assert_eq!(head, revision_id);
+    let predictions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM predictions")
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+    assert_eq!(predictions, 1, "the source prediction is immutable");
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM suggestion_set_states WHERE suggestion_set_id='suggestion-e2e'",
+    )
+    .fetch_one(tx.connection())
+    .await
+    .unwrap();
+    assert_eq!(state, "accepted");
+    tx.commit().await.unwrap();
+
+    // Idempotent replay by operation must not write a second journal row.
+    let (status, replay) = fixture.request("PUT", &path, Some(request)).await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay["idempotent_replay"], true);
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM suggestion_decisions")
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1, "replays must not duplicate decision rows");
+    tx.commit().await.unwrap();
+
+    // A manual delete is a plain save without decisions and produces a new
+    // revision; the original accept stays journaled.
+    let mut deleted = fixture.document();
+    deleted["objects"] = json!([]);
+    let delete_request = fixture.save_request("op-e2e-delete", &revision_id, deleted);
+    let (status, removed) = fixture.request("PUT", &path, Some(delete_request)).await;
+    assert_eq!(status, StatusCode::OK, "{removed}");
+    let after_delete = removed["revision"]["annotation_revision_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Repeating the accept must not create the object twice: the journal
+    // already records this change as accepted.
+    let mut repeat_document = fixture.document();
+    repeat_document["objects"] = json!([created_object]);
+    let mut repeat = fixture.save_request("op-e2e-repeat", &after_delete, repeat_document);
+    repeat["suggestion_decisions"] = json!([{
+        "suggestion_set_id": "suggestion-e2e",
+        "change_ids": ["change-e2e"],
+        "decision": "accept"
+    }]);
+    let (status, error) = fixture.request("PUT", &path, Some(repeat)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{error}");
+    assert_eq!(error["code"], "ALREADY_ACCEPTED");
+
+    // Undo of the accept is a revert intent bound to the new revision and the
+    // source prediction history stays intact.
+    let mut undo = fixture.save_request("op-e2e-undo", &after_delete, fixture.document());
+    undo["suggestion_decisions"] = json!([{
+        "suggestion_set_id": "suggestion-e2e",
+        "change_ids": ["change-e2e"],
+        "decision": "revert"
+    }]);
+    let (status, undone) = fixture.request("PUT", &path, Some(undo)).await;
+    assert_eq!(status, StatusCode::OK, "{undone}");
+    let revert_revision = undone["revision"]["annotation_revision_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let rows: Vec<(String, String)> =
+        sqlx::query("SELECT decision, bound_revision_id FROM suggestion_decisions ORDER BY rowid")
+            .map(|row: sqlx::sqlite::SqliteRow| {
+                (
+                    row.try_get::<String, _>(0).unwrap(),
+                    row.try_get::<String, _>(1).unwrap(),
+                )
+            })
+            .fetch_all(tx.connection())
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("accept".to_owned(), revision_id),
+            ("revert".to_owned(), revert_revision),
+        ],
+        "accept -> revert must be journaled in save order without dedup"
+    );
+    let predictions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM predictions")
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+    assert_eq!(predictions, 1, "undo must never delete prediction history");
+    tx.commit().await.unwrap();
 }

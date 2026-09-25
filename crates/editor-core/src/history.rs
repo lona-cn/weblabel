@@ -1,4 +1,4 @@
-use annotation_domain::{AnnotationDocument, AnnotationObject, Scalar};
+use annotation_domain::{AnnotationDocument, AnnotationObject, Scalar, SuggestionDecisionIntent};
 
 pub(crate) const HISTORY_LIMIT: usize = 128;
 pub(crate) const HISTORY_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
@@ -7,6 +7,10 @@ pub(crate) const HISTORY_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 pub(crate) struct HistoryEntry {
     pub before: AnnotationDocument,
     pub after: AnnotationDocument,
+    /// Suggestion decision intents produced by this logical operation. Undo
+    /// flips them to `revert`, redo replays them as `accept`; the journal must
+    /// keep the ordered accept/revert transitions without deduplication.
+    pub suggestion_decisions: Vec<SuggestionDecisionIntent>,
     bytes: usize,
 }
 
@@ -17,8 +21,17 @@ impl HistoryEntry {
         Self {
             before,
             after,
+            suggestion_decisions: Vec::new(),
             bytes,
         }
+    }
+
+    pub fn with_suggestion_decisions(
+        mut self,
+        suggestion_decisions: Vec<SuggestionDecisionIntent>,
+    ) -> Self {
+        self.suggestion_decisions = suggestion_decisions;
+        self
     }
 }
 
@@ -59,20 +72,28 @@ impl History {
         self.undo.push(entry);
     }
 
-    pub fn undo(&mut self, current: &AnnotationDocument) -> Option<AnnotationDocument> {
+    pub fn undo(
+        &mut self,
+        current: &AnnotationDocument,
+    ) -> Option<(AnnotationDocument, Vec<SuggestionDecisionIntent>)> {
         let entry = self.undo.pop()?;
         debug_assert_eq!(&entry.after, current);
+        let decisions = crate::suggestions::revert_intents(&entry.suggestion_decisions);
         let document = entry.before.clone();
         self.redo.push(entry);
-        Some(document)
+        Some((document, decisions))
     }
 
-    pub fn redo(&mut self, current: &AnnotationDocument) -> Option<AnnotationDocument> {
+    pub fn redo(
+        &mut self,
+        current: &AnnotationDocument,
+    ) -> Option<(AnnotationDocument, Vec<SuggestionDecisionIntent>)> {
         let entry = self.redo.pop()?;
         debug_assert_eq!(&entry.before, current);
+        let decisions = entry.suggestion_decisions.clone();
         let document = entry.after.clone();
         self.undo.push(entry);
-        Some(document)
+        Some((document, decisions))
     }
 }
 

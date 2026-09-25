@@ -7,6 +7,7 @@ pub mod ontology;
 pub mod prediction;
 pub mod revision;
 mod schema;
+pub mod suggestion_validation;
 
 pub use document::{
     AnnotationDocument, AnnotationObject, Attrs, Completion, CoordinateSpace, CoordinateSpaceType,

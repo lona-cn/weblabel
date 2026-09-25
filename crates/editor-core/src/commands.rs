@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use annotation_domain::{
-    validate_document, AnnotationDocument, AnnotationObject, Completion, DomainError,
-    EditorCommand, Id, OntologyVersion,
+    validate_document, AnnotationDocument, AnnotationObject, DomainError, EditorCommand, Id,
+    OntologyVersion,
 };
 
 use crate::Selection;
@@ -105,8 +105,8 @@ pub(crate) fn apply(
         EditorCommand::SetCompletion { completion } => document.completion = *completion,
         EditorCommand::ApplySuggestions { .. } => {
             return Err(DomainError::new(
-                "NOT_READY",
-                "suggestion application is not implemented",
+                "INVALID_COMMAND_STATE",
+                "suggestion application is handled by the editor",
             ));
         }
         EditorCommand::Undo | EditorCommand::Redo => {

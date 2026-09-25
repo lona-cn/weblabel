@@ -1,6 +1,7 @@
 //! AI subsystem: persistent model runs, immutable predictions, suggestion sets
 //! and the monotonic run event stream.
 
+pub mod acceptance;
 pub mod events;
 pub mod predictions;
 pub mod runs;

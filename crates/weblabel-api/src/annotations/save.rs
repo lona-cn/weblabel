@@ -27,6 +27,7 @@ struct WritableAsset {
     project_id: String,
     width: u32,
     height: u32,
+    canonical_sha256: String,
 }
 
 pub(super) async fn put(
@@ -159,13 +160,6 @@ async fn save_in_transaction(
             "Task leases are not supported by this save endpoint yet",
         ));
     }
-    if !request.suggestion_decisions.is_empty() {
-        return Err(Failure::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "SUGGESTION_DECISIONS_UNSUPPORTED",
-            "Suggestion decisions must be empty until transactional decision support is available",
-        ));
-    }
     if &*request.document.asset_revision_id != asset_revision_id {
         return Err(Failure::new(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -211,12 +205,9 @@ async fn save_in_transaction(
                     ));
                 }
             }
-            _ => {
-                return Err(Failure::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "UNVERIFIED_PROVENANCE",
-                    "Prediction provenance is not verifiable for annotation saves",
-                ));
+            OriginType::Prediction => {
+                // Verified below against the accepted create coverage once the
+                // decision journal is validated inside this transaction.
             }
         }
     }
@@ -301,6 +292,39 @@ async fn save_in_transaction(
         ));
     }
     let revision_no = current_revision_no + 1;
+
+    // Suggestion decisions are validated against the base revision document
+    // inside this transaction and write nothing until `record` below, so a
+    // rejected decision leaves the document, head and journal untouched.
+    let base_body: String = sqlx::query_scalar(
+        "SELECT body_json FROM annotation_revisions \
+         WHERE annotation_revision_id=? AND project_id=?",
+    )
+    .bind(&*request.base_revision_id)
+    .bind(&asset.project_id)
+    .fetch_one(transaction.connection())
+    .await
+    .map_err(|_| storage_failure())?;
+    let base_document: annotation_domain::AnnotationDocument =
+        serde_json::from_str(&base_body).map_err(|_| storage_failure())?;
+    let prepared = crate::ai::acceptance::prepare(
+        transaction.connection(),
+        &crate::ai::acceptance::SavePins {
+            project_id: &asset.project_id,
+            asset_revision_id,
+            canonical_sha256: &asset.canonical_sha256,
+            base_document: &base_document,
+            ontology: &ontology,
+        },
+        request,
+    )
+    .await?;
+    for object in &request.document.objects {
+        if object.origin.kind == OriginType::Prediction {
+            prepared.verify_prediction_object(object)?;
+        }
+    }
+
     let serialized = serialize_document(&request.document).map_err(|_| {
         Failure::new(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -336,6 +360,14 @@ async fn save_in_transaction(
     .execute(transaction.connection())
     .await
     .map_err(|_| storage_failure())?;
+    crate::ai::acceptance::record(
+        transaction.connection(),
+        &prepared,
+        &*revision.annotation_revision_id,
+        &principal.user_id,
+        &revision.created_at,
+    )
+    .await?;
 
     let updated = sqlx::query(
         "UPDATE annotation_heads SET annotation_revision_id=? \
@@ -418,7 +450,7 @@ async fn writable_asset(
     user_id: &str,
 ) -> Result<WritableAsset, Failure> {
     let row = sqlx::query(
-        "SELECT r.project_id, m.canonical_width, m.canonical_height, u.role \
+        "SELECT r.project_id, r.canonical_sha256, m.canonical_width, m.canonical_height, u.role \
          FROM media_revisions r \
          JOIN media_metadata m ON m.asset_revision_id=r.asset_revision_id \
          JOIN memberships u ON u.project_id=r.project_id \
@@ -454,6 +486,9 @@ async fn writable_asset(
         project_id: row.try_get("project_id").map_err(|_| storage_failure())?,
         width: u32::try_from(width).map_err(|_| storage_failure())?,
         height: u32::try_from(height).map_err(|_| storage_failure())?,
+        canonical_sha256: row
+            .try_get("canonical_sha256")
+            .map_err(|_| storage_failure())?,
     })
 }
 

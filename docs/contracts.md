@@ -311,6 +311,8 @@ T14单图导出同步生成单个不可变revision的native/YOLO/COCO产物并�
 
 T17响应形状（主Agent已批准）：`POST /api/ai/runs` 返回RunSummary数组+`idempotent_replay`（与T11 SaveResponse惯例一致）；`GET /api/ai/runs/{id}/events`与`/suggestions`返回`{run,items,next_cursor}`（run摘要使UI可见interrupted与cost_display=unknown）；`GET /api/jobs/{id}`返回作业状态与`items`逐asset结果。Interrupted无对应RunEventType（C4冻结8值），恢复事件以`failed`+`data:{interrupted:true,cost_display}`表达。`POST /internal/test/jobs/drain`为debug构建专用测试通道（cfg(debug_assertions)+平台管理员），生产不编译。
 
+T19裁定：Prediction出处校验固定身份引用（object_id/prediction_id/model_run_id真实存在且属于该run），不固定接受时刻的对象内容——接受后的手工编辑保留prediction出处，内容变化由revision history记录。`suggestion_set_states`由决策journal重算；T25落地reject路由时，rejected/stale终态不得被静默覆盖，reject必须阻止后续accept除非用户显式重新确认。
+
 POST /api/users 与 GET /api/users 的管理员接口由 testing-contracts.md §6定义，T10实现。
 
 ## C7. SQLite 表与不可变对象

@@ -1,0 +1,662 @@
+diff --git a/crates/annotation-domain/src/lib.rs b/crates/annotation-domain/src/lib.rs
+index 2efd219..be7d395 100644
+--- a/crates/annotation-domain/src/lib.rs
++++ b/crates/annotation-domain/src/lib.rs
+@@ -7,6 +7,7 @@ pub mod ontology;
+ pub mod prediction;
+ pub mod revision;
+ mod schema;
++pub mod suggestion_validation;
+ 
+ pub use document::{
+     AnnotationDocument, AnnotationObject, Attrs, Completion, CoordinateSpace, CoordinateSpaceType,
+diff --git a/crates/editor-core/src/commands.rs b/crates/editor-core/src/commands.rs
+index c1d55cd..fc29274 100644
+--- a/crates/editor-core/src/commands.rs
++++ b/crates/editor-core/src/commands.rs
+@@ -105,8 +105,8 @@ pub(crate) fn apply(
+         EditorCommand::SetCompletion { completion } => document.completion = *completion,
+         EditorCommand::ApplySuggestions { .. } => {
+             return Err(DomainError::new(
+-                "NOT_READY",
+-                "suggestion application is not implemented",
++                "INVALID_COMMAND_STATE",
++                "suggestion application is handled by the editor",
+             ));
+         }
+         EditorCommand::Undo | EditorCommand::Redo => {
+diff --git a/crates/editor-core/src/editor.rs b/crates/editor-core/src/editor.rs
+index 890b169..5f9407f 100644
+--- a/crates/editor-core/src/editor.rs
++++ b/crates/editor-core/src/editor.rs
+@@ -57,21 +57,50 @@ impl Editor {
+             other => {
+                 let before = self.document.clone();
+                 let mut after = before.clone();
+-                commands::apply(&mut after, &self.ontology, &self.selection, &other)?;
++                let suggestion_decisions = match &other {
++                    EditorCommand::ApplySuggestions {
++                        set,
++                        change_ids,
++                        expected_generation,
++                    } => {
++                        vec![crate::suggestions::apply(
++                            &mut after,
++                            &self.ontology,
++                            &self.selection,
++                            &crate::suggestions::AcceptancePins {
++                                generation: self.generation,
++                                expected_generation: *expected_generation,
++                                base_revision_id: None,
++                                canonical_sha256: None,
++                                run: None,
++                            },
++                            set,
++                            change_ids,
++                        )?]
++                    }
++                    _ => {
++                        commands::apply(&mut after, &self.ontology, &self.selection, &other)?;
++                        Vec::new()
++                    }
++                };
+                 if after == before {
+                     return Ok(self.delta(false, false, Vec::new(), Vec::new()));
+                 }
+                 self.bump_generation()?;
+                 self.document = after.clone();
+-                self.history
+-                    .push(HistoryEntry::new(before.clone(), after.clone()));
++                self.history.push(
++                    HistoryEntry::new(before.clone(), after.clone())
++                        .with_suggestion_decisions(suggestion_decisions.clone()),
++                );
+                 self.prune_transient_state();
+-                Ok(self.delta(
++                let mut delta = self.delta(
+                     true,
+                     true,
+                     changed_objects(&before, &after),
+                     removed_objects(&before, &after),
+-                ))
++                );
++                delta.suggestion_decisions = suggestion_decisions;
++                Ok(delta)
+             }
+         }
+     }
+@@ -356,19 +385,21 @@ impl Editor {
+         }
+         self.bump_generation()?;
+         let before = self.document.clone();
+-        let restored = self
++        let (restored, suggestion_decisions) = self
+             .history
+             .undo(&before)
+             .expect("undo availability was checked");
+         self.document = restored;
+         self.prune_transient_state();
+         let after = self.document.clone();
+-        Ok(self.delta(
++        let mut delta = self.delta(
+             true,
+             true,
+             changed_objects(&before, &after),
+             removed_objects(&before, &after),
+-        ))
++        );
++        delta.suggestion_decisions = suggestion_decisions;
++        Ok(delta)
+     }
+     fn redo(&mut self) -> Result<EditorDelta, DomainError> {
+         if !self.history.can_redo() {
+@@ -376,19 +407,21 @@ impl Editor {
+         }
+         self.bump_generation()?;
+         let before = self.document.clone();
+-        let restored = self
++        let (restored, suggestion_decisions) = self
+             .history
+             .redo(&before)
+             .expect("redo availability was checked");
+         self.document = restored;
+         self.prune_transient_state();
+         let after = self.document.clone();
+-        Ok(self.delta(
++        let mut delta = self.delta(
+             true,
+             true,
+             changed_objects(&before, &after),
+             removed_objects(&before, &after),
+-        ))
++        );
++        delta.suggestion_decisions = suggestion_decisions;
++        Ok(delta)
+     }
+ 
+     fn bump_generation(&mut self) -> Result<(), DomainError> {
+diff --git a/crates/editor-core/src/history.rs b/crates/editor-core/src/history.rs
+index 52698df..6006377 100644
+--- a/crates/editor-core/src/history.rs
++++ b/crates/editor-core/src/history.rs
+@@ -1,4 +1,4 @@
+-use annotation_domain::{AnnotationDocument, AnnotationObject, Scalar};
++use annotation_domain::{AnnotationDocument, AnnotationObject, Scalar, SuggestionDecisionIntent};
+ 
+ pub(crate) const HISTORY_LIMIT: usize = 128;
+ pub(crate) const HISTORY_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+@@ -7,6 +7,10 @@ pub(crate) const HISTORY_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+ pub(crate) struct HistoryEntry {
+     pub before: AnnotationDocument,
+     pub after: AnnotationDocument,
++    /// Suggestion decision intents produced by this logical operation. Undo
++    /// flips them to `revert`, redo replays them as `accept`; the journal must
++    /// keep the ordered accept/revert transitions without deduplication.
++    pub suggestion_decisions: Vec<SuggestionDecisionIntent>,
+     bytes: usize,
+ }
+ 
+@@ -17,9 +21,18 @@ impl HistoryEntry {
+         Self {
+             before,
+             after,
++            suggestion_decisions: Vec::new(),
+             bytes,
+         }
+     }
++
++    pub fn with_suggestion_decisions(
++        mut self,
++        suggestion_decisions: Vec<SuggestionDecisionIntent>,
++    ) -> Self {
++        self.suggestion_decisions = suggestion_decisions;
++        self
++    }
+ }
+ 
+ #[derive(Debug, Default)]
+@@ -59,20 +72,28 @@ impl History {
+         self.undo.push(entry);
+     }
+ 
+-    pub fn undo(&mut self, current: &AnnotationDocument) -> Option<AnnotationDocument> {
++    pub fn undo(
++        &mut self,
++        current: &AnnotationDocument,
++    ) -> Option<(AnnotationDocument, Vec<SuggestionDecisionIntent>)> {
+         let entry = self.undo.pop()?;
+         debug_assert_eq!(&entry.after, current);
++        let decisions = crate::suggestions::revert_intents(&entry.suggestion_decisions);
+         let document = entry.before.clone();
+         self.redo.push(entry);
+-        Some(document)
++        Some((document, decisions))
+     }
+ 
+-    pub fn redo(&mut self, current: &AnnotationDocument) -> Option<AnnotationDocument> {
++    pub fn redo(
++        &mut self,
++        current: &AnnotationDocument,
++    ) -> Option<(AnnotationDocument, Vec<SuggestionDecisionIntent>)> {
+         let entry = self.redo.pop()?;
+         debug_assert_eq!(&entry.before, current);
++        let decisions = entry.suggestion_decisions.clone();
+         let document = entry.after.clone();
+         self.undo.push(entry);
+-        Some(document)
++        Some((document, decisions))
+     }
+ }
+ 
+diff --git a/crates/editor-core/src/lib.rs b/crates/editor-core/src/lib.rs
+index 98cc707..3b2026d 100644
+--- a/crates/editor-core/src/lib.rs
++++ b/crates/editor-core/src/lib.rs
+@@ -6,6 +6,8 @@ mod history;
+ mod selection;
+ mod tools;
+ 
++pub mod suggestions;
++
+ pub use annotation_domain::{ApiError, DomainError, EditorCommand, EditorDelta};
+ pub use editor::Editor;
+ pub use geometry::Viewport;
+diff --git a/crates/editor-core/tests/t04_editor.rs b/crates/editor-core/tests/t04_editor.rs
+index 8430b9e..af255ab 100644
+--- a/crates/editor-core/tests/t04_editor.rs
++++ b/crates/editor-core/tests/t04_editor.rs
+@@ -317,7 +317,7 @@ fn locked_objects_reject_mutation_without_changing_document() {
+ }
+ 
+ #[test]
+-fn apply_suggestions_reports_not_ready_without_mutating_document() {
++fn apply_suggestions_rejects_empty_selection_without_mutating_document() {
+     let mut editor = editor();
+     let before = editor.snapshot();
+     let result = editor.dispatch(EditorCommand::ApplySuggestions {
+@@ -328,7 +328,7 @@ fn apply_suggestions_reports_not_ready_without_mutating_document() {
+         change_ids: vec![],
+         expected_generation: 0,
+     });
+-    assert_eq!(result.unwrap_err().code, "NOT_READY");
++    assert_eq!(result.unwrap_err().code, "EMPTY_SELECTION");
+     assert_eq!(editor.snapshot(), before);
+     assert_eq!(editor.generation(), 0);
+ }
+diff --git a/crates/weblabel-api/src/ai/mod.rs b/crates/weblabel-api/src/ai/mod.rs
+index 2bbec8f..d99c377 100644
+--- a/crates/weblabel-api/src/ai/mod.rs
++++ b/crates/weblabel-api/src/ai/mod.rs
+@@ -1,6 +1,7 @@
+ //! AI subsystem: persistent model runs, immutable predictions, suggestion sets
+ //! and the monotonic run event stream.
+ 
++pub mod acceptance;
+ pub mod events;
+ pub mod predictions;
+ pub mod runs;
+diff --git a/crates/weblabel-api/src/annotations/mod.rs b/crates/weblabel-api/src/annotations/mod.rs
+index 472909d..106d213 100644
+--- a/crates/weblabel-api/src/annotations/mod.rs
++++ b/crates/weblabel-api/src/annotations/mod.rs
+@@ -54,7 +54,7 @@ pub fn router(repository: Repository, auth: AuthState) -> Router {
+         .with_state(state)
+ }
+ 
+-#[derive(Clone, Copy)]
++#[derive(Clone, Copy, Debug)]
+ pub(crate) struct Failure {
+     pub(crate) status: axum::http::StatusCode,
+     pub(crate) code: &'static str,
+diff --git a/crates/weblabel-api/src/annotations/save.rs b/crates/weblabel-api/src/annotations/save.rs
+index 523d6d7..bf2ad40 100644
+--- a/crates/weblabel-api/src/annotations/save.rs
++++ b/crates/weblabel-api/src/annotations/save.rs
+@@ -27,6 +27,7 @@ struct WritableAsset {
+     project_id: String,
+     width: u32,
+     height: u32,
++    canonical_sha256: String,
+ }
+ 
+ pub(super) async fn put(
+@@ -159,13 +160,6 @@ async fn save_in_transaction(
+             "Task leases are not supported by this save endpoint yet",
+         ));
+     }
+-    if !request.suggestion_decisions.is_empty() {
+-        return Err(Failure::new(
+-            StatusCode::UNPROCESSABLE_ENTITY,
+-            "SUGGESTION_DECISIONS_UNSUPPORTED",
+-            "Suggestion decisions must be empty until transactional decision support is available",
+-        ));
+-    }
+     if &*request.document.asset_revision_id != asset_revision_id {
+         return Err(Failure::new(
+             StatusCode::UNPROCESSABLE_ENTITY,
+@@ -211,12 +205,9 @@ async fn save_in_transaction(
+                     ));
+                 }
+             }
+-            _ => {
+-                return Err(Failure::new(
+-                    StatusCode::UNPROCESSABLE_ENTITY,
+-                    "UNVERIFIED_PROVENANCE",
+-                    "Prediction provenance is not verifiable for annotation saves",
+-                ));
++            OriginType::Prediction => {
++                // Verified below against the accepted create coverage once the
++                // decision journal is validated inside this transaction.
+             }
+         }
+     }
+@@ -301,6 +292,39 @@ async fn save_in_transaction(
+         ));
+     }
+     let revision_no = current_revision_no + 1;
++
++    // Suggestion decisions are validated against the base revision document
++    // inside this transaction and write nothing until `record` below, so a
++    // rejected decision leaves the document, head and journal untouched.
++    let base_body: String = sqlx::query_scalar(
++        "SELECT body_json FROM annotation_revisions \
++         WHERE annotation_revision_id=? AND project_id=?",
++    )
++    .bind(&*request.base_revision_id)
++    .bind(&asset.project_id)
++    .fetch_one(transaction.connection())
++    .await
++    .map_err(|_| storage_failure())?;
++    let base_document: annotation_domain::AnnotationDocument =
++        serde_json::from_str(&base_body).map_err(|_| storage_failure())?;
++    let prepared = crate::ai::acceptance::prepare(
++        transaction.connection(),
++        &crate::ai::acceptance::SavePins {
++            project_id: &asset.project_id,
++            asset_revision_id,
++            canonical_sha256: &asset.canonical_sha256,
++            base_document: &base_document,
++            ontology: &ontology,
++        },
++        request,
++    )
++    .await?;
++    for object in &request.document.objects {
++        if object.origin.kind == OriginType::Prediction {
++            prepared.verify_prediction_object(object)?;
++        }
++    }
++
+     let serialized = serialize_document(&request.document).map_err(|_| {
+         Failure::new(
+             StatusCode::UNPROCESSABLE_ENTITY,
+@@ -336,6 +360,14 @@ async fn save_in_transaction(
+     .execute(transaction.connection())
+     .await
+     .map_err(|_| storage_failure())?;
++    crate::ai::acceptance::record(
++        transaction.connection(),
++        &prepared,
++        &*revision.annotation_revision_id,
++        &principal.user_id,
++        &revision.created_at,
++    )
++    .await?;
+ 
+     let updated = sqlx::query(
+         "UPDATE annotation_heads SET annotation_revision_id=? \
+@@ -418,7 +450,7 @@ async fn writable_asset(
+     user_id: &str,
+ ) -> Result<WritableAsset, Failure> {
+     let row = sqlx::query(
+-        "SELECT r.project_id, m.canonical_width, m.canonical_height, u.role \
++        "SELECT r.project_id, r.canonical_sha256, m.canonical_width, m.canonical_height, u.role \
+          FROM media_revisions r \
+          JOIN media_metadata m ON m.asset_revision_id=r.asset_revision_id \
+          JOIN memberships u ON u.project_id=r.project_id \
+@@ -454,6 +486,9 @@ async fn writable_asset(
+         project_id: row.try_get("project_id").map_err(|_| storage_failure())?,
+         width: u32::try_from(width).map_err(|_| storage_failure())?,
+         height: u32::try_from(height).map_err(|_| storage_failure())?,
++        canonical_sha256: row
++            .try_get("canonical_sha256")
++            .map_err(|_| storage_failure())?,
+     })
+ }
+ 
+diff --git a/crates/weblabel-api/tests/t11_save.rs b/crates/weblabel-api/tests/t11_save.rs
+index 9ad4cdf..fb261ce 100644
+--- a/crates/weblabel-api/tests/t11_save.rs
++++ b/crates/weblabel-api/tests/t11_save.rs
+@@ -653,7 +653,7 @@ async fn save_cas_replay_conflict_and_history_are_atomic() {
+ }
+ 
+ #[tokio::test]
+-async fn save_rejects_invalid_domain_data_and_unavailable_decisions() {
++async fn save_rejects_invalid_domain_data_and_unknown_decisions() {
+     let fixture = fixture().await;
+     let path = fixture.annotation_path();
+     let object = json!({
+@@ -747,8 +747,8 @@ async fn save_rejects_invalid_domain_data_and_unavailable_decisions() {
+         "decision": "accept"
+     }]);
+     let (status, error) = fixture.request("PUT", &path, Some(request)).await;
+-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{error}");
+-    assert_eq!(error["code"], "SUGGESTION_DECISIONS_UNSUPPORTED");
++    assert_eq!(status, StatusCode::NOT_FOUND, "{error}");
++    assert_eq!(error["code"], "SUGGESTION_SET_NOT_FOUND");
+ 
+     let (status, head) = fixture.request("GET", &path, None).await;
+     assert_eq!(status, StatusCode::OK, "{head}");
+@@ -798,3 +798,251 @@ async fn same_base_concurrent_saves_create_only_one_revision() {
+     transaction.commit().await.unwrap();
+     assert_eq!(revision_count, 2);
+ }
++
++#[tokio::test]
++async fn save_journals_decisions_with_the_revision_atomically_and_idempotently() {
++    use sqlx::Row;
++
++    // Seed the AI rows directly: the job engine fixtures live in t17, this
++    // test exercises the real save handler with real decision intents.
++    let fixture = fixture().await;
++    let path = fixture.annotation_path();
++    let mut tx = fixture.repository.begin_write().await.unwrap();
++    let user_id: String = sqlx::query_scalar("SELECT user_id FROM users LIMIT 1")
++        .fetch_one(tx.connection())
++        .await
++        .unwrap();
++    let canonical_sha256: String = sqlx::query_scalar(
++        "SELECT canonical_sha256 FROM media_revisions WHERE asset_revision_id=?",
++    )
++    .bind(&fixture.asset_revision_id)
++    .fetch_one(tx.connection())
++    .await
++    .unwrap();
++    sqlx::query(
++        "INSERT INTO jobs(job_id, project_id, kind, state, payload_json, created_at, updated_at) \
++         VALUES ('job-e2e', ?, 'model', 'succeeded', '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')",
++    )
++    .bind(&fixture.project_id)
++    .execute(tx.connection())
++    .await
++    .unwrap();
++    let profile = json!({
++        "profile_id": "profile-e2e",
++        "provider_id": "detector_local",
++        "model_id": "detector-e2e",
++        "auth_kind": "local_weights",
++        "capabilities": {
++            "image_input": true, "tools": false, "structured_output": true,
++            "bbox_output": true, "attributes": true
++        },
++        "availability": "ready",
++        "verification": "mock_only",
++        "runtime_version": null,
++        "verified_at": null
++    });
++    let context = json!({
++        "project_id": fixture.project_id,
++        "asset_revision_id": fixture.asset_revision_id,
++        "annotation_revision_id": fixture.initial_revision_id,
++        "ontology_version_id": fixture.ontology_id,
++        "draft_generation": 0,
++        "canonical_sha256": canonical_sha256,
++        "selected_object_ids": [],
++        "object_hashes": {},
++        "input_fingerprint": "fp-e2e"
++    });
++    sqlx::query(
++        "INSERT INTO model_runs(run_id, operation_id, project_id, asset_revision_id, annotation_revision_id, \
++         ontology_version_id, actor_id, job_id, profile_id, profile_snapshot_json, provider_id, source, intent, \
++         prompt, consent_id, context_json, input_fingerprint, request_hash, state, cancel_requested, cost_display, \
++         usage_json, created_at, started_at, finished_at) \
++         VALUES ('run-e2e','op-run-e2e',?,?,?,? ,?,'job-e2e','profile-e2e',?,'detector_local','mock','detect', \
++         'detect vehicles',NULL,?,'fp-e2e',?,'succeeded',0,'none',NULL, \
++         '2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z')",
++    )
++    .bind(&fixture.project_id)
++    .bind(&fixture.asset_revision_id)
++    .bind(&fixture.initial_revision_id)
++    .bind(&fixture.ontology_id)
++    .bind(&user_id)
++    .bind(profile.to_string())
++    .bind(context.to_string())
++    .bind("2222222222222222222222222222222222222222222222222222222222222222")
++    .execute(tx.connection())
++    .await
++    .unwrap();
++    sqlx::query(
++        "INSERT INTO predictions(prediction_id, run_id, project_id, asset_revision_id, source, raw_output_json, \
++         raw_output_bytes, usage_json, created_at) \
++         VALUES ('prediction-e2e','run-e2e',?,?,'mock','{}',2,NULL,'2026-01-01T00:00:00.000Z')",
++    )
++    .bind(&fixture.project_id)
++    .bind(&fixture.asset_revision_id)
++    .execute(tx.connection())
++    .await
++    .unwrap();
++    let created_object = json!({
++        "object_id": "object_pred_1",
++        "label_id": "vehicle",
++        "geometry": {"type": "bbox_xyxy", "x_min": 2.0, "y_min": 3.0, "x_max": 20.0, "y_max": 18.0},
++        "attributes": {},
++        "origin": {"type": "prediction", "prediction_id": "prediction-e2e", "model_run_id": "run-e2e", "import_batch_id": null}
++    });
++    let change = json!({
++        "kind": "create",
++        "change_id": "change-e2e",
++        "object": created_object,
++        "before_hash": null,
++        "reason": "detector candidate"
++    });
++    sqlx::query(
++        "INSERT INTO suggestion_sets(suggestion_set_id, run_id, prediction_id, project_id, asset_revision_id, \
++         changes_json, issues_json, score, created_at) \
++         VALUES ('suggestion-e2e','run-e2e','prediction-e2e',?,?,?,'[]',NULL,'2026-01-01T00:00:00.000Z')",
++    )
++    .bind(&fixture.project_id)
++    .bind(&fixture.asset_revision_id)
++    .bind(json!([change]).to_string())
++    .execute(tx.connection())
++    .await
++    .unwrap();
++    tx.commit().await.unwrap();
++
++    // Accept: the journal row, the new revision and the head move commit
++    // together in one save transaction.
++    let mut accepted_document = fixture.document();
++    accepted_document["objects"] = json!([created_object.clone()]);
++    let mut request = fixture.save_request(
++        "op-e2e-accept",
++        &fixture.initial_revision_id,
++        accepted_document,
++    );
++    request["suggestion_decisions"] = json!([{
++        "suggestion_set_id": "suggestion-e2e",
++        "change_ids": ["change-e2e"],
++        "decision": "accept"
++    }]);
++    let (status, saved) = fixture.request("PUT", &path, Some(request.clone())).await;
++    assert_eq!(status, StatusCode::OK, "{saved}");
++    assert_eq!(saved["idempotent_replay"], false);
++    let revision_id = saved["revision"]["annotation_revision_id"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++
++    let mut tx = fixture.repository.begin_write().await.unwrap();
++    let rows: Vec<(String, String)> =
++        sqlx::query("SELECT decision, bound_revision_id FROM suggestion_decisions ORDER BY rowid")
++            .map(|row: sqlx::sqlite::SqliteRow| {
++                (
++                    row.try_get::<String, _>(0).unwrap(),
++                    row.try_get::<String, _>(1).unwrap(),
++                )
++            })
++            .fetch_all(tx.connection())
++            .await
++            .unwrap();
++    assert_eq!(rows, vec![("accept".to_owned(), revision_id.clone())]);
++    let head: String = sqlx::query_scalar(
++        "SELECT annotation_revision_id FROM annotation_heads WHERE asset_revision_id=?",
++    )
++    .bind(&fixture.asset_revision_id)
++    .fetch_one(tx.connection())
++    .await
++    .unwrap();
++    assert_eq!(head, revision_id);
++    let predictions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM predictions")
++        .fetch_one(tx.connection())
++        .await
++        .unwrap();
++    assert_eq!(predictions, 1, "the source prediction is immutable");
++    let state: String = sqlx::query_scalar(
++        "SELECT state FROM suggestion_set_states WHERE suggestion_set_id='suggestion-e2e'",
++    )
++    .fetch_one(tx.connection())
++    .await
++    .unwrap();
++    assert_eq!(state, "accepted");
++    tx.commit().await.unwrap();
++
++    // Idempotent replay by operation must not write a second journal row.
++    let (status, replay) = fixture.request("PUT", &path, Some(request)).await;
++    assert_eq!(status, StatusCode::OK, "{replay}");
++    assert_eq!(replay["idempotent_replay"], true);
++    let mut tx = fixture.repository.begin_write().await.unwrap();
++    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM suggestion_decisions")
++        .fetch_one(tx.connection())
++        .await
++        .unwrap();
++    assert_eq!(rows, 1, "replays must not duplicate decision rows");
++    tx.commit().await.unwrap();
++
++    // A manual delete is a plain save without decisions and produces a new
++    // revision; the original accept stays journaled.
++    let mut deleted = fixture.document();
++    deleted["objects"] = json!([]);
++    let delete_request = fixture.save_request("op-e2e-delete", &revision_id, deleted);
++    let (status, removed) = fixture.request("PUT", &path, Some(delete_request)).await;
++    assert_eq!(status, StatusCode::OK, "{removed}");
++    let after_delete = removed["revision"]["annotation_revision_id"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++
++    // Repeating the accept must not create the object twice: the journal
++    // already records this change as accepted.
++    let mut repeat_document = fixture.document();
++    repeat_document["objects"] = json!([created_object]);
++    let mut repeat = fixture.save_request("op-e2e-repeat", &after_delete, repeat_document);
++    repeat["suggestion_decisions"] = json!([{
++        "suggestion_set_id": "suggestion-e2e",
++        "change_ids": ["change-e2e"],
++        "decision": "accept"
++    }]);
++    let (status, error) = fixture.request("PUT", &path, Some(repeat)).await;
++    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{error}");
++    assert_eq!(error["code"], "ALREADY_ACCEPTED");
++
++    // Undo of the accept is a revert intent bound to the new revision and the
++    // source prediction history stays intact.
++    let mut undo = fixture.save_request("op-e2e-undo", &after_delete, fixture.document());
++    undo["suggestion_decisions"] = json!([{
++        "suggestion_set_id": "suggestion-e2e",
++        "change_ids": ["change-e2e"],
++        "decision": "revert"
++    }]);
++    let (status, undone) = fixture.request("PUT", &path, Some(undo)).await;
++    assert_eq!(status, StatusCode::OK, "{undone}");
++    let revert_revision = undone["revision"]["annotation_revision_id"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++
++    let mut tx = fixture.repository.begin_write().await.unwrap();
++    let rows: Vec<(String, String)> =
++        sqlx::query("SELECT decision, bound_revision_id FROM suggestion_decisions ORDER BY rowid")
++            .map(|row: sqlx::sqlite::SqliteRow| {
++                (
++                    row.try_get::<String, _>(0).unwrap(),
++                    row.try_get::<String, _>(1).unwrap(),
++                )
++            })
++            .fetch_all(tx.connection())
++            .await
++            .unwrap();
++    assert_eq!(
++        rows,
++        vec![
++            ("accept".to_owned(), revision_id),
++            ("revert".to_owned(), revert_revision),
++        ],
++        "accept -> revert must be journaled in save order without dedup"
++    );
++    let predictions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM predictions")
++        .fetch_one(tx.connection())
++        .await
++        .unwrap();
++    assert_eq!(predictions, 1, "undo must never delete prediction history");
++    tx.commit().await.unwrap();
++}

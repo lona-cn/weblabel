@@ -317,7 +317,7 @@ fn locked_objects_reject_mutation_without_changing_document() {
 }
 
 #[test]
-fn apply_suggestions_reports_not_ready_without_mutating_document() {
+fn apply_suggestions_rejects_empty_selection_without_mutating_document() {
     let mut editor = editor();
     let before = editor.snapshot();
     let result = editor.dispatch(EditorCommand::ApplySuggestions {
@@ -328,7 +328,7 @@ fn apply_suggestions_reports_not_ready_without_mutating_document() {
         change_ids: vec![],
         expected_generation: 0,
     });
-    assert_eq!(result.unwrap_err().code, "NOT_READY");
+    assert_eq!(result.unwrap_err().code, "EMPTY_SELECTION");
     assert_eq!(editor.snapshot(), before);
     assert_eq!(editor.generation(), 0);
 }

@@ -54,7 +54,7 @@ pub fn router(repository: Repository, auth: AuthState) -> Router {
         .with_state(state)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Failure {
     pub(crate) status: axum::http::StatusCode,
     pub(crate) code: &'static str,

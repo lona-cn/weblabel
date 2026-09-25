@@ -57,21 +57,55 @@ impl Editor {
             other => {
                 let before = self.document.clone();
                 let mut after = before.clone();
-                commands::apply(&mut after, &self.ontology, &self.selection, &other)?;
+                let suggestion_decisions = match &other {
+                    EditorCommand::ApplySuggestions {
+                        set,
+                        change_ids,
+                        expected_generation,
+                    } => {
+                        vec![crate::suggestions::apply(
+                            &mut after,
+                            &self.ontology,
+                            &self.selection,
+                            &crate::suggestions::AcceptancePins {
+                                generation: self.generation,
+                                expected_generation: *expected_generation,
+                                base_revision_id: None,
+                                canonical_sha256: None,
+                                run: None,
+                            },
+                            set,
+                            change_ids,
+                        )?]
+                    }
+                    _ => {
+                        commands::apply(&mut after, &self.ontology, &self.selection, &other)?;
+                        Vec::new()
+                    }
+                };
                 if after == before {
-                    return Ok(self.delta(false, false, Vec::new(), Vec::new()));
+                    // A value-equal accept is still a decision: surface the
+                    // computed intents so the save transaction journals them
+                    // even though the document itself did not change.
+                    let mut delta = self.delta(false, false, Vec::new(), Vec::new());
+                    delta.suggestion_decisions = suggestion_decisions;
+                    return Ok(delta);
                 }
                 self.bump_generation()?;
                 self.document = after.clone();
-                self.history
-                    .push(HistoryEntry::new(before.clone(), after.clone()));
+                self.history.push(
+                    HistoryEntry::new(before.clone(), after.clone())
+                        .with_suggestion_decisions(suggestion_decisions.clone()),
+                );
                 self.prune_transient_state();
-                Ok(self.delta(
+                let mut delta = self.delta(
                     true,
                     true,
                     changed_objects(&before, &after),
                     removed_objects(&before, &after),
-                ))
+                );
+                delta.suggestion_decisions = suggestion_decisions;
+                Ok(delta)
             }
         }
     }
@@ -356,19 +390,21 @@ impl Editor {
         }
         self.bump_generation()?;
         let before = self.document.clone();
-        let restored = self
+        let (restored, suggestion_decisions) = self
             .history
             .undo(&before)
             .expect("undo availability was checked");
         self.document = restored;
         self.prune_transient_state();
         let after = self.document.clone();
-        Ok(self.delta(
+        let mut delta = self.delta(
             true,
             true,
             changed_objects(&before, &after),
             removed_objects(&before, &after),
-        ))
+        );
+        delta.suggestion_decisions = suggestion_decisions;
+        Ok(delta)
     }
     fn redo(&mut self) -> Result<EditorDelta, DomainError> {
         if !self.history.can_redo() {
@@ -376,19 +412,21 @@ impl Editor {
         }
         self.bump_generation()?;
         let before = self.document.clone();
-        let restored = self
+        let (restored, suggestion_decisions) = self
             .history
             .redo(&before)
             .expect("redo availability was checked");
         self.document = restored;
         self.prune_transient_state();
         let after = self.document.clone();
-        Ok(self.delta(
+        let mut delta = self.delta(
             true,
             true,
             changed_objects(&before, &after),
             removed_objects(&before, &after),
-        ))
+        );
+        delta.suggestion_decisions = suggestion_decisions;
+        Ok(delta)
     }
 
     fn bump_generation(&mut self) -> Result<(), DomainError> {
