@@ -46,6 +46,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     texture: wgpu::Texture,
+    render_format: wgpu::TextureFormat,
     image_bind: wgpu::BindGroup,
     image_layout: wgpu::BindGroupLayout,
     image_sampler: wgpu::Sampler,
@@ -241,8 +242,17 @@ impl Renderer {
     pub fn adapter_diagnostics(&self) -> String {
         self.diagnostics.clone()
     }
+    /// Simulate the only device-loss vector a page can force: destroying the
+    /// GPUDevice (loss reason Destroyed). Browsers cannot force a `Failed`
+    /// loss; see reports/T05 for what was and was not exercised. The saved
+    /// scene survives so `recover` rebuilds from it like an unexpected loss.
+    pub fn simulate_device_loss(&mut self) {
+        self.device.destroy();
+        self.lost.store(true, Ordering::Release);
+    }
     pub fn dispose(&mut self) {
         self.device.destroy();
+        self.lost.store(true, Ordering::Release);
         self.scene = None;
     }
 }
@@ -278,17 +288,23 @@ impl Renderer {
             .await
             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
         let caps = surface.get_capabilities(&adapter);
-        let format = caps
+        // Browsers only expose *Unorm canvas formats, whose texels the
+        // compositor reads as sRGB-encoded (SurfaceColorSpace::Auto resolves
+        // to Srgb on the web), and wgpu never encodes for us. Rendering
+        // through the *Srgb reinterpretation view makes the hardware apply
+        // the same encoding an sRGB target would, and blends in linear light.
+        let (format, render_format) = caps
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())
-            .or_else(|| caps.formats.first().copied())
-            .ok_or_else(|| RendererError::Unsupported("surface has no formats".into()))?;
+            .find_map(|format| srgb_render_format(format).map(|view| (format, view)))
+            .ok_or_else(|| {
+                RendererError::Unsupported("surface has no sRGB-encodable format".into())
+            })?;
         let info = adapter.get_info();
         let diagnostics = format!(
-            "backend={:?}; device_type={:?}; name={}",
-            info.backend, info.device_type, info.name
+            "backend={:?}; device_type={:?}; name={}; surface={:?}; render_view={:?}",
+            info.backend, info.device_type, info.name, format, render_format
         );
         let (css_w, css_h) = (
             canvas.client_width().max(0) as u32,
@@ -312,7 +328,11 @@ impl Renderer {
                 .first()
                 .copied()
                 .unwrap_or(wgpu::CompositeAlphaMode::Auto),
-            view_formats: vec![],
+            view_formats: if render_format != format {
+                vec![render_format]
+            } else {
+                vec![]
+            },
         };
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport uniform"),
@@ -426,7 +446,7 @@ impl Renderer {
             &uniform_layout,
             &image_layout,
             &image_shader,
-            format,
+            render_format,
             "image pipeline",
         );
         let box_pipeline = pipeline(
@@ -434,7 +454,7 @@ impl Renderer {
             &uniform_layout,
             &instance_layout,
             &box_shader,
-            format,
+            render_format,
             "bbox pipeline",
         );
         let overlay_pipeline = pipeline(
@@ -442,7 +462,7 @@ impl Renderer {
             &uniform_layout,
             &instance_layout,
             &overlay_shader,
-            format,
+            render_format,
             "overlay pipeline",
         );
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -469,6 +489,7 @@ impl Renderer {
             device,
             queue,
             texture,
+            render_format,
             image_bind,
             image_pipeline,
             box_pipeline,
@@ -675,7 +696,11 @@ impl Renderer {
                 return Err(RendererError::Surface("surface validation failed".into()));
             }
         };
-        let view = frame.texture.create_view(&Default::default());
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("surface frame view"),
+            format: Some(self.render_format),
+            ..Default::default()
+        });
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -844,4 +869,16 @@ fn upload_instances_delta<T>(
 #[cfg(target_arch = "wasm32")]
 fn bytemuck_bytes<T>(values: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(values.as_ptr().cast(), std::mem::size_of_val(values)) }
+}
+/// The sRGB reinterpretation of a surface format, when one exists. Formats
+/// without a pair (e.g. `Rgba16Float`) are rejected at device creation rather
+/// than silently rendered with the wrong transfer function.
+#[cfg(target_arch = "wasm32")]
+fn srgb_render_format(format: wgpu::TextureFormat) -> Option<wgpu::TextureFormat> {
+    match format {
+        wgpu::TextureFormat::Rgba8Unorm => Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        wgpu::TextureFormat::Bgra8Unorm => Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+        wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Bgra8UnormSrgb => Some(format),
+        _ => None,
+    }
 }

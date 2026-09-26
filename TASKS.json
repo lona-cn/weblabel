@@ -225,6 +225,10 @@
           "--test",
           "t05_renderer",
           "--locked"
+        ],
+        [
+          "pnpm",
+          "verify:gpu"
         ]
       ],
       "external_gate": false,
