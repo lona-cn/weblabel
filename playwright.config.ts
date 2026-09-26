@@ -7,7 +7,7 @@ export default defineConfig({
       name: 't05-render',
       testDir: './tests/render',
       // Override the global software adapter argument for the real-device probe.
-      use: { launchOptions: { args: ['--enable-unsafe-webgpu'] } },
+      use: { channel: 'chromium', launchOptions: { args: ['--enable-unsafe-webgpu'] } },
     },
   ],
   fullyParallel: false,
