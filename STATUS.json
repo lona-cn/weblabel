@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plan_version": "1.0.0",
   "application_commit": "02c0c523302a67f572692879763f591c7885c005",
-  "last_updated_at": "2026-09-27T17:51:49Z",
+  "last_updated_at": "2026-09-27T18:06:39Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -286,7 +286,7 @@
       "blockers": []
     },
     "T24": {
-      "status": "done",
+      "status": "review",
       "base_commit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
       "integrated_commit": "02c0c523302a67f572692879763f591c7885c005",
       "evidence": [
@@ -294,7 +294,9 @@
         "reports/T24/tests.log",
         "reports/T24/review.md"
       ],
-      "blockers": []
+      "blockers": [
+        "T24 selected-subset success→undo batch restoration lacks a composition regression; see reports/T24/review.md."
+      ]
     },
     "T25": {
       "status": "running",
@@ -318,11 +320,17 @@
       "blockers": []
     },
     "T28": {
-      "status": "running",
+      "status": "review",
       "base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
       "integrated_commit": null,
-      "evidence": [],
-      "blockers": []
+      "evidence": [
+        "reports/T28/result.json",
+        "reports/T28/tests.log",
+        "reports/T28/review.md"
+      ],
+      "blockers": [
+        "Renderer wiring, test-only dense browser harness, budget enforcement, profile, and gate remain incomplete; see reports/T28/integration.patch."
+      ]
     },
     "T29": {
       "status": "pending",
