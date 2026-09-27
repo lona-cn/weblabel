@@ -21,12 +21,20 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
-  webServer: {
-    command: 'node scripts/serve-wgpu-probe.mjs',
-    url: 'http://127.0.0.1:4174/health',
-    reuseExistingServer: !process.env.CI,
-    timeout: 10_000,
-  },
+  webServer: [
+    {
+      command: 'node scripts/serve-wgpu-probe.mjs',
+      url: 'http://127.0.0.1:4174/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 10_000,
+    },
+    {
+      command: 'pnpm --filter @weblabel/web run dev',
+      url: 'http://127.0.0.1:5173/',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
   use: {
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

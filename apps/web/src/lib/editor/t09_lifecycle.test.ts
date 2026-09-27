@@ -548,15 +548,22 @@ describe('T09 StrictMode double mounting', () => {
       createElement(
         StrictMode,
         null,
-        createElement(CanvasView, { request: makeRequest(), hostOptions: { facadeFactory: factory, scheduler } }),
+        createElement(CanvasView, {
+          request: makeRequest(),
+          hostOptions: { facadeFactory: factory, scheduler },
+          activeTool: 'select',
+          onDelta: () => {},
+          onHostReady: () => {},
+        }),
       ),
     );
     const canvas = screen.getByTestId('annotation-canvas');
     await act(async () => {
+      await Promise.resolve();
       for (const creation of factory.creations) creation.settle();
     });
 
-    expect(factory.creations.length).toBeGreaterThanOrEqual(2);
+    expect(factory.creations).toHaveLength(1);
     const active = factory.creations.filter(({ facade }) => facade.disposeCount === 0);
     expect(active).toHaveLength(1);
     for (const { facade } of factory.creations) {
@@ -705,8 +712,17 @@ describe('T09 structured error surfaces', () => {
   it('rejects a failed asset load with a structured ApiError and shows it instead of a blank canvas', async () => {
     const factory = new FakeFacadeFactory();
     const hostOptions: Partial<EditorHostOptions> = { facadeFactory: factory, scheduler: new FakeRenderScheduler() };
-    render(createElement(CanvasView, { request: makeRequest(), hostOptions }));
-    await act(async () => { factory.creations[0].fail('bridge exploded'); });
+    render(createElement(CanvasView, {
+      request: makeRequest(),
+      hostOptions,
+      activeTool: 'select',
+      onDelta: () => {},
+      onHostReady: () => {},
+    }));
+    await act(async () => {
+      await Promise.resolve();
+      factory.creations[0].fail('bridge exploded');
+    });
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('bridge exploded');

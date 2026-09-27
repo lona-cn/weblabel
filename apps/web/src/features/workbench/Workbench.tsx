@@ -1,148 +1,296 @@
-import { useMemo, useState } from 'react';
-import { Projects } from '../projects/Projects';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
 import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
+import type { AnnotationRevision } from '../../../../../packages/contracts/generated/AnnotationRevision';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
-import { useRuntimeMode } from '../../app/providers';
+import type { Scalar } from '../../../../../packages/contracts/generated/Scalar';
+import type { EditorDelta } from '../../../../../packages/contracts/generated/EditorDelta';
+import { useSession } from '../../app/providers';
+import { api, csrfToken, type ApiMedia, type Project } from '../../lib/t15/api';
+import { decodeCanonicalFrame } from '../../lib/editor/loader';
+import { EditorHost } from '../../lib/editor/EditorHost';
+import { FetchSaveTransport, SaveQueue } from '../../lib/persistence/save-queue';
+import { IndexedDbDraftStorage } from '../../lib/persistence/draft-store';
+import { runRecovery, type RecoveryReport } from '../../lib/persistence/recovery';
+import { SaveStatus } from './SaveStatus';
 import { AttributePanel } from './AttributePanel';
 import { ObjectList } from './ObjectList';
 import { Toolbar, type Tool } from './Toolbar';
+import { CanvasView } from './CanvasView';
+import { ResizeControls } from './ResizeControls';
 
-export type WorkbenchStatus = 'ready' | 'loading' | 'error' | 'empty' | 'unsupported';
+type Props = { projectId?: string; onProjects?: () => void };
+type LoadedAsset = { media: ApiMedia; ontology: OntologyVersion; document: AnnotationDocument; revisionId: string; frame: { width: number; height: number; rgba: Uint8Array } };
 
-export const fixtureOntology: OntologyVersion = {
-  ontology_version_id: 'fixture-ontology-v1', project_id: 'sample-project', version_no: 1,
-  labels: [{
-    label_id: 'label_person', name: '施工现场人员（安全帽、反光背心及高处作业防护检查）', color: '#2878d0', shortcut: null,
-    allowed_geometry_types: ['bbox_xyxy'], attributes: [
-      { key: 'helmet_state', kind: 'enum', required: true, default_value: 'unknown', enum_values: ['wearing', 'not_wearing', 'unknown'], min: null, max: null },
-      { key: 'vest_visible', kind: 'boolean', required: false, default_value: null, enum_values: [], min: null, max: null },
-      { key: 'confidence_note', kind: 'text', required: false, default_value: null, enum_values: [], min: null, max: null },
-    ],
-  }], guidelines_markdown: 'Development fixture only.', allow_out_of_bounds: false,
-};
+function reportError(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
 
-const fixtureObject: AnnotationObject = {
-  object_id: 'object_person_001', label_id: 'label_person',
-  geometry: { type: 'bbox_xyxy', x_min: 10, y_min: 20, x_max: 110, y_max: 220 },
-  attributes: { helmet_state: 'unknown', vest_visible: true },
-  origin: { type: 'manual', prediction_id: null, model_run_id: null, import_batch_id: null },
-};
-
-function useFixtureObjects(): readonly AnnotationObject[] {
-  return useMemo(() => Array.from({ length: 10_000 }, (_, index) => ({
-    ...fixtureObject,
-    object_id: index === 0 ? fixtureObject.object_id : `object_person_${String(index + 1).padStart(5, '0')}`,
-    attributes: index === 0 ? fixtureObject.attributes : { helmet_state: 'unknown' },
-  })), []);
-}
-
-function ResizeControls({
-  targetId,
-  axis,
-  decreaseName,
-  increaseName,
-  minimum,
-  maximum,
-  step,
-}: {
-  targetId: string;
-  axis: 'width' | 'height';
-  decreaseName: string;
-  increaseName: string;
-  minimum: number;
-  maximum: number;
-  step: number;
-}) {
-  const adjust = (delta: number) => {
-    const target = document.getElementById(targetId);
-    if (!target) return;
-    const size = target.getBoundingClientRect()[axis];
-    target.style[axis] = `${Math.max(minimum, Math.min(maximum, size + delta))}px`;
-  };
-  return (
-    <div className="resize-controls">
-      <button type="button" aria-label={decreaseName} title={`每次调整 ${step} 像素`} onClick={() => adjust(-step)}>−</button>
-      <button type="button" aria-label={increaseName} title={`每次调整 ${step} 像素`} onClick={() => adjust(step)}>＋</button>
-    </div>
-  );
-}
-
-export function Workbench({ status = 'ready' }: { status?: WorkbenchStatus }) {
-  const runtimeMode = useRuntimeMode();
-  const objects = useFixtureObjects();
-  const [selectedId, setSelectedId] = useState<string | null>(objects[0]?.object_id ?? null);
+export function Workbench({ projectId = '', onProjects = () => {} }: Props) {
+  const { session, logout } = useSession();
+  const [project, setProject] = useState<Project | null>(null);
+  const [ontologies, setOntologies] = useState<OntologyVersion[]>([]);
+  const [assets, setAssets] = useState<ApiMedia[]>([]);
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(() => new URLSearchParams(location.search).get('asset_revision_id'));
+  const [loaded, setLoaded] = useState<LoadedAsset | null>(null);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error' | 'empty'>('loading');
+  const [error, setError] = useState<string | null>(null);
+  const [job, setJob] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>('select');
-  const [activePage, setActivePage] = useState<'projects' | 'workbench'>('workbench');
-  const [activeMedia, setActiveMedia] = useState(0);
-  const displayedObjects = status === 'empty' ? [] : objects;
-  const selected = status === 'empty' ? null : objects.find((object) => object.object_id === selectedId) ?? null;
+  const [host, setHost] = useState<EditorHost | null>(null);
+  const [objects, setObjects] = useState<AnnotationObject[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [completionChoice, setCompletionChoice] = useState<'unprocessed' | 'in_progress' | 'complete' | 'confirmed_negative'>('unprocessed');
+  const [negativeConfirmed, setNegativeConfirmed] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'coco' | 'yolo' | 'native'>('coco');
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [recovery, setRecovery] = useState<RecoveryReport | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const queue = useMemo(() => new SaveQueue({ transport: new FetchSaveTransport({ csrfToken }), storage: new IndexedDbDraftStorage() }), []);
+  const activeLoaded = loaded?.media.asset_revision_id === selectedAssetId ? loaded : null;
+  const activeHost = activeLoaded ? host : null;
+  const activeObjects = activeLoaded ? objects : [];
+  const activeSelectedIds = activeLoaded ? selectedIds : [];
 
-  return (
-    <main className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="WebLabel 首页"><span className="brand-mark" aria-hidden="true">W</span><span>WebLabel</span></a>
-        <nav aria-label="主导航" className="main-nav">
-          <button type="button" aria-current={activePage === 'projects' ? 'page' : undefined} onClick={() => setActivePage('projects')}>项目</button>
-          <button type="button" aria-current={activePage === 'workbench' ? 'page' : undefined} onClick={() => setActivePage('workbench')}>工作台</button>
-        </nav>
-        <span className="mock-badge" aria-label="开发模拟数据">{runtimeMode === 'fixture' ? 'DEV MOCK' : ''}</span>
-      </header>
-      <div className="workspace-heading">
-        <div><p className="eyebrow" aria-live="polite">演示项目 <span aria-hidden="true">/</span> 媒体 {activeMedia + 1} / 3</p><h1>安全帽属性检查</h1></div>
-        <span className="local-state">仅本地界面状态 · 未连接持久化服务</span>
-      </div>
-      {activePage === 'projects' ? (
-        <Projects onOpen={() => setActivePage('workbench')} />
-      ) : (
-        <div className="workbench-grid">
-          <aside id="workbench-sidebar" className="sidebar-resize" aria-label="对象与属性侧栏，可拖动或用按钮调整宽度">
-            <div id="media-strip" className="media-strip" aria-label="项目媒体">
-              <div className="media-strip-heading">
-                <span className="eyebrow">媒体底片条</span>
-                <span>3 张</span>
-                <ResizeControls targetId="media-strip" axis="height" decreaseName="减小媒体底片条高度" increaseName="增大媒体底片条高度" minimum={94} maximum={260} step={16} />
-                <ResizeControls targetId="workbench-sidebar" axis="width" decreaseName="缩窄对象与属性侧栏" increaseName="加宽对象与属性侧栏" minimum={220} maximum={420} step={20} />
-              </div>
-              {[1, 2, 3].map((media) => (
-                <button
-                  key={media}
-                  type="button"
-                  className={`media-thumb${activeMedia === media - 1 ? ' active' : ''}`}
-                  aria-label={activeMedia === media - 1 ? `当前媒体：现场图片 ${media}` : `现场图片 ${media}`}
-                  aria-pressed={activeMedia === media - 1}
-                  onClick={() => setActiveMedia(media - 1)}
-                >
-                  {String(media).padStart(2, '0')}
-                </button>
-              ))}
-            </div>
-            <ObjectList objects={displayedObjects} selectedIds={selectedId ? [selectedId] : []} onSelect={setSelectedId} status={status} />
-            <AttributePanel object={selected} ontology={fixtureOntology} />
-          </aside>
-          <section className="canvas-column" aria-label="标注画布区域">
-            <div id="canvas-toolbar-row" className="canvas-toolbar-row">
-              <Toolbar active={tool} disabled={status !== 'ready'} onChange={setTool} />
-              <div className="canvas-actions">
-                <button type="button" aria-label="缩小画布（渲染器未接入）" title="画布渲染接入后可用" disabled>−</button>
-                <span>缩放未接入</span>
-                <button type="button" aria-label="放大画布（渲染器未接入）" title="画布渲染接入后可用" disabled>＋</button>
-                <ResizeControls targetId="canvas-toolbar-row" axis="height" decreaseName="减小画布工具栏高度" increaseName="增大画布工具栏高度" minimum={46} maximum={180} step={16} />
-              </div>
-            </div>
-            <div className="canvas-stage" data-testid="canvas-container">
-              {status === 'loading' ? <div className="canvas-state" role="status">正在加载媒体…</div> : null}
-              {status === 'error' ? <div className="canvas-state error" role="alert">媒体加载失败。请检查本地服务后重试。</div> : null}
-              {status === 'empty' ? <div className="canvas-state" role="status">暂无媒体，请从项目页选择媒体。</div> : null}
-              {status === 'unsupported' ? <div className="canvas-state warning" role="status">当前环境不支持 WebGPU；画布编辑不可用，对象列表仍可查看。</div> : null}
-              {status === 'ready' ? <div className="canvas-placeholder" role="img" aria-label={`开发夹具媒体预览：媒体 ${activeMedia + 1}，非真实图片`}><span aria-hidden="true">▧</span><strong>媒体预览占位</strong><span>开发夹具媒体 {activeMedia + 1} / 3</span><span>画布渲染由后续编辑器接入</span></div> : null}
-              <div className="canvas-size-label">画布容器 · {status === 'ready' ? '适配视口' : '等待媒体'}</div>
-            </div>
-            <footer className="canvas-footer"><span>选择工具：{tool}</span><span>对象 {displayedObjects.length.toLocaleString('zh-CN')}</span></footer>
-          </section>
-          <aside className="ai-placeholder" aria-label="AI审校区域"><h2>AI 审校</h2><span className="mock-badge">DEV MOCK</span><p>AI 差异审阅将在服务与授权流程接入后可用。</p><button type="button" disabled aria-label="AI审校暂不可用">暂不可用</button></aside>
+  const refreshAssets = useCallback(async () => {
+    const result = await api.assets(projectId);
+    setAssets(result);
+    if (!result.length) setLoadState('empty');
+    return result;
+  }, [projectId]);
+  useEffect(() => {
+    let alive = true;
+    setError(null);
+    Promise.all([api.projects(), api.ontologies(projectId), api.assets(projectId)]).then(([projectsResult, ontologyResult, assetsResult]) => {
+      if (!alive) return;
+      const selectedProject = projectsResult.items.find((item) => item.project_id === projectId) ?? null;
+      setProject(selectedProject);
+      setOntologies(ontologyResult.items);
+      setAssets(assetsResult);
+      if (!assetsResult.length) setLoadState('empty');
+      setSelectedAssetId((current) => {
+        if (current && assetsResult.some((asset) => asset.asset_revision_id === current)) return current;
+        return assetsResult[0]?.asset_revision_id ?? null;
+      });
+    }).catch((reason: unknown) => { if (alive) setError(reportError(reason)); });
+    return () => { alive = false; };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!job) return undefined;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const status = await api.job(job);
+        if (!alive) return;
+        if (status.state === 'succeeded' || status.state === 'failed' || status.state === 'interrupted') {
+          setJob(null);
+          await refreshAssets();
+        } else timer = setTimeout(() => void poll(), 600);
+      } catch (reason) {
+        if (alive) { setError(reportError(reason)); timer = setTimeout(() => void poll(), 1200); }
+      }
+    };
+    timer = setTimeout(() => void poll(), 350);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [job, refreshAssets]);
+
+  useEffect(() => {
+    if (!selectedAssetId) {
+      setLoaded(null);
+      setObjects([]);
+      setHost(null);
+      if (assets.length) setLoadState('ready');
+      return;
+    }
+    const media = assets.find((item) => item.asset_revision_id === selectedAssetId);
+    const ontology = ontologies[0];
+    if (!media || !ontology) return;
+    if (loaded?.media.asset_revision_id === media.asset_revision_id
+      && loaded.ontology.ontology_version_id === ontology.ontology_version_id) {
+      setLoadState('ready');
+      return;
+    }
+    let alive = true;
+    setLoadState('loading');
+    setError(null);
+    setHost(null);
+    const transport = new FetchSaveTransport({ csrfToken });
+    Promise.all([api.annotation(media.asset_revision_id, ontology.ontology_version_id), api.image(media.asset_revision_id)]).then(async ([revision, image]) => {
+      const frame = await decodeCanonicalFrame(image, { width: media.canonical_width, height: media.canonical_height });
+      const recoveryReport = await runRecovery({ storage: new IndexedDbDraftStorage(), transport }, media.asset_revision_id);
+      if (!alive) return;
+      setRecovery(recoveryReport);
+      if (recoveryReport.kind === 'restored' || recoveryReport.kind === 'conflict' || recoveryReport.kind === 'unreachable') {
+        queue.restoreFromRecord(recoveryReport.record);
+      } else if (recoveryReport.kind === 'clean' || recoveryReport.kind === 'no_local_record') {
+        queue.initializeFromServerRevision({
+          asset_revision_id: media.asset_revision_id,
+          ontology_version_id: ontology.ontology_version_id,
+          annotation_revision_id: revision.annotation_revision_id,
+          generation: 0,
+          document: revision.document,
+        });
+      }
+      const queueStatus = queue.getStatus(media.asset_revision_id);
+      const queueRecord = queue.toRecord(media.asset_revision_id);
+      const useQueuedDraft = recoveryReport.kind === 'restored' ||
+        ((recoveryReport.kind === 'clean' || recoveryReport.kind === 'no_local_record') && queueStatus.dirty);
+      const document = useQueuedDraft
+        ? queueRecord?.document ?? (recoveryReport.kind === 'restored' ? recoveryReport.record.document : revision.document)
+        : revision.document;
+      setLoaded({ media, ontology, document, revisionId: revision.annotation_revision_id, frame });
+      setObjects(document.objects);
+      setSelectedIds([]);
+      setCompletionChoice(document.completion);
+      setNegativeConfirmed(false);
+      setLoadState('ready');
+      queue.switchAsset(media.asset_revision_id);
+    }).catch((reason: unknown) => { if (alive) { setError(reportError(reason)); setLoadState('error'); } });
+    return () => { alive = false; };
+  }, [selectedAssetId, assets, ontologies, loaded, queue]);
+
+  async function importFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setError(null);
+    try {
+      const result = await api.importAssets(projectId, Array.from(files));
+      setJob(result.import_job_id);
+    } catch (reason) { setError(reportError(reason)); }
+    if (importRef.current) importRef.current.value = '';
+  }
+
+  const selectAsset = (asset: ApiMedia) => {
+    setSelectedAssetId(asset.asset_revision_id);
+    const url = new URL(location.href);
+    url.searchParams.set('project_id', projectId);
+    url.searchParams.set('asset_revision_id', asset.asset_revision_id);
+    history.replaceState(null, '', url);
+  };
+
+  const applyDelta = useCallback((currentHost: EditorHost, delta: EditorDelta) => {
+    const snapshot = currentHost.getSnapshot();
+    if (!snapshot || !loaded || loaded.media.asset_revision_id !== selectedAssetId) return;
+    setObjects(snapshot.objects);
+    setSelectedIds(delta.selected_object_ids);
+    setCompletionChoice(snapshot.completion);
+    if (delta.document_changed) {
+      queue.enqueue({ asset_revision_id: loaded.media.asset_revision_id, ontology_version_id: loaded.ontology.ontology_version_id,
+        base_revision_id: queue.getStatus(loaded.media.asset_revision_id).base_revision_id ?? loaded.revisionId,
+        generation: delta.generation, document: snapshot, suggestion_decisions: delta.suggestion_decisions });
+    }
+  }, [loaded, queue, selectedAssetId]);
+
+  function setActiveTool(next: Tool) {
+    setTool(next);
+  }
+
+  function selectObject(objectId: string) {
+    const delta = activeHost?.select([objectId]);
+    if (delta) setSelectedIds(delta.selected_object_ids);
+  }
+
+  function changeAttribute(key: string, value: Scalar) {
+    if (!activeHost) { setError('The editor is not ready for attribute editing.'); return; }
+    if (!activeSelectedIds.length) { setError('Select an object before editing attributes.'); return; }
+    const delta = activeHost.dispatch({ kind: 'set_attributes', object_ids: activeSelectedIds, values: { [key]: value } });
+    if (!delta) setError('Editor did not return the attribute update.');
+    else if (delta.error) setError(`${delta.error.code}: ${delta.error.message}`);
+  }
+
+  function setCompletion(value: 'unprocessed' | 'in_progress' | 'complete' | 'confirmed_negative') {
+    if (!activeLoaded) return;
+    setCompletionChoice(value);
+    setNegativeConfirmed(false);
+    if (value !== 'confirmed_negative' && activeHost) activeHost.dispatch({ kind: 'set_completion', completion: value });
+  }
+
+  function confirmNegative() {
+    if (!activeHost || activeObjects.length !== 0 || !negativeConfirmed) return;
+    activeHost.dispatch({ kind: 'set_completion', completion: 'confirmed_negative' });
+  }
+
+  async function exportCurrent() {
+    const current = activeLoaded;
+    if (!current) return;
+    setExporting(true);
+    setExportMessage(null);
+    try {
+      await queue.flush(current.media.asset_revision_id);
+      if (queue.getStatus(current.media.asset_revision_id).dirty) throw new Error('保存未同步，无法导出旧版本；请处理保存状态后重试。');
+      const revision = await api.annotation(current.media.asset_revision_id, current.ontology.ontology_version_id);
+      const result = await api.exportRevision(revision.annotation_revision_id, exportFormat);
+      const file = await api.download(result.download_url);
+      const objectUrl = URL.createObjectURL(file.bytes);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `${current.media.original_name.replace(/\.[^.]*$/, '')}.${exportFormat === 'coco' ? 'json' : 'zip'}`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setExportMessage(file.loss ? `导出完成。损失报告：${file.loss}` : '导出完成，已下载服务端固定版本的文件。');
+    } catch (reason) { setExportMessage(reportError(reason)); }
+    finally { setExporting(false); }
+  }
+
+  function viewServerRevision(revision: AnnotationRevision | null) {
+    if (!revision) {
+      setError('无法读取服务端标注版本。');
+      return;
+    }
+    if (!activeLoaded) return;
+    setLoaded((current) => current?.media.asset_revision_id === activeLoaded.media.asset_revision_id
+      ? { ...current, document: revision.document, revisionId: revision.annotation_revision_id }
+      : current);
+    setObjects(revision.document.objects);
+    setSelectedIds([]);
+    setCompletionChoice(revision.document.completion);
+  }
+
+  if (!session) return null;
+  return <main className="app-shell">
+    <header className="topbar"><a className="brand" href="/" aria-label="WebLabel 项目"><span className="brand-mark" aria-hidden="true">W</span><span>WebLabel</span></a>
+      <nav aria-label="主导航" className="main-nav"><button type="button" onClick={onProjects}>项目</button><button type="button" aria-current="page">工作台</button></nav>
+      <span className="session-user">{session.username}</span><button type="button" className="logout-button" onClick={() => void logout()}>退出</button>
+    </header>
+    <header className="workspace-heading"><div><p className="eyebrow">{project?.name ?? '项目'} / {activeLoaded?.media.original_name ?? '选择媒体'}</p><input className="project-name-field" data-testid="project-name" aria-label="项目名称" value={project?.name ?? ''} readOnly /></div><span className="local-state">服务端版本 · canonical 像素坐标</span></header>
+    {error ? <p className="api-error" role="alert">{error}</p> : null}
+    <section className="asset-import-bar" aria-label="项目媒体导入"><label htmlFor="media-import">导入图片</label><input ref={importRef} id="media-import" data-testid="media-import" type="file" accept="image/png,image/jpeg" multiple onChange={(event) => void importFiles(event.currentTarget.files)} />{job ? <span role="status">导入处理中…</span> : null}</section>
+    <div className="workbench-grid">
+      <aside id="workbench-sidebar" className="sidebar-resize" aria-label="项目媒体、对象与属性侧栏，可调整宽度">
+        <section id="media-strip" className="media-strip" data-testid="asset-grid" aria-label="项目媒体">
+          <div className="media-strip-heading"><span className="eyebrow">媒体</span><span>{assets.length} 张</span>
+            <ResizeControls targetId="media-strip" axis="height" decreaseName="减小媒体底片条高度" increaseName="增大媒体底片条高度" minimum={94} maximum={260} step={16} />
+            <ResizeControls targetId="workbench-sidebar" axis="width" decreaseName="缩窄对象与属性侧栏" increaseName="加宽对象与属性侧栏" minimum={220} maximum={420} step={20} />
+          </div>
+          {assets.map((asset) => <button key={asset.asset_revision_id} type="button" className={`media-thumb${selectedAssetId === asset.asset_revision_id ? ' active' : ''}`} data-testid={`asset-item-${asset.asset_revision_id}`} aria-pressed={selectedAssetId === asset.asset_revision_id} aria-label={`选择媒体 ${asset.original_name}`} onClick={() => selectAsset(asset)}><span>{asset.original_name}</span><small>{asset.canonical_width} × {asset.canonical_height}</small></button>)}
+          {!assets.length ? <p role="status">{loadState === 'loading' ? '加载媒体…' : '暂无媒体，请导入图片。'}</p> : null}
+        </section>
+        <ObjectList objects={activeObjects} selectedIds={activeSelectedIds} onSelect={selectObject} status={loadState === 'error' ? 'error' : !activeLoaded || loadState === 'loading' ? 'loading' : 'ready'} />
+        {activeLoaded ? <AttributePanel object={activeObjects.find((item) => activeSelectedIds.includes(item.object_id)) ?? null} ontology={activeLoaded.ontology} onChange={changeAttribute} disabled={!activeHost} /> : null}
+      </aside>
+      <section className="canvas-column" aria-label="标注工作区">
+        <div id="canvas-toolbar-row" className="canvas-toolbar-row"><Toolbar active={tool} disabled={!activeLoaded || !activeHost} onChange={setActiveTool} /><div className="canvas-actions"><button type="button" aria-label="适配画布" disabled={!activeHost} onClick={() => activeHost?.fitImage()}>适配画布</button>
+          <ResizeControls targetId="canvas-toolbar-row" axis="height" decreaseName="减小画布工具栏高度" increaseName="增大画布工具栏高度" minimum={46} maximum={180} step={16} />
+        </div></div>
+        <div className="canvas-stage" data-testid="canvas-container">
+          {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}`} request={activeLoaded} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}
         </div>
-      )}
-      <footer className="app-footer">开发夹具不会写入数据。未登录 · 无后端持久化 · 无真实 AI 调用。</footer>
-    </main>
-  );
+        <footer className="canvas-footer"><span>工具：{tool}</span><span>{activeLoaded ? `${activeLoaded.media.canonical_width} × ${activeLoaded.media.canonical_height} canonical` : '—'}</span><span>对象 {activeObjects.length}</span></footer>
+        {activeLoaded ? <SaveStatus queue={queue} asset_revision_id={activeLoaded.media.asset_revision_id} recovery={recovery} onViewServer={viewServerRevision} /> : null}
+        <section className="completion-panel" aria-label="标注完成状态"><label htmlFor="completion-state">完成状态</label><select id="completion-state" data-testid="completion-state" value={completionChoice} disabled={!activeHost} onChange={(event) => setCompletion(event.target.value as typeof completionChoice)}>
+          <option value="unprocessed">未处理</option><option value="in_progress">处理中</option><option value="complete">已完成</option><option value="confirmed_negative">已确认无目标</option>
+        </select>
+        {completionChoice === 'confirmed_negative' ? <div data-testid="negative-confirmation" className="negative-confirmation" role="group" aria-label="确认负样本">
+          <p>确认该图像确实没有目标对象。空白文档不会自动成为负样本。</p>
+          {activeObjects.length ? <p role="alert">请先移除全部对象后再确认。</p> : null}
+          <label><input data-testid="negative-confirm-checkbox" type="checkbox" checked={negativeConfirmed} disabled={activeObjects.length > 0 || !activeHost} onChange={(event) => setNegativeConfirmed(event.target.checked)} />我已检查图像并确认没有目标对象</label>
+          <button data-testid="negative-confirm-submit" type="button" disabled={!negativeConfirmed || activeObjects.length > 0 || !activeHost} onClick={confirmNegative}>确认负样本并保存</button>
+        </div> : null}</section>
+        <section className="export-panel" aria-label="固定版本导出"><label htmlFor="export-format">导出格式</label><select id="export-format" data-testid="export-format" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as typeof exportFormat)}><option value="coco">COCO</option><option value="yolo">YOLO</option><option value="native">WebLabel 原生包</option></select>
+          <p>COCO/YOLO 不包含全部对象属性；点击确认导出即确认接受该格式的信息损失，产物绑定保存后的不可变标注版本。</p><button data-testid="export-start" type="button" disabled={!activeLoaded || exporting} onClick={() => void exportCurrent()}>{exporting ? '保存并导出中…' : '确认信息损失并导出'}</button>{exportMessage ? <p role="status">{exportMessage}</p> : null}</section>
+      </section>
+    </div>
+  </main>;
 }

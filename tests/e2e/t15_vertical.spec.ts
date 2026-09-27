@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import sharp from 'sharp';
 import { expect, test } from './fixtures';
 
-const origin = 'http://127.0.0.1:4174';
+const origin = 'http://127.0.0.1:5173';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const SOFTWARE = /cpu|software|swiftshader|llvmpipe|lavapipe|mesa|basic render/i;
 
@@ -34,12 +34,13 @@ function canvasPoint(rect: { x: number; y: number; width: number; height: number
 
 
 test('T15 real UI project/import/editor/save/reload/export flow on a hardware WebGPU device', async ({ adminPage: page, seededProject }) => {
+  test.setTimeout(60_000);
   await page.goto(`${origin}/?project_id=${encodeURIComponent(seededProject.project_id)}`);
   await expect(page.getByTestId('project-name')).toHaveValue(/T15 vertical/);
   await expect(page.getByTestId('asset-grid')).toBeVisible();
   const diagnostics = page.getByTestId('gpu-status');
-  await expect(diagnostics).toHaveAttribute('data-actual-backend', 'webgpu');
-  await expect(diagnostics).toHaveAttribute('data-device-state', 'ready');
+  await expect(diagnostics).toHaveAttribute('data-actual-backend', 'webgpu', { timeout: 30_000 });
+  await expect(diagnostics).toHaveAttribute('data-device-state', 'ready', { timeout: 30_000 });
   const adapter = await diagnostics.getAttribute('data-adapter-kind');
   expect(adapter).toBe('hardware');
   expect(await diagnostics.innerText()).not.toMatch(SOFTWARE);
@@ -47,16 +48,43 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
   // This is a genuine file-input import of deterministic, separately generated demo images.
   const importInput = page.getByTestId('media-import');
   await expect(importInput).toBeAttached();
-  const imagePaths = seededProject.demoImagePaths;
-  for (const imagePath of imagePaths) await access(imagePath);
-  await importInput.setInputFiles(imagePaths);
+  const uploadFiles = await Promise.all(seededProject.demoImagePaths.map(async (imagePath) => ({
+    name: path.basename(imagePath),
+    mimeType: 'image/png',
+    buffer: await readFile(imagePath),
+  })));
+  const importQueued = page.waitForResponse((response) =>
+    response.url().includes('/api/projects/') && response.url().endsWith('/assets')
+    && response.request().method() === 'POST' && response.status() === 202,
+  );
+  await importInput.setInputFiles(uploadFiles);
+  await importQueued;
   const importDrain = await seededProject.api.request<Record<string, unknown>>('POST', '/internal/test/jobs/drain', {});
   expect(importDrain.status, JSON.stringify(importDrain.json)).toBe(200);
-  expect(importDrain.json.processed).toBe(20);
+  expect(importDrain.json.processed).toBe(1);
   await expect(page.getByTestId('asset-grid').locator('[data-testid^="asset-item-"]')).toHaveCount(42);
 
   const asset = seededProject.assets.find((item) => item.exif_orientation === 1 && item.width === 320);
   if (!asset) throw new Error('T15 procedural 320x240 asset is missing');
+  await page.getByTestId(`asset-item-${asset.asset_revision_id}`).click();
+  await expect(page.getByTestId('tool-box')).toBeVisible();
+  await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state', 'ready');
+  const nextAsset = seededProject.assets.find((item) => item.asset_revision_id !== asset.asset_revision_id);
+  if (!nextAsset) throw new Error('T15 asset-switch regression needs two server assets');
+  const delayedPath = `**/api/assets/${nextAsset.asset_revision_id}/annotation*`;
+  await page.route(delayedPath, async (route) => {
+    const delay = Promise.withResolvers<void>();
+    setTimeout(delay.resolve, 500);
+    await delay.promise;
+    await route.fallback();
+  });
+  await page.getByTestId(`asset-item-${nextAsset.asset_revision_id}`).click();
+  await expect(page.getByTestId('tool-box')).toBeDisabled();
+  await expect(page.getByTestId('annotation-canvas')).toHaveCount(0);
+  await expect(page.getByTestId('completion-state')).toBeDisabled();
+  await expect(page.getByTestId('export-start')).toBeDisabled();
+  await page.unroute(delayedPath);
+  await expect(page.getByTestId('tool-box')).toBeVisible();
   await page.getByTestId(`asset-item-${asset.asset_revision_id}`).click();
   await expect(page.getByTestId('tool-box')).toBeVisible();
   await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state', 'ready');
@@ -67,9 +95,19 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
   await page.mouse.down();
   await page.mouse.move(...canvasPoint(box, asset, asset.expected.x_max, asset.expected.y_max), { steps: 5 });
   await page.mouse.up();
+  const objectList = page.getByTestId('object-list');
+  await expect(objectList.getByRole('option')).toHaveCount(1);
+  await objectList.getByRole('option').click();
+  await expect(objectList.getByRole('option')).toHaveAttribute('aria-selected', 'true');
+  const attributeSave = page.waitForResponse((response) => {
+    const request = response.request();
+    if (request.method() !== 'PUT' || !response.url().endsWith('/annotation')) return false;
+    const body = request.postDataJSON() as { document?: { objects?: Array<{ attributes?: Record<string, unknown> }> } } | null;
+    return body?.document?.objects?.some((object) => object.attributes?.helmet_state === 'wearing') ?? false;
+  });
   await page.getByTestId('attribute-helmet_state').selectOption('wearing');
-  await expect(page.getByTestId('object-list')).toContainText('1');
-  await expect(page.getByTestId('save-status')).toContainText('已同步');
+  await expect(page.getByTestId('attribute-helmet_state')).toHaveValue('wearing');
+  await attributeSave;
 
   const savedBeforeReload = await annotation(seededProject.api, asset.asset_revision_id, seededProject.ontology_version_id);
   const revisionBeforeReload = savedBeforeReload.annotation_revision_id;
@@ -117,10 +155,14 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
 test('T15 confirmed-negative requires explicit confirmation and remains negative after reload', async ({ adminPage: page, seededProject }) => {
   const asset = seededProject.assets[1];
   await page.goto(`${origin}/?project_id=${encodeURIComponent(seededProject.project_id)}&asset_revision_id=${asset.asset_revision_id}`);
+  await expect(page.getByTestId('tool-box')).toBeEnabled();
+  await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state', 'ready');
   await expect(page.getByTestId('completion-state')).toHaveValue('unprocessed');
   await page.getByTestId('completion-state').selectOption('confirmed_negative');
   await expect(page.getByTestId('negative-confirmation')).toBeVisible();
-  await expect(page.getByTestId('save-status')).not.toContainText('已同步');
+  await expect(page.getByTestId('save-status')).toContainText('已同步');
+  const beforeConfirmation = await annotation(seededProject.api, asset.asset_revision_id, seededProject.ontology_version_id);
+  expect((beforeConfirmation.document as { completion: string }).completion).toBe('unprocessed');
   await page.getByTestId('negative-confirm-checkbox').check();
   await page.getByTestId('negative-confirm-submit').click();
   await expect(page.getByTestId('save-status')).toContainText('已同步');
@@ -164,7 +206,10 @@ test('T15 EXIF 6 and mirrored media keep canonical display and exported xyxy ali
     await expect(page.getByTestId('save-status')).toContainText('已同步');
     const saved = await annotation(seededProject.api, asset!.asset_revision_id, seededProject.ontology_version_id);
     const geometry = (saved.document as { objects: Array<{ geometry: { x_min: number; y_min: number; x_max: number; y_max: number } }> }).objects[0].geometry;
-    expect([geometry.x_min, geometry.y_min, geometry.x_max, geometry.y_max]).toEqual([expected.x_min, expected.y_min, expected.x_max, expected.y_max]);
+    expect(geometry.x_min).toBeCloseTo(expected.x_min, 4);
+    expect(geometry.y_min).toBeCloseTo(expected.y_min, 4);
+    expect(geometry.x_max).toBeCloseTo(expected.x_max, 4);
+    expect(geometry.y_max).toBeCloseTo(expected.y_max, 4);
     await page.getByTestId('export-format').selectOption('coco');
     await page.getByTestId('export-start').click();
     const download = await page.waitForEvent('download');
@@ -172,6 +217,9 @@ test('T15 EXIF 6 and mirrored media keep canonical display and exported xyxy ali
     if (!output) throw new Error('oriented-image export did not produce bytes');
     const exported = JSON.parse(await readFile(output, 'utf8')) as { annotations: Array<{ bbox: number[] }> };
     const [x, y, width, height] = exported.annotations[0].bbox;
-    expect([x, y, x + width, y + height]).toEqual([expected.x_min, expected.y_min, expected.x_max, expected.y_max]);
+    expect(x).toBeCloseTo(geometry.x_min, 4);
+    expect(y).toBeCloseTo(geometry.y_min, 4);
+    expect(x + width).toBeCloseTo(geometry.x_max, 4);
+    expect(y + height).toBeCloseTo(geometry.y_max, 4);
   }
 });

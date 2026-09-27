@@ -232,6 +232,35 @@ export class SaveQueue {
     const state = this.states.get(asset_revision_id);
     return state === undefined ? IDLE_SNAPSHOT : state.snapshot;
   }
+  /** Registers a server-fetched immutable head as the clean starting point for an editor session. */
+  initializeFromServerRevision(input: {
+    asset_revision_id: Id;
+    ontology_version_id: Id;
+    annotation_revision_id: Id;
+    generation: number;
+    document: AnnotationDocument;
+  }): boolean {
+    if (input.document.asset_revision_id !== input.asset_revision_id ||
+      input.document.ontology_version_id !== input.ontology_version_id ||
+      !Number.isSafeInteger(input.generation) || input.generation < 0) {
+      throw new Error('server revision baseline does not match its asset, ontology, or generation');
+    }
+    if (this.states.has(input.asset_revision_id)) return false;
+    const state = this.stateTemplate(input.asset_revision_id, input.ontology_version_id);
+    state.base_revision_id = input.annotation_revision_id;
+    state.local_generation = input.generation;
+    state.synced_generation = input.generation;
+    state.document = frozenCopy(input.document);
+    state.last_ack = {
+      revision_id: input.annotation_revision_id,
+      generation: input.generation,
+      at: iso(this.clock.now()),
+    };
+    this.states.set(input.asset_revision_id, state);
+    this.recompute(state);
+    this.persist(state);
+    return true;
+  }
 
   subscribe(asset_revision_id: Id, listener: () => void): () => void {
     let set = this.listeners.get(asset_revision_id);
@@ -325,7 +354,15 @@ export class SaveQueue {
   /** Adopts a draft record (recovery "restored" / "keep local") as live state. */
   restoreFromRecord(record: DraftRecord): void {
     const existing = this.states.get(record.asset_revision_id);
-    const state: AssetState = this.stateTemplate(record.asset_revision_id, record.ontology_version_id);
+    if (existing && (
+      existing.dirty ||
+      existing.in_flight !== null ||
+      existing.paused ||
+      existing.conflict !== null ||
+      existing.storage_error !== null ||
+      existing.save_error !== null
+    )) return;
+    const state = this.stateTemplate(record.asset_revision_id, record.ontology_version_id);
     state.base_revision_id = record.base_revision_id;
     state.local_generation = record.generation;
     state.synced_generation = record.synced_generation;

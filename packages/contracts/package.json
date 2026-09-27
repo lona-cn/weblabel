@@ -5,6 +5,10 @@
   "type": "module",
   "exports": {
     "./validate": "./src/validate.js",
+    "./validate-browser": {
+      "types": "./src/validate-browser.d.ts",
+      "import": "./src/validate-browser.js"
+    },
     "./generated/*": "./generated/*"
   },
   "dependencies": {

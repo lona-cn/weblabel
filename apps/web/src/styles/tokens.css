@@ -106,3 +106,39 @@ button:disabled { cursor: not-allowed; }
 .projects-inline { padding: 20px; }
 @media (max-width: 1000px) { .workbench-grid { flex-wrap: wrap; } .sidebar-resize { width: 270px; } .ai-placeholder { flex: 1 0 100%; min-height: 100px; } }
 @media (max-width: 680px) { .topbar { padding: 0 12px; gap: 12px; } .main-nav button { padding: 0 8px; } .workspace-heading { align-items: flex-start; gap: 8px; flex-direction: column; padding: 12px; } .workbench-grid { flex-direction: column; padding: 8px; } .sidebar-resize { resize: vertical; width: auto; max-width: none; max-height: 450px; } .ai-placeholder { flex: 0 0 auto; } .canvas-stage { min-height: 300px; } .local-state { font-size: 10px; } }
+.login-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #e9ece7; }
+.login-card, .project-create { display: grid; gap: 10px; padding: 24px; border: 1px solid var(--color-border); border-radius: 10px; background: #fff; box-shadow: var(--shadow); }
+.login-card { width: min(420px, 100%); }
+.login-card h1, .project-create h2 { margin: 0 0 8px; font-size: 20px; }
+.login-card label, .project-create label, .completion-panel > label, .export-panel > label { font-size: 12px; color: var(--color-muted); }
+.login-card input, .project-create input, .project-name-field { min-height: 38px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 5px; }
+.login-card button, .project-create button, .negative-confirmation button, .export-panel button, .logout-button { min-height: 34px; padding: 6px 12px; border: 1px solid #c4572f; border-radius: 5px; background: #c4572f; color: #fff; cursor: pointer; }
+.project-create { grid-template-columns: minmax(110px, 1fr) minmax(150px, 2fr) auto; align-items: end; margin: 18px 0; }
+.project-create h2 { grid-column: 1 / -1; }
+.project-create label { grid-row: 2; }
+.project-create input { grid-row: 3; }
+.project-create button { grid-column: 3; grid-row: 3; }
+.session-loading { min-height: 100vh; display: grid; place-items: center; }
+.session-user { margin-left: auto; color: var(--color-muted); font-size: 12px; }
+.topbar > .logout-button { margin-left: 0; }
+.project-name-field { width: min(560px, 75vw); height: 31px; font-weight: 700; font-size: 17px; background: #fff; }
+.asset-import-bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--color-border); background: #fff; font-size: 12px; }
+.asset-import-bar label { font-weight: 700; }
+.media-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.media-strip-heading { grid-column: 1 / -1; }
+.media-thumb { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; padding: 5px; overflow: hidden; }
+.media-thumb span, .media-thumb small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-thumb small { color: var(--color-muted); font-size: 9px; }
+.canvas-stage { overflow: hidden; }
+.canvas-stage > canvas { position: relative; z-index: 0; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.gpu-diagnostics { position: absolute; z-index: 2; top: 8px; left: 8px; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 4px; background: rgb(255 255 255 / 92%); color: var(--color-ink); font-size: 10px; }
+.completion-panel, .export-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin-top: 8px; border: 1px solid var(--color-border); border-radius: 7px; background: #fff; }
+.completion-panel select, .export-panel select { min-height: 32px; padding: 4px 7px; border: 1px solid var(--color-border); border-radius: 5px; background: #fff; }
+.negative-confirmation { display: grid; flex-basis: 100%; gap: 7px; padding: 10px; border-left: 3px solid #c4572f; background: #fbf4ef; font-size: 12px; }
+.negative-confirmation p, .export-panel p { flex-basis: 100%; margin: 0; color: var(--color-muted); font-size: 11px; line-height: 1.5; }
+.negative-confirmation label { display: flex; align-items: center; gap: 7px; }
+.export-panel button { margin-left: auto; }
+.api-error { padding: 9px 12px; color: var(--color-danger); }
+.save-status-panel { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 10px; background: #fff; border: 1px solid var(--color-border); }
+.save-status { color: var(--color-muted); font-size: 11px; }
+@media (max-width: 680px) { .project-create { grid-template-columns: 1fr; } .project-create h2, .project-create label, .project-create input, .project-create button { grid-column: 1; grid-row: auto; } }

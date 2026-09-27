@@ -545,6 +545,58 @@ describe('T13 behavior 2: retry reuses the prepared operation', () => {
     expect(fixture.transport.saves.map((save) => save.request.operation_id)).toEqual(['op-1', 'op-1', 'op-1']);
   });
 
+  it('registers a fetched immutable head as an acknowledged baseline without replacing later local work', async () => {
+    const fixture = makeQueue();
+    const serverDocument = makeDocument({ asset_revision_id: 'asset_a' });
+    expect(fixture.queue.initializeFromServerRevision({
+      asset_revision_id: 'asset_a',
+      ontology_version_id: 'ontology_v1',
+      annotation_revision_id: 'server-r7',
+      generation: 0,
+      document: serverDocument,
+    })).toBe(true);
+    await fixture.queue.whenPersisted('asset_a');
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({
+      phase: 'synced', dirty: false, local_generation: 0, synced_generation: 0, base_revision_id: 'server-r7',
+    });
+    await fixture.queue.flush('asset_a');
+    expect(fixture.transport.saves).toHaveLength(0);
+
+    const localDocument = makeDocument({ asset_revision_id: 'asset_a', completion: 'complete' });
+    enqueue(fixture, { asset: 'asset_a', generation: 1, document: localDocument });
+    expect(fixture.queue.initializeFromServerRevision({
+      asset_revision_id: 'asset_a',
+      ontology_version_id: 'ontology_v1',
+      annotation_revision_id: 'server-r8',
+      generation: 0,
+      document: serverDocument,
+    })).toBe(false);
+    expect(fixture.queue.toRecord('asset_a')?.document).toEqual(localDocument);
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: true, base_revision_id: 'server-r7' });
+  });
+  it('does not replace newer in-memory work with an older recovered record', () => {
+    const fixture = makeQueue();
+    const newerDocument = makeDocument({ asset_revision_id: 'asset_a', completion: 'complete' });
+    enqueue(fixture, { asset: 'asset_a', generation: 9, document: newerDocument, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
+    const olderRecord = makeRecord({
+      asset_revision_id: 'asset_a',
+      ontology_version_id: 'ontology_v1',
+      base_revision_id: 'r7',
+      generation: 8,
+      document: makeDocument({ asset_revision_id: 'asset_a' }),
+      synced_generation: 7,
+    });
+
+    fixture.queue.restoreFromRecord(olderRecord);
+
+    const live = fixture.queue.toRecord('asset_a');
+    expect(live?.document).toEqual(newerDocument);
+    expect(live?.generation).toBe(9);
+    expect(live?.intent_journal.map((entry) => entry.intent)).toEqual([ACCEPT]);
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: true, base_revision_id: 'r7', local_generation: 9 });
+  });
+
+
   it('a pending operation restored from a record stays frozen and keeps its identity across retry', async () => {
     // Produce a real prepared operation, then simulate a reload: JSON round-trip
     // (as IndexedDB structured-clone does) and restore into a fresh queue.

@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node ../../scripts/build-web-bridge.mjs",
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@weblabel/contracts": "workspace:*",
     "@tanstack/react-virtual": "3.13.12",
     "react": "19.2.0",
     "react-dom": "19.2.0"

@@ -34,6 +34,7 @@ export interface SeededProject {
   api: ApiClient;
   apiBaseUrl: string;
   apiCookie: string;
+  login: { username: string; password: string };
 }
 
 interface Fixtures {
@@ -93,7 +94,7 @@ async function generatedImage(index: number): Promise<Buffer> {
   return sharp(pixels, { raw: { width: WIDTH, height: HEIGHT, channels: 3 } }).png().toBuffer();
 }
 
-async function authorizedUploader(admin: ApiClient, app: TestApp, projectId: string): Promise<{ cookie: string; csrf: string }> {
+async function authorizedUploader(admin: ApiClient, app: TestApp, projectId: string): Promise<{ cookie: string; csrf: string; username: string; password: string }> {
   const username = `t15-${randomUUID()}`;
   const password = `${randomUUID()}-T15-password`;
   const created = await admin.request<JsonRecord>('POST', '/api/users', { username, password });
@@ -111,7 +112,7 @@ async function authorizedUploader(admin: ApiClient, app: TestApp, projectId: str
   const login = record(await response.json(), 'login');
   const csrf = stringField(login, 'csrf_token');
   if (!cookie) throw new Error('T15 login did not issue a session cookie');
-  return { cookie, csrf };
+  return { cookie, csrf, username, password };
 }
 
 async function uploadTypedImage(app: TestApp, projectId: string, credentials: { cookie: string; csrf: string }, image: Buffer, index: number, filename: string, mime: string): Promise<void> {
@@ -188,7 +189,16 @@ async function seed(app: TestApp, api: ApiClient, demoDir: string): Promise<Seed
       mirrored: orientation === 2,
     });
   }
-  return { project_id: projectId, ontology_version_id: ontologyId, assets: seededAssets, demoImagePaths, api, apiBaseUrl: app.base_url, apiCookie: uploader.cookie };
+  return {
+    project_id: projectId,
+    ontology_version_id: ontologyId,
+    assets: seededAssets,
+    demoImagePaths,
+    api,
+    apiBaseUrl: app.base_url,
+    apiCookie: uploader.cookie,
+    login: { username: uploader.username, password: uploader.password },
+  };
 }
 
 export const test = base.extend<Fixtures>({
@@ -197,11 +207,25 @@ export const test = base.extend<Fixtures>({
     try { await use(app); } finally { await app.stop(); }
   },
   adminPage: async ({ page, seededProject }, use) => {
-    const separator = seededProject.apiCookie.indexOf('=');
-    const name = seededProject.apiCookie.slice(0, separator);
-    const value = seededProject.apiCookie.slice(separator + 1);
-    if (separator < 1 || !value) throw new Error('T15 API login returned an invalid session cookie');
-    await page.context().addCookies([{ name, value, url: seededProject.apiBaseUrl, path: '/' }]);
+    await page.route('http://127.0.0.1:5173/api/**', async (route) => {
+      const request = route.request();
+      const incoming = new URL(request.url());
+      const target = new URL(`${incoming.pathname}${incoming.search}`, seededProject.apiBaseUrl);
+      const headers = { ...request.headers(), origin: seededProject.apiBaseUrl };
+      delete headers.host;
+      delete headers['content-length'];
+      const postData = request.postDataBuffer();
+      await route.fulfill({
+        response: await route.fetch({ url: target.href, headers, method: request.method(), postData: postData ?? undefined }),
+      });
+    });
+    await page.goto('http://127.0.0.1:5173/');
+    await page.getByTestId('login-username').fill(seededProject.login.username);
+    await page.getByTestId('login-password').fill(seededProject.login.password);
+    await page.getByTestId('login-submit').click();
+    await expect(page.getByTestId('login-submit')).toHaveCount(0);
+    await page.goto(`http://127.0.0.1:5173/?project_id=${encodeURIComponent(seededProject.project_id)}`);
+    await expect(page.getByTestId('asset-grid')).toBeVisible();
     await use(page);
   },
   seededProject: async ({ app }, use) => {

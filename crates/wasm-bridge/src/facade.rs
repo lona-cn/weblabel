@@ -847,7 +847,12 @@ pub mod wasm {
     }
 
     fn to_js<T: serde::Serialize>(value: &T) -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(value).map_err(|error| JsValue::from_str(&error.to_string()))
+        let serializer = serde_wasm_bindgen::Serializer::new()
+            .serialize_maps_as_objects(true)
+            .serialize_missing_as_null(true);
+        value
+            .serialize(&serializer)
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     fn to_js_error(error: ApiError) -> JsValue {
