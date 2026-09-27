@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "2b37cb57305042a0a34017e10e5adf58d9e49cf7",
-  "last_updated_at": "2026-09-27T19:15:50Z",
+  "application_commit": "51569b5e787845db6dc0aef6a847bfd8aab4913b",
+  "last_updated_at": "2026-09-27T21:30:47Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -317,10 +317,15 @@
       "blockers": []
     },
     "T27": {
-      "status": "pending",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
+      "status": "done",
+      "base_commit": "e33819d887c2b4c1826831d56e3d52e8359778f5",
+      "integrated_commit": "51569b5e787845db6dc0aef6a847bfd8aab4913b",
+      "evidence": [
+        "reports/T27/result.json",
+        "reports/T27/tests.log",
+        "reports/T27/review.md",
+        "reports/T27/ui-smoke.webp"
+      ],
       "blockers": []
     },
     "T28": {
