@@ -1,5 +1,8 @@
 use annotation_domain::BBox;
 
+pub(crate) mod dense;
+pub(crate) mod gesture;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Select,
@@ -27,14 +30,6 @@ pub struct PointerInput {
     pub ctrl: bool,
     pub alt: bool,
     pub meta: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PointerGesture {
-    pub pointer_id: i32,
-    pub start: [f64; 2],
-    pub current: [f64; 2],
-    pub additive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

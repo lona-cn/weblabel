@@ -27,6 +27,12 @@ const CANVAS_POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup', 'point
 
 type CanvasPointerEvent = (typeof CANVAS_POINTER_EVENTS)[number];
 
+/** Normalized wheel delta units (DOM `WheelEvent.deltaMode`). */
+const WHEEL_PIXELS_PER_LINE = 16;
+const WHEEL_PIXELS_PER_PAGE = 400;
+/** Exponential scroll-zoom rate: factor = exp(-pixels * rate). */
+const WHEEL_ZOOM_RATE = 0.002;
+
 function defaultScheduler(): RenderScheduler {
   return {
     request: (callback) => window.requestAnimationFrame(callback),
@@ -65,6 +71,10 @@ export class EditorHost {
   private assetToken = 0;
   /** Invalidated on dispose; in-flight creations compare it before mounting. */
   private disposeToken = 0;
+  /** Pointer ids captured by this host so every capture pairs with a release. */
+  private readonly capturedPointers = new Set<number>();
+  /** The pointer that started (or may still start) the active gesture. */
+  private activePointerId: number | null = null;
 
   constructor(options: Partial<EditorHostOptions> = {}) {
     this.facadeFactory = options.facadeFactory ?? createEditorFacadeFactory(DEFAULT_WASM_BRIDGE_URL);
@@ -90,7 +100,10 @@ export class EditorHost {
     if (this.canvas !== null || this.disposed) return;
     this.canvas = canvas;
     for (const type of CANVAS_POINTER_EVENTS) canvas.addEventListener(type, this.pointerListeners[type]);
+    canvas.addEventListener('contextmenu', this.handleContextMenu);
+    canvas.addEventListener('wheel', this.handleWheel, { passive: false });
     window.addEventListener('resize', this.handleResize);
+    window.addEventListener('blur', this.handleWindowBlur);
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(this.handleResize);
       this.resizeObserver.observe(canvas);
@@ -117,6 +130,9 @@ export class EditorHost {
     }
     this.statusValue = 'loading';
     this.errorValue = null;
+    // Switching assets destroys any in-progress gesture and its captures (T12).
+    this.releaseCaptures();
+    this.activePointerId = null;
     this.releaseFacade();
     let created;
     try {
@@ -147,6 +163,10 @@ export class EditorHost {
   }
 
   setTool(tool: EditorTool): void {
+    // A tool switch cancels any in-progress gesture (T12): the Rust core drops
+    // it in set_tool and the web side releases the gesture's pointer captures.
+    this.releaseCaptures();
+    this.activePointerId = null;
     this.guard((facade) => {
       facade.set_tool(tool);
       return null;
@@ -199,6 +219,36 @@ export class EditorHost {
     return this.guard((facade) => facade.get_generation(), 'EDITOR_BRIDGE_FAILURE');
   }
 
+  /** The Rust-owned view (the additive C3 read-back from reports/T09). */
+  getViewport(): Viewport | null {
+    return this.guard((facade) => facade.get_viewport(), 'EDITOR_BRIDGE_FAILURE');
+  }
+
+  /**
+   * Cancels the in-progress gesture exactly like a pointer cancel (T12): Esc,
+   * window blur, tool switch and asset switch all route here. Rust discards
+   * the gesture without touching the document or the generation, and every
+   * pointer capture taken for the gesture is released.
+   */
+  cancelGesture(): void {
+    this.releaseCaptures();
+    const pointerId = this.activePointerId;
+    this.activePointerId = null;
+    const input: PointerInput = {
+      phase: 'cancel',
+      pointer_id: pointerId ?? 0,
+      x_css: 0,
+      y_css: 0,
+      button: 0,
+      buttons: 0,
+      shift: false,
+      ctrl: false,
+      alt: false,
+      meta: false,
+    };
+    this.consumeDelta(this.guard((facade) => facade.pointer(input), 'EDITOR_BRIDGE_FAILURE'));
+  }
+
   /** Idempotent teardown: listeners, pending frames, and the GPU device. */
   dispose(): void {
     if (this.disposed) return;
@@ -208,8 +258,12 @@ export class EditorHost {
     const canvas = this.canvas;
     if (canvas !== null) {
       for (const type of CANVAS_POINTER_EVENTS) canvas.removeEventListener(type, this.pointerListeners[type]);
+      canvas.removeEventListener('contextmenu', this.handleContextMenu);
+      canvas.removeEventListener('wheel', this.handleWheel);
       window.removeEventListener('resize', this.handleResize);
+      window.removeEventListener('blur', this.handleWindowBlur);
     }
+    this.releaseCaptures();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     if (this.frameHandle !== null) {
@@ -308,9 +362,78 @@ export class EditorHost {
     pointercancel: (event) => this.handlePointer(event, 'cancel'),
   };
 
+  /**
+   * Precise contextmenu policy (T12): the drawing surface suppresses the
+   * native menu on every platform. Right-click and the macOS ctrl+click
+   * context gesture never edit, never select, and never start a gesture. No
+   * platform branch exists here at all, so macOS handling cannot alter the
+   * Windows defaults.
+   */
+  private readonly handleContextMenu = (event: MouseEvent): void => {
+    event.preventDefault();
+  };
+
+  /**
+   * Precise scroll-zoom policy (T12): the wheel zooms at the cursor with an
+   * exponential factor of the normalized pixel delta and never edits or
+   * selects. A wheel during an active gesture cancels that gesture, because a
+   * viewport change invalidates in-flight gesture state.
+   */
+  private readonly handleWheel = (event: WheelEvent): void => {
+    event.preventDefault();
+    const canvas = this.canvas;
+    if (canvas === null || this.disposed) return;
+    if (this.activePointerId !== null) this.cancelGesture();
+    const pixels =
+      event.deltaMode === 1
+        ? event.deltaY * WHEEL_PIXELS_PER_LINE
+        : event.deltaMode === 2
+          ? event.deltaY * WHEEL_PIXELS_PER_PAGE
+          : event.deltaY;
+    const rect = canvas.getBoundingClientRect();
+    this.zoomAt(event.clientX - rect.left, event.clientY - rect.top, Math.exp(-pixels * WHEEL_ZOOM_RATE));
+  };
+
+  /** Window blur cancels the in-progress gesture and releases its captures. */
+  private readonly handleWindowBlur = (): void => {
+    if (this.activePointerId !== null) this.cancelGesture();
+  };
+
+  private releaseCapture(pointerId: number): void {
+    if (!this.capturedPointers.has(pointerId)) return;
+    this.capturedPointers.delete(pointerId);
+    const canvas = this.canvas;
+    if (canvas === null) return;
+    try {
+      if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+    } catch {
+      // The pointer can already be gone; the pairing bookkeeping is complete.
+    }
+  }
+
+  private releaseCaptures(): void {
+    for (const pointerId of [...this.capturedPointers]) this.releaseCapture(pointerId);
+  }
+
   private handlePointer(event: PointerEvent, phase: PointerPhase): void {
     const canvas = this.canvas;
     if (canvas === null || this.disposed) return;
+    if (phase === 'down' && event.button === 0) {
+      // Pointer capture pairs with every gesture: released on up/cancel and on
+      // every external cancel path (T12).
+      try {
+        canvas.setPointerCapture(event.pointerId);
+        this.capturedPointers.add(event.pointerId);
+      } catch {
+        // Synthetic or already-gone pointers have no capture to pair; the
+        // gesture still runs and the Rust cancel path still applies.
+      }
+      this.activePointerId = event.pointerId;
+    }
+    if (phase === 'up' || phase === 'cancel') {
+      if (this.activePointerId === event.pointerId) this.activePointerId = null;
+      this.releaseCapture(event.pointerId);
+    }
     // Pointer coordinates become canvas-local CSS pixels here; DPR never
     // multiplies into them (docs/architecture.md view formula).
     const rect = canvas.getBoundingClientRect();

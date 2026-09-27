@@ -2,15 +2,16 @@ use std::collections::{HashMap, HashSet};
 
 use annotation_domain::{
     validate_document, AnnotationDocument, AnnotationObject, DomainError, EditorCommand,
-    EditorDelta, Id, OntologyVersion, Origin, OriginType,
+    EditorDelta, Id, OntologyVersion,
 };
-use geometry::{css_to_image, normalize_bbox, Viewport};
+use geometry::{css_to_image, Viewport};
 
 use crate::{
     commands,
     history::{History, HistoryEntry},
     selection::{LocalFlags, Selection},
-    tools::{PointerGesture, PointerInput, PointerPhase, Preview, Tool},
+    tools::gesture::{self, Action, Commit, EventOutcome, GestureContext, GestureMachine},
+    tools::{PointerInput, Preview, Tool},
 };
 
 const MAX_GENERATION: u64 = 9_007_199_254_740_991;
@@ -22,8 +23,7 @@ pub struct Editor {
     history: History,
     selection: Selection,
     tool: Tool,
-    gesture: Option<PointerGesture>,
-    preview: Option<Preview>,
+    gesture: GestureMachine,
     active_label_id: Option<Id>,
     viewport: Viewport,
 }
@@ -43,14 +43,17 @@ impl Editor {
             history: History::default(),
             selection: Selection::default(),
             tool: Tool::Select,
-            gesture: None,
-            preview: None,
+            gesture: GestureMachine::new(),
             active_label_id: None,
             viewport: Viewport::try_new(1.0, 0.0, 0.0, width, height, 1.0)?,
         })
     }
 
     pub fn dispatch(&mut self, command: EditorCommand) -> Result<EditorDelta, DomainError> {
+        // A document mutation invalidates any in-flight gesture; committing a
+        // gesture reaches this path only after the machine has already cleared
+        // its state, so this is a no-op for gesture commits.
+        self.gesture.cancel();
         match command {
             EditorCommand::Undo => self.undo(),
             EditorCommand::Redo => self.redo(),
@@ -118,6 +121,12 @@ impl Editor {
         self.generation
     }
 
+    /// Read-only view state so boundary layers can mirror view changes the
+    /// gesture path makes (the pan tool) without duplicating view math.
+    pub fn viewport(&self) -> Viewport {
+        self.viewport
+    }
+
     pub fn can_undo(&self) -> bool {
         self.history.can_undo()
     }
@@ -127,7 +136,7 @@ impl Editor {
     }
 
     pub fn set_tool(&mut self, tool: Tool) {
-        self.cancel_gesture();
+        self.gesture.cancel();
         self.tool = tool;
     }
 
@@ -150,7 +159,7 @@ impl Editor {
     pub fn set_viewport(&mut self, viewport: Viewport) -> Result<(), DomainError> {
         viewport.validate()?;
         self.viewport = viewport;
-        self.cancel_gesture();
+        self.gesture.cancel();
         Ok(())
     }
 
@@ -209,7 +218,7 @@ impl Editor {
     }
 
     pub fn preview(&self) -> Option<&Preview> {
-        self.preview.as_ref()
+        self.gesture.preview()
     }
 
     pub fn pointer(&mut self, input: PointerInput) -> Result<EditorDelta, DomainError> {
@@ -226,134 +235,25 @@ impl Editor {
                 "transformed pointer coordinates must be finite",
             ));
         }
-        match input.phase {
-            PointerPhase::Down => {
-                if self.gesture.is_some() || input.button != 0 {
-                    return Ok(self.delta(false, false, Vec::new(), Vec::new()));
-                }
-                self.gesture = Some(PointerGesture {
-                    pointer_id: input.pointer_id,
-                    start: point,
-                    current: point,
-                    additive: input.shift || input.ctrl || input.meta,
-                });
-                self.refresh_preview();
-                Ok(self.delta(false, true, Vec::new(), Vec::new()))
-            }
-            PointerPhase::Move => {
-                let Some(gesture) = self
-                    .gesture
-                    .as_mut()
-                    .filter(|g| g.pointer_id == input.pointer_id)
-                else {
-                    return Ok(self.delta(false, false, Vec::new(), Vec::new()));
-                };
-                gesture.current = point;
-                self.refresh_preview();
-                Ok(self.delta(false, true, Vec::new(), Vec::new()))
-            }
-            PointerPhase::Cancel => {
-                if self
-                    .gesture
-                    .is_some_and(|gesture| gesture.pointer_id == input.pointer_id)
-                {
-                    self.cancel_gesture();
-                    return Ok(self.delta(false, true, Vec::new(), Vec::new()));
-                }
-                Ok(self.delta(false, false, Vec::new(), Vec::new()))
-            }
-            PointerPhase::Up => self.finish_pointer(input.pointer_id, point),
-        }
+        let context = GestureContext {
+            document: &self.document,
+            selection: &self.selection,
+            viewport: self.viewport,
+            tool: self.tool,
+            active_label_id: self.active_label_id.as_ref(),
+            ontology: &self.ontology,
+        };
+        let outcome = self.gesture.handle(&context, &input, point)?;
+        self.apply_outcome(outcome)
     }
 
-    fn finish_pointer(
-        &mut self,
-        pointer_id: i32,
-        point: [f64; 2],
-    ) -> Result<EditorDelta, DomainError> {
-        let Some(gesture) = self
-            .gesture
-            .filter(|gesture| gesture.pointer_id == pointer_id)
-        else {
-            return Ok(self.delta(false, false, Vec::new(), Vec::new()));
-        };
-        let gesture = PointerGesture {
-            current: point,
-            ..gesture
-        };
-        self.gesture = None;
-        self.preview = None;
-        match self.tool {
-            Tool::Box => {
-                let width_css = (gesture.current[0] - gesture.start[0]).abs() * self.viewport.scale;
-                let height_css =
-                    (gesture.current[1] - gesture.start[1]).abs() * self.viewport.scale;
-                if width_css < 2.0 || height_css < 2.0 {
-                    return Ok(self.delta(false, true, Vec::new(), Vec::new()));
-                }
-                let label_id = self.active_label_id.clone().ok_or_else(|| {
-                    DomainError::new("ACTIVE_LABEL_REQUIRED", "box tool requires an active label")
-                })?;
-                let geometry = normalize_bbox(gesture.start, gesture.current)?;
-                let attributes = self
-                    .ontology
-                    .labels
-                    .iter()
-                    .find(|label| label.label_id == label_id)
-                    .expect("active label was validated")
-                    .attributes
-                    .iter()
-                    .map(|attribute| (attribute.key.clone(), attribute.default_value.clone()))
-                    .collect();
-                let object = AnnotationObject {
-                    object_id: Id::from(uuid::Uuid::new_v4().to_string()),
-                    label_id,
-                    geometry,
-                    attributes,
-                    origin: Origin {
-                        kind: OriginType::Manual,
-                        prediction_id: None,
-                        model_run_id: None,
-                        import_batch_id: None,
-                    },
-                };
-                self.dispatch(EditorCommand::Create { object })
-            }
-            Tool::Select => {
-                let min_x = gesture.start[0].min(gesture.current[0]);
-                let min_y = gesture.start[1].min(gesture.current[1]);
-                let max_x = gesture.start[0].max(gesture.current[0]);
-                let max_y = gesture.start[1].max(gesture.current[1]);
-                let mut ids = if gesture.additive {
-                    self.selection
-                        .ids()
-                        .iter()
-                        .filter(|id| !self.selection.flags(id).hidden)
-                        .cloned()
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                ids.extend(
-                    self.document
-                        .objects
-                        .iter()
-                        .filter(|object| {
-                            !self.selection.flags(&object.object_id).hidden
-                                && object.geometry.x_min <= max_x
-                                && object.geometry.x_max >= min_x
-                                && object.geometry.y_min <= max_y
-                                && object.geometry.y_max >= min_y
-                        })
-                        .map(|object| object.object_id.clone()),
-                );
-                self.set_selection(ids)
-            }
-            Tool::Pan => {
-                let tx = self.viewport.tx
-                    + (gesture.current[0] - gesture.start[0]) * self.viewport.scale;
-                let ty = self.viewport.ty
-                    + (gesture.current[1] - gesture.start[1]) * self.viewport.scale;
+    fn apply_outcome(&mut self, outcome: EventOutcome) -> Result<EditorDelta, DomainError> {
+        match outcome.action {
+            Action::None => Ok(self.delta(false, outcome.repaint, Vec::new(), Vec::new())),
+            Action::SetSelection(ids) => self.set_selection(ids),
+            Action::Pan(delta_css) => {
+                let tx = self.viewport.tx + delta_css[0];
+                let ty = self.viewport.ty + delta_css[1];
                 if !tx.is_finite() || !ty.is_finite() {
                     return Err(DomainError::new(
                         "INVALID_VIEWPORT",
@@ -364,24 +264,52 @@ impl Editor {
                 self.viewport.ty = ty;
                 Ok(self.delta(false, true, Vec::new(), Vec::new()))
             }
+            Action::Commit { selection, edit } => {
+                // The staged selection lands in the same delta as the edit.
+                let mut selection_changed = false;
+                if let Some(ids) = selection {
+                    selection_changed = ids.as_slice() != self.selection.ids();
+                    self.selection.set(ids);
+                }
+                let mut delta = match edit {
+                    Commit::Create(object) => self.dispatch(EditorCommand::Create { object })?,
+                    Commit::ReplaceGeometries(edits) => {
+                        self.commit_document_edit(|document, selection| {
+                            gesture::apply_replacements(document, selection, &edits)
+                        })?
+                    }
+                };
+                if selection_changed {
+                    delta.repaint = true;
+                }
+                Ok(delta)
+            }
         }
     }
 
-    fn refresh_preview(&mut self) {
-        self.preview = if self.tool == Tool::Box {
-            self.gesture.and_then(|gesture| {
-                normalize_bbox(gesture.start, gesture.current)
-                    .ok()
-                    .map(|geometry| Preview { geometry })
-            })
-        } else {
-            None
-        };
-    }
-
-    fn cancel_gesture(&mut self) {
-        self.gesture = None;
-        self.preview = None;
+    /// Commits one atomic document edit as exactly one history entry.
+    fn commit_document_edit(
+        &mut self,
+        apply: impl FnOnce(&mut AnnotationDocument, &Selection) -> Result<(), DomainError>,
+    ) -> Result<EditorDelta, DomainError> {
+        let before = self.document.clone();
+        let mut after = before.clone();
+        apply(&mut after, &self.selection)?;
+        validate_document(&after, &self.ontology)?;
+        if after == before {
+            return Ok(self.delta(false, false, Vec::new(), Vec::new()));
+        }
+        self.bump_generation()?;
+        self.document = after.clone();
+        self.history
+            .push(HistoryEntry::new(before.clone(), after.clone()));
+        self.prune_transient_state();
+        Ok(self.delta(
+            true,
+            true,
+            changed_objects(&before, &after),
+            removed_objects(&before, &after),
+        ))
     }
 
     fn undo(&mut self) -> Result<EditorDelta, DomainError> {

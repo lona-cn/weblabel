@@ -1,0 +1,651 @@
+T12 parent integration proposal (apply only in the parent integration checkout)
+
+T12's exclusive files are the new modules crates/editor-core/src/tools/*.rs,
+the four workbench components, the Rust suite and the e2e spec. Four shared
+wiring files had to change for those to compile and to satisfy the card's
+behavior list; all four were applied locally in this worktree (T21/T09
+precedent, integration_files_locally_applied) so the registered acceptance
+could actually run. No root manifest / lockfile / router / navigation /
+TASKS.json / STATUS.json / package.json / pnpm-workspace.yaml / Cargo.toml /
+vitest.config.ts / playwright.config.ts change exists: `pnpm test:task T12`
+already resolves through TASKS.json to
+`cargo test -p editor-core --test t12_tools --locked` untouched. Cargo.lock is
+unchanged (no dependency was added anywhere).
+
+1. crates/editor-core/src/tools.rs — the new-module declaration (the
+   testing-contracts.md section 5 "new module declarations go to
+   integration.patch" case): `mod dense; mod gesture;` plus the old
+   `PointerGesture` helper struct moved into tools/gesture.rs as the
+   machine-internal ActiveGesture (it was `pub(crate)` and nothing outside
+   editor.rs used it). The public tools exports (Tool, PointerPhase,
+   PointerInput, Preview) are byte-identical to before.
+
+2. crates/editor-core/src/editor.rs — delegation into the T12 gesture machine:
+   `pointer()` keeps the exact C3 validation/transform and now routes the
+   event through tools::gesture::GestureMachine; `finish_pointer`/
+   `refresh_preview`/`cancel_gesture` moved into the machine. Two additive
+   pieces of crate-internal plumbing: `commit_document_edit` (one history
+   entry for an atomic multi-object edit, the "one pointerup = one undo entry"
+   unit) and `Editor::viewport()` (read-only, mirroring the T09 get_viewport
+   precedent) so the wasm facade can mirror the pan tool's view change. No
+   public behavior of Editor changed except the documented T12 semantics:
+   Select-tool drags starting on an object move it, handle drags resize it,
+   and plain clicks cycle dense stacks (tasks/T12.md required behavior).
+   Draw clamp detail: the raw drag must reach 2 CSS px per side before clipping; after clipping
+   to canonical image bounds, either side below 2 CSS px (or zero area) rejects the draw. The
+   result is not expanded back to the minimum size.
+
+3. crates/wasm-bridge/src/facade.rs — three small fixes the T12 cancel/pan
+   semantics require: set_tool and set_viewport refresh the preview overlay
+   (a tool/viewport switch cancels the in-flight gesture; the overlay must
+   disappear with it), and absorb() mirrors the editor-owned view after every
+   delta (the pan tool mutates the editor viewport; without the mirror,
+   get_viewport and the renderer would show a stale view — a pre-existing
+   T04/T09 divergence the real e2e caught).
+
+4. apps/web/src/lib/editor/EditorHost.ts — the canvas interaction policy the
+   card asks to define precisely: pointer capture pairing (set on primary
+   pointerdown, released on up/cancel and on every external cancel path),
+   cancelGesture() (the Esc/blur/tool-switch/asset-switch seam), window-blur
+   cancel, scroll-zoom at the cursor (exp(-pixels*0.002), cancels an active
+   gesture), and the contextmenu policy (suppressed on the canvas on every
+   platform; never selects/edits/starts gestures). All listeners pair in
+   mount/dispose exactly like the T09 set (T09's pairing test stays green) and
+   getViewport() passes the additive C3 read-back through.
+
+5. Narrow acceptance after integration (exactly the TASKS.json entry):
+
+       pnpm test:task T12
+
+   Full registered battery (see reports/T12/tests.log for exit codes):
+
+       cargo test --workspace --locked
+       cargo fmt --all -- --check
+       pnpm exec vitest run
+       pnpm --filter @weblabel/web typecheck
+       pnpm test:contracts
+       REQUIRE_WGPU_DEVICE=1 REQUIRE_HARDWARE_GPU=1 pnpm exec playwright test tests/e2e/t12_tools.spec.ts --reporter=list
+
+   The e2e builds crates/wasm-bridge via wasm-bindgen itself (pinned toolchain,
+   neutral cargo cwd) and needs no playwright.config.ts change: it launches
+   full Chromium through file-level test.use({ channel: 'chromium' }).
+
+6. Nothing else is claimed: the save request transport in the e2e is a fetch
+   stand-in for the T13 SaveQueue.enqueue wiring; T12 owns only the trigger
+   gate (SelectionStore.subscribeSaveNeeded fires for document_changed deltas
+   exclusively).
+
+--- unified diff of items 1-4 (already applied in this worktree) ---
+diff --git a/apps/web/src/lib/editor/EditorHost.ts b/apps/web/src/lib/editor/EditorHost.ts
+index f658cbad..ddab8b03 100644
+--- a/apps/web/src/lib/editor/EditorHost.ts
++++ b/apps/web/src/lib/editor/EditorHost.ts
+@@ -27,6 +27,12 @@ const CANVAS_POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup', 'point
+ 
+ type CanvasPointerEvent = (typeof CANVAS_POINTER_EVENTS)[number];
+ 
++/** Normalized wheel delta units (DOM `WheelEvent.deltaMode`). */
++const WHEEL_PIXELS_PER_LINE = 16;
++const WHEEL_PIXELS_PER_PAGE = 400;
++/** Exponential scroll-zoom rate: factor = exp(-pixels * rate). */
++const WHEEL_ZOOM_RATE = 0.002;
++
+ function defaultScheduler(): RenderScheduler {
+   return {
+     request: (callback) => window.requestAnimationFrame(callback),
+@@ -65,6 +71,10 @@ export class EditorHost {
+   private assetToken = 0;
+   /** Invalidated on dispose; in-flight creations compare it before mounting. */
+   private disposeToken = 0;
++  /** Pointer ids captured by this host so every capture pairs with a release. */
++  private readonly capturedPointers = new Set<number>();
++  /** The pointer that started (or may still start) the active gesture. */
++  private activePointerId: number | null = null;
+ 
+   constructor(options: Partial<EditorHostOptions> = {}) {
+     this.facadeFactory = options.facadeFactory ?? createEditorFacadeFactory(DEFAULT_WASM_BRIDGE_URL);
+@@ -90,7 +100,10 @@ export class EditorHost {
+     if (this.canvas !== null || this.disposed) return;
+     this.canvas = canvas;
+     for (const type of CANVAS_POINTER_EVENTS) canvas.addEventListener(type, this.pointerListeners[type]);
++    canvas.addEventListener('contextmenu', this.handleContextMenu);
++    canvas.addEventListener('wheel', this.handleWheel, { passive: false });
+     window.addEventListener('resize', this.handleResize);
++    window.addEventListener('blur', this.handleWindowBlur);
+     if (typeof ResizeObserver !== 'undefined') {
+       this.resizeObserver = new ResizeObserver(this.handleResize);
+       this.resizeObserver.observe(canvas);
+@@ -117,6 +130,9 @@ export class EditorHost {
+     }
+     this.statusValue = 'loading';
+     this.errorValue = null;
++    // Switching assets destroys any in-progress gesture and its captures (T12).
++    this.releaseCaptures();
++    this.activePointerId = null;
+     this.releaseFacade();
+     let created;
+     try {
+@@ -147,6 +163,10 @@ export class EditorHost {
+   }
+ 
+   setTool(tool: EditorTool): void {
++    // A tool switch cancels any in-progress gesture (T12): the Rust core drops
++    // it in set_tool and the web side releases the gesture's pointer captures.
++    this.releaseCaptures();
++    this.activePointerId = null;
+     this.guard((facade) => {
+       facade.set_tool(tool);
+       return null;
+@@ -199,6 +219,36 @@ export class EditorHost {
+     return this.guard((facade) => facade.get_generation(), 'EDITOR_BRIDGE_FAILURE');
+   }
+ 
++  /** The Rust-owned view (the additive C3 read-back from reports/T09). */
++  getViewport(): Viewport | null {
++    return this.guard((facade) => facade.get_viewport(), 'EDITOR_BRIDGE_FAILURE');
++  }
++
++  /**
++   * Cancels the in-progress gesture exactly like a pointer cancel (T12): Esc,
++   * window blur, tool switch and asset switch all route here. Rust discards
++   * the gesture without touching the document or the generation, and every
++   * pointer capture taken for the gesture is released.
++   */
++  cancelGesture(): void {
++    this.releaseCaptures();
++    const pointerId = this.activePointerId;
++    this.activePointerId = null;
++    const input: PointerInput = {
++      phase: 'cancel',
++      pointer_id: pointerId ?? 0,
++      x_css: 0,
++      y_css: 0,
++      button: 0,
++      buttons: 0,
++      shift: false,
++      ctrl: false,
++      alt: false,
++      meta: false,
++    };
++    this.consumeDelta(this.guard((facade) => facade.pointer(input), 'EDITOR_BRIDGE_FAILURE'));
++  }
++
+   /** Idempotent teardown: listeners, pending frames, and the GPU device. */
+   dispose(): void {
+     if (this.disposed) return;
+@@ -208,8 +258,12 @@ export class EditorHost {
+     const canvas = this.canvas;
+     if (canvas !== null) {
+       for (const type of CANVAS_POINTER_EVENTS) canvas.removeEventListener(type, this.pointerListeners[type]);
++      canvas.removeEventListener('contextmenu', this.handleContextMenu);
++      canvas.removeEventListener('wheel', this.handleWheel);
+       window.removeEventListener('resize', this.handleResize);
++      window.removeEventListener('blur', this.handleWindowBlur);
+     }
++    this.releaseCaptures();
+     this.resizeObserver?.disconnect();
+     this.resizeObserver = null;
+     if (this.frameHandle !== null) {
+@@ -308,9 +362,78 @@ export class EditorHost {
+     pointercancel: (event) => this.handlePointer(event, 'cancel'),
+   };
+ 
++  /**
++   * Precise contextmenu policy (T12): the drawing surface suppresses the
++   * native menu on every platform. Right-click and the macOS ctrl+click
++   * context gesture never edit, never select, and never start a gesture. No
++   * platform branch exists here at all, so macOS handling cannot alter the
++   * Windows defaults.
++   */
++  private readonly handleContextMenu = (event: MouseEvent): void => {
++    event.preventDefault();
++  };
++
++  /**
++   * Precise scroll-zoom policy (T12): the wheel zooms at the cursor with an
++   * exponential factor of the normalized pixel delta and never edits or
++   * selects. A wheel during an active gesture cancels that gesture, because a
++   * viewport change invalidates in-flight gesture state.
++   */
++  private readonly handleWheel = (event: WheelEvent): void => {
++    event.preventDefault();
++    const canvas = this.canvas;
++    if (canvas === null || this.disposed) return;
++    if (this.activePointerId !== null) this.cancelGesture();
++    const pixels =
++      event.deltaMode === 1
++        ? event.deltaY * WHEEL_PIXELS_PER_LINE
++        : event.deltaMode === 2
++          ? event.deltaY * WHEEL_PIXELS_PER_PAGE
++          : event.deltaY;
++    const rect = canvas.getBoundingClientRect();
++    this.zoomAt(event.clientX - rect.left, event.clientY - rect.top, Math.exp(-pixels * WHEEL_ZOOM_RATE));
++  };
++
++  /** Window blur cancels the in-progress gesture and releases its captures. */
++  private readonly handleWindowBlur = (): void => {
++    if (this.activePointerId !== null) this.cancelGesture();
++  };
++
++  private releaseCapture(pointerId: number): void {
++    if (!this.capturedPointers.has(pointerId)) return;
++    this.capturedPointers.delete(pointerId);
++    const canvas = this.canvas;
++    if (canvas === null) return;
++    try {
++      if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
++    } catch {
++      // The pointer can already be gone; the pairing bookkeeping is complete.
++    }
++  }
++
++  private releaseCaptures(): void {
++    for (const pointerId of [...this.capturedPointers]) this.releaseCapture(pointerId);
++  }
++
+   private handlePointer(event: PointerEvent, phase: PointerPhase): void {
+     const canvas = this.canvas;
+     if (canvas === null || this.disposed) return;
++    if (phase === 'down' && event.button === 0) {
++      // Pointer capture pairs with every gesture: released on up/cancel and on
++      // every external cancel path (T12).
++      try {
++        canvas.setPointerCapture(event.pointerId);
++        this.capturedPointers.add(event.pointerId);
++      } catch {
++        // Synthetic or already-gone pointers have no capture to pair; the
++        // gesture still runs and the Rust cancel path still applies.
++      }
++      this.activePointerId = event.pointerId;
++    }
++    if (phase === 'up' || phase === 'cancel') {
++      if (this.activePointerId === event.pointerId) this.activePointerId = null;
++      this.releaseCapture(event.pointerId);
++    }
+     // Pointer coordinates become canvas-local CSS pixels here; DPR never
+     // multiplies into them (docs/architecture.md view formula).
+     const rect = canvas.getBoundingClientRect();
+diff --git a/crates/editor-core/src/editor.rs b/crates/editor-core/src/editor.rs
+index afab1d6d..3dda8134 100644
+--- a/crates/editor-core/src/editor.rs
++++ b/crates/editor-core/src/editor.rs
+@@ -2,15 +2,16 @@ use std::collections::{HashMap, HashSet};
+ 
+ use annotation_domain::{
+     validate_document, AnnotationDocument, AnnotationObject, DomainError, EditorCommand,
+-    EditorDelta, Id, OntologyVersion, Origin, OriginType,
++    EditorDelta, Id, OntologyVersion,
+ };
+-use geometry::{css_to_image, normalize_bbox, Viewport};
++use geometry::{css_to_image, Viewport};
+ 
+ use crate::{
+     commands,
+     history::{History, HistoryEntry},
+     selection::{LocalFlags, Selection},
+-    tools::{PointerGesture, PointerInput, PointerPhase, Preview, Tool},
++    tools::gesture::{self, Action, Commit, EventOutcome, GestureContext, GestureMachine},
++    tools::{PointerInput, Preview, Tool},
+ };
+ 
+ const MAX_GENERATION: u64 = 9_007_199_254_740_991;
+@@ -22,8 +23,7 @@ pub struct Editor {
+     history: History,
+     selection: Selection,
+     tool: Tool,
+-    gesture: Option<PointerGesture>,
+-    preview: Option<Preview>,
++    gesture: GestureMachine,
+     active_label_id: Option<Id>,
+     viewport: Viewport,
+ }
+@@ -43,14 +43,17 @@ impl Editor {
+             history: History::default(),
+             selection: Selection::default(),
+             tool: Tool::Select,
+-            gesture: None,
+-            preview: None,
++            gesture: GestureMachine::new(),
+             active_label_id: None,
+             viewport: Viewport::try_new(1.0, 0.0, 0.0, width, height, 1.0)?,
+         })
+     }
+ 
+     pub fn dispatch(&mut self, command: EditorCommand) -> Result<EditorDelta, DomainError> {
++        // A document mutation invalidates any in-flight gesture; committing a
++        // gesture reaches this path only after the machine has already cleared
++        // its state, so this is a no-op for gesture commits.
++        self.gesture.cancel();
+         match command {
+             EditorCommand::Undo => self.undo(),
+             EditorCommand::Redo => self.redo(),
+@@ -118,6 +121,12 @@ impl Editor {
+         self.generation
+     }
+ 
++    /// Read-only view state so boundary layers can mirror view changes the
++    /// gesture path makes (the pan tool) without duplicating view math.
++    pub fn viewport(&self) -> Viewport {
++        self.viewport
++    }
++
+     pub fn can_undo(&self) -> bool {
+         self.history.can_undo()
+     }
+@@ -127,7 +136,7 @@ impl Editor {
+     }
+ 
+     pub fn set_tool(&mut self, tool: Tool) {
+-        self.cancel_gesture();
++        self.gesture.cancel();
+         self.tool = tool;
+     }
+ 
+@@ -150,7 +159,7 @@ impl Editor {
+     pub fn set_viewport(&mut self, viewport: Viewport) -> Result<(), DomainError> {
+         viewport.validate()?;
+         self.viewport = viewport;
+-        self.cancel_gesture();
++        self.gesture.cancel();
+         Ok(())
+     }
+ 
+@@ -209,7 +218,7 @@ impl Editor {
+     }
+ 
+     pub fn preview(&self) -> Option<&Preview> {
+-        self.preview.as_ref()
++        self.gesture.preview()
+     }
+ 
+     pub fn pointer(&mut self, input: PointerInput) -> Result<EditorDelta, DomainError> {
+@@ -226,134 +235,25 @@ impl Editor {
+                 "transformed pointer coordinates must be finite",
+             ));
+         }
+-        match input.phase {
+-            PointerPhase::Down => {
+-                if self.gesture.is_some() || input.button != 0 {
+-                    return Ok(self.delta(false, false, Vec::new(), Vec::new()));
+-                }
+-                self.gesture = Some(PointerGesture {
+-                    pointer_id: input.pointer_id,
+-                    start: point,
+-                    current: point,
+-                    additive: input.shift || input.ctrl || input.meta,
+-                });
+-                self.refresh_preview();
+-                Ok(self.delta(false, true, Vec::new(), Vec::new()))
+-            }
+-            PointerPhase::Move => {
+-                let Some(gesture) = self
+-                    .gesture
+-                    .as_mut()
+-                    .filter(|g| g.pointer_id == input.pointer_id)
+-                else {
+-                    return Ok(self.delta(false, false, Vec::new(), Vec::new()));
+-                };
+-                gesture.current = point;
+-                self.refresh_preview();
+-                Ok(self.delta(false, true, Vec::new(), Vec::new()))
+-            }
+-            PointerPhase::Cancel => {
+-                if self
+-                    .gesture
+-                    .is_some_and(|gesture| gesture.pointer_id == input.pointer_id)
+-                {
+-                    self.cancel_gesture();
+-                    return Ok(self.delta(false, true, Vec::new(), Vec::new()));
+-                }
+-                Ok(self.delta(false, false, Vec::new(), Vec::new()))
+-            }
+-            PointerPhase::Up => self.finish_pointer(input.pointer_id, point),
+-        }
++        let context = GestureContext {
++            document: &self.document,
++            selection: &self.selection,
++            viewport: self.viewport,
++            tool: self.tool,
++            active_label_id: self.active_label_id.as_ref(),
++            ontology: &self.ontology,
++        };
++        let outcome = self.gesture.handle(&context, &input, point)?;
++        self.apply_outcome(outcome)
+     }
+ 
+-    fn finish_pointer(
+-        &mut self,
+-        pointer_id: i32,
+-        point: [f64; 2],
+-    ) -> Result<EditorDelta, DomainError> {
+-        let Some(gesture) = self
+-            .gesture
+-            .filter(|gesture| gesture.pointer_id == pointer_id)
+-        else {
+-            return Ok(self.delta(false, false, Vec::new(), Vec::new()));
+-        };
+-        let gesture = PointerGesture {
+-            current: point,
+-            ..gesture
+-        };
+-        self.gesture = None;
+-        self.preview = None;
+-        match self.tool {
+-            Tool::Box => {
+-                let width_css = (gesture.current[0] - gesture.start[0]).abs() * self.viewport.scale;
+-                let height_css =
+-                    (gesture.current[1] - gesture.start[1]).abs() * self.viewport.scale;
+-                if width_css < 2.0 || height_css < 2.0 {
+-                    return Ok(self.delta(false, true, Vec::new(), Vec::new()));
+-                }
+-                let label_id = self.active_label_id.clone().ok_or_else(|| {
+-                    DomainError::new("ACTIVE_LABEL_REQUIRED", "box tool requires an active label")
+-                })?;
+-                let geometry = normalize_bbox(gesture.start, gesture.current)?;
+-                let attributes = self
+-                    .ontology
+-                    .labels
+-                    .iter()
+-                    .find(|label| label.label_id == label_id)
+-                    .expect("active label was validated")
+-                    .attributes
+-                    .iter()
+-                    .map(|attribute| (attribute.key.clone(), attribute.default_value.clone()))
+-                    .collect();
+-                let object = AnnotationObject {
+-                    object_id: Id::from(uuid::Uuid::new_v4().to_string()),
+-                    label_id,
+-                    geometry,
+-                    attributes,
+-                    origin: Origin {
+-                        kind: OriginType::Manual,
+-                        prediction_id: None,
+-                        model_run_id: None,
+-                        import_batch_id: None,
+-                    },
+-                };
+-                self.dispatch(EditorCommand::Create { object })
+-            }
+-            Tool::Select => {
+-                let min_x = gesture.start[0].min(gesture.current[0]);
+-                let min_y = gesture.start[1].min(gesture.current[1]);
+-                let max_x = gesture.start[0].max(gesture.current[0]);
+-                let max_y = gesture.start[1].max(gesture.current[1]);
+-                let mut ids = if gesture.additive {
+-                    self.selection
+-                        .ids()
+-                        .iter()
+-                        .filter(|id| !self.selection.flags(id).hidden)
+-                        .cloned()
+-                        .collect()
+-                } else {
+-                    Vec::new()
+-                };
+-                ids.extend(
+-                    self.document
+-                        .objects
+-                        .iter()
+-                        .filter(|object| {
+-                            !self.selection.flags(&object.object_id).hidden
+-                                && object.geometry.x_min <= max_x
+-                                && object.geometry.x_max >= min_x
+-                                && object.geometry.y_min <= max_y
+-                                && object.geometry.y_max >= min_y
+-                        })
+-                        .map(|object| object.object_id.clone()),
+-                );
+-                self.set_selection(ids)
+-            }
+-            Tool::Pan => {
+-                let tx = self.viewport.tx
+-                    + (gesture.current[0] - gesture.start[0]) * self.viewport.scale;
+-                let ty = self.viewport.ty
+-                    + (gesture.current[1] - gesture.start[1]) * self.viewport.scale;
++    fn apply_outcome(&mut self, outcome: EventOutcome) -> Result<EditorDelta, DomainError> {
++        match outcome.action {
++            Action::None => Ok(self.delta(false, outcome.repaint, Vec::new(), Vec::new())),
++            Action::SetSelection(ids) => self.set_selection(ids),
++            Action::Pan(delta_css) => {
++                let tx = self.viewport.tx + delta_css[0];
++                let ty = self.viewport.ty + delta_css[1];
+                 if !tx.is_finite() || !ty.is_finite() {
+                     return Err(DomainError::new(
+                         "INVALID_VIEWPORT",
+@@ -364,24 +264,52 @@ impl Editor {
+                 self.viewport.ty = ty;
+                 Ok(self.delta(false, true, Vec::new(), Vec::new()))
+             }
++            Action::Commit { selection, edit } => {
++                // The staged selection lands in the same delta as the edit.
++                let mut selection_changed = false;
++                if let Some(ids) = selection {
++                    selection_changed = ids.as_slice() != self.selection.ids();
++                    self.selection.set(ids);
++                }
++                let mut delta = match edit {
++                    Commit::Create(object) => self.dispatch(EditorCommand::Create { object })?,
++                    Commit::ReplaceGeometries(edits) => {
++                        self.commit_document_edit(|document, selection| {
++                            gesture::apply_replacements(document, selection, &edits)
++                        })?
++                    }
++                };
++                if selection_changed {
++                    delta.repaint = true;
++                }
++                Ok(delta)
++            }
+         }
+     }
+ 
+-    fn refresh_preview(&mut self) {
+-        self.preview = if self.tool == Tool::Box {
+-            self.gesture.and_then(|gesture| {
+-                normalize_bbox(gesture.start, gesture.current)
+-                    .ok()
+-                    .map(|geometry| Preview { geometry })
+-            })
+-        } else {
+-            None
+-        };
+-    }
+-
+-    fn cancel_gesture(&mut self) {
+-        self.gesture = None;
+-        self.preview = None;
++    /// Commits one atomic document edit as exactly one history entry.
++    fn commit_document_edit(
++        &mut self,
++        apply: impl FnOnce(&mut AnnotationDocument, &Selection) -> Result<(), DomainError>,
++    ) -> Result<EditorDelta, DomainError> {
++        let before = self.document.clone();
++        let mut after = before.clone();
++        apply(&mut after, &self.selection)?;
++        validate_document(&after, &self.ontology)?;
++        if after == before {
++            return Ok(self.delta(false, false, Vec::new(), Vec::new()));
++        }
++        self.bump_generation()?;
++        self.document = after.clone();
++        self.history
++            .push(HistoryEntry::new(before.clone(), after.clone()));
++        self.prune_transient_state();
++        Ok(self.delta(
++            true,
++            true,
++            changed_objects(&before, &after),
++            removed_objects(&before, &after),
++        ))
+     }
+ 
+     fn undo(&mut self) -> Result<EditorDelta, DomainError> {
+diff --git a/crates/editor-core/src/tools.rs b/crates/editor-core/src/tools.rs
+index 7de407a3..5a0701fb 100644
+--- a/crates/editor-core/src/tools.rs
++++ b/crates/editor-core/src/tools.rs
+@@ -1,5 +1,8 @@
+ use annotation_domain::BBox;
+ 
++pub(crate) mod dense;
++pub(crate) mod gesture;
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum Tool {
+     Select,
+@@ -29,14 +32,6 @@ pub struct PointerInput {
+     pub meta: bool,
+ }
+ 
+-#[derive(Debug, Clone, Copy, PartialEq)]
+-pub(crate) struct PointerGesture {
+-    pub pointer_id: i32,
+-    pub start: [f64; 2],
+-    pub current: [f64; 2],
+-    pub additive: bool,
+-}
+-
+ #[derive(Debug, Clone, PartialEq)]
+ pub struct Preview {
+     pub geometry: BBox,
+diff --git a/crates/wasm-bridge/src/facade.rs b/crates/wasm-bridge/src/facade.rs
+index cfd77da6..31ea5616 100644
+--- a/crates/wasm-bridge/src/facade.rs
++++ b/crates/wasm-bridge/src/facade.rs
+@@ -292,6 +292,11 @@ impl EditorSession {
+     pub fn set_tool(&mut self, tool: Tool) -> Result<(), ApiError> {
+         self.ensure_live()?;
+         self.editor.set_tool(tool);
++        // Tool switches cancel any in-flight gesture (T12): the preview
++        // overlay must disappear with it.
++        if self.refresh_preview() {
++            self.projection_dirty = true;
++        }
+         Ok(())
+     }
+ 
+@@ -309,6 +314,11 @@ impl EditorSession {
+             .map_err(|error| api_error_from_domain(&error))?;
+         self.view = view;
+         self.viewport_dirty = true;
++        // Viewport switches (scroll zoom, canvas resize) cancel any in-flight
++        // gesture (T12): clear a preview overlay that no gesture owns anymore.
++        if self.refresh_preview() {
++            self.projection_dirty = true;
++        }
+         Ok(())
+     }
+ 
+@@ -460,6 +470,13 @@ impl EditorSession {
+     }
+ 
+     fn absorb(&mut self, delta: EditorDelta) -> EditorDelta {
++        // The pan tool moves the editor-owned view; mirror it so the renderer
++        // and the get_viewport read-back never diverge from gesture truth.
++        let editor_view = self.editor.viewport();
++        if editor_view != self.view {
++            self.view = editor_view;
++            self.viewport_dirty = true;
++        }
+         let colors = &self.colors;
+         let mut touched = self.projection.apply_delta(
+             &delta.changed_objects,

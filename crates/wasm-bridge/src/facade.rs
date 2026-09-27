@@ -292,6 +292,11 @@ impl EditorSession {
     pub fn set_tool(&mut self, tool: Tool) -> Result<(), ApiError> {
         self.ensure_live()?;
         self.editor.set_tool(tool);
+        // Tool switches cancel any in-flight gesture (T12): the preview
+        // overlay must disappear with it.
+        if self.refresh_preview() {
+            self.projection_dirty = true;
+        }
         Ok(())
     }
 
@@ -309,6 +314,11 @@ impl EditorSession {
             .map_err(|error| api_error_from_domain(&error))?;
         self.view = view;
         self.viewport_dirty = true;
+        // Viewport switches (scroll zoom, canvas resize) cancel any in-flight
+        // gesture (T12): clear a preview overlay that no gesture owns anymore.
+        if self.refresh_preview() {
+            self.projection_dirty = true;
+        }
         Ok(())
     }
 
@@ -460,6 +470,13 @@ impl EditorSession {
     }
 
     fn absorb(&mut self, delta: EditorDelta) -> EditorDelta {
+        // The pan tool moves the editor-owned view; mirror it so the renderer
+        // and the get_viewport read-back never diverge from gesture truth.
+        let editor_view = self.editor.viewport();
+        if editor_view != self.view {
+            self.view = editor_view;
+            self.viewport_dirty = true;
+        }
         let colors = &self.colors;
         let mut touched = self.projection.apply_delta(
             &delta.changed_objects,
@@ -663,6 +680,82 @@ mod tests {
         assert!(objects[0].selected);
         assert!(overlays.is_empty());
         assert!(session.prepare_frame().is_none());
+    }
+
+    /// Regression for the stale-preview-overlay fix (review F-2): cancelling a
+    /// gesture by switching tool or viewport must drop the half-finished
+    /// preview box from the very next frame.
+    #[test]
+    fn tool_and_viewport_switches_drop_a_stale_preview_overlay() {
+        let mut session = session();
+        session.set_tool(Tool::Box).expect("tool");
+        session
+            .set_active_label(Id::from("label_person"))
+            .expect("label");
+        session.pointer(pointer(editor_core::PointerPhase::Down, 20.0, 30.0));
+        session.pointer(pointer(editor_core::PointerPhase::Move, 80.0, 90.0));
+        let frame = session.prepare_frame().expect("preview frame");
+        let (_, overlays) = frame.projection.expect("projection part");
+        assert_eq!(
+            overlays.len(),
+            1,
+            "the in-progress preview box is on screen"
+        );
+
+        // Tool switch mid-gesture cancels it and clears the overlay.
+        session.set_tool(Tool::Select).expect("tool switch");
+        let frame = session.prepare_frame().expect("cancel frame");
+        let (_, overlays) = frame.projection.expect("projection part");
+        assert!(
+            overlays.is_empty(),
+            "no half-finished preview box after a tool switch"
+        );
+        assert!(session.prepare_frame().is_none(), "idle again");
+
+        // Viewport switch mid-gesture behaves the same.
+        session.set_tool(Tool::Box).expect("tool");
+        session.pointer(pointer(editor_core::PointerPhase::Down, 20.0, 30.0));
+        session.pointer(pointer(editor_core::PointerPhase::Move, 80.0, 90.0));
+        let frame = session.prepare_frame().expect("preview frame");
+        let (_, overlays) = frame.projection.expect("projection part");
+        assert_eq!(overlays.len(), 1);
+        session
+            .set_viewport(Viewport::try_new(2.0, 5.0, 6.0, 640.0, 480.0, 2.0).expect("viewport"))
+            .expect("set viewport");
+        let frame = session.prepare_frame().expect("cancel frame");
+        let (_, overlays) = frame.projection.expect("projection part");
+        assert!(
+            overlays.is_empty(),
+            "no half-finished preview box after a viewport switch"
+        );
+    }
+
+    /// Regression for the pan/view divergence fix (review F-1): the pan tool
+    /// moves the editor-owned view and the facade must mirror it exactly, so
+    /// get_viewport and the rendered viewport never diverge from gesture truth.
+    #[test]
+    fn pan_gestures_move_the_editor_view_and_the_facade_stays_in_sync() {
+        let mut session = session();
+        session.set_tool(Tool::Pan).expect("tool");
+        let before = session.get_viewport();
+        let generation_before = session.get_generation();
+        session.pointer(pointer(editor_core::PointerPhase::Down, 100.0, 100.0));
+        session.pointer(pointer(editor_core::PointerPhase::Move, 120.0, 80.0));
+        let up = session.pointer(pointer(editor_core::PointerPhase::Up, 120.0, 80.0));
+        assert!(!up.document_changed, "pan never edits the document");
+        assert_eq!(session.get_generation(), generation_before);
+
+        let after = session.get_viewport();
+        assert_eq!(after.tx, before.tx + 20.0, "view follows the pointer dx");
+        assert_eq!(after.ty, before.ty - 20.0, "view follows the pointer dy");
+        assert_eq!(after.scale, before.scale, "pan never zooms");
+
+        // The frame the renderer receives carries the same view (absorb mirror).
+        let frame = session.prepare_frame().expect("pan frame");
+        let viewport = frame.viewport.expect("viewport part");
+        assert_eq!(f64::from(viewport.tx), after.tx);
+        assert_eq!(f64::from(viewport.ty), after.ty);
+        assert_eq!(f64::from(viewport.scale), after.scale);
     }
 
     #[test]
