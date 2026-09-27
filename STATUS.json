@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plan_version": "1.0.0",
   "application_commit": "02c0c523302a67f572692879763f591c7885c005",
-  "last_updated_at": "2026-09-27T17:44:43Z",
+  "last_updated_at": "2026-09-27T17:51:49Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -297,15 +297,15 @@
       "blockers": []
     },
     "T25": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
     },
     "T26": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
@@ -318,8 +318,8 @@
       "blockers": []
     },
     "T28": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
