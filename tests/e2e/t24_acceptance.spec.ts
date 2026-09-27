@@ -25,7 +25,7 @@ import { createEditorFacadeFactory, loadWasmBridge } from './src/lib/editor/load
 const asset = 'asset_revision_golden';
 const ontologyId = 'ontology_v1';
 const annotationRevision = 'revision_golden';
-const document = {
+const initialDocument = {
   schema_version: 1, asset_revision_id: asset, ontology_version_id: ontologyId,
   coordinate_space: { type: 'canonical_image_pixels', width: 640, height: 480 },
   completion: 'in_progress', objects: [],
@@ -97,7 +97,7 @@ window.__t24 = {
         original_sha256: 'a'.repeat(64), canonical_sha256: 'b'.repeat(64), canonical_width: 640, canonical_height: 480,
         exif_orientation: 1, original_to_canonical: [1, 0, 0, 0, 1, 0, 0, 0, 1], source_group_id: 'source-golden',
       },
-      ontology, document, frame: { width: 640, height: 480, rgba: new Uint8Array(640 * 480 * 4).fill(255) },
+      ontology, document: initialDocument, frame: { width: 640, height: 480, rgba: new Uint8Array(640 * 480 * 4).fill(255) },
     });
     if (host.status !== 'ready') throw new Error('real editor did not reach ready state: ' + host.status);
     root = createRoot(document.getElementById('t24-react'));
