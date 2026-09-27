@@ -140,7 +140,13 @@ describe('T24 AI review behavior', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
     await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
     expect(obtainConsent).toHaveBeenCalledTimes(1);
-    expect(start.mock.calls[0]?.[0]).toMatchObject({ prompt: 'Only inspect helmet_state.', consent_id: 'consent-1', context });
+    const request = start.mock.calls[0]?.[0];
+    expect(request).toMatchObject({
+      prompt: 'Only inspect helmet_state.',
+      consent_id: 'consent-1',
+      context: { ...context, input_fingerprint: expect.any(String) },
+    });
+    expect(request?.context.input_fingerprint).not.toBe(context.input_fingerprint);
   });
   it('refuses consent and run creation without an acknowledged save queue', async () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'must-not-start' }));

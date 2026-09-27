@@ -881,7 +881,9 @@
       "files": [
         "apps/web/src/features/ai/{Panel,ProviderPicker,Consent,RunProgress,CandidateList,DiffView}.tsx",
         "apps/web/src/features/ai/useRun.ts",
-        "apps/web/src/features/ai/t24_ui.test.tsx"
+        "apps/web/src/features/ai/t24_ui.test.tsx",
+        "tests/e2e/t24_acceptance.spec.ts",
+        "playwright.t24.config.ts"
       ],
       "checks": [
         [
@@ -890,6 +892,14 @@
           "vitest",
           "run",
           "apps/web/src/features/ai/t24_ui.test.tsx"
+        ],
+        [
+          "pnpm",
+          "test:e2e",
+          "tests/e2e/t24_acceptance.spec.ts",
+          "--config",
+          "playwright.t24.config.ts",
+          "--project=chromium-webgpu"
         ]
       ],
       "external_gate": false,
