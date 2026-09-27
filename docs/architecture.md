@@ -183,7 +183,7 @@ Node Host 与 Rust 父进程通过私有 stdio 消息交换，浏览器无法指
 
 ## 12. 任务、审核与交付
 
-项目角色：admin、annotator、reviewer、viewer。服务器对每一个媒体/标注/候选/导出请求检查 project membership；新项目是否允许自审是显式设置。任务租约 60 秒、心跳 20 秒，服务端时钟判断；保存仍受版本 CAS 保护。
+项目角色：admin、annotator、reviewer、viewer。服务器对每一个媒体/标注/候选/导出请求检查 project membership；新项目是否允许自审是显式设置。任务固定媒体 revision 与 ontology；任务租约 60 秒、心跳 20 秒，服务端时钟判断。被分配任务的每次新 SaveRequest 必须在 CAS 同一 SQLite 事务内携带当前 holder 与 fencing token；CAS 成功不能绕过租约。提交期间编辑面锁定，flush、读取服务端head并提交必须作为一个不可插入本地修改的序列；head/队列 generation不一致时中止。审核必须查看已提交不可变revision相对其parent的对象/geometry/attribute差异后，才能绑定精确revision与理由批准/退回；批准关闭任务，退回重新开放该任务供修订，旧决定与旧问题保留。
 
 空文档不是负样本。完成状态区分 unprocessed/in_progress/complete/confirmed_negative；negative 要求 objects=[]。已通过版本产生新 head 后，新 head 不能继承批准。
 

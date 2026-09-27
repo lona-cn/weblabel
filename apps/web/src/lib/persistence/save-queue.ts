@@ -123,6 +123,14 @@ const IDLE_SNAPSHOT: SaveStatusSnapshot = Object.freeze({
   last_error: null,
 });
 
+const LEASE_REJECTION_CODES = new Set([
+  'LEASE_REQUIRED',
+  'LEASE_NOT_REQUIRED',
+  'LEASE_NOT_HELD',
+  'LEASE_EXPIRED',
+  'STALE_FENCING_TOKEN',
+]);
+
 function iso(timestampMs: number): string {
   return new Date(timestampMs).toISOString();
 }
@@ -168,6 +176,7 @@ export class SaveQueue {
   private readonly clock: Clock;
   private readonly debounceMs: number;
   private readonly newOperationId: () => Id;
+  private readonly getLease: (asset_revision_id: Id) => SaveRequest['lease'];
   private readonly states = new Map<Id, AssetState>();
   private readonly listeners = new Map<Id, Set<() => void>>();
   private activeAsset: Id | null = null;
@@ -178,6 +187,7 @@ export class SaveQueue {
     this.clock = options.clock ?? realClock;
     this.debounceMs = options.debounceMs ?? SAVE_DEBOUNCE_MS;
     this.newOperationId = options.newOperationId ?? (() => crypto.randomUUID());
+    this.getLease = options.getLease ?? (() => null);
   }
 
   /** Records one logical operation (one C3 generation) for an asset. */
@@ -216,6 +226,31 @@ export class SaveQueue {
     const state = this.states.get(asset_revision_id);
     if (state === undefined) return Promise.resolve();
     return this.runPump(state, true);
+  }
+  /**
+   * A lease-related 409 is a definitive rejection before any revision write.
+   * Rebuild the operation with a fresh id after the user acquires a valid
+   * lease; all other conflicts and ambiguous failures retain their payload.
+   */
+  async retryRejectedLease(asset_revision_id: Id): Promise<boolean> {
+    const state = this.states.get(asset_revision_id);
+    
+    if (
+      state === undefined ||
+      state.in_flight !== null ||
+      !state.paused ||
+      state.save_error?.kind !== 'conflict' ||
+      !LEASE_REJECTION_CODES.has(state.save_error.code)
+    ) return false;
+    state.pending = null;
+    state.paused = false;
+    state.conflict = null;
+    state.save_error = null;
+    state.next_eligible_at = this.clock.now();
+    state.dirty = isDirty(state);
+    this.recompute(state);
+    await this.flush(asset_revision_id);
+    return true;
   }
 
   /** Asset switch: flushes the previous asset now, keeps background queues. */
@@ -517,11 +552,12 @@ export class SaveQueue {
     }
     const suggestion_decisions = state.journal.slice(state.synced_intent_seq).map((entry) => entry.intent);
     Object.freeze(suggestion_decisions);
+    const lease = this.getLease(state.asset_revision_id);
     const request: SaveRequest = {
       operation_id: this.mintOperationId(state),
       base_revision_id: state.base_revision_id ?? '',
       document: state.document as AnnotationDocument,
-      lease: null,
+      lease: lease === null ? null : { task_id: lease.task_id, fencing_token: lease.fencing_token },
       suggestion_decisions,
     };
     Object.freeze(request);

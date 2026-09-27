@@ -951,11 +951,20 @@
         "annotation-store"
       ],
       "files": [
-        "apps/api/src/review/{mod,tasks,leases,submissions,decisions,issues}.rs",
-        "apps/api/migrations/0003_workflow.sql",
+        "crates/weblabel-api/src/review/{mod,tasks,leases,submissions,decisions,issues}.rs",
+        "crates/weblabel-api/migrations/0009_workflow.sql",
+        "crates/weblabel-api/tests/t26_workflow.rs",
+        "crates/weblabel-api/src/annotations/save.rs",
+        "crates/weblabel-api/src/lib.rs",
+        "crates/weblabel-api/src/storage/db.rs",
         "apps/web/src/features/review/*",
-        "apps/api/tests/t26_workflow.rs",
-        "tests/integration/t26_review.test.ts"
+        "apps/web/src/features/workbench/Workbench.tsx",
+        "apps/web/src/lib/persistence/{save-queue,types}.ts",
+        "apps/web/src/lib/persistence/t13_queue.test.ts",
+        "tests/integration/t26_review.test.ts",
+        "tests/support/app.ts",
+        "docs/contracts.md",
+        "docs/architecture.md"
       ],
       "checks": [
         [
@@ -973,6 +982,27 @@
           "vitest",
           "run",
           "tests/integration/t26_review.test.ts"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/web/src/lib/persistence/t13_queue.test.ts"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/web/src/features/review/t26_review_ui.test.tsx"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "apps/web/src/features/review/submission.test.tsx"
         ]
       ],
       "external_gate": false,

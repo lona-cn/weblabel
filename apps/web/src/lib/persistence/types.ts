@@ -217,6 +217,7 @@ export interface SaveQueueOptions {
   transport: SaveTransport;
   storage: DraftStorage;
   clock?: Clock;
+  getLease?: (asset_revision_id: Id) => SaveRequest['lease'];
   debounceMs?: number;
   newOperationId?: () => Id;
 }

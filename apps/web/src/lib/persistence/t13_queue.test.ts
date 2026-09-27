@@ -14,7 +14,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
 import type { AnnotationRevision } from '../../../../../packages/contracts/generated/AnnotationRevision';
-import type { SaveRequest } from '../../../../../packages/contracts/generated/SaveRequest';
 import type { SaveResponse } from '../../../../../packages/contracts/generated/SaveResponse';
 import type { SuggestionDecisionIntent } from '../../../../../packages/contracts/generated/SuggestionDecisionIntent';
 
@@ -35,6 +34,7 @@ import {
   viewServerVersion,
 } from './recovery';
 import { FetchSaveTransport, SaveQueue, reconcileAck } from './save-queue';
+import { SAVE_DEBOUNCE_MS, StorageError, TransportError } from './types';
 import type {
   Clock,
   DraftRecord,
@@ -42,8 +42,8 @@ import type {
   NativeDraftExport,
   SaveStatusSnapshot,
   SaveTransport,
+  SaveRequest,
 } from './types';
-import { SAVE_DEBOUNCE_MS, StorageError, TransportError } from './types';
 
 expect.extend(matchers);
 
@@ -334,7 +334,7 @@ interface QueueFixture {
   storage: InMemoryDraftStorage;
 }
 
-function makeQueue(): QueueFixture {
+function makeQueue(getLease?: () => SaveRequest['lease']): QueueFixture {
   const clock = new TestClock();
   const transport = new ControllableTransport();
   const storage = new InMemoryDraftStorage();
@@ -343,6 +343,7 @@ function makeQueue(): QueueFixture {
     transport,
     storage,
     clock,
+    getLease,
     newOperationId: () => {
       counter += 1;
       return `op-${counter}`;
@@ -1160,6 +1161,32 @@ describe('T13 behavior 8: HTTP 409 pauses automatic writes', () => {
 
     fixture.clock.advance(SAVE_DEBOUNCE_MS);
     expect(fixture.transport.saves).toHaveLength(1);
+  });
+});
+describe('T26 save lease recovery', () => {
+  it('rebuilds a definitively rejected save with the acquired lease and a fresh operation id', async () => {
+    let lease: SaveRequest['lease'] = null;
+    const fixture = makeQueue(() => lease);
+    enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
+    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.transport.failHttp(0, 409, 'LEASE_REQUIRED');
+    await microtasks();
+
+    expect(fixture.queue.getStatus('asset_a').writes_paused).toBe(true);
+    expect(fixture.transport.saves[0].request.lease).toBeNull();
+    const rejectedOperationId = fixture.transport.saves[0].request.operation_id;
+
+    lease = { task_id: 'task-a', fencing_token: 42 };
+    const retry = fixture.queue.retryRejectedLease('asset_a');
+    await microtasks();
+    expect(fixture.transport.saves).toHaveLength(2);
+    expect(fixture.transport.saves[1].request.lease).toEqual(lease);
+    expect(fixture.transport.saves[1].request.operation_id).not.toBe(rejectedOperationId);
+    fixture.transport.ackSave(1, 'r8');
+    await retry;
+
+    expect(fixture.queue.getStatus('asset_a').phase).toBe('synced');
+    expect(fixture.queue.getStatus('asset_a').dirty).toBe(false);
   });
 });
 

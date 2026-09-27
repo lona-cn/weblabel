@@ -10,7 +10,7 @@ export type Role = 'admin' | 'annotator' | 'reviewer' | 'viewer';
 export interface ApiResponse<T = unknown> { status: number; json: T; headers: Headers }
 export interface ApiClient {
   request<T = unknown>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>>;
-  upload<T = unknown>(path: string, bytes: Uint8Array, filename: string, idempotencyKey?: string): Promise<ApiResponse<T>>;
+  upload<T = unknown>(path: string, bytes: Uint8Array, filename: string, idempotencyKey?: string, mediaType?: string): Promise<ApiResponse<T>>;
 }
 export interface TestApp {
   base_url: string;
@@ -80,11 +80,11 @@ function responseClient(
     request<T = unknown>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>> {
       return send<T>(method, path, body === undefined ? undefined : JSON.stringify(body), body === undefined ? undefined : 'application/json');
     },
-    async upload<T = unknown>(path: string, bytes: Uint8Array, filename: string, idempotencyKey = crypto.randomUUID()): Promise<ApiResponse<T>> {
+    async upload<T = unknown>(path: string, bytes: Uint8Array, filename: string, idempotencyKey = crypto.randomUUID(), mediaType = 'application/octet-stream'): Promise<ApiResponse<T>> {
       const form = new FormData();
       const buffer = new ArrayBuffer(bytes.byteLength);
       new Uint8Array(buffer).set(bytes);
-      form.append('images', new Blob([buffer]), filename);
+      form.append('images', new Blob([buffer], { type: mediaType }), filename);
       return send<T>('POST', path, form, undefined, idempotencyKey);
     },
   };

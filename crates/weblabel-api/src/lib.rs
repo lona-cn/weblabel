@@ -7,6 +7,7 @@ pub mod config;
 pub mod jobs;
 pub mod media;
 pub mod projects;
+pub mod review;
 pub mod runtime;
 pub mod storage;
 
@@ -103,6 +104,10 @@ pub fn router(state: AppState) -> Router {
             state.run_tokens.clone(),
         ))
         .merge(annotations::router(
+            state.repository.clone(),
+            state.auth.clone(),
+        ))
+        .merge(crate::review::router(
             state.repository.clone(),
             state.auth.clone(),
         ))

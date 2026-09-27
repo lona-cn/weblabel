@@ -291,10 +291,11 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | GET /api/ai/runs/{id}/suggestions | 候选集合 | T17 |
 | POST /api/ai/runs/{id}/cancel | 幂等取消；T17实现取消/隔离审计，T25叠加授权语义 | T17/T25 |
 | POST /api/ai/suggestions/{id}/decision | 拒绝/幂等确认；接受必须随SaveRequest同事务 | T19/T25 |
-| POST/GET /api/projects/{id}/tasks | 创建/列出任务 | T26 |
-| POST /api/tasks/{id}/lease | acquire/renew/release + fencing token | T26 |
-| POST /api/tasks/{id}/submit | 指定 annotation revisions → review request | T26 |
-| POST /api/reviews/{id}/decision | approve/reject + reason + revision IDs | T26 |
+| POST/GET /api/projects/{id}/tasks | 创建/列出任务；任务固定 asset revision + ontology | T26 |
+| POST /api/tasks/{id}/lease | acquire/renew/release/transfer + server-clock expiry/fencing token | T26 |
+| POST /api/tasks/{id}/submit | exactly one current, saved annotation revision → immutable review submission | T26 |
+| POST /api/reviews/{id}/decision | approve/reject + reason + exact submitted revision IDs | T26 |
+| GET/POST /api/reviews/{id}/issues | 读取/创建绑定来源 revision 与 ontology 的不可变问题 | T26 |
 | POST /api/projects/{id}/dataset-versions | 指定 revisions/split → immutable snapshot | T27 |
 | POST /api/dataset-versions/{id}/exports | format,loss_ack,operation_id → export job | T27 |
 | POST /api/assets/{asset_revision_id}/annotation-import-previews | multipart format/ontology/data/显式映射 → 不可变预览、损失报告与base head，不改head | T14 |
@@ -317,7 +318,7 @@ POST /api/users 与 GET /api/users 的管理员接口由 testing-contracts.md §
 
 ## C7. SQLite 表与不可变对象
 
-T06 预留 migrations 0001_core：users/sessions/projects/memberships/ontology_versions/media_assets/media_revisions/annotation_revisions/annotation_heads/idempotency_keys/jobs/job_items。T17 增加 0008_ai（主Agent按仓库实际序号分配，覆盖草案中的0002_ai）：model_profiles/model_runs/predictions/suggestion_sets/suggestion_decisions/run_events/consents。T26 增加 0003_workflow：tasks/task_items/task_leases/review_requests/review_decisions/review_issues。T27 增加 0004_datasets：dataset_versions/dataset_items/export_jobs。禁止多个 Agent 同时分配 migration 编号。
+T06预留migrations 0001_core：users/sessions/projects/memberships/ontology_versions/media_assets/media_revisions/annotation_revisions/annotation_heads/idempotency_keys/jobs/job_items。T17增加0008_ai（主Agent按仓库实际序号分配，覆盖草案中的0002_ai）：model_profiles/model_runs/predictions/suggestion_sets/suggestion_decisions/run_events/consents。T26增加0009_workflow：review_tasks/task_leases/review_submissions/review_decisions/review_issues。T27迁移编号由主Agent在依赖落地后按仓库实际序号分配。禁止多个Agent同时分配migration编号。
 T14 migration 0007增加不可变annotation_import_batches与annotation_exports，preview记录base head及loss report；commit与revision同一事务。
 
 外键开启；关键关联包含 project_id 校验，head unique(asset_revision_id,ontology_version_id)。idempotency unique(actor_id,operation_id,operation_kind)。作业 lease 与任务租约分开；重启恢复 running job 为 interrupted/retryable，并且模型调用存在费用不确定性时要求显式重试。

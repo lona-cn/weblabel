@@ -18,7 +18,11 @@ import { ObjectList } from './ObjectList';
 import { Toolbar, type Tool } from './Toolbar';
 import { CanvasView } from './CanvasView';
 import { ResizeControls } from './ResizeControls';
+import { ReviewPanel } from '../review/ReviewPanel';
+import type { ReviewTask } from '../review/api';
+import { setReviewEditorLocked, submitCurrentReviewRevision } from '../review/submission';
 
+type TaskLease = { asset_revision_id: string; task_id: string; fencing_token: number };
 type Props = { projectId?: string; onProjects?: () => void };
 type LoadedAsset = { media: ApiMedia; ontology: OntologyVersion; document: AnnotationDocument; revisionId: string; frame: { width: number; height: number; rgba: Uint8Array } };
 
@@ -45,7 +49,37 @@ export function Workbench({ projectId = '', onProjects = () => {} }: Props) {
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [recovery, setRecovery] = useState<RecoveryReport | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
-  const queue = useMemo(() => new SaveQueue({ transport: new FetchSaveTransport({ csrfToken }), storage: new IndexedDbDraftStorage() }), []);
+  const taskLeaseRef = useRef<TaskLease | null>(null);
+  const editorSurfaceRef = useRef<HTMLDivElement>(null);
+  const importSurfaceRef = useRef<HTMLElement>(null);
+  const submissionLockRef = useRef(false);
+  const queue = useMemo(() => new SaveQueue({
+    transport: new FetchSaveTransport({ csrfToken }),
+    storage: new IndexedDbDraftStorage(),
+    getLease: (assetRevisionId) => {
+      const lease = taskLeaseRef.current;
+      return lease?.asset_revision_id === assetRevisionId
+        ? { task_id: lease.task_id, fencing_token: lease.fencing_token }
+        : null;
+    },
+  }), []);
+  const updateTaskLease = useCallback((lease: TaskLease | null) => {
+    taskLeaseRef.current = lease;
+    if (lease) {
+      void queue.retryRejectedLease(lease.asset_revision_id)
+        .catch((reason: unknown) => setError(reportError(reason)));
+    }
+  }, [queue]);
+  const submitReviewTask = useCallback((task: ReviewTask, submit: (revisionId: string) => Promise<void>) =>
+    submitCurrentReviewRevision({
+      task,
+      queue,
+      readHead: () => api.annotation(task.asset_revision_id, task.ontology_version_id),
+      submit,
+      lockEditor: (locked) => setReviewEditorLocked({
+        locked, state: submissionLockRef, host, surfaces: [editorSurfaceRef.current, importSurfaceRef.current],
+      }),
+    }), [host, queue]);
   const activeLoaded = loaded?.media.asset_revision_id === selectedAssetId ? loaded : null;
   const activeHost = activeLoaded ? host : null;
   const activeObjects = activeLoaded ? objects : [];
@@ -169,6 +203,7 @@ export function Workbench({ projectId = '', onProjects = () => {} }: Props) {
   };
 
   const applyDelta = useCallback((currentHost: EditorHost, delta: EditorDelta) => {
+    if (submissionLockRef.current && delta.document_changed) return;
     const snapshot = currentHost.getSnapshot();
     if (!snapshot || !loaded || loaded.media.asset_revision_id !== selectedAssetId) return;
     setObjects(snapshot.objects);
@@ -256,8 +291,8 @@ export function Workbench({ projectId = '', onProjects = () => {} }: Props) {
     </header>
     <header className="workspace-heading"><div><p className="eyebrow">{project?.name ?? '项目'} / {activeLoaded?.media.original_name ?? '选择媒体'}</p><input className="project-name-field" data-testid="project-name" aria-label="项目名称" value={project?.name ?? ''} readOnly /></div><span className="local-state">服务端版本 · canonical 像素坐标</span></header>
     {error ? <p className="api-error" role="alert">{error}</p> : null}
-    <section className="asset-import-bar" aria-label="项目媒体导入"><label htmlFor="media-import">导入图片</label><input ref={importRef} id="media-import" data-testid="media-import" type="file" accept="image/png,image/jpeg" multiple onChange={(event) => void importFiles(event.currentTarget.files)} />{job ? <span role="status">导入处理中…</span> : null}</section>
-    <div className="workbench-grid">
+    <section ref={importSurfaceRef} className="asset-import-bar" aria-label="项目媒体导入"><label htmlFor="media-import">导入图片</label><input ref={importRef} id="media-import" data-testid="media-import" type="file" accept="image/png,image/jpeg" multiple onChange={(event) => void importFiles(event.currentTarget.files)} />{job ? <span role="status">导入处理中…</span> : null}</section>
+    <div ref={editorSurfaceRef} className="workbench-grid">
       <aside id="workbench-sidebar" className="sidebar-resize" aria-label="项目媒体、对象与属性侧栏，可调整宽度">
         <section id="media-strip" className="media-strip" data-testid="asset-grid" aria-label="项目媒体">
           <div className="media-strip-heading"><span className="eyebrow">媒体</span><span>{assets.length} 张</span>
@@ -292,5 +327,6 @@ export function Workbench({ projectId = '', onProjects = () => {} }: Props) {
           <p>COCO/YOLO 不包含全部对象属性；点击确认导出即确认接受该格式的信息损失，产物绑定保存后的不可变标注版本。</p><button data-testid="export-start" type="button" disabled={!activeLoaded || exporting} onClick={() => void exportCurrent()}>{exporting ? '保存并导出中…' : '确认信息损失并导出'}</button>{exportMessage ? <p role="status">{exportMessage}</p> : null}</section>
       </section>
     </div>
+    {projectId && session ? <ReviewPanel projectId={projectId} session={session} onLeaseChange={updateTaskLease} onSubmitTask={submitReviewTask} /> : null}
   </main>;
 }

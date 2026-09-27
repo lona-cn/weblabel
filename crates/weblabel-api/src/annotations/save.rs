@@ -153,12 +153,113 @@ async fn save_in_transaction(
         &principal.user_id,
     )
     .await?;
-    if request.lease.is_some() {
-        return Err(Failure::new(
-            StatusCode::CONFLICT,
-            "LEASE_UNSUPPORTED",
-            "Task leases are not supported by this save endpoint yet",
-        ));
+    let tasks = sqlx::query(
+        "SELECT task_id,state FROM review_tasks WHERE project_id=? AND asset_revision_id=?",
+    )
+    .bind(&asset.project_id)
+    .bind(asset_revision_id)
+    .fetch_all(transaction.connection())
+    .await
+    .map_err(|_| storage_failure())?;
+    if tasks.is_empty() {
+        if request.lease.is_some() {
+            return Err(Failure::new(
+                StatusCode::CONFLICT,
+                "LEASE_NOT_REQUIRED",
+                "No review task is assigned to this asset",
+            ));
+        }
+    } else {
+        let mut open_task_id: Option<String> = None;
+        for task in tasks {
+            let task_id: String = task.try_get("task_id").map_err(|_| storage_failure())?;
+            let state: String = task.try_get("state").map_err(|_| storage_failure())?;
+            if state == "open" {
+                if open_task_id.replace(task_id).is_some() {
+                    return Err(Failure::new(
+                        StatusCode::CONFLICT,
+                        "TASK_STATE_INVALID",
+                        "Multiple open tasks exist for this asset",
+                    ));
+                }
+            }
+        }
+        let Some(open_task_id) = open_task_id else {
+            return Err(Failure::new(
+                StatusCode::CONFLICT,
+                "TASK_NOT_OPEN",
+                "The assigned task is not open for annotation",
+            ));
+        };
+        let Some(lease) = request.lease.as_ref() else {
+            return Err(Failure::new(
+                StatusCode::CONFLICT,
+                "LEASE_REQUIRED",
+                "An active task lease and fencing token are required to save",
+            ));
+        };
+        if lease.task_id.as_ref() != open_task_id {
+            return Err(Failure::new(
+                StatusCode::CONFLICT,
+                "LEASE_REQUIRED",
+                "Save lease must name the open task assigned to this asset",
+            ));
+        }
+        let lease_row = sqlx::query(
+            "SELECT l.holder_id,l.fencing_token,l.expires_at FROM task_leases l \
+             JOIN review_tasks t ON t.task_id=l.task_id \
+             WHERE l.task_id=? AND t.project_id=? AND t.asset_revision_id=? AND t.state='open'",
+        )
+        .bind(&open_task_id)
+        .bind(&asset.project_id)
+        .bind(asset_revision_id)
+        .fetch_optional(transaction.connection())
+        .await
+        .map_err(|_| storage_failure())?;
+        let Some(lease_row) = lease_row else {
+            return Err(Failure::new(
+                StatusCode::CONFLICT,
+                "LEASE_REQUIRED",
+                "The task has no active lease",
+            ));
+        };
+        let holder: Option<String> = lease_row
+            .try_get("holder_id")
+            .map_err(|_| storage_failure())?;
+        let current_token: i64 = lease_row
+            .try_get("fencing_token")
+            .map_err(|_| storage_failure())?;
+        let expires_at: i64 = lease_row
+            .try_get("expires_at")
+            .map_err(|_| storage_failure())?;
+        if holder.as_deref() != Some(principal.user_id.as_str()) {
+            return Err(Failure::new(
+                StatusCode::CONFLICT,
+                "LEASE_NOT_HELD",
+                "Only the current lease holder may save this task",
+            ));
+        }
+        if expires_at <= chrono::Utc::now().timestamp() {
+            return Err(Failure::new(
+                StatusCode::CONFLICT,
+                "LEASE_EXPIRED",
+                "Task lease expired before the annotation save",
+            ));
+        }
+        let supplied_token = i64::try_from(lease.fencing_token).map_err(|_| {
+            Failure::new(
+                StatusCode::CONFLICT,
+                "STALE_FENCING_TOKEN",
+                "Save fencing token is invalid",
+            )
+        })?;
+        if crate::review::leases::validate_fencing(current_token, supplied_token).is_err() {
+            return Err(Failure::new(
+                StatusCode::CONFLICT,
+                "STALE_FENCING_TOKEN",
+                "Save fencing token is stale",
+            ));
+        }
     }
     if &*request.document.asset_revision_id != asset_revision_id {
         return Err(Failure::new(
