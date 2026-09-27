@@ -112,10 +112,21 @@ impl JobQueue {
         worker_id: &str,
         lease_for: Duration,
     ) -> Result<Option<LeasedJob>, QueueError> {
+        self.lease_next_kind(worker_id, lease_for, None).await
+    }
+
+    /// Claims a job of one kind, or the oldest available job when `kind` is None.
+    pub async fn lease_next_kind(
+        &self,
+        worker_id: &str,
+        lease_for: Duration,
+        kind: Option<&str>,
+    ) -> Result<Option<LeasedJob>, QueueError> {
         if worker_id.is_empty()
             || worker_id.chars().count() > 128
             || lease_for.is_zero()
             || lease_for > Duration::from_secs(MAX_JOB_LEASE_SECONDS)
+            || kind.is_some_and(str::is_empty)
         {
             return Err(QueueError::InvalidRequest);
         }
@@ -125,8 +136,8 @@ impl JobQueue {
         let lease_until = (now
             + chrono::Duration::from_std(lease_for).map_err(|_| QueueError::InvalidRequest)?)
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let row = sqlx::query("SELECT job_id, kind, payload_json, attempt, fencing_token FROM jobs WHERE state='queued' OR (state='running' AND lease_until<=?) ORDER BY created_at, job_id LIMIT 1")
-            .bind(&now_text).fetch_optional(tx.connection()).await?;
+        let row = sqlx::query("SELECT job_id, kind, payload_json, attempt, fencing_token FROM jobs WHERE (? IS NULL OR kind=?) AND (state='queued' OR (state='running' AND lease_until<=?)) ORDER BY created_at, job_id LIMIT 1")
+            .bind(kind).bind(kind).bind(&now_text).fetch_optional(tx.connection()).await?;
         let Some(row) = row else {
             tx.commit().await?;
             return Ok(None);

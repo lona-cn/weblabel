@@ -367,8 +367,8 @@ pub(super) async fn download(
     Path(export_id): Path<String>,
     Extension(principal): Extension<Principal>,
 ) -> Response {
-    let row = sqlx::query("SELECT e.object_sha256, e.format, e.byte_size, e.loss_report_json FROM annotation_exports e JOIN memberships m ON m.project_id=e.project_id AND m.user_id=? WHERE e.export_id=?")
-        .bind(&principal.user_id).bind(&export_id).fetch_optional(&state.auth.pool).await;
+    let row = sqlx::query("SELECT e.object_sha256,e.format,e.byte_size,e.loss_report_json,0 AS dataset_package FROM annotation_exports e JOIN memberships m ON m.project_id=e.project_id AND m.user_id=? WHERE e.export_id=? AND NOT EXISTS(SELECT 1 FROM dataset_exports d WHERE d.export_id=e.export_id) UNION ALL SELECT d.object_sha256,d.format,d.byte_size,d.loss_report_json,1 AS dataset_package FROM dataset_exports d JOIN memberships m ON m.project_id=d.project_id AND m.user_id=? WHERE d.export_id=?")
+        .bind(&principal.user_id).bind(&export_id).bind(&principal.user_id).bind(&export_id).fetch_optional(&state.auth.pool).await;
     let row = match row {
         Ok(Some(row)) => row,
         Ok(None) => {
@@ -388,6 +388,7 @@ pub(super) async fn download(
     };
     let hash: String = row.try_get("object_sha256").unwrap_or_default();
     let format: String = row.try_get("format").unwrap_or_default();
+    let dataset_package: i64 = row.try_get("dataset_package").unwrap_or(0);
     let expected_size: i64 = row.try_get("byte_size").unwrap_or(-1);
     let loss_report_json: String = match row.try_get("loss_report_json") {
         Ok(report) => report,
@@ -421,7 +422,7 @@ pub(super) async fn download(
             )
         }
     };
-    let (content_type, extension) = if format == "coco" {
+    let (content_type, extension) = if format == "coco" && dataset_package == 0 {
         ("application/json", "json")
     } else {
         ("application/zip", "zip")

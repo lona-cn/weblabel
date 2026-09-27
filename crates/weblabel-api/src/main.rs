@@ -96,7 +96,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     tracing::info!(address = %config.bind, "WebLabel API listening");
-    axum::serve(listener, router(state)).await?;
+    let queue = weblabel_api::jobs::queue::JobQueue::new(state.repository.clone());
+    let repository = state.repository.clone();
+    let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+    let mut worker_shutdown = shutdown_tx.subscribe();
+    let export_worker = tokio::spawn(async move {
+        loop {
+            if *worker_shutdown.borrow() {
+                break;
+            }
+            tokio::select! {
+                changed = worker_shutdown.changed() => {
+                    if changed.is_err() || *worker_shutdown.borrow() { break; }
+                }
+                result = weblabel_api::jobs::model_jobs::process_dataset_export_next(
+                    &repository, &queue, "dataset-export-worker",
+                ) => match result {
+                    Ok(Some(_)) => {}
+                    Ok(None) => tokio::time::sleep(Duration::from_millis(500)).await,
+                    Err(error) => {
+                        tracing::error!(%error, "dataset export worker failed");
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                }
+            }
+        }
+    });
+    let serving = axum::serve(listener, router(state)).with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    });
+    let server_result = serving.await;
+    let _ = shutdown_tx.send(true);
+    if let Err(error) = export_worker.await {
+        tracing::error!(%error, "dataset export worker did not stop cleanly");
+    }
+    server_result?;
     Ok(())
 }
 

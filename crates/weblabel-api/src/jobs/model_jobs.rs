@@ -218,6 +218,9 @@ pub async fn process_next(
         "media_import" => {
             ingest::process_import_job(repository, &media_worker(), queue, &lease).await?;
         }
+        "dataset_export" => {
+            crate::datasets::export::process_job(repository, queue, &lease).await?;
+        }
         MODEL_JOB_KIND => {
             execute_model_run(repository, queue, &lease, runner).await?;
         }
@@ -230,6 +233,22 @@ pub async fn process_next(
     Ok(Some(job_id))
 }
 
+/// Production dataset-export worker that never leases unrelated shared-queue jobs.
+pub async fn process_dataset_export_next(
+    repository: &Repository,
+    queue: &JobQueue,
+    worker_id: &str,
+) -> Result<Option<String>, ModelJobError> {
+    let Some(lease) = queue
+        .lease_next_kind(worker_id, Duration::from_secs(300), Some("dataset_export"))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let job_id = lease.job_id.clone();
+    crate::datasets::export::process_job(repository, queue, &lease).await?;
+    Ok(Some(job_id))
+}
 fn media_worker() -> crate::jobs::worker::MediaWorker {
     crate::jobs::worker::MediaWorker::new()
 }

@@ -53,6 +53,10 @@ impl Repository {
                 "0009_workflow",
                 include_str!("../../migrations/0009_workflow.sql"),
             ),
+            (
+                "0010_datasets",
+                include_str!("../../migrations/0010_datasets.sql"),
+            ),
         ] {
             let mut tx = begin_immediate(&pool, write_timeout).await?;
             let applied: i64 = sqlx::query_scalar(

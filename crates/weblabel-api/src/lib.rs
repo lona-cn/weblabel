@@ -4,6 +4,7 @@ pub mod ai;
 pub mod annotations;
 pub mod auth;
 pub mod config;
+pub mod datasets;
 pub mod jobs;
 pub mod media;
 pub mod projects;
@@ -108,6 +109,10 @@ pub fn router(state: AppState) -> Router {
             state.auth.clone(),
         ))
         .merge(crate::review::router(
+            state.repository.clone(),
+            state.auth.clone(),
+        ))
+        .merge(crate::datasets::router(
             state.repository.clone(),
             state.auth.clone(),
         ))

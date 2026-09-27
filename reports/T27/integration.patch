@@ -1,0 +1,301 @@
+diff --git a/crates/weblabel-api/src/lib.rs b/crates/weblabel-api/src/lib.rs
+--- a/crates/weblabel-api/src/lib.rs
++++ b/crates/weblabel-api/src/lib.rs
+@@ -6,3 +6,4 @@
+ pub mod config;
++pub mod datasets;
+ pub mod jobs;
+ pub mod media;
+@@ -110,9 +111,13 @@
+         .merge(crate::review::router(
+             state.repository.clone(),
+             state.auth.clone(),
+         ))
++        .merge(crate::datasets::router(
++            state.repository.clone(),
++            state.auth.clone(),
++        ))
+         .merge(media::routes::router(state.repository.clone(), state.auth))
+         .merge(crate::runtime::agent_tools::router(
+             state.repository.clone(),
+diff --git a/crates/weblabel-api/migrations/0010_datasets.sql b/crates/weblabel-api/migrations/0010_datasets.sql
+new file mode 100644
+--- /dev/null
++++ b/crates/weblabel-api/migrations/0010_datasets.sql
+@@ -0,0 +1,33 @@
++CREATE TABLE dataset_versions (
++ dataset_version_id TEXT PRIMARY KEY NOT NULL,
++ project_id TEXT NOT NULL REFERENCES projects(project_id),
++ ontology_version_id TEXT NOT NULL,
++ manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json)),
++ manifest_sha256 TEXT NOT NULL CHECK(length(manifest_sha256)=64),
++ created_by TEXT NOT NULL REFERENCES users(user_id),
++ created_at TEXT NOT NULL,
++ FOREIGN KEY(project_id,ontology_version_id) REFERENCES ontology_versions(project_id,ontology_version_id),
++ UNIQUE(project_id,dataset_version_id)
++);
++CREATE TABLE dataset_exports (
++ export_id TEXT PRIMARY KEY NOT NULL REFERENCES jobs(job_id),
++ project_id TEXT NOT NULL,
++ dataset_version_id TEXT NOT NULL,
++ manifest_sha256 TEXT NOT NULL CHECK(length(manifest_sha256)=64),
++ actor_id TEXT NOT NULL REFERENCES users(user_id),
++ format TEXT NOT NULL CHECK(format IN ('native','yolo','coco')),
++ object_sha256 TEXT NOT NULL CHECK(length(object_sha256)=64),
++ byte_size INTEGER NOT NULL CHECK(byte_size>=0),
++ loss_report_json TEXT NOT NULL CHECK(json_valid(loss_report_json)),
++ created_at TEXT NOT NULL,
++ FOREIGN KEY(project_id,dataset_version_id) REFERENCES dataset_versions(project_id,dataset_version_id)
++);
++CREATE INDEX dataset_exports_project_page ON dataset_exports(project_id,created_at,export_id);
++CREATE TRIGGER dataset_versions_no_update BEFORE UPDATE ON dataset_versions
++BEGIN SELECT RAISE(ABORT,'dataset versions are immutable'); END;
++CREATE TRIGGER dataset_versions_no_delete BEFORE DELETE ON dataset_versions
++BEGIN SELECT RAISE(ABORT,'dataset versions are immutable'); END;
++CREATE TRIGGER dataset_exports_no_update BEFORE UPDATE ON dataset_exports
++BEGIN SELECT RAISE(ABORT,'dataset exports are immutable'); END;
++CREATE TRIGGER dataset_exports_no_delete BEFORE DELETE ON dataset_exports
++BEGIN SELECT RAISE(ABORT,'dataset exports are immutable'); END;
+diff --git a/crates/weblabel-api/src/storage/db.rs b/crates/weblabel-api/src/storage/db.rs
+--- a/crates/weblabel-api/src/storage/db.rs
++++ b/crates/weblabel-api/src/storage/db.rs
+@@ -51,6 +51,9 @@
+             ("0008_ai", include_str!("../../migrations/0008_ai.sql")),
+             (
+                 "0009_workflow",
+                 include_str!("../../migrations/0009_workflow.sql"),
+             ),
++            (
++                "0010_datasets",
++                include_str!("../../migrations/0010_datasets.sql"),
++            ),
+         ] {
+diff --git a/crates/weblabel-api/src/jobs/queue.rs b/crates/weblabel-api/src/jobs/queue.rs
+--- a/crates/weblabel-api/src/jobs/queue.rs
++++ b/crates/weblabel-api/src/jobs/queue.rs
+@@ -110,5 +110,15 @@
+     pub async fn lease_next(
+         &self,
+         worker_id: &str,
+         lease_for: Duration,
+     ) -> Result<Option<LeasedJob>, QueueError> {
++        self.lease_next_kind(worker_id, lease_for, None).await
++    }
++
++    /// Claims only jobs of `kind`; `None` retains the shared queue behavior.
++    pub async fn lease_next_kind(
++        &self,
++        worker_id: &str,
++        lease_for: Duration,
++        kind: Option<&str>,
++    ) -> Result<Option<LeasedJob>, QueueError> {
+         if worker_id.is_empty()
+             || worker_id.chars().count() > 128
+             || lease_for.is_zero()
+             || lease_for > Duration::from_secs(MAX_JOB_LEASE_SECONDS)
++            || kind.is_some_and(str::is_empty)
+         {
+             return Err(QueueError::InvalidRequest);
+         }
+@@ -125,5 +135,5 @@
+         let lease_until = (now
+             + chrono::Duration::from_std(lease_for).map_err(|_| QueueError::InvalidRequest)?)
+         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+-        let row = sqlx::query("SELECT job_id, kind, payload_json, attempt, fencing_token FROM jobs WHERE state='queued' OR (state='running' AND lease_until<=?) ORDER BY created_at, job_id LIMIT 1")
+-            .bind(&now_text).fetch_optional(tx.connection()).await?;
++        let row = sqlx::query("SELECT job_id, kind, payload_json, attempt, fencing_token FROM jobs WHERE (? IS NULL OR kind=?) AND (state='queued' OR (state='running' AND lease_until<=?)) ORDER BY created_at, job_id LIMIT 1")
++            .bind(kind).bind(kind).bind(&now_text).fetch_optional(tx.connection()).await?;
+diff --git a/crates/weblabel-api/src/jobs/model_jobs.rs b/crates/weblabel-api/src/jobs/model_jobs.rs
+--- a/crates/weblabel-api/src/jobs/model_jobs.rs
++++ b/crates/weblabel-api/src/jobs/model_jobs.rs
+@@ -218,6 +218,9 @@
+         "media_import" => {
+             ingest::process_import_job(repository, &media_worker(), queue, &lease).await?;
+         }
++        "dataset_export" => {
++            crate::datasets::export::process_job(repository, queue, &lease).await?;
++        }
+         MODEL_JOB_KIND => {
+             execute_model_run(repository, queue, &lease, runner).await?;
+         }
+@@ -230,6 +233,23 @@
+     Ok(Some(job_id))
+ }
+ 
++/// Production dataset-export worker; never claims unrelated shared queue jobs.
++pub async fn process_dataset_export_next(
++    repository: &Repository,
++    queue: &JobQueue,
++    worker_id: &str,
++) -> Result<Option<String>, ModelJobError> {
++    let Some(lease) = queue
++        .lease_next_kind(worker_id, Duration::from_secs(300), Some("dataset_export"))
++        .await?
++    else {
++        return Ok(None);
++    };
++    let job_id = lease.job_id.clone();
++    crate::datasets::export::process_job(repository, queue, &lease).await?;
++    Ok(Some(job_id))
++}
++
+ fn media_worker() -> crate::jobs::worker::MediaWorker {
+     crate::jobs::worker::MediaWorker::new()
+ }
+diff --git a/crates/weblabel-api/Cargo.toml b/crates/weblabel-api/Cargo.toml
+--- a/crates/weblabel-api/Cargo.toml
++++ b/crates/weblabel-api/Cargo.toml
+@@ -28,7 +28,7 @@
+-tokio = { version = "=1.47.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
++tokio = { version = "=1.47.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+diff --git a/crates/weblabel-api/src/main.rs b/crates/weblabel-api/src/main.rs
+--- a/crates/weblabel-api/src/main.rs
++++ b/crates/weblabel-api/src/main.rs
+@@ -96,6 +96,39 @@
+     }
+     let listener = tokio::net::TcpListener::bind(config.bind).await?;
+     tracing::info!(address = %config.bind, "WebLabel API listening");
+-    axum::serve(listener, router(state)).await?;
++    let queue = weblabel_api::jobs::queue::JobQueue::new(state.repository.clone());
++    let repository = state.repository.clone();
++    let (shutdown_tx, _) = tokio::sync::watch::channel(false);
++    let mut worker_shutdown = shutdown_tx.subscribe();
++    let export_worker = tokio::spawn(async move {
++        loop {
++            if *worker_shutdown.borrow() {
++                break;
++            }
++            tokio::select! {
++                changed = worker_shutdown.changed() => {
++                    if changed.is_err() || *worker_shutdown.borrow() { break; }
++                }
++                result = weblabel_api::jobs::model_jobs::process_dataset_export_next(
++                    &repository, &queue, "dataset-export-worker",
++                ) => match result {
++                    Ok(Some(_)) => {}
++                    Ok(None) => tokio::time::sleep(Duration::from_millis(500)).await,
++                    Err(error) => {
++                        tracing::error!(%error, "dataset export worker failed");
++                        tokio::time::sleep(Duration::from_secs(2)).await;
++                    }
++                }
++            }
++        }
++    });
++    let serving = axum::serve(listener, router(state))
++        .with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; });
++    let server_result = serving.await;
++    let _ = shutdown_tx.send(true);
++    if let Err(error) = export_worker.await {
++        tracing::error!(%error, "dataset export worker did not stop cleanly");
++    }
++    server_result?;
+     Ok(())
+ }
+diff --git a/apps/web/src/app/routes.tsx b/apps/web/src/app/routes.tsx
+--- a/apps/web/src/app/routes.tsx
++++ b/apps/web/src/app/routes.tsx
+@@ -1,5 +1,6 @@
+-import { useState } from 'react';
++import { useEffect, useState } from 'react';
+ import { useSession } from './providers';
+ import { Login } from '../features/projects/Login';
+ import { Projects } from '../features/projects/Projects';
+ import { Workbench } from '../features/workbench/Workbench';
++import { Datasets } from '../features/datasets/Datasets';
+@@ -9,2 +10,12 @@ export function RouteView() {
+   const { session, loading } = useSession();
+   const [projectId, setProjectId] = useState(() => new URLSearchParams(location.search).get('project_id'));
++  const [datasetView, setDatasetView] = useState(() => new URLSearchParams(location.search).get('dataset_view') === '1');
++  useEffect(() => {
++    const restore = () => {
++      const query = new URLSearchParams(location.search);
++      setProjectId(query.get('project_id'));
++      setDatasetView(query.get('dataset_view') === '1');
++    };
++    window.addEventListener('popstate', restore);
++    return () => window.removeEventListener('popstate', restore);
++  }, []);
+@@ -13,15 +23,35 @@
+   const open = (project: Project) => {
+     setProjectId(project.project_id);
++    setDatasetView(false);
+     const url = new URL(location.href);
+     url.searchParams.set('project_id', project.project_id);
+     url.searchParams.delete('asset_revision_id');
++    url.searchParams.delete('dataset_view');
+     history.pushState(null, '', url);
+   };
+   const goProjects = () => {
+     setProjectId(null);
++    setDatasetView(false);
+     const url = new URL(location.href);
+     url.searchParams.delete('project_id');
+     url.searchParams.delete('asset_revision_id');
++    url.searchParams.delete('dataset_view');
+     history.pushState(null, '', url);
+   };
+-  return projectId ? <Workbench projectId={projectId} onProjects={goProjects} /> : <Projects onOpen={open} />;
++  const openDatasets = () => {
++    setDatasetView(true);
++    const url = new URL(location.href);
++    url.searchParams.set('project_id', projectId ?? '');
++    url.searchParams.set('dataset_view', '1');
++    history.pushState(null, '', url);
++  };
++  const openWorkbench = () => {
++    setDatasetView(false);
++    const url = new URL(location.href);
++    url.searchParams.delete('dataset_view');
++    history.pushState(null, '', url);
++  };
++  if (!projectId) return <Projects onOpen={open} />;
++  if (datasetView) return <Datasets projectId={projectId} onWorkbench={openWorkbench} />;
++  return <Workbench projectId={projectId} onProjects={goProjects} onDatasets={openDatasets} />;
+ }
+diff --git a/apps/web/src/features/workbench/Workbench.tsx b/apps/web/src/features/workbench/Workbench.tsx
+--- a/apps/web/src/features/workbench/Workbench.tsx
++++ b/apps/web/src/features/workbench/Workbench.tsx
+@@ -23,5 +23,5 @@
+ import { setReviewEditorLocked, submitCurrentReviewRevision } from '../review/submission';
+ 
+ type TaskLease = { asset_revision_id: string; task_id: string; fencing_token: number };
+-type Props = { projectId?: string; onProjects?: () => void };
++type Props = { projectId?: string; onProjects?: () => void; onDatasets?: () => void };
+@@ -31,2 +31,4 @@
+-export function Workbench({ projectId = '', onProjects = () => {} }: Props) {
++export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = () => {} }: Props) {
+   const { session, logout } = useSession();
++  const workspaceHeadingRef = useRef<HTMLElement>(null);
++  useEffect(() => { workspaceHeadingRef.current?.focus(); }, []);
+@@ -287,7 +289,7 @@
+-  return <main className="app-shell">
++  return <main className="app-shell">
+     <header className="topbar"><a className="brand" href="/" aria-label="WebLabel 项目"><span className="brand-mark" aria-hidden="true">W</span><span>WebLabel</span></a>
+-      <nav aria-label="主导航" className="main-nav"><button type="button" onClick={onProjects}>项目</button><button type="button" aria-current="page">工作台</button></nav>
++      <nav aria-label="主导航" className="main-nav"><button type="button" onClick={onProjects}>项目</button><button type="button" aria-current="page">工作台</button><button type="button" onClick={onDatasets}>数据集与导出</button></nav>
+       <span className="session-user">{session.username}</span><button type="button" className="logout-button" onClick={() => void logout()}>退出</button>
+     </header>
+-    <header className="workspace-heading"><div><p className="eyebrow">{project?.name ?? '项目'} / {activeLoaded?.media.original_name ?? '选择媒体'}</p><input className="project-name-field" data-testid="project-name" aria-label="项目名称" value={project?.name ?? ''} readOnly /></div><span className="local-state">服务端版本 · canonical 像素坐标</span></header>
++    <header ref={workspaceHeadingRef} tabIndex={-1} className="workspace-heading"><div><p className="eyebrow">{project?.name ?? '项目'} / {activeLoaded?.media.original_name ?? '选择媒体'}</p><input className="project-name-field" data-testid="project-name" aria-label="项目名称" value={project?.name ?? ''} readOnly /></div><span className="local-state">服务端版本 · canonical 像素坐标</span></header>
+     {error ? <p className="api-error" role="alert">{error}</p> : null}
+diff --git a/crates/weblabel-api/src/annotations/exports.rs b/crates/weblabel-api/src/annotations/exports.rs
+--- a/crates/weblabel-api/src/annotations/exports.rs
++++ b/crates/weblabel-api/src/annotations/exports.rs
+@@ -370,2 +370,2 @@
+-    let row = sqlx::query("SELECT e.object_sha256, e.format, e.byte_size, e.loss_report_json FROM annotation_exports e JOIN memberships m ON m.project_id=e.project_id AND m.user_id=? WHERE e.export_id=?")
++    let row = sqlx::query("SELECT e.object_sha256,e.format,e.byte_size,e.loss_report_json,0 AS dataset_package FROM annotation_exports e JOIN memberships m ON m.project_id=e.project_id AND m.user_id=? WHERE e.export_id=? AND NOT EXISTS(SELECT 1 FROM dataset_exports d WHERE d.export_id=e.export_id) UNION ALL SELECT d.object_sha256,d.format,d.byte_size,d.loss_report_json,1 AS dataset_package FROM dataset_exports d JOIN memberships m ON m.project_id=d.project_id AND m.user_id=? WHERE d.export_id=?")
+-        .bind(&principal.user_id).bind(&export_id).fetch_optional(&state.auth.pool).await;
++        .bind(&principal.user_id).bind(&export_id).bind(&principal.user_id).bind(&export_id).fetch_optional(&state.auth.pool).await;
+@@ -389,3 +389,4 @@
+     let hash: String = row.try_get("object_sha256").unwrap_or_default();
+     let format: String = row.try_get("format").unwrap_or_default();
++    let dataset_package: i64 = row.try_get("dataset_package").unwrap_or(0);
+     let expected_size: i64 = row.try_get("byte_size").unwrap_or(-1);
+@@ -424,5 +425,5 @@
+-    let (content_type, extension) = if format == "coco" {
++    let (content_type, extension) = if format == "coco" && dataset_package == 0 {
+         ("application/json", "json")
+     } else {
+         ("application/zip", "zip")
+     };
