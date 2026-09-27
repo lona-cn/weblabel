@@ -1,0 +1,44 @@
+# T15 integration boundary — minimal owning-module implementation required
+# Worker base: 0b8a7526db58b7a296ead5f98d1d13a5c10b86ff
+# No source changes outside the T15 allocation are made here.
+
+The assigned test/docs files cannot supply a real end-to-end UI because the integrated
+web application does not implement the API-backed login/project/media/editor workflow:
+
+- `apps/web/src/app/routes.tsx` mounts only `Workbench`.
+- `apps/web/src/features/projects/Projects.tsx` explicitly marks itself DEV MOCK and
+  offers a static project card only.
+- `apps/web/src/features/workbench/Workbench.tsx` owns a fixed fixture ontology and
+  generated fixture object list; it does not consume project/media/annotation APIs.
+- `AttributePanel.tsx` renders disabled/readOnly inputs. CanvasView has a real T09
+  renderer component, but Workbench does not construct an EditorAssetRequest or mount it.
+- The configured Playwright webServer (`scripts/serve-wgpu-probe.mjs`) serves only the
+  WebGPU probe, not the application. The WebGPU project therefore has no authenticated
+  real UI surface for the T15 browser fixture to exercise.
+
+Required parent-owned cutover (do not merge this prose as a code diff):
+
+1. Add the actual session UI and project creation/list API flows in the existing app
+   shell/features. Project creation and asset import must call the authenticated public
+   endpoints, with cookie/CSRF and user-visible errors; do not retain the DEV MOCK card.
+2. Replace Workbench fixture state with API-backed project, ontology, asset list, head
+   annotation and canonical image data. Mount CanvasView with the selected MediaRevision,
+   ontology, document and canonical RGBA; use EditorHost's real WebGPU `gpu-status`
+   diagnostics. Connect the existing real toolbar/attribute/object components to editor
+   deltas without a second mutable geometry owner.
+3. Wire the existing persistence SaveQueue / SaveStatus to the API and persist changed
+   documents. Add explicit confirmed-negative UI confirmation before `set_completion`,
+   and reject/disable confirmation while objects remain. Keep completion distinct from
+   empty/unprocessed.
+4. Connect actual T14 revision-bound export UI: save/flush, use the resulting immutable
+   annotation revision, POST `/api/annotation-revisions/{id}/exports` with COCO loss
+   acknowledgement, GET the authenticated download, and expose bytes as a browser
+   download. Never assert only the filename or the visible label.
+5. Serve the real web app and API in the `chromium-webgpu` test environment and perform
+   actual login through the UI. Preserve real GPU enforcement; do not stub WebGPU,
+   mock API traffic, use editor-internal command shortcuts, or relax project isolation.
+
+After that owned implementation exists, keep `tests/e2e/t15_vertical.spec.ts` as the
+public acceptance contract, adapt only selectors to the actual shipped surface, and run
+`pnpm test:task T15` with the real hardware adapter. This assignment cannot implement
+or verify those cross-module items under its explicit file allocation.
