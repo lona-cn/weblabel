@@ -1,0 +1,54 @@
+diff --git a/packages/contracts/package.json b/packages/contracts/package.json
+--- a/packages/contracts/package.json
++++ b/packages/contracts/package.json
+@@ -5,6 +5,7 @@
+   "type": "module",
+   "exports": {
+     "./validate": "./src/validate.js",
++    "./validate-browser": "./src/validate-browser.js",
+     "./generated/*": "./generated/*"
+   },
+   "dependencies": {
+diff --git a/packages/contracts/src/validate-browser.js b/packages/contracts/src/validate-browser.js
+new file mode 100644
+--- /dev/null
++++ b/packages/contracts/src/validate-browser.js
+@@ -0,0 +1,22 @@
++import Ajv from 'ajv';
++import runEvent from '../generated/run_event.schema.json';
++import suggestionSet from '../generated/suggestion_set.schema.json';
++
++const ajv = new Ajv({ allErrors: true, strict: false });
++ajv.addFormat('uint64', { type: 'number', validate: (value) => Number.isSafeInteger(value) && value >= 0 });
++ajv.addFormat('double', { type: 'number', validate: Number.isFinite });
++const validators = new Map([
++  ['run_event', ajv.compile(runEvent)],
++  ['suggestion_set', ajv.compile(suggestionSet)],
++]);
++
++export function validateContract(name, value) {
++  const validate = validators.get(name);
++  if (!validate) throw new RangeError(`unknown generated contract: ${name}`);
++  const valid = validate(value);
++  return {
++    valid,
++    errors: valid ? [] : (validate.errors ?? []).map(({ instancePath, keyword, message }) => ({ instancePath, keyword, message })),
++  };
++}
+diff --git a/packages/contracts/src/validate-browser.d.ts b/packages/contracts/src/validate-browser.d.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/contracts/src/validate-browser.d.ts
+@@ -0,0 +1,12 @@
++export interface ContractValidationError {
++  instancePath: string;
++  keyword: string;
++  message?: string;
++}
++
++export interface ContractValidationResult {
++  valid: boolean;
++  errors: ContractValidationError[];
++}
++
++export function validateContract(name: string, value: unknown): ContractValidationResult;
