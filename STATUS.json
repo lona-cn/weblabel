@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "51569b5e787845db6dc0aef6a847bfd8aab4913b",
-  "last_updated_at": "2026-09-27T21:30:47Z",
+  "application_commit": "9947be8aec1fd6526f965c804448ce3a8a523de6",
+  "last_updated_at": "2026-09-27T21:53:56Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -286,16 +286,16 @@
       "blockers": []
     },
     "T24": {
-      "status": "review",
+      "status": "blocked",
       "base_commit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
-      "integrated_commit": "02c0c523302a67f572692879763f591c7885c005",
+      "integrated_commit": "9947be8aec1fd6526f965c804448ce3a8a523de6",
       "evidence": [
         "reports/T24/result.json",
         "reports/T24/tests.log",
         "reports/T24/review.md"
       ],
       "blockers": [
-        "T24 selected-subset success→undo batch restoration lacks a composition regression; see reports/T24/review.md."
+        "Fresh `wasm-bridge` build for the registered T24 real-editor browser regression is blocked by the in-progress T28 compile error: crates/geometry/src/spatial_index.rs:195 omits required BBox.kind. A diagnostic run using the pre-existing artifact passed 1/1 but does not satisfy the current-source gate."
       ]
     },
     "T25": {
