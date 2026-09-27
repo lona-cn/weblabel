@@ -9,7 +9,14 @@ export default defineConfig({
       // Override the global software adapter argument for the real-device probe.
       use: { channel: 'chromium', launchOptions: { args: ['--enable-unsafe-webgpu'] } },
     },
+    {
+      name: 'chromium-webgpu',
+      testDir: './tests/e2e',
+      // T15 and downstream integration gates require an actual Chromium WebGPU device.
+      use: { channel: 'chromium', launchOptions: { args: ['--enable-unsafe-webgpu'] } },
+    },
   ],
+
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
