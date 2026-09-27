@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plan_version": "1.0.0",
   "application_commit": "cad3ce8",
-  "last_updated_at": "2026-09-26T08:25:30Z",
+  "last_updated_at": "2026-09-27T14:42:56Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -114,17 +114,21 @@
       "blockers": []
     },
     "T09": {
-      "status": "pending",
+      "status": "done",
       "base_commit": "6e7d67d",
-      "integrated_commit": null,
+      "integrated_commit": "ec85e21",
       "evidence": [
-        "reports/T05/result.json",
-        "reports/T05/tests.log",
-        "reports/T05/review.md"
+        "reports/T09/result.json",
+        "reports/T09/tests.log",
+        "reports/T09/review.md",
+        "reports/T09/canvas-render.png",
+        "reports/T09/integration.patch"
       ],
       "blockers": [],
       "notes": [
-        "原 blocker(T05 无 WebGPU adapter)已随 T05 真实 GPU 关卡通过而解除(RTX 5060 Ti,BrowserWebGpu;见 reports/T05/gpu-adapter-recheck.md 与 T05 review);T09 现可执行。"
+        "wl-renderer 实现;wl-reviewer 判定 adequate-with-fixes 无阻断;F1-F5 全部修复(hash 61字符更正、provenance 对齐、get_viewport 并入 guard、错误通道定性、序数更正)。",
+        "主Agent接受附加只读 get_viewport(): Viewport(最小 Rust 视图读回,不改 C3 冻结语义,无需 ADR);后续任务可依赖。",
+        "主Agent复跑全绿:pnpm test:task T09 18/18、vitest 176/176、cargo 47/47、typecheck、contracts 3/3、fmt 干净、真实GPU e2e 5/5(nvidia blackwell, BrowserWebGpu)。"
       ]
     },
     "T10": {
@@ -150,22 +154,26 @@
       "blockers": []
     },
     "T12": {
-      "status": "blocked",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
-      "blockers": [
-        "Blocked by T09; T09 requires T05's real-WebGPU adapter/pixel/device-loss evidence before T12 can start."
-      ]
+      "status": "done",
+      "base_commit": "ec85e21",
+      "integrated_commit": "57245a4addf9dcc2afe6917195a4ad8b247d0fe8",
+      "evidence": [
+        "reports/T12/result.json",
+        "reports/T12/tests.log",
+        "reports/T12/review.md"
+      ],
+      "blockers": []
     },
     "T13": {
-      "status": "blocked",
-      "base_commit": null,
-      "integrated_commit": null,
-      "evidence": [],
-      "blockers": [
-        "Blocked by T09; T09 requires T05's real-WebGPU adapter/pixel/device-loss evidence before T13 can start."
-      ]
+      "status": "done",
+      "base_commit": "ec85e21",
+      "integrated_commit": "0609e0ddc49962dd0da37c6a87d5bedd92b94370",
+      "evidence": [
+        "reports/T13/result.json",
+        "reports/T13/tests.log",
+        "reports/T13/review.md"
+      ],
+      "blockers": []
     },
     "T14": {
       "status": "done",
