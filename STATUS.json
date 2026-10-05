@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "9947be8aec1fd6526f965c804448ce3a8a523de6",
-  "last_updated_at": "2026-09-27T21:53:56Z",
+  "application_commit": "4e536c6195e7b6d6cc2aff4ca3ba2b45df9819cd",
+  "last_updated_at": "2026-10-05T17:06:13.340Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -288,14 +288,14 @@
     "T24": {
       "status": "blocked",
       "base_commit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
-      "integrated_commit": "9947be8aec1fd6526f965c804448ce3a8a523de6",
+      "integrated_commit": "4e536c6195e7b6d6cc2aff4ca3ba2b45df9819cd",
       "evidence": [
         "reports/T24/result.json",
         "reports/T24/tests.log",
         "reports/T24/review.md"
       ],
       "blockers": [
-        "Fresh `wasm-bridge` build for the registered T24 real-editor browser regression is blocked by the in-progress T28 compile error: crates/geometry/src/spatial_index.rs:195 omits required BBox.kind. A diagnostic run using the pre-existing artifact passed 1/1 but does not satisfy the current-source gate."
+        "Production AI prerequisite routes GET /api/model-profiles and POST /api/ai/consents are not registered; actual Workbench GET returned 404. T25 depends on T24, so integrating its consent prerequisite requires explicit task-ownership/dependency resolution. Fixture gates do not substitute for this production chain."
       ]
     },
     "T25": {
