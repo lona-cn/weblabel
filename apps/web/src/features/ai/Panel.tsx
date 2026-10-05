@@ -6,17 +6,20 @@ import type { AnnotationDocument } from '../../../../../packages/contracts/gener
 import type { EditorCommand } from '../../../../../packages/contracts/generated/EditorCommand';
 import type { EditorDelta } from '../../../../../packages/contracts/generated/EditorDelta';
 import type { SaveQueue } from '../../lib/persistence/save-queue';
+import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 import { CandidateList } from './CandidateList';
 import { Consent } from './Consent';
 import { ProviderPicker } from './ProviderPicker';
 import { RunProgress } from './RunProgress';
 import { useRun, type ConsentPreview, type RunApi } from './useRun';
 
-export function Panel({ asset_revision_id, profiles, context, document, generation, dispatch, saveQueue, obtainConsent, refreshContext, grants, api, csrfToken, intent: initialIntent = 'audit_attributes' }: {
+export function Panel({ asset_revision_id, profiles, context, ontology, getDocument, getGeneration, generation, dispatch, saveQueue, obtainConsent, refreshContext, grants, api, csrfToken, intent: initialIntent = 'audit_attributes' }: {
   asset_revision_id: string;
   profiles: readonly ModelProfile[];
   context: RunContext;
-  document: AnnotationDocument;
+  ontology: OntologyVersion;
+  getDocument: () => AnnotationDocument | null;
+  getGeneration: () => number | null;
   generation: number;
   dispatch: (command: EditorCommand) => EditorDelta | null;
   saveQueue?: SaveQueue;
@@ -46,8 +49,8 @@ export function Panel({ asset_revision_id, profiles, context, document, generati
   }, [contextKey]);
   const controller = useRun({
     asset_revision_id, profile, context, intent, prompt, grants, obtainConsent, dispatch,
-    getDocument: () => document,
-    getGeneration: () => generation,
+    getDocument,
+    getGeneration,
     refreshContext,
     saveQueue,
     csrfToken,
@@ -82,6 +85,15 @@ export function Panel({ asset_revision_id, profiles, context, document, generati
   return (
     <aside aria-label="AI review panel" data-testid="ai-panel">
       <h2>AI review</h2>
+      <section aria-label="Pinned ontology rules">
+        <h3>Ontology {ontology.ontology_version_id} · version {ontology.version_no}</h3>
+        <pre>{ontology.guidelines_markdown}</pre>
+        {ontology.labels.map((label) => <div key={label.label_id}>
+          <h4>{label.name}</h4>
+          <p>Allowed geometry: {label.allowed_geometry_types.join(', ')}</p>
+          {label.attributes.map((attribute) => <p key={attribute.key}>{attribute.key}: {attribute.kind}; {attribute.required ? 'required' : 'optional'}; default {JSON.stringify(attribute.default_value)}; values {attribute.enum_values?.join(', ') ?? 'none'}; min {attribute.min ?? 'none'}; max {attribute.max ?? 'none'}</p>)}
+        </div>)}
+      </section>
       <ProviderPicker profiles={profiles} selected={profile?.profile_id ?? null} disabled={controller.busy || preparingScope} onSelect={(next) => { setSelectedProfileId(next.profile_id); setConfirmedPreviewKey(null); setPreviewOpen(false); }} />
       <label htmlFor="ai-intent">Review intent</label>
       <select id="ai-intent" value={intent} disabled={controller.busy || preparingScope} onChange={(event) => { setIntent(event.currentTarget.value as RunIntent); setConfirmedPreviewKey(null); setPreviewOpen(false); }} aria-label="Run intent">

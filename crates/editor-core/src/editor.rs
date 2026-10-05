@@ -33,13 +33,22 @@ impl Editor {
         document: AnnotationDocument,
         ontology: OntologyVersion,
     ) -> Result<Self, DomainError> {
+        Self::from_snapshot(document, ontology, 0)
+    }
+
+    /// Resume a persisted logical generation without recreating undo history.
+    pub fn from_snapshot(
+        document: AnnotationDocument,
+        ontology: OntologyVersion,
+        generation: u64,
+    ) -> Result<Self, DomainError> {
         validate_document(&document, &ontology)?;
         let width = f64::from(document.coordinate_space.width);
         let height = f64::from(document.coordinate_space.height);
         Ok(Self {
             document,
             ontology,
-            generation: 0,
+            generation,
             history: History::default(),
             selection: Selection::default(),
             tool: Tool::Select,
@@ -115,6 +124,21 @@ impl Editor {
 
     pub fn snapshot(&self) -> AnnotationDocument {
         self.document.clone()
+    }
+
+    /// Pinned AI object content hashes from the validated canonical document.
+    /// Called at run preparation, never from pointer preview or rendering.
+    pub fn object_hashes(&self) -> std::collections::BTreeMap<Id, String> {
+        self.document
+            .objects
+            .iter()
+            .map(|object| {
+                (
+                    object.object_id.clone(),
+                    annotation_domain::object_hash(object),
+                )
+            })
+            .collect()
     }
 
     pub fn generation(&self) -> u64 {

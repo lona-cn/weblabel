@@ -149,6 +149,7 @@ export interface EditorFacade {
   set_local_flags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
   get_snapshot(): AnnotationDocument;
   get_generation(): number;
+  get_object_hashes(): Record<Id, string>;
   set_predictions(sets: SuggestionSet[]): void;
   render(timestamp_ms: number): void;
   dispose(): void;
@@ -159,6 +160,7 @@ export function create_editor(
   ontology: OntologyVersion,
   document: AnnotationDocument,
   canonical_rgba: Uint8Array,
+  initial_generation: number, // 与载入文档配对的SaveQueue.local_generation；新资产为0
 ): Promise<EditorFacade>;
 ```
 
@@ -167,6 +169,11 @@ C3 的 flags 只属于编辑器会话，不进入保存文档。业务 UI 可持
 Rust 函数边界：`geometry::image_to_css([f64;2], Viewport)->[f64;2]`、`css_to_image`、`validate_bbox(&BBox,w:u32,h:u32)->Result<(),DomainError>`；`editor_core::Editor::new(document,ontology)->Result<Editor,DomainError>`；`Editor::dispatch(EditorCommand)->Result<EditorDelta,DomainError>`；`Editor::snapshot()->AnnotationDocument`。渲染模块依赖只读 render scene，不反向修改 Editor。
 
 WASM public facade 按 C3 命名；内部 JsValue/serde_wasm_bindgen 包装留在 wasm-bridge。`dispose` 释放监听、rAF、图像和 GPU 引用；重复调用无副作用。create_editor 异步完成时需匹配当前 asset token，旧图片初始化结果不得挂到新图片 Canvas。
+
+T24只读扩展决策：`get_object_hashes`从Rust当前已校验文档生成C4对象hash，复用annotation-domain的canonical序列化；不在JS重新实现浮点/属性序列化，也不复制完整Rust文档。仅在运行准备或逻辑generation变化后读取；pointermove、pan和选择变化不得全量重算hash。接受/撤销由EditorHost onDelta唯一保存边界入队，UI只flush并等待对应generation的远端ACK，禁止再用React旧props覆盖快照。
+
+T24会话恢复决策：`Editor::from_snapshot(document,ontology,generation)`以载入文档配对的逻辑generation创建新会话，不恢复旧undo栈。WASM `create_editor` 必须传入此generation；工作台切图/草稿恢复沿用SaveQueue.local_generation，不能将已保存或待保存资产重置为0，不能丢弃queue/journal来绕过ACK检查。新资产显式传0。
+恢复时从同一queue record选择document/base/generation；保留内存ACK快照不能与较早HTTP GET文档混配。conflict/unreachable恢复保留本地document与journal并暂停写入，须显式保留本地/导出后才基于观察的服务端head继续。查看服务器版本为只读预览，不可覆盖本地queue；返回本地编辑时从queue重新装载对应快照。
 
 ## C4. 候选与模型运行
 

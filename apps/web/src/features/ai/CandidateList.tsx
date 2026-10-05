@@ -17,7 +17,7 @@ export function CandidateList({ entries, activeAsset, activeContext, activeGener
       {entries.length === 0 ? <p role="status">No candidates have been returned.</p> : null}
       {entries.map((entry) => {
         const candidate = entry.candidate;
-        const acceptAllowed = canAcceptSuggestion({ active_asset: activeAsset, candidate_asset: entry.asset_revision_id, active_context: activeContext, active_generation: activeGeneration ?? activeContext.draft_generation, candidate, busy, schema_error: entry.schema_error });
+        const acceptAllowed = canAcceptSuggestion({ active_asset: activeAsset, candidate_asset: entry.asset_revision_id, active_context: activeContext, run_context: entry.run_context, active_generation: activeGeneration ?? activeContext.draft_generation, candidate, busy, schema_error: entry.schema_error });
         const ids = selected[entry.key] ?? [];
         const sourceAssetIsCurrent = entry.asset_revision_id === activeAsset;
         return (

@@ -6,6 +6,7 @@ import type { EditorDelta } from '../../../../../packages/contracts/generated/Ed
 
 export interface CanvasViewProps {
   request: EditorAssetRequest;
+  readOnly?: boolean;
   hostOptions?: Partial<EditorHostOptions>;
   activeTool: EditorTool;
   onDelta: (host: EditorHost, delta: EditorDelta) => void;
@@ -32,13 +33,14 @@ async function adapterKind(): Promise<'hardware' | 'software' | 'unknown'> {
   }
 }
 
-export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostReady }: CanvasViewProps) {
+export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostReady, readOnly = false }: CanvasViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef(request);
   const hostRef = useRef<EditorHost | null>(null);
   const optionsRef = useRef(hostOptions);
   const deltaRef = useRef(onDelta);
   const readyRef = useRef(onHostReady);
+  const toolRef = useRef(activeTool);
   const [error, setError] = useState<ApiError | null>(null);
   const [deviceState, setDeviceState] = useState<'loading' | 'ready' | 'unsupported' | 'lost'>('loading');
   const [adapter, setAdapter] = useState<'hardware' | 'software' | 'unknown'>('unknown');
@@ -46,6 +48,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
   optionsRef.current = hostOptions;
   deltaRef.current = onDelta;
   readyRef.current = onHostReady;
+  toolRef.current = activeTool;
 
   useEffect(() => {
     let active = true;
@@ -58,11 +61,11 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
       } });
       hostRef.current = host;
       host.mount(canvas);
-      host.setTool(activeTool);
       setError(null);
       setDeviceState('loading');
       void host.loadAsset(requestRef.current).then(async () => {
         if (!active || host?.status !== 'ready') return;
+        host.setTool(toolRef.current);
         readyRef.current(host);
         const kind = await adapterKind();
         if (!active) return;
@@ -80,6 +83,11 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
       if (hostRef.current === host) hostRef.current = null;
     };
   }, [request.media.asset_revision_id]);
+
+  useEffect(() => {
+    if (canvasRef.current) canvasRef.current.inert = readOnly;
+    if (readOnly) hostRef.current?.cancelGesture();
+  }, [readOnly]);
 
   useEffect(() => {
     hostRef.current?.setTool(activeTool);

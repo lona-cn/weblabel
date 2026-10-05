@@ -56,6 +56,7 @@ export interface EditorFacade {
   set_local_flags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
   get_snapshot(): AnnotationDocument;
   get_generation(): number;
+  get_object_hashes(): Record<Id, string>;
   get_viewport(): Viewport;
   set_predictions(sets: SuggestionSet[]): void;
   render(timestamp_ms: number): void;
@@ -75,6 +76,7 @@ export interface EditorAssetRequest {
   ontology: OntologyVersion;
   document: AnnotationDocument;
   frame: CanonicalFrame;
+  initial_generation: number;
 }
 
 /** Measured binary RGBA handoff across the WASM boundary. The wasm-bindgen
@@ -103,6 +105,7 @@ export interface EditorWasmBridge {
     ontology: OntologyVersion,
     document: AnnotationDocument,
     canonical_rgba: Uint8Array,
+    initial_generation: number,
   ): Promise<EditorFacade>;
 }
 

@@ -229,14 +229,22 @@ pub struct EditorSession {
 
 impl EditorSession {
     pub fn new(document: AnnotationDocument, ontology: OntologyVersion) -> Result<Self, ApiError> {
+        Self::from_snapshot(document, ontology, 0)
+    }
+
+    pub fn from_snapshot(
+        document: AnnotationDocument,
+        ontology: OntologyVersion,
+        generation: u64,
+    ) -> Result<Self, ApiError> {
         let image_width = document.coordinate_space.width;
         let image_height = document.coordinate_space.height;
         let mut colors = HashMap::with_capacity(ontology.labels.len());
         for label in &ontology.labels {
             colors.insert(label.label_id.clone(), label_color(&label.color));
         }
-        let editor =
-            Editor::new(document, ontology).map_err(|error| api_error_from_domain(&error))?;
+        let editor = Editor::from_snapshot(document, ontology, generation)
+            .map_err(|error| api_error_from_domain(&error))?;
         let view = Viewport::try_new(
             1.0,
             0.0,
@@ -552,6 +560,28 @@ mod tests {
 
     fn person() -> Id {
         Id::from("object_person_001")
+    }
+
+    #[test]
+    fn resumed_generation_keeps_new_edits_and_undo_ahead_of_the_saved_baseline() {
+        let (document, ontology) = fixtures();
+        let original = document.clone();
+        let mut session = EditorSession::from_snapshot(document, ontology, 7).unwrap();
+        let delta = session.dispatch(EditorCommand::Delete {
+            object_ids: vec![person()],
+        });
+        assert!(delta.error.is_none());
+        assert_eq!(delta.generation, 8);
+        assert!(!session
+            .get_snapshot()
+            .objects
+            .iter()
+            .any(|object| object.object_id == person()));
+        let undo = session.dispatch(EditorCommand::Undo);
+        assert!(undo.error.is_none());
+        assert_eq!(undo.generation, 9);
+        assert_eq!(session.get_snapshot(), original);
+        assert!(!undo.can_undo);
     }
 
     fn pointer(phase: editor_core::PointerPhase, x_css: f64, y_css: f64) -> PointerInput {
@@ -951,6 +981,10 @@ pub mod wasm {
             to_js(&self.session.get_snapshot())
         }
 
+        pub fn get_object_hashes(&self) -> Result<JsValue, JsValue> {
+            to_js(&self.session.editor.object_hashes())
+        }
+
         /// Generation is bounded by 2^53-1 in editor-core; it crosses the
         /// boundary as a plain JS number (a u64 return would become a BigInt
         /// and break the C3 `get_generation(): number` contract).
@@ -1023,6 +1057,7 @@ pub mod wasm {
         ontology: JsValue,
         document: JsValue,
         canonical_rgba: Vec<u8>,
+        initial_generation: JsValue,
     ) -> Result<EditorFacade, JsValue> {
         let media = from_js::<MediaRevision>(media, "INVALID_MEDIA").map_err(to_js_error)?;
         let ontology =
@@ -1041,7 +1076,10 @@ pub mod wasm {
             )));
         }
         validate_canonical_rgba(width, height, &canonical_rgba).map_err(to_js_error)?;
-        let session = EditorSession::new(document, ontology).map_err(to_js_error)?;
+        let generation =
+            from_js::<u64>(initial_generation, "INVALID_GENERATION").map_err(to_js_error)?;
+        let session =
+            EditorSession::from_snapshot(document, ontology, generation).map_err(to_js_error)?;
         let renderer = renderer_wgpu::Renderer::new(canvas.clone(), width, height, canonical_rgba)
             .await
             .map_err(|error| {

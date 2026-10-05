@@ -21,10 +21,11 @@ import { ResizeControls } from './ResizeControls';
 import { ReviewPanel } from '../review/ReviewPanel';
 import type { ReviewTask } from '../review/api';
 import { setReviewEditorLocked, submitCurrentReviewRevision } from '../review/submission';
+import { WorkbenchAi } from '../ai/WorkbenchAi';
 
 type TaskLease = { asset_revision_id: string; task_id: string; fencing_token: number };
 type Props = { projectId?: string; onProjects?: () => void; onDatasets?: () => void };
-type LoadedAsset = { media: ApiMedia; ontology: OntologyVersion; document: AnnotationDocument; revisionId: string; frame: { width: number; height: number; rgba: Uint8Array } };
+type LoadedAsset = { media: ApiMedia; ontology: OntologyVersion; document: AnnotationDocument; revisionId: string; initial_generation: number; readOnlyPreview: boolean; frame: { width: number; height: number; rgba: Uint8Array } };
 
 function reportError(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
 
@@ -48,6 +49,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   const [negativeConfirmed, setNegativeConfirmed] = useState(false);
   const [exportFormat, setExportFormat] = useState<'coco' | 'yolo' | 'native'>('coco');
   const [exporting, setExporting] = useState(false);
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [recovery, setRecovery] = useState<RecoveryReport | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -83,7 +85,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
       }),
     }), [host, queue]);
   const activeLoaded = loaded?.media.asset_revision_id === selectedAssetId ? loaded : null;
-  const activeHost = activeLoaded ? host : null;
+  const activeHost = activeLoaded && !activeLoaded.readOnlyPreview ? host : null;
   const activeObjects = activeLoaded ? objects : [];
   const activeSelectedIds = activeLoaded ? selectedIds : [];
 
@@ -151,6 +153,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
     setLoadState('loading');
     setError(null);
     setHost(null);
+    setHistoryState({ canUndo: false, canRedo: false });
     const transport = new FetchSaveTransport({ csrfToken });
     Promise.all([api.annotation(media.asset_revision_id, ontology.ontology_version_id), api.image(media.asset_revision_id)]).then(async ([revision, image]) => {
       const frame = await decodeCanonicalFrame(image, { width: media.canonical_width, height: media.canonical_height });
@@ -158,7 +161,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
       if (!alive) return;
       setRecovery(recoveryReport);
       if (recoveryReport.kind === 'restored' || recoveryReport.kind === 'conflict' || recoveryReport.kind === 'unreachable') {
-        queue.restoreFromRecord(recoveryReport.record);
+        queue.restoreFromRecord(recoveryReport.record, recoveryReport.kind !== 'restored');
       } else if (recoveryReport.kind === 'clean' || recoveryReport.kind === 'no_local_record') {
         queue.initializeFromServerRevision({
           asset_revision_id: media.asset_revision_id,
@@ -168,14 +171,11 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
           document: revision.document,
         });
       }
-      const queueStatus = queue.getStatus(media.asset_revision_id);
       const queueRecord = queue.toRecord(media.asset_revision_id);
-      const useQueuedDraft = recoveryReport.kind === 'restored' ||
-        ((recoveryReport.kind === 'clean' || recoveryReport.kind === 'no_local_record') && queueStatus.dirty);
-      const document = useQueuedDraft
-        ? queueRecord?.document ?? (recoveryReport.kind === 'restored' ? recoveryReport.record.document : revision.document)
-        : revision.document;
-      setLoaded({ media, ontology, document, revisionId: revision.annotation_revision_id, frame });
+      // Document, base and generation are one queue snapshot, including a save
+      // ACK that arrived after the earlier annotation GET or recovered draft.
+      const document = queueRecord?.document ?? revision.document;
+      setLoaded({ media, ontology, document, revisionId: queueRecord?.base_revision_id ?? revision.annotation_revision_id, initial_generation: queueRecord?.generation ?? 0, readOnlyPreview: false, frame });
       setObjects(document.objects);
       setSelectedIds([]);
       setCompletionChoice(document.completion);
@@ -205,13 +205,14 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   };
 
   const applyDelta = useCallback((currentHost: EditorHost, delta: EditorDelta) => {
-    if (submissionLockRef.current && delta.document_changed) return;
+    if (loaded?.readOnlyPreview || (submissionLockRef.current && delta.document_changed)) return;
     const snapshot = currentHost.getSnapshot();
     if (!snapshot || !loaded || loaded.media.asset_revision_id !== selectedAssetId) return;
     setObjects(snapshot.objects);
     setSelectedIds(delta.selected_object_ids);
     setCompletionChoice(snapshot.completion);
-    if (delta.document_changed) {
+    setHistoryState({ canUndo: delta.can_undo, canRedo: delta.can_redo });
+    if (delta.document_changed || delta.suggestion_decisions.length > 0) {
       queue.enqueue({ asset_revision_id: loaded.media.asset_revision_id, ontology_version_id: loaded.ontology.ontology_version_id,
         base_revision_id: queue.getStatus(loaded.media.asset_revision_id).base_revision_id ?? loaded.revisionId,
         generation: delta.generation, document: snapshot, suggestion_decisions: delta.suggestion_decisions });
@@ -278,11 +279,24 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
     }
     if (!activeLoaded) return;
     setLoaded((current) => current?.media.asset_revision_id === activeLoaded.media.asset_revision_id
-      ? { ...current, document: revision.document, revisionId: revision.annotation_revision_id }
+      ? { ...current, document: revision.document, revisionId: revision.annotation_revision_id, readOnlyPreview: true }
       : current);
     setObjects(revision.document.objects);
     setSelectedIds([]);
     setCompletionChoice(revision.document.completion);
+  }
+
+  function resumeLocalDraft() {
+    if (!activeLoaded) return;
+    const record = queue.toRecord(activeLoaded.media.asset_revision_id);
+    if (!record?.base_revision_id) return;
+    setHost(null);
+    setHistoryState({ canUndo: false, canRedo: false });
+    setLoaded({ ...activeLoaded, document: record.document, revisionId: record.base_revision_id, initial_generation: record.generation, readOnlyPreview: false });
+    setObjects(record.document.objects);
+    setSelectedIds([]);
+    setCompletionChoice(record.document.completion);
+    setRecovery(null);
   }
 
   if (!session) return null;
@@ -310,12 +324,14 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
       <section className="canvas-column" aria-label="标注工作区">
         <div id="canvas-toolbar-row" className="canvas-toolbar-row"><Toolbar active={tool} disabled={!activeLoaded || !activeHost} onChange={setActiveTool} /><div className="canvas-actions"><button type="button" aria-label="适配画布" disabled={!activeHost} onClick={() => activeHost?.fitImage()}>适配画布</button>
           <ResizeControls targetId="canvas-toolbar-row" axis="height" decreaseName="减小画布工具栏高度" increaseName="增大画布工具栏高度" minimum={46} maximum={180} step={16} />
+          <button type="button" data-testid="undo" disabled={!activeHost || !historyState.canUndo} onClick={() => activeHost?.dispatch({ kind: 'undo' })}>撤销</button>
+          <button type="button" data-testid="redo" disabled={!activeHost || !historyState.canRedo} onClick={() => activeHost?.dispatch({ kind: 'redo' })}>重做</button>
         </div></div>
         <div className="canvas-stage" data-testid="canvas-container">
-          {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}`} request={activeLoaded} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}
+          {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}:${activeLoaded.readOnlyPreview}`} request={activeLoaded} readOnly={activeLoaded.readOnlyPreview} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}
         </div>
         <footer className="canvas-footer"><span>工具：{tool}</span><span>{activeLoaded ? `${activeLoaded.media.canonical_width} × ${activeLoaded.media.canonical_height} canonical` : '—'}</span><span>对象 {activeObjects.length}</span></footer>
-        {activeLoaded ? <SaveStatus queue={queue} asset_revision_id={activeLoaded.media.asset_revision_id} recovery={recovery} onViewServer={viewServerRevision} /> : null}
+        {activeLoaded ? <SaveStatus queue={queue} asset_revision_id={activeLoaded.media.asset_revision_id} recovery={recovery} onViewServer={viewServerRevision} onResumeLocal={resumeLocalDraft} /> : null}
         <section className="completion-panel" aria-label="标注完成状态"><label htmlFor="completion-state">完成状态</label><select id="completion-state" data-testid="completion-state" value={completionChoice} disabled={!activeHost} onChange={(event) => setCompletion(event.target.value as typeof completionChoice)}>
           <option value="unprocessed">未处理</option><option value="in_progress">处理中</option><option value="complete">已完成</option><option value="confirmed_negative">已确认无目标</option>
         </select>
@@ -329,6 +345,9 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
           <p>COCO/YOLO 不包含全部对象属性；点击确认导出即确认接受该格式的信息损失，产物绑定保存后的不可变标注版本。</p><button data-testid="export-start" type="button" disabled={!activeLoaded || exporting} onClick={() => void exportCurrent()}>{exporting ? '保存并导出中…' : '确认信息损失并导出'}</button>{exportMessage ? <p role="status">{exportMessage}</p> : null}</section>
       </section>
     </div>
+    <WorkbenchAi assetId={selectedAssetId ?? ''} media={activeLoaded?.media ?? null}
+      ontology={activeLoaded?.ontology ?? null} host={activeHost} queue={queue}
+      revisionId={activeLoaded?.revisionId ?? null} selectedIds={activeSelectedIds} />
     {projectId && session ? <ReviewPanel projectId={projectId} session={session} onLeaseChange={updateTaskLease} onSubmitTask={submitReviewTask} /> : null}
   </main>;
 }

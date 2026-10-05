@@ -85,7 +85,7 @@ describe('T26 serialized review submission', () => {
       releasePointerCapture: { value: releasePointerCapture },
     });
     host.mount(canvas);
-    await host.loadAsset({ media: { asset_revision_id: 'asset-1' }, ontology: {}, document: {}, frame: { width: 10, height: 10, rgba: new Uint8Array(400) } } as unknown as EditorAssetRequest);
+    await host.loadAsset({ media: { asset_revision_id: 'asset-1' }, ontology: {}, document: {}, frame: { width: 10, height: 10, rgba: new Uint8Array(400) }, initial_generation: 0 } as unknown as EditorAssetRequest);
     const surface = document.createElement('div');
 
     fireEvent.pointerDown(canvas, { pointerId: 7, button: 0, buttons: 1, clientX: 20, clientY: 20 });

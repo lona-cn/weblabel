@@ -115,6 +115,7 @@ export function createEditorFacadeFactory(source: string | URL | EditorWasmBridg
         request.ontology,
         request.document,
         rgba,
+        request.initial_generation,
       );
       const transfer: BinaryTransfer = {
         method: 'copyBytes',

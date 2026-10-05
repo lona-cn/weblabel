@@ -720,6 +720,127 @@ describe('T13 behavior 3: storage and network failures stay distinct', () => {
 // Behavior 4: refresh recovery compares against the server head, no LWW.
 // ===========================================================================
 
+describe('T24 recovery pause preserves local work', () => {
+  it.each([2, 0])('ignores recovery captured before a generation %s pending/journal ACK', async (generation) => {
+    const fixture = makeQueue();
+    const document = makeDocument({ asset_revision_id: 'asset_a', completion: 'complete' });
+    enqueue(fixture, { generation, document, base_revision_id: 'r0', suggestion_decisions: [ACCEPT] });
+    const saving = fixture.queue.flush('asset_a');
+    await fixture.queue.whenPersisted('asset_a');
+    const pending = await fixture.storage.get('asset_a');
+    expect(pending).toMatchObject({ generation, synced_generation: 0, synced_intent_seq: 0, pending: { operation_id: 'op-1' } });
+    let releaseHead!: (head: AnnotationRevision) => void;
+    const fetchingHead = new Promise<AnnotationRevision>((resolve) => { releaseHead = resolve; });
+    const fetchHead = vi.spyOn(fixture.transport, 'fetchHead').mockReturnValueOnce(fetchingHead);
+    const recovery = runRecovery({ storage: fixture.storage, transport: fixture.transport }, 'asset_a');
+    await microtasks();
+    expect(fetchHead).toHaveBeenCalledOnce();
+    // Recovery has read the pending record but is still awaiting the head.
+    fixture.transport.ackSave(0, 'ack-r2');
+    await saving;
+    await fixture.queue.whenPersisted('asset_a');
+    const acknowledged = fixture.queue.toRecord('asset_a');
+    expect(acknowledged).toMatchObject({ document, generation, synced_generation: generation, synced_intent_seq: 1, base_revision_id: 'ack-r2', pending: null });
+    releaseHead(makeRevision('ack-r2', document));
+    const report = await recovery;
+    expect(report.kind).toBe('conflict');
+    if (report.kind !== 'conflict') throw new Error('expected stale conflict report');
+    expect(report.record).toEqual(pending);
+    fixture.queue.restoreFromRecord(report.record, true);
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ phase: 'synced', dirty: false, writes_paused: false, local_generation: generation, synced_generation: generation, base_revision_id: 'ack-r2' });
+    expect(fixture.queue.toRecord('asset_a')).toEqual(acknowledged);
+    await fixture.queue.flush('asset_a');
+    await fixture.queue.retry('asset_a');
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2);
+    await microtasks();
+    expect(fixture.transport.saves).toHaveLength(1);
+    expect(await fixture.storage.get('asset_a')).toEqual(acknowledged);
+    const edited = makeDocument({ asset_revision_id: 'asset_a', objects: [] });
+    enqueue(fixture, { generation: generation + 1, document: edited, suggestion_decisions: [REVERT] });
+    const nextSave = fixture.queue.flush('asset_a');
+    expect(fixture.transport.saves[1].request).toMatchObject({ operation_id: 'op-2', base_revision_id: 'ack-r2', document: edited, suggestion_decisions: [REVERT] });
+    fixture.transport.ackSave(1, 'ack-next');
+    await nextSave;
+    await fixture.queue.whenPersisted('asset_a');
+    expect(await fixture.storage.get('asset_a')).toMatchObject({ document: edited, synced_generation: generation + 1, synced_intent_seq: 2, base_revision_id: 'ack-next', pending: null });
+  });
+
+  it('restores a genuinely later draft over a clean generation-zero baseline', () => {
+    const fixture = makeQueue();
+    fixture.queue.initializeFromServerRevision({ asset_revision_id: 'asset_a', ontology_version_id: 'ontology_v1', annotation_revision_id: 'server-r0', generation: 0, document: makeDocument({ asset_revision_id: 'asset_a', objects: [] }) });
+    const record = makeRecord({ asset_revision_id: 'asset_a', generation: 9, document: makeDocument({ asset_revision_id: 'asset_a' }) });
+    fixture.queue.restoreFromRecord(record, true);
+    expect(fixture.queue.toRecord('asset_a')).toMatchObject({ document: record.document, generation: 9, synced_generation: 7, base_revision_id: 'r7' });
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: true, writes_paused: true, local_generation: 9 });
+  });
+  it.each(['conflict', 'unreachable'] as const)('%s recovery waits for keep-local and sends every local object and intent', async (kind) => {
+    const producing = makeQueue();
+    const original = makeDocument({ asset_revision_id: 'asset_a' });
+    enqueue(producing, { generation: 8, document: original, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
+    producing.clock.advance(SAVE_DEBOUNCE_MS);
+    producing.transport.failNetwork(0);
+    await microtasks();
+    const record = JSON.parse(JSON.stringify(producing.queue.toRecord('asset_a'))) as DraftRecord;
+    const fixture = makeQueue();
+    fixture.transport.head = makeRevision('server-r9', makeDocument({ asset_revision_id: 'asset_a', objects: [] }));
+    if (kind === 'unreachable') fixture.transport.headError = new Error('offline');
+    await fixture.storage.put(record);
+    expect((await runRecovery({ storage: fixture.storage, transport: fixture.transport }, 'asset_a')).kind).toBe(kind);
+    fixture.queue.restoreFromRecord(record, true);
+    expect(fixture.queue.toRecord('asset_a')).toMatchObject({ document: original, pending: record.pending, intent_journal: record.intent_journal });
+    const edited = makeDocument({ asset_revision_id: 'asset_a', objects: [...original.objects, { ...original.objects[0], object_id: 'local_second' }] });
+    enqueue(fixture, { generation: 9, document: edited, suggestion_decisions: [REVERT] });
+    fixture.queue.switchAsset('asset_a');
+    fixture.queue.switchAsset('asset_b');
+    void fixture.queue.flush('asset_a');
+    void fixture.queue.retry('asset_a');
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2);
+    await microtasks();
+    expect(fixture.transport.saves).toHaveLength(0);
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ writes_paused: true, dirty: true });
+    await fixture.queue.whenPersisted('asset_a');
+    expect(await fixture.storage.get('asset_a')).toMatchObject({ document: edited, pending: record.pending, intent_journal: [record.intent_journal[0], expect.objectContaining({ intent: REVERT })] });
+    fixture.transport.headError = null;
+    const resolution = await fixture.queue.resolveConflict('asset_a', 'keep_local_export');
+    expect(resolution).toMatchObject({ resumed: true, base_revision_id: 'server-r9', export: { document: edited } });
+    const sent = fixture.queue.flush('asset_a');
+    expect(fixture.transport.saves).toHaveLength(1);
+    expect(fixture.transport.saves[0].request).toMatchObject({ base_revision_id: 'server-r9', document: edited, suggestion_decisions: [ACCEPT, REVERT] });
+    fixture.transport.ackSave(0, 'saved-local');
+    await sent;
+    await fixture.queue.whenPersisted('asset_a');
+    expect(await fixture.storage.get('asset_a')).toMatchObject({ document: edited, generation: 9, synced_generation: 9, intent_journal: [record.intent_journal[0], expect.objectContaining({ intent: REVERT })] });
+  });
+
+  it.each([false, true])('pauses existing memory without replacing it (in flight: %s)', async (inFlight) => {
+    const fixture = makeQueue();
+    const document = makeDocument({ asset_revision_id: 'asset_a', completion: 'complete' });
+    enqueue(fixture, { generation: 9, document, base_revision_id: 'memory-r8', suggestion_decisions: [ACCEPT] });
+    if (inFlight) fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    const before = fixture.queue.toRecord('asset_a');
+    const listener = vi.fn();
+    fixture.queue.subscribe('asset_a', listener);
+    fixture.queue.restoreFromRecord(makeRecord({ asset_revision_id: 'asset_a', generation: 1 }), true);
+    expect(fixture.queue.toRecord('asset_a')).toEqual(before);
+    expect(listener).toHaveBeenCalled();
+    expect(fixture.queue.getStatus('asset_a').writes_paused).toBe(true);
+    await fixture.queue.whenPersisted('asset_a');
+    expect(await fixture.storage.get('asset_a')).toEqual(before);
+    if (inFlight) {
+      enqueue(fixture, { generation: 10, document, suggestion_decisions: [REVERT] });
+      fixture.transport.ackSave(0, 'ack-r9');
+      await microtasks();
+      expect(fixture.queue.getStatus('asset_a')).toMatchObject({ writes_paused: true, dirty: true, synced_generation: 9, local_generation: 10 });
+    }
+    void fixture.queue.flush('asset_a');
+    void fixture.queue.retry('asset_a');
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2);
+    await microtasks();
+    expect(fixture.transport.saves).toHaveLength(inFlight ? 1 : 0);
+    expect(fixture.queue.toRecord('asset_a')?.document).toEqual(document);
+  });
+});
+
 describe('T13 behavior 4: recovery compares against the server head', () => {
   it('auto-restores only when the record base is the server head', () => {
     const record = makeRecord({ base_revision_id: 'r7', generation: 9, synced_generation: 7 });

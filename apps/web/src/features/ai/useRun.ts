@@ -10,6 +10,7 @@ import type { RunEvent } from '../../../../../packages/contracts/generated/RunEv
 import type { StartRunRequest } from '../../../../../packages/contracts/generated/StartRunRequest';
 import type { SuggestionSet } from '../../../../../packages/contracts/generated/SuggestionSet';
 import type { SaveQueue } from '../../lib/persistence/save-queue';
+import { freezeAfterFlush, inputFingerprint } from './runCoordinator';
 
 export interface ConsentPreview {
   profile: ModelProfile;
@@ -47,6 +48,7 @@ export interface CandidateEntry {
   readonly key: string;
   readonly asset_revision_id: string;
   readonly run_id: string;
+  readonly run_context: RunContext;
   readonly candidate: SuggestionSet;
   readonly schema_error: string | null;
   readonly objects: ReadonlyMap<string, AnnotationObject>;
@@ -64,14 +66,16 @@ export function canAcceptSuggestion(input: {
   candidate_asset: string;
   active_context: RunContext;
   candidate: SuggestionSet;
+  run_context?: RunContext;
   active_generation?: number;
   busy: boolean;
   schema_error?: string | null;
 }): boolean {
   if (input.busy || input.schema_error || input.active_asset !== input.candidate_asset) return false;
+  if (input.run_context && !contextMatches(input.run_context, input.candidate.context)) return false;
   if (input.active_generation !== undefined && input.candidate.context.draft_generation !== input.active_generation) return false;
   if (!['pending', 'partially_accepted'].includes(input.candidate.state) || !input.candidate.changes.length) return false;
-  return contextMatches(input.active_context, input.candidate.context);
+  return contextMatches(input.active_context, input.candidate.context, false);
 }
 
 function defaultApi(csrfToken: string | null): RunApi {
@@ -116,13 +120,13 @@ function defaultApi(csrfToken: string | null): RunApi {
   };
 }
 
-function contextMatches(a: RunContext, b: RunContext): boolean {
+function contextMatches(a: RunContext, b: RunContext, includeRunInput = true): boolean {
   const hashesA = Object.entries(a.object_hashes).sort(([left], [right]) => left.localeCompare(right));
   const hashesB = Object.entries(b.object_hashes).sort(([left], [right]) => left.localeCompare(right));
   return a.project_id === b.project_id && a.asset_revision_id === b.asset_revision_id &&
     a.annotation_revision_id === b.annotation_revision_id && a.ontology_version_id === b.ontology_version_id &&
     a.draft_generation === b.draft_generation && a.canonical_sha256 === b.canonical_sha256 &&
-    a.input_fingerprint === b.input_fingerprint &&
+    (!includeRunInput || a.input_fingerprint === b.input_fingerprint) &&
     JSON.stringify([...a.selected_object_ids].sort()) === JSON.stringify([...b.selected_object_ids].sort()) &&
     JSON.stringify(hashesA) === JSON.stringify(hashesB);
 }
@@ -137,45 +141,35 @@ export function useRun(options: RunControllerOptions) {
   const [candidateEntries, setCandidateEntries] = useState<CandidateEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState<{ assetId: string; generation: number; message: string } | null>(null);
+  const savedMessage = savedNotice?.assetId === options.asset_revision_id
+    ? (savedNotice.generation === options.getGeneration() ? savedNotice.message : 'A later edit or undo changed this acceptance; check the current save status.')
+    : null;
   const runContexts = useRef(new Map<string, RunContext>());
   const runObjects = useRef(new Map<string, ReadonlyMap<string, AnnotationObject>>());
   const lastSequences = useRef(new Map<string, number>());
   const finishedRuns = useRef(new Set<string>());
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  useEffect(() => { setSavedNotice(null); }, [options.asset_revision_id]);
   const prepareSnapshot = useCallback(async () => {
     const initial = optionsRef.current;
     try {
-      const initialQueue = initial.saveQueue;
-      if (!initialQueue) throw new Error('Persistence is unavailable; AI runs require an acknowledged save queue.');
-      await initialQueue.flush(initial.asset_revision_id);
+      if (!initial.saveQueue) throw new Error('Persistence is unavailable; AI runs require an acknowledged save queue.');
+      const frozen = await freezeAfterFlush({
+        asset_revision_id: initial.asset_revision_id,
+        ontology_version_id: initial.context.ontology_version_id,
+        saveQueue: initial.saveQueue,
+        getDocument: initial.getDocument,
+        getGeneration: initial.getGeneration,
+        refreshContext: initial.refreshContext,
+      });
       const current = optionsRef.current;
-      if (current.asset_revision_id !== initial.asset_revision_id) throw new Error('Active asset changed while preparing AI scope; no run was started.');
-      const document = current.getDocument();
-      const generation = current.getGeneration();
-      if (!document || generation === null || document.asset_revision_id !== current.asset_revision_id ||
-        document.ontology_version_id !== current.context.ontology_version_id) {
-        throw new Error('Editor snapshot does not match the active asset and ontology; no run was started.');
+      if (current.asset_revision_id !== initial.asset_revision_id ||
+        frozen.context.project_id !== current.context.project_id) {
+        throw new Error('Active project or asset changed while preparing AI scope; no run was started.');
       }
-      const currentQueue = current.saveQueue;
-      if (!currentQueue) throw new Error('Persistence is unavailable; AI runs require an acknowledged save queue.');
-      const queue = currentQueue.getStatus(current.asset_revision_id);
-      if (queue.dirty || queue.writes_paused || queue.phase !== 'synced' ||
-        queue.synced_generation !== generation || !queue.base_revision_id) {
-        throw new Error('The latest editor generation is not acknowledged by the save queue; no run was started.');
-      }
-      const revisionId = queue.base_revision_id;
-      const context = await current.refreshContext({ document, generation, annotation_revision_id: revisionId });
-      if (optionsRef.current.asset_revision_id !== current.asset_revision_id ||
-        context.asset_revision_id !== current.asset_revision_id ||
-        context.project_id !== current.context.project_id ||
-        context.ontology_version_id !== document.ontology_version_id ||
-        context.annotation_revision_id !== revisionId ||
-        context.draft_generation !== generation) {
-        throw new Error('Refreshed AI context does not match the acknowledged editor snapshot; no run was started.');
-      }
-      return { context, document };
+      return frozen;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not refresh the saved AI context.');
       return null;
@@ -192,7 +186,7 @@ export function useRun(options: RunControllerOptions) {
 
   const run = useCallback(async (reviewedContext: RunContext = optionsRef.current.context) => {
     setError(null);
-    setSavedMessage(null);
+    setSavedNotice(null);
     const initial = optionsRef.current;
     const profile = initial.profile;
     const obtainConsent = initial.obtainConsent;
@@ -211,22 +205,32 @@ export function useRun(options: RunControllerOptions) {
         throw new Error('The saved revision or editor draft changed after scope review. Review the refreshed scope and confirm consent again.');
       }
       const current = optionsRef.current;
+      const frozenContext = {
+        ...prepared.context,
+        input_fingerprint: await inputFingerprint({
+          profile,
+          context: prepared.context,
+          intent: current.intent,
+          prompt,
+          grants: current.grants,
+        }),
+      };
       const objectSnapshot = new Map<string, AnnotationObject>(prepared.document.objects.map((object): [string, AnnotationObject] => [
         object.object_id,
         { ...object, geometry: { ...object.geometry }, attributes: { ...object.attributes }, origin: { ...object.origin } },
       ]));
-      const consent_id = await current.obtainConsent!({ profile, context: prepared.context, intent: current.intent, prompt, grants: current.grants });
+      const consent_id = await current.obtainConsent!({ profile, context: frozenContext, intent: current.intent, prompt, grants: current.grants });
       const request: StartRunRequest = {
         operation_id: globalThis.crypto?.randomUUID?.() ?? `run-${Date.now()}-${++operationSequence}`,
         profile_id: profile.profile_id,
-        context: prepared.context,
+        context: frozenContext,
         intent: current.intent,
         prompt,
         consent_id,
       };
       const result = await api.start(request, controller.signal);
       if (!result.run_id) throw new Error('RUN_RESPONSE_INVALID: server returned no run id');
-      runContexts.current.set(result.run_id, prepared.context);
+      runContexts.current.set(result.run_id, frozenContext);
       runObjects.current.set(result.run_id, objectSnapshot);
       setRunId(result.run_id);
       setRunIds((currentRuns) => currentRuns.includes(result.run_id) ? currentRuns : [...currentRuns, result.run_id]);
@@ -257,7 +261,6 @@ export function useRun(options: RunControllerOptions) {
             return;
           }
           const incoming = rawEvents as RunEvent[];
-          for (const event of incoming) lastSequences.current.set(runId, Math.max(lastSequences.current.get(runId) ?? 0, event.seq));
           if (incoming.length) setEventsByRun((prior) => new Map(prior).set(
             runId,
             [...(prior.get(runId) ?? []), ...incoming].filter((event, index, all) => all.findIndex((item) => item.seq === event.seq) === index).sort((a, b) => a.seq - b.seq),
@@ -275,7 +278,10 @@ export function useRun(options: RunControllerOptions) {
             const key = candidateCacheKey(runId, assetId);
             const checked = raw.map((unknownCandidate, index): CandidateEntry => {
               const validation = validateContract('suggestion_set', unknownCandidate);
-              const schema_error = validation.valid ? null : `Candidate ${index + 1} failed schema validation: ${validation.errors.map((item) => `${item.instancePath || '/'} ${item.message}`).join('; ')}`;
+              const schema_error = validation.valid
+                ? ((unknownCandidate as SuggestionSet).model_run_id !== runId || !contextMatches((unknownCandidate as SuggestionSet).context, pinnedContext)
+                  ? `Candidate ${index + 1} does not match its frozen run context.` : null)
+                : `Candidate ${index + 1} failed schema validation: ${validation.errors.map((item) => `${item.instancePath || '/'} ${item.message}`).join('; ')}`;
               const candidate: SuggestionSet = validation.valid ? unknownCandidate as SuggestionSet : {
                 suggestion_set_id: `invalid-${runId}-${index}`,
                 model_run_id: runId,
@@ -286,11 +292,14 @@ export function useRun(options: RunControllerOptions) {
                 score: null,
                 state: 'stale',
               };
-              return { key: `${key}:${index}`, asset_revision_id: assetId, run_id: runId, candidate, schema_error, objects: pinnedObjects };
+              return { key: `${key}:${index}`, asset_revision_id: assetId, run_id: runId, run_context: pinnedContext, candidate, schema_error, objects: pinnedObjects };
             });
             runCache.set(key, checked);
             setCandidateEntries((current) => [...current.filter((entry) => entry.run_id !== runId), ...checked]);
           }
+          // Commit the cursor only after dependent suggestions have been attached.
+          // Failed or aborted reads must leave their trigger replayable via strict after.
+          for (const event of incoming) lastSequences.current.set(runId, Math.max(lastSequences.current.get(runId) ?? 0, event.seq));
           const latest = incoming[incoming.length - 1];
           if (latest && ['succeeded', 'failed', 'cancelled'].includes(latest.type)) {
             finishedRuns.current.add(runId);
@@ -321,10 +330,10 @@ export function useRun(options: RunControllerOptions) {
 
   const acceptSelected = useCallback(async (candidate: SuggestionSet, assetId: string, changeIds: string[], schemaError: string | null) => {
     setError(null);
-    setSavedMessage(null);
+    setSavedNotice(null);
     const captured = runContexts.current.get(candidate.model_run_id) ?? null;
     const currentGeneration = options.getGeneration();
-    if (!captured || !contextMatches(captured, options.context) || !canAcceptSuggestion({ active_asset: options.asset_revision_id, candidate_asset: assetId, active_context: options.context, active_generation: currentGeneration ?? -1, candidate, busy, schema_error: schemaError })) {
+    if (!captured || !contextMatches(captured, candidate.context) || !canAcceptSuggestion({ active_asset: options.asset_revision_id, candidate_asset: assetId, active_context: options.context, active_generation: currentGeneration ?? -1, candidate, busy, schema_error: schemaError })) {
       setError(candidate.state === 'stale' ? 'This candidate is stale and can only be compared.' : 'Candidate context or schema is not valid for acceptance.');
       return;
     }
@@ -350,14 +359,23 @@ export function useRun(options: RunControllerOptions) {
       setError('Editor did not produce the selected acceptance journal; the operation was undone.');
       return;
     }
-    saveQueue.enqueue({ asset_revision_id: assetId, ontology_version_id: options.context.ontology_version_id, base_revision_id: options.context.annotation_revision_id, generation, document: documentNow, suggestion_decisions: delta.suggestion_decisions });
+    const showSavedMessage = (message: string) => setSavedNotice({ assetId, generation: delta.generation, message });
+    const acceptanceChanged = () => optionsRef.current.getGeneration() !== delta.generation;
     try {
       await saveQueue.flush(assetId);
+      if (optionsRef.current.asset_revision_id !== assetId) return;
+      if (acceptanceChanged()) {
+        showSavedMessage('A later edit or undo changed this acceptance; check the current save status.');
+        return;
+      }
       const saved = saveQueue.getStatus(assetId);
-      if (saved.synced_generation >= generation && !saved.dirty) setSavedMessage('Accepted changes are saved on the server.');
-      else setSavedMessage('Accepted changes are pending server acknowledgement.');
+      if (saved.synced_generation >= delta.generation && !saved.dirty) showSavedMessage('Accepted changes are saved on the server.');
+      else showSavedMessage('Accepted changes are pending server acknowledgement.');
     } catch {
-      setSavedMessage('Accepted changes remain in the local save journal; server acknowledgement is pending.');
+      if (optionsRef.current.asset_revision_id !== assetId) return;
+      showSavedMessage(acceptanceChanged()
+        ? 'A later edit or undo changed this acceptance; check the current save status.'
+        : 'Accepted changes remain in the local save journal; server acknowledgement is pending.');
     }
   }, [busy, options]);
 

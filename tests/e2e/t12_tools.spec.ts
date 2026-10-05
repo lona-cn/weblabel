@@ -84,6 +84,7 @@ function makeRequest(objects, assetRevisionId) {
       objects: objects.map(([id, xMin, yMin, xMax, yMax]) => objectAt(id, xMin, yMin, xMax, yMax)),
     },
     frame: { width: 640, height: 480, rgba: Uint8Array.from(FRAME) },
+    initial_generation: 0,
   };
 }
 

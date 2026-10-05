@@ -386,9 +386,15 @@ export class SaveQueue {
     };
   }
 
-  /** Adopts a draft record (recovery "restored" / "keep local") as live state. */
-  restoreFromRecord(record: DraftRecord): void {
+  /** Restores local work; recovery conflicts pause writes until explicit user resolution. */
+  restoreFromRecord(record: DraftRecord, pauseForUserChoice = false): void {
     const existing = this.states.get(record.asset_revision_id);
+    // Recovery may have read storage before a PUT ACK landed while fetching the head.
+    // A later acknowledged generation/journal boundary must not be rolled back or paused.
+    if (existing && existing.local_generation >= record.generation && (
+      existing.synced_generation > record.synced_generation ||
+      existing.synced_intent_seq > record.synced_intent_seq
+    )) return;
     if (existing && (
       existing.dirty ||
       existing.in_flight !== null ||
@@ -396,7 +402,15 @@ export class SaveQueue {
       existing.conflict !== null ||
       existing.storage_error !== null ||
       existing.save_error !== null
-    )) return;
+    )) {
+      if (pauseForUserChoice) {
+        existing.paused = true;
+        this.clearTimer(existing);
+        this.recompute(existing);
+        this.persist(existing);
+      }
+      return;
+    }
     const state = this.stateTemplate(record.asset_revision_id, record.ontology_version_id);
     state.base_revision_id = record.base_revision_id;
     state.local_generation = record.generation;
@@ -408,6 +422,7 @@ export class SaveQueue {
     state.edit_seq = record.pending?.edit_seq ?? 0;
     state.used_operation_ids = new Set<Id>(record.pending === null ? [] : [record.pending.operation_id]);
     state.pending = record.pending === null ? null : frozenCopy(record.pending);
+    state.paused = pauseForUserChoice;
     state.dirty = isDirty(state);
     state.persist_promise = existing?.persist_promise ?? state.persist_promise;
     this.states.set(record.asset_revision_id, state);

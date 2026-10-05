@@ -20,6 +20,7 @@ export interface SaveStatusProps {
   onExportDraft?: (draft: NativeDraftExport) => void;
   /** Receives the server revision when the user picks "view server version". */
   onViewServer?: (revision: AnnotationRevision | null) => void;
+  onResumeLocal?: () => void;
 }
 
 const PHASE_LABELS: Record<SavePhase, string> = {
@@ -58,6 +59,7 @@ export function SaveStatus({
   recovery = null,
   onExportDraft,
   onViewServer,
+  onResumeLocal,
 }: SaveStatusProps): JSX.Element {
   const [actionError, setActionError] = useState<string | null>(null);
   const subscribe = useCallback(
@@ -85,7 +87,10 @@ export function SaveStatus({
     void queue
       .resolveConflict(asset_revision_id, 'keep_local_export')
       .then((resolution) => {
-        if (resolution.action === 'keep_local_export') deliverDraft(resolution.export);
+        if (resolution.action === 'keep_local_export') {
+          deliverDraft(resolution.export);
+          if (resolution.resumed) onResumeLocal?.();
+        }
       })
       .catch((error: unknown) => {
         setActionError(error instanceof Error ? error.message : String(error));

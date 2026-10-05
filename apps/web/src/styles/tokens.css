@@ -36,7 +36,7 @@ button:disabled { cursor: not-allowed; }
 .workspace-heading h1, .section-heading h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.4; }
 .eyebrow { margin: 0 0 3px; color: var(--color-metadata); font-size: 11px; }
 .local-state { color: var(--color-muted); font-size: 12px; }
-.workbench-grid { display: flex; align-items: stretch; gap: 12px; padding: 14px; flex: 1 0 540px; min-height: 540px; }
+.workbench-grid { display: flex; align-items: stretch; gap: 12px; padding: 14px; flex: 1 0 auto; min-height: 540px; }
  .sidebar-resize { display: flex; flex: 0 0 auto; flex-direction: column; width: 290px; min-width: 220px; max-width: 420px; min-height: 0; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: auto; resize: horizontal; }
  .media-strip { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 12px; border-bottom: 1px solid var(--color-border); min-height: 94px; max-height: 260px; resize: vertical; overflow: auto; }
  .media-strip-heading { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 4px; font-size: 11px; color: var(--color-muted); }
@@ -139,6 +139,7 @@ button:disabled { cursor: not-allowed; }
 .negative-confirmation label { display: flex; align-items: center; gap: 7px; }
 .export-panel button { margin-left: auto; }
 .api-error { padding: 9px 12px; color: var(--color-danger); }
-.save-status-panel { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 10px; background: #fff; border: 1px solid var(--color-border); }
+.save-status-panel { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 38px; padding: 6px 10px; background: #fff; border: 1px solid var(--color-border); }
 .save-status { color: var(--color-muted); font-size: 11px; }
+.recovery-banner, .conflict-banner { flex-basis: 100%; }
 @media (max-width: 680px) { .project-create { grid-template-columns: 1fr; } .project-create h2, .project-create label, .project-create input, .project-create button { grid-column: 1; grid-row: auto; } }

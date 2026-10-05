@@ -219,6 +219,10 @@ export class EditorHost {
     return this.guard((facade) => facade.get_generation(), 'EDITOR_BRIDGE_FAILURE');
   }
 
+  getObjectHashes(): Record<Id, string> | null {
+    return this.guard((facade) => facade.get_object_hashes(), 'EDITOR_BRIDGE_FAILURE');
+  }
+
   /** The Rust-owned view (the additive C3 read-back from reports/T09). */
   getViewport(): Viewport | null {
     return this.guard((facade) => facade.get_viewport(), 'EDITOR_BRIDGE_FAILURE');

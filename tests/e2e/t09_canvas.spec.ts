@@ -50,6 +50,7 @@ function makeRequest(rgba, width, height, assetRevisionId) {
       completion: 'unprocessed', objects: [],
     },
     frame: { width, height, rgba: Uint8Array.from(rgba) },
+    initial_generation: 0,
   };
 }
 

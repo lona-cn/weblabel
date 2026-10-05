@@ -78,7 +78,7 @@ function makeFrame(width = 4, height = 2): CanonicalFrame {
 }
 
 function makeRequest(overrides: Partial<EditorAssetRequest> = {}): EditorAssetRequest {
-  return { media: makeMedia(), ontology: makeOntology(), document: makeDocument(), frame: makeFrame(), ...overrides };
+  return { media: makeMedia(), ontology: makeOntology(), document: makeDocument(), frame: makeFrame(), initial_generation: 0, ...overrides };
 }
 
 function makeDelta(overrides: Partial<EditorDelta> = {}): EditorDelta {
@@ -135,6 +135,7 @@ class FakeEditorFacade implements EditorFacade {
   set_local_flags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta { this.flagCalls.push([ids, flags]); return this.deltaFactory('flags'); }
   get_snapshot(): AnnotationDocument { this.snapshotCalls.push(0); return makeDocument(); }
   get_generation(): number { this.generationCalls.push(0); return 0; }
+  get_object_hashes(): Record<Id, string> { return {}; }
   get_viewport(): Viewport { return this.viewport; }
   set_predictions(sets: SuggestionSet[]): void { this.predictionCalls.push(sets); }
   render(timestamp_ms: number): void { this.renderCalls.push(timestamp_ms); }
