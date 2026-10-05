@@ -176,6 +176,29 @@ impl SpatialIndex {
         sort_hits(&mut result);
         Ok(result)
     }
+
+    /// Returns visible boxes in deterministic draw order using the CSS viewport
+    /// transformed to image coordinates; DPR is intentionally not involved.
+    pub fn query_viewport(&self, view: Viewport) -> Result<Vec<IndexedBBox>, DomainError> {
+        view.validate()?;
+        if view.css_width == 0.0 || view.css_height == 0.0 {
+            return Ok(Vec::new());
+        }
+        let min = crate::css_to_image([0.0, 0.0], view);
+        let max = crate::css_to_image([view.css_width, view.css_height], view);
+        if min.iter().chain(max.iter()).any(|value| !value.is_finite()) {
+            return Err(DomainError::new(
+                "INVALID_GEOMETRY",
+                "derived viewport query is not finite",
+            ));
+        }
+        self.query_rect(&BBox::new(
+            min[0].min(max[0]),
+            min[1].min(max[1]),
+            min[0].max(max[0]),
+            min[1].max(max[1]),
+        ))
+    }
 }
 
 fn sort_hits(values: &mut [IndexedBBox]) {
