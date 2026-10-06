@@ -1,0 +1,11 @@
+diff --git a/TASKS.json b/TASKS.json
+--- a/TASKS.json
++++ b/TASKS.json
+@@ -1183,6 +1183,7 @@
+           "playwright",
+           "test",
+           "tests/e2e/t30_recovery.spec.ts",
++          "--config=reports/T30/playwright.config.ts",
+           "--project=chromium-webgpu"
+         ]
+       ],

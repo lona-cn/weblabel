@@ -69,13 +69,22 @@ it('F09/F17 real SQLite timeout and killed owned API preserve atomic revision an
     await service.start();
     let client=(await loginClient(service.base,owner.username,owner.password)).api;
     const body:SaveRequest={operation_id:crypto.randomUUID(),base_revision_id:before.annotation_revision_id,document:{...before.document,completion:'in_progress',objects:[person]},lease:null,suggestion_decisions:[]};
+    // A real SQLite trigger rejects the head update after the revision insert in the actual save transaction.
+    const faultDb=new DatabaseSync(service.database);let midpointFailure:unknown;
+    faultDb.exec("CREATE TRIGGER t30_head_failure BEFORE UPDATE OF annotation_revision_id ON annotation_heads BEGIN SELECT RAISE(ABORT,'T30 actual midpoint storage failure'); END");
+    try{
+      const failed=await client.request<{code:string}>('PUT',`/api/assets/${pins.assetRevisionId}/annotation`,body);midpointFailure=failed.json;
+      expect(failed.status).toBe(503);expect(failed.json.code).toBe('SAVE_UNAVAILABLE');
+      expect(await head(client,pins.assetRevisionId,pins.ontologyId)).toEqual(before);
+      expect(faultDb.prepare('SELECT count(*) AS n FROM annotation_revisions WHERE asset_revision_id=?').get(pins.assetRevisionId)?.n).toBe(1);
+    }finally{faultDb.exec('DROP TRIGGER t30_head_failure');faultDb.close();}
     const db=new DatabaseSync(service.database);db.exec('BEGIN IMMEDIATE');
     try{
       const timeout=await client.request<{code:string}>('PUT',`/api/assets/${pins.assetRevisionId}/annotation`,body);
       expect(timeout.status).toBe(503);expect(timeout.json.code).toBe('SAVE_UNAVAILABLE');
       expect(db.prepare('SELECT count(*) AS n FROM annotation_revisions WHERE asset_revision_id=?').get(pins.assetRevisionId)?.n).toBe(1);
       const pendingFailure=expect(client.request('PUT',`/api/assets/${pins.assetRevisionId}/annotation`,body)).rejects.toThrow();
-      // Real request must reach the locked service before it is killed; no artificial successful response.
+      // Kill while the real request is outstanding and the SQLite writer remains locked; no synthetic response.
       await delay(100);
       await service.crash();
       await pendingFailure;
@@ -89,7 +98,7 @@ it('F09/F17 real SQLite timeout and killed owned API preserve atomic revision an
     expect(replay.status).toBe(200);expect(replay.json.idempotent_replay).toBe(true);expect(replay.json.revision).toEqual(saved.json.revision);
     const inspect=new DatabaseSync(service.database);
     try{expect(inspect.prepare('SELECT count(*) AS n FROM annotation_revisions WHERE asset_revision_id=?').get(pins.assetRevisionId)?.n).toBe(2);expect(inspect.prepare('PRAGMA integrity_check').get()?.integrity_check).toBe('ok');}finally{inspect.close();}
-    await writeEvidence('atomic-crash-restart',{api_port:new URL(service.base).port,operation_id:body.operation_id,before,committed:saved.json.revision,replay:replay.json});
+    await writeEvidence('atomic-crash-restart',{api_port:new URL(service.base).port,operation_id:body.operation_id,before,midpoint_failure:midpointFailure,committed:saved.json.revision,replay:replay.json,kill_cutpoint:'client request issued with actual SQLite write lock held; no privileged backend entry barrier'});
   }finally{await service?.stop();await app.stop();}
 },30000);
 
@@ -161,6 +170,8 @@ it('F17/F23 actual supervised Node host times out once, preserves unknown cost a
     };
     await service.start(setup);
     let client=(await loginClient(service.base,owner.username,owner.password)).api;
+    const profiles=await client.request<{items:unknown[]}>('GET','/api/model-profiles');expect(profiles.status).toBe(200);
+    const selectedProfile=profiles.json.items.map(jsonObject).find(profile=>profile.profile_id===config.profile_id);if(!selectedProfile)throw new Error('Real API did not expose the configured timeout profile');
     const authorized=await authorize(client,startRunBody(pins,crypto.randomUUID(),'Synthetic timeout, no business image',{profile_id:config.profile_id}));
     const queued=await client.request('POST','/api/ai/runs',authorized);expect(queued.status).toBe(202);const runId=id(queued.json,'run_id');
     let events:Record<string,unknown>={};
@@ -174,7 +185,7 @@ it('F17/F23 actual supervised Node host times out once, preserves unknown cost a
     for(let index=0;index<4;index+=1){const polled=await client.request('GET',`/api/ai/runs/${runId}/events`);expect(jsonObject(polled.json).run).toMatchObject({state:'failed',cost_display:'unknown'});await delay(500);}
     expect(provider.calls()).toBe(1);expect(await head(client,pins.assetRevisionId,pins.ontologyId)).toEqual(saved.json.revision);
     const inspection=new DatabaseSync(service.database);try{expect(inspection.prepare('SELECT count(*) AS n FROM predictions WHERE run_id=?').get(runId)?.n).toBe(0);expect(inspection.prepare('SELECT count(*) AS n FROM model_runs WHERE operation_id=?').get(authorized.operation_id as string)?.n).toBe(1);}finally{inspection.close();}
-    await writeEvidence('model-timeout',{provider_port:new URL(provider.base).port,api_port:new URL(service.base).port,run_id:runId,operation_id:authorized.operation_id,events,provider_calls:provider.calls(),manual_revision:saved.json.revision,default_http_timeout_ms:60000,parent_deadline_ms:120000,verification:'synthetic loopback error path; no live provider call'});
+    await writeEvidence('model-timeout',{provider_port:new URL(provider.base).port,api_port:new URL(service.base).port,profile:selectedProfile,provider_requests:provider.inputs(),run_id:runId,operation_id:authorized.operation_id,events,provider_calls:provider.calls(),manual_revision:saved.json.revision,default_http_timeout_ms:60000,parent_deadline_ms:120000,verification:'synthetic loopback error path; no live provider call'});
   }finally{await service?.stop();await provider.stop();await app.stop();}
 },100000);
 

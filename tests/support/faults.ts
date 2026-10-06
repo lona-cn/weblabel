@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -59,7 +60,8 @@ export async function proxyPage(page:Page, base:string):Promise<void> {
   await page.route(`${privateOrigin}/api/**`, async route => {
     const request=route.request(), incoming=new URL(request.url());
     const headers:Record<string,string>={...request.headers(),origin:base}; delete headers.host;delete headers['content-length'];
-    await route.fulfill({response:await route.fetch({url:new URL(incoming.pathname+incoming.search,base).href,headers,method:request.method(),postData:request.postDataBuffer()??undefined})});
+    try{await route.fulfill({response:await route.fetch({url:new URL(incoming.pathname+incoming.search,base).href,headers,method:request.method(),postData:request.postDataBuffer()??undefined})});}
+    catch{await route.abort('connectionrefused');}
   });
 }
 export async function actualResponse(route:Route, base:string) {
@@ -125,13 +127,15 @@ export function seededRandom(seed:number):()=>number {
   let state=seed>>>0;
   return ()=>{state^=state<<13;state^=state>>>17;state^=state<<5;return (state>>>0)/0x100000000;};
 }
+export interface ProviderRequestEvidence {sha256:string;bytes:number}
+export interface SilentProvider {base:string;calls():number;inputs():readonly ProviderRequestEvidence[];stop():Promise<void>}
 /** Real writable socket, never a successful fake provider. */
-export async function silentProvider() {
-  let calls=0;
-  const server=createServer((request,response)=>{if(request.url==='/chat/completions'&&request.method==='POST'){calls+=1;request.resume();request.on('end',()=>{response.writeHead(200,{'content-type':'text/event-stream'});response.flushHeaders();});}else{response.writeHead(404);response.end();}});
+export async function silentProvider():Promise<SilentProvider> {
+  let calls=0;const inputs:ProviderRequestEvidence[]=[];
+  const server=createServer((request,response)=>{if(request.url==='/chat/completions'&&request.method==='POST'){calls+=1;const hash=createHash('sha256');let bytes=0;request.on('data',chunk=>{hash.update(chunk);bytes+=chunk.length;});request.on('end',()=>{inputs.push({sha256:hash.digest('hex'),bytes});response.writeHead(200,{'content-type':'text/event-stream'});response.flushHeaders();});}else{response.writeHead(404);response.end();}});
   const listening=Promise.withResolvers<void>();server.listen(0,'127.0.0.1',listening.resolve);await listening.promise;
   const address=server.address();if(!address||typeof address==='string')throw new Error('No provider port');
-  return {base:`http://127.0.0.1:${address.port}`,calls:()=>calls,async stop(){server.closeAllConnections();const closed=Promise.withResolvers<void>();server.close(error=>error?closed.reject(error):closed.resolve());await closed.promise;}};
+  return {base:`http://127.0.0.1:${address.port}`,calls:()=>calls,inputs:()=>inputs,async stop(){server.closeAllConnections();const closed=Promise.withResolvers<void>();server.close(error=>error?closed.reject(error):closed.resolve());await closed.promise;}};
 }
 export type ApiEnvironment = Record<string,string> | ((base:string)=>Promise<Record<string,string>>);
 export interface PersistentApi {
@@ -165,8 +169,8 @@ export async function persistentCopy(app:TestApp, directory:string):Promise<Pers
       while(Date.now()<deadline){if(child.exitCode!==null)throw new Error(`Restart exited: ${output}`);try{if((await fetch(`${base}/health`)).status===204)return;}catch{}await delay(50);}
       throw new Error(`Persistent API failed startup ${output}`);
     },
-    async crash() {if(!child)throw new Error('No owned child');const active=child;const exit=Promise.withResolvers<void>();active.once('exit',()=>exit.resolve());active.kill('SIGKILL');await exit.promise;child=null;},
-    async stop(){if(child){const active=child;const exit=Promise.withResolvers<void>();active.once('exit',()=>exit.resolve());active.kill('SIGTERM');await exit.promise;child=null;}await rm(directory,{recursive:true,force:true});},
+    async crash() {if(!child)throw new Error('No owned child');const active=child;if(active.exitCode!==null||active.signalCode!==null){child=null;throw new Error('Owned API already exited: requested crash was not exercised');}const exit=Promise.withResolvers<void>();active.once('exit',()=>exit.resolve());active.kill('SIGKILL');await exit.promise;child=null;},
+    async stop(){if(child){const active=child;if(active.exitCode===null&&active.signalCode===null){const exit=Promise.withResolvers<void>();active.once('exit',()=>exit.resolve());active.kill('SIGTERM');await exit.promise;}child=null;}await rm(directory,{recursive:true,force:true});},
   };
 }
 export async function writeEvidence(name:string, value:unknown):Promise<void>{await mkdir('reports/T30/observations',{recursive:true});await writeFile(`reports/T30/observations/${name}.json`,JSON.stringify(value,null,2));}

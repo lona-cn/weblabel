@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
+import path from 'node:path';
 import { expect, test as fixtureTest } from './fixtures';
 import type { SeededAsset } from './fixtures';
 import type { Page, TestInfo } from '@playwright/test';
 import { database_path_for_test, start_test_app } from '../support/app';
-import { actualResponse, cpuSnapshot, head, installBrowserFaults, observeEditor, privateOrigin, proxyPage, seededRandom, viewport } from '../support/faults';
+import { actualResponse, cpuSnapshot, head, installBrowserFaults, loginClient, observeEditor, persistentCopy, privateOrigin, proxyPage, seededRandom, viewport } from '../support/faults';
 import type { AnnotationDocument } from '../../packages/contracts/generated/AnnotationDocument';
 import type { AnnotationObject } from '../../packages/contracts/generated/AnnotationObject';
 import type { SaveResponse } from '../../packages/contracts/generated/SaveResponse';
@@ -171,6 +172,7 @@ test('F14 actual hardware device loss keeps CPU hash and unsaved history, rebuil
   const asset=seededProject.assets.find(item=>item.width===320)!;await openAsset(page,asset);await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-adapter-kind','hardware');
   await page.route(`**/api/assets/${asset.asset_revision_id}/annotation`,async route=>{if(route.request().method()==='PUT')await route.abort('failed');else await route.fallback();});
   await createBox(page);const before=await cpuSnapshot(page);expect(before.objects).toHaveLength(1);await expect(page.getByTestId('undo')).toBeEnabled();await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','save_failed');await expect(page.getByTestId('save-status')).toHaveAttribute('data-dirty','true');
+  const canvasBefore=await page.getByTestId('annotation-canvas').screenshot();await info.attach('device-loss-canvas-before',{body:canvasBefore,contentType:'image/png'});
   const beforeHash=createHash('sha256').update(JSON.stringify(before)).digest('hex');let navigations=0;page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigations+=1;});
   const devicesBefore=await page.evaluate(()=>window.__t30Faults.devices.length);
   const lost=await page.evaluate(()=>window.__t30Faults.destroyDevice());expect(lost.reason).toBe('destroyed');
@@ -179,6 +181,8 @@ test('F14 actual hardware device loss keeps CPU hash and unsaved history, rebuil
   // Renderer rebuild must be real (a new GPUDevice), not a ready label on the destroyed device.
   await expect.poll(()=>page.evaluate(()=>window.__t30Faults.devices.length),{timeout:15000}).toBeGreaterThan(devicesBefore);
   await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state','ready');expect(navigations).toBe(0);
+  const canvasAfter=await page.getByTestId('annotation-canvas').screenshot();await info.attach('device-loss-canvas-after',{body:canvasAfter,contentType:'image/png'});
+  expect(createHash('sha256').update(canvasAfter).digest('hex')).toBe(createHash('sha256').update(canvasBefore).digest('hex'));
   expect(await cpuSnapshot(page)).toEqual(before);await expect(page.getByTestId('undo')).toBeEnabled();await page.getByTestId('undo').click();expect(await cpuSnapshot(page)).toEqual({...before,objects:[]});
   await createBox(page,100,60,180,140);expect((await cpuSnapshot(page)).objects).toHaveLength(1);expect(navigations).toBe(0);
   const rescue=await draft(page,info);expect(rescue.document).toEqual(await cpuSnapshot(page));await evidence(page,info,'device-rebuilt-history',{beforeHash,rescue,lost,navigations});
@@ -189,6 +193,7 @@ test('fixed seed create/move/undo/save/reload matches independent document refer
   const asset=seededProject.assets.find(item=>item.width===320)!;await openAsset(page,asset);
   const random=seededRandom(0x30fa17);let model:AnnotationDocument=await cpuSnapshot(page);let history:AnnotationDocument[]=[];
   const transcript:unknown[]=[];
+  try{
   for(let step=0;step<48;step+=1){
     const action=step%8===7?'reload':step%8===6?'save':model.objects.length&&step%4===2?'undo':model.objects.length&&step%4===1?'move':'create';
     if(action==='create'){
@@ -210,8 +215,49 @@ test('fixed seed create/move/undo/save/reload matches independent document refer
       await synced(page);await page.reload();await observeEditor(page);await openAsset(page,asset);history=[];await expect(page.getByTestId('undo')).toBeDisabled();
     }
     const actual=await cpuSnapshot(page);expect(actual.objects.map(object=>object.object_id)).toEqual(model.objects.map(object=>object.object_id));
-    for(let index=0;index<model.objects.length;index+=1){const expected=model.objects[index],observed=actual.objects[index];expect({...observed,geometry:expected.geometry}).toEqual(expected);for(const key of ['x_min','y_min','x_max','y_max'] as const)expect(observed.geometry[key]).toBeCloseTo(expected.geometry[key],5);}
+    for(let index=0;index<model.objects.length;index+=1){const expected=model.objects[index],observed=actual.objects[index];expect({...observed,geometry:expected.geometry}).toEqual(expected);for(const key of ['x_min','y_min','x_max','y_max'] as const)expect(Math.abs(observed.geometry[key]-expected.geometry[key])).toBeLessThanOrEqual(1e-6);}
     expect({...actual,objects:model.objects}).toEqual(model);transcript.push({step,action,expected:model,actual});
   }
+  }catch(cause){await evidence(page,info,'seeded-session-blocked',{seed:0x30fa17,requested_steps:48,completed_steps:transcript.length,transcript,reference:model,actual:await cpuSnapshot(page)});throw cause;}
   await synced(page);expect((await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).document).toEqual(await cpuSnapshot(page));await evidence(page,info,'seeded-session',{seed:0x30fa17,steps:48,transcript});
+});
+
+test('F09/F17 actual API crash never claims a dirty native edit saved; same database restart keeps prior head and manual work continues',async({adminPage:page,seededProject,app},info)=>{
+  const service=await persistentCopy(app,path.resolve(`reports/T30/runtime/browser-crash-${crypto.randomUUID()}`));
+  try{
+    await service.start();let client=(await loginClient(service.base,seededProject.login.username,seededProject.login.password)).api;
+    await page.unroute(`${privateOrigin}/api/**`);await proxyPage(page,service.base);await page.reload();await observeEditor(page);
+    const asset=seededProject.assets.find(item=>item.width===320)!;await openAsset(page,asset);await createBox(page);await synced(page);
+    const original=await head(client,asset.asset_revision_id,seededProject.ontology_version_id),objectId=original.document.objects[0].object_id;
+    await service.crash();
+    await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('attribute-helmet_state').selectOption('wearing');
+    await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','save_failed');await expect(page.getByTestId('save-status')).toHaveAttribute('data-dirty','true');
+    await expect(page.getByTestId('save-status')).not.toContainText('已同步到服务器');const rescue=await draft(page,info);expect(rescue.document).toEqual(await cpuSnapshot(page));expect(rescue.document.objects[0].attributes).toEqual({helmet_state:'wearing'});
+    await evidence(page,info,'killed-api-unsynced',{original,rescue,api_port:new URL(service.base).port});
+    await service.start();client=(await loginClient(service.base,seededProject.login.username,seededProject.login.password)).api;
+    expect(await head(client,asset.asset_revision_id,seededProject.ontology_version_id)).toEqual(original);
+    await page.unroute(`${privateOrigin}/api/**`);await proxyPage(page,service.base);
+    await page.getByTestId('attribute-helmet_state').selectOption('not_wearing');await synced(page);
+    const recovered=await head(client,asset.asset_revision_id,seededProject.ontology_version_id);
+    expect(recovered.parent_revision_id).toBe(original.annotation_revision_id);expect(recovered.revision_no).toBe(3);
+    expect(recovered.document).toEqual({...original.document,objects:original.document.objects.map(object=>({...object,attributes:{helmet_state:'not_wearing'}}))});
+    await evidence(page,info,'restarted-api-manual',{original,recovered,rescue,api_port:new URL(service.base).port});
+  }finally{await service.stop();}
+});
+
+test('F07 late actual engineering Mock detect result is scoped to A while B is open',async({adminPage:page,seededProject,app},info)=>{
+  const db=new DatabaseSync(database_path_for_test(app));try{db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES('profile_mock_local','mock','weblabel-mock-source-v1','none',?,'ready','mock_only','builtin-mock-1',NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(JSON.stringify({image_input:true,tools:false,structured_output:true,bbox_output:true,attributes:true}));}finally{db.close();}
+  await page.reload();await observeEditor(page);const [asset,other]=seededProject.assets.filter(item=>item.width===320).slice(0,2);await openAsset(page,asset);
+  const first=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id),second=await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id);
+  await page.getByLabel('Run intent').selectOption('detect');await page.getByTestId('ai-prompt').fill('Explicit engineering Mock late result; no live inference');
+  const gate=Promise.withResolvers<void>(),held=Promise.withResolvers<{items:SuggestionSet[]}>();
+  await page.route('**/api/ai/runs/*/suggestions*',async route=>{const response=await actualResponse(route,seededProject.apiBaseUrl),body=await response.json();if(body.items.length){held.resolve(body);await gate.promise;}await route.fulfill({response});});
+  await page.getByTestId('ai-run').click();await page.getByTestId('ai-consent').getByRole('checkbox').check();await page.getByRole('button',{name:'Authorize and run now'}).click();
+  const result=await held.promise;expect(result.items[0].context.asset_revision_id).toBe(asset.asset_revision_id);expect(result.items[0].changes[0].kind).toBe('create');
+  await openAsset(page,other);gate.resolve();await expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(0);
+  for(const button of await page.getByTestId('accept-selected').all())await expect(button).toBeDisabled();
+  expect(await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id)).toEqual(second);
+  await openAsset(page,asset);await expect(page.getByTestId(`candidate-${result.items[0].changes[0].change_id}`)).toBeVisible();
+  expect(await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).toEqual(first);
+  await evidence(page,info,'late-detect-scope',{first,second,result,verification:'builtin engineering Mock result; not live provider or model correctness'});
 });
