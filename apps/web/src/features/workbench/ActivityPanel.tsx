@@ -81,7 +81,7 @@ export function ActivityPanel({ projectId, actorId, collector, surfaceRef }: Act
     </select></label>
     <dl data-testid="activity-totals">{Object.entries(LABELS).map(([kind, label]) => <div key={kind}><dt>{label}</dt><dd data-testid={`activity-duration-${kind}`}>{(totals[kind as ActivityKind] / 1000).toFixed(3)} 秒</dd></div>)}</dl>
     <p data-testid="activity-human-total">人工合计：{((totals.task + totals.annotation + totals.correction + totals.review + totals.switch) / 1000).toFixed(3)} 秒。仅描述统计，不是ROI或节省结论；30%仅试点目标。</p>
-    <button type="button" data-testid="activity-download" disabled={collector.problem !== null} onClick={download}>下载本地区间 JSON</button>
+    <button type="button" data-testid="activity-download" disabled={collector.problem !== null && !Object.values(totals).some((duration) => duration > 0)} onClick={download}>下载本地区间 JSON</button>
     {collector.recoveryJournal && collector.problem ? <button type="button" data-testid="activity-rescue-journal" onClick={() => run(() => {
       const url = URL.createObjectURL(new Blob([collector.recoveryJournal!], { type: 'application/json' }));
       const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'activity-journal-recovery.json'; anchor.click();

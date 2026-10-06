@@ -66,3 +66,20 @@ it('preserves a corrupted journal and keeps editing usable until explicit cleari
   expect(raw).toBeNull(); expect(screen.getByTestId('activity-opt-in')).toBeEnabled();
   expect(screen.getByTestId('activity-opt-in')).not.toBeChecked();
 });
+
+it('stops optional collection on quota failure but preserves measured intervals for download and leaves editing usable', async () => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+  let now = 0;
+  const collector = new ActivityCollector('project', 'actor', () => now, { getItem: () => null, setItem: () => { throw new Error('quota exceeded'); }, removeItem: () => {} });
+  render(<main><textarea aria-label="Annotation note" /><ActivityPanel projectId="project" actorId="actor" collector={collector} /></main>);
+  await userEvent.click(screen.getByTestId('activity-opt-in'));
+  now = 1000; act(() => collector.interact('correction'));
+  expect(collector.totals().task).toBe(1000);
+  expect(collector.isEnabled()).toBe(false);
+  expect(screen.getByRole('alert')).toHaveTextContent('quota exceeded');
+  expect(screen.getByTestId('activity-download')).toBeEnabled();
+  await userEvent.type(screen.getByRole('textbox', { name: 'Annotation note' }), 'editing continues');
+  expect(screen.getByRole('textbox', { name: 'Annotation note' })).toHaveValue('editing continues');
+  now = 10_000; act(() => collector.commit());
+  expect(collector.totals().task).toBe(1000);
+});

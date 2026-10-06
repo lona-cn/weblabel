@@ -91,11 +91,12 @@ export class ActivityCollector {
     if (!session) { session = { session_id: this.currentSession, version: 0, intervals: [] }; this.sessions.push(session); }
     if (session.intervals.length >= 10_000 || session.intervals.reduce((sum, item) => sum + item.duration_ms, 0) + duration > 86_400_000) {
       this.enabled = false;
+      this.problem = 'Activity session limit reached; export and explicitly clear before starting a new session';
       this.notify();
-      throw new Error('Activity session limit reached; stop and export before starting a new session');
+      return;
     }
     session.intervals.push({ seq: session.intervals.length, kind: this.kind, duration_ms: duration });
-    this.storage?.setItem(this.storageKey, JSON.stringify({ schema_version: 1, sessions: this.sessions }));
+    this.persist();
     this.notify();
   }
   snapshot(): ActivitySession[] { return structuredClone(this.sessions); }
@@ -108,8 +109,18 @@ export class ActivityCollector {
     const session = this.sessions.find((item) => item.session_id === sessionId);
     if (!session || !Number.isSafeInteger(version) || version < session.version) throw new Error('Invalid activity acknowledgement');
     session.version = version;
-    this.storage?.setItem(this.storageKey, JSON.stringify({ schema_version: 1, sessions: this.sessions }));
+    this.persist();
     this.notify();
+  }
+  private persist(): void {
+    try {
+      const payload = JSON.stringify({ schema_version: 1, sessions: this.sessions });
+      this.storage?.setItem(this.storageKey, payload);
+      this.recoveryJournal = payload;
+    } catch (reason) {
+      this.enabled = false;
+      this.problem = `Local activity write failed: ${reason instanceof Error ? reason.message : String(reason)}`;
+    }
   }
   clear(): void {
     const storage = typeof this.storageSource === 'function' ? this.storageSource() : this.storageSource;
