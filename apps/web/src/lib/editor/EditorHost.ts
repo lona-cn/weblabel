@@ -73,7 +73,11 @@ export class EditorHost {
   private disposed = false;
   /** Identity of the asset the host currently initializes or mounted. */
   private assetToken = 0;
+  private lossWatchToken = 0;
   private readonly renderedListeners = new Set<() => void>();
+  private readonly statusListeners = new Set<() => void>();
+  subscribeStatus(listener: () => void): () => void { this.statusListeners.add(listener); return () => { this.statusListeners.delete(listener); }; }
+  private notifyStatus(): void { for (const listener of this.statusListeners) listener(); }
   private retiredStats: Partial<RenderStats> = {};
   subscribeRendered(listener: () => void): () => void { this.renderedListeners.add(listener); return () => { this.renderedListeners.delete(listener); }; }
   getCanvasLabels(): CanvasLabel[] { return this.facade?.get_canvas_labels?.() ?? []; }
@@ -178,6 +182,8 @@ export class EditorHost {
       this.guard(() => created.facade.fit_image(), 'EDITOR_FIT_FAILED');
     }
     this.markDirty();
+    this.watchDeviceLoss(created.facade, assetToken, disposeToken);
+    this.notifyStatus();
   }
 
   dispatch(command: EditorCommand): EditorDelta | null {
@@ -253,7 +259,7 @@ export class EditorHost {
     this.guard((facade) => {
       facade.set_predictions(sets);
       return null;
-    }, 'EDITOR_BRIDGE_FAILURE');
+    }, 'EDITOR_BRIDGE_FAILURE', true);
   }
 
   getCommittedSnapshot(delta: EditorDelta): AnnotationDocument | null {
@@ -261,20 +267,20 @@ export class EditorHost {
   }
 
   getSnapshot(): AnnotationDocument | null {
-    return this.guard((facade) => facade.get_snapshot(), 'EDITOR_BRIDGE_FAILURE');
+    return this.guard((facade) => facade.get_snapshot(), 'EDITOR_BRIDGE_FAILURE', true);
   }
 
   getGeneration(): number | null {
-    return this.guard((facade) => facade.get_generation(), 'EDITOR_BRIDGE_FAILURE');
+    return this.guard((facade) => facade.get_generation(), 'EDITOR_BRIDGE_FAILURE', true);
   }
 
   getObjectHashes(): Record<Id, string> | null {
-    return this.guard((facade) => facade.get_object_hashes(), 'EDITOR_BRIDGE_FAILURE');
+    return this.guard((facade) => facade.get_object_hashes(), 'EDITOR_BRIDGE_FAILURE', true);
   }
 
   /** The Rust-owned view (the additive C3 read-back from reports/T09). */
   getViewport(): Viewport | null {
-    return this.guard((facade) => facade.get_viewport(), 'EDITOR_BRIDGE_FAILURE');
+    return this.guard((facade) => facade.get_viewport(), 'EDITOR_BRIDGE_FAILURE', true);
   }
 
   /**
@@ -332,6 +338,63 @@ export class EditorHost {
   private stale(assetToken: number, disposeToken: number): boolean {
     return this.disposed || disposeToken !== this.disposeToken || assetToken !== this.assetToken;
   }
+  private currentFacade(facade: EditorFacade, assetToken: number, disposeToken: number): boolean {
+    return !this.stale(assetToken, disposeToken) && this.facade === facade;
+  }
+
+  private watchDeviceLoss(facade: EditorFacade, assetToken: number, disposeToken: number): void {
+    const watchToken = ++this.lossWatchToken;
+    void facade.device_lost().then((message) => {
+      if (watchToken !== this.lossWatchToken || !this.currentFacade(facade, assetToken, disposeToken) || this.statusValue === 'recovering') return;
+      this.enterDeviceLost(message);
+      return this.retryRenderer();
+    }).catch((reason: unknown) => {
+      if (watchToken !== this.lossWatchToken || !this.currentFacade(facade, assetToken, disposeToken)) return;
+      this.enterDeviceLost(toApiError(reason, 'GPU_DEVICE_LOST', this.nextRequestId).message);
+    });
+  }
+
+  private enterDeviceLost(message: string): void {
+    this.statusValue = 'lost';
+    this.errorValue = { code: 'GPU_DEVICE_LOST', message: `WebGPU device lost (${message}); CPU editor and unsaved work retained`, request_id: this.nextRequestId(), details: null };
+    if (this.frameHandle !== null) this.scheduler.cancel(this.frameHandle);
+    this.frameHandle = null;
+    this.framePending = false;
+    this.dirty = true;
+    // Keep the native gesture/preview intact. Browser capture alone is retired.
+    this.releaseCaptures();
+    this.notifyStatus();
+  }
+
+  /** Explicit retry after a failed rebuild; never creates a new CPU editor. */
+  async retryRenderer(): Promise<void> {
+    const facade = this.facade;
+    if (facade === null || this.disposed || this.statusValue !== 'lost') return;
+    const assetToken = this.assetToken;
+    const disposeToken = this.disposeToken;
+    this.statusValue = 'recovering';
+    this.notifyStatus();
+    try {
+      await facade.recover_renderer();
+    } catch (reason) {
+      if (!this.currentFacade(facade, assetToken, disposeToken)) return;
+      this.errorValue = toApiError(reason, 'GPU_RECOVERY_FAILED', this.nextRequestId);
+      this.statusValue = 'lost';
+      this.notifyStatus();
+      return;
+    }
+    if (!this.currentFacade(facade, assetToken, disposeToken)) return;
+    this.statusValue = 'ready';
+    this.errorValue = null;
+    // Resize may have happened while read-only. Do not reset an unchanged view:
+    // set_viewport cancels the native preview, which must survive device loss.
+    const view = facade.get_viewport();
+    const size = this.size;
+    if (size && (view.css_width !== size.width || view.css_height !== size.height || view.dpr !== size.dpr)) this.applyViewport();
+    this.watchDeviceLoss(facade, assetToken, disposeToken);
+    this.notifyStatus();
+    this.markDirty();
+  }
 
   private releaseFacade(): void {
     const facade = this.facade;
@@ -348,13 +411,22 @@ export class EditorHost {
     }
   }
 
-  private guard<T>(action: (facade: EditorFacade) => T, fallbackCode: string): T | null {
+  private guard<T>(action: (facade: EditorFacade) => T, fallbackCode: string, cpuRead = false): T | null {
     const facade = this.facade;
-    if (facade === null) return null;
+    if (facade === null || (!cpuRead && this.statusValue !== 'ready')) return null;
     try {
       return action(facade);
     } catch (reason) {
       this.errorValue = toApiError(reason, fallbackCode, this.nextRequestId);
+      if (fallbackCode === 'RENDER_FAILED') {
+        if (facade.get_device_state() === 'lost') {
+          this.enterDeviceLost(this.errorValue.message);
+          void this.retryRenderer();
+        } else {
+          this.statusValue = 'error';
+          this.notifyStatus();
+        }
+      }
       return null;
     }
   }
@@ -395,7 +467,7 @@ export class EditorHost {
 
   private markDirty(): void {
     this.dirty = true;
-    if (this.framePending || this.paused || this.disposed) return;
+    if (this.framePending || this.paused || this.disposed || this.statusValue !== 'ready') return;
     this.framePending = true;
     this.frameHandle = this.scheduler.request(this.handleFrame);
   }
@@ -403,7 +475,7 @@ export class EditorHost {
   private handleFrame = (timestampMs: number): void => {
     this.framePending = false;
     this.frameHandle = null;
-    if (this.disposed || this.paused || !this.dirty) return;
+    if (this.disposed || this.paused || !this.dirty || this.statusValue !== 'ready') return;
     this.dirty = false;
     this.guard((facade) => {
       facade.render(timestampMs);
@@ -454,7 +526,7 @@ export class EditorHost {
   private readonly handleWheel = (event: WheelEvent): void => {
     event.preventDefault();
     const canvas = this.canvas;
-    if (canvas === null || this.disposed) return;
+    if (canvas === null || this.disposed || this.statusValue !== 'ready') return;
     if (this.activePointerId !== null) this.cancelGesture();
     const pixels =
       event.deltaMode === 1
@@ -489,7 +561,7 @@ export class EditorHost {
 
   private handlePointer(event: PointerEvent, phase: PointerPhase): void {
     const canvas = this.canvas;
-    if (canvas === null || this.disposed) return;
+    if (canvas === null || this.disposed || this.statusValue !== 'ready') return;
     if (phase === 'down' && event.button === 0) {
       // Pointer capture pairs with every gesture: released on up/cancel and on
       // every external cancel path (T12).

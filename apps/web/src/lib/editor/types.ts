@@ -75,6 +75,11 @@ export interface EditorFacade {
   get_viewport(): Viewport;
   set_predictions(sets: SuggestionSet[]): void;
   render(timestamp_ms: number): void;
+  /** Owned, one-shot real device-loss notification; never holds a WASM borrow. */
+  device_lost(): Promise<string>;
+  get_device_state(): 'ready' | 'lost' | 'recovering' | 'disposed';
+  /** Rebuild GPU resources only; retains the same CPU session and history. */
+  recover_renderer(): Promise<void>;
   dispose(): void;
   free?(): void;
   get_render_stats?(): RenderStats;
@@ -136,7 +141,7 @@ export interface RenderScheduler {
   cancel(handle: number): void;
 }
 
-export type EditorHostStatus = 'idle' | 'loading' | 'ready' | 'error' | 'disposed';
+export type EditorHostStatus = 'idle' | 'loading' | 'ready' | 'lost' | 'recovering' | 'error' | 'disposed';
 
 export interface EditorHostOptions {
   facadeFactory: EditorFacadeFactory;

@@ -68,6 +68,7 @@ pub struct Renderer {
     stats: crate::stats::RendererStats,
     visible_ranges: Vec<std::ops::Range<u32>>,
     lost: Arc<AtomicBool>,
+    loss_notification: js_sys::Promise,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -223,26 +224,17 @@ impl Renderer {
             .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))
     }
     pub async fn recover(&mut self) -> Result<(), wasm_bindgen::JsValue> {
-        let scene = self
-            .scene
-            .clone()
-            .ok_or_else(|| wasm_bindgen::JsValue::from_str("no saved scene"))?;
-        let replacement = Self::create(
-            self.canvas.clone(),
-            scene.image.width,
-            scene.image.height,
-            &scene.image.rgba,
-        )
-        .await
-        .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
-        *self = replacement;
-        self.scene = Some(scene);
-        self.upload_scene()?;
-        self.render_saved()
-            .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))
+        self.recover_with_fence(None).await
+    }
+    /// Owned notification: waiting in JS never borrows this WASM object.
+    pub fn device_lost(&self) -> js_sys::Promise {
+        self.loss_notification.clone()
+    }
+    pub fn is_device_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
     }
     pub fn device_state(&self) -> String {
-        if self.lost.load(Ordering::Acquire) {
+        if self.is_device_lost() {
             "lost"
         } else {
             "ready"
@@ -281,6 +273,57 @@ impl Renderer {
 
 #[cfg(target_arch = "wasm32")]
 impl Renderer {
+    /// Capture the current CPU viewport even if its dirty frame never reached
+    /// the lost device. This does not upload, configure, or submit anything.
+    pub fn set_recovery_viewport(&mut self, viewport: Viewport) {
+        if let Some(scene) = self.scene.as_mut() {
+            scene.viewport = viewport;
+        }
+    }
+    pub async fn recover_with_fence(
+        &mut self,
+        disposed: Option<&std::cell::Cell<bool>>,
+    ) -> Result<(), JsValue> {
+        let scene = self
+            .scene
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("no saved scene"))?;
+        let mut replacement = Self::create_with_fence(
+            self.canvas.clone(),
+            scene.image.width,
+            scene.image.height,
+            &scene.image.rgba,
+            disposed,
+            scene.viewport.backing_size().is_none(),
+        )
+        .await
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // Move the saved scene, including pixels, instead of cloning it. CPU
+        // editor state is not involved. A failed request leaves the old scene.
+        replacement.scene = self.scene.take();
+        let stats = self.stats;
+        self.dispose();
+        let released = self.stats;
+        replacement.stats.cpu_calls += stats.cpu_calls;
+        replacement.stats.cpu_elapsed_ns += stats.cpu_elapsed_ns;
+        replacement.stats.cpu_objects_examined += stats.cpu_objects_examined;
+        replacement.stats.gpu_buffer_upload_calls += stats.gpu_buffer_upload_calls;
+        replacement.stats.gpu_buffer_upload_bytes += stats.gpu_buffer_upload_bytes;
+        replacement.stats.gpu_texture_upload_calls += stats.gpu_texture_upload_calls;
+        replacement.stats.gpu_texture_upload_bytes += stats.gpu_texture_upload_bytes;
+        replacement.stats.bbox_upload_calls += stats.bbox_upload_calls;
+        replacement.stats.bbox_upload_bytes += stats.bbox_upload_bytes;
+        replacement.stats.uniform_upload_bytes += stats.uniform_upload_bytes;
+        replacement.stats.draw_calls += stats.draw_calls;
+        replacement.stats.gpu_submissions += stats.gpu_submissions;
+        replacement.stats.buffer_creations += released.buffer_creations;
+        replacement.stats.buffer_releases += released.buffer_releases;
+        replacement.stats.rejected_resources += stats.rejected_resources;
+        *self = replacement;
+        self.upload_scene()?;
+        // The host schedules one dirty frame after ready; no submission here.
+        Ok(())
+    }
     pub fn stats(&self) -> crate::stats::RendererStats {
         self.stats
     }
@@ -316,6 +359,16 @@ impl Renderer {
         height: u32,
         rgba: &[u8],
     ) -> Result<Self, RendererError> {
+        Self::create_with_fence(canvas, width, height, rgba, None, false).await
+    }
+    async fn create_with_fence(
+        canvas: web_sys::HtmlCanvasElement,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        disposed: Option<&std::cell::Cell<bool>>,
+        paused: bool,
+    ) -> Result<Self, RendererError> {
         let expected_bytes = (width as usize)
             .checked_mul(height as usize)
             .and_then(|n| n.checked_mul(4))
@@ -339,6 +392,9 @@ impl Renderer {
             })
             .await
             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
+        if disposed.is_some_and(std::cell::Cell::get) {
+            return Err(RendererError::DeviceLost);
+        }
         if width > adapter.limits().max_texture_dimension_2d
             || height > adapter.limits().max_texture_dimension_2d
         {
@@ -350,6 +406,10 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor::default())
             .await
             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
+        if disposed.is_some_and(std::cell::Cell::get) {
+            device.destroy();
+            return Err(RendererError::DeviceLost);
+        }
         let caps = surface.get_capabilities(&adapter);
         // Browsers only expose *Unorm canvas formats, whose texels the
         // compositor reads as sRGB-encoded (SurfaceColorSpace::Auto resolves
@@ -373,10 +433,14 @@ impl Renderer {
             browser_info.as_ref().map(|info| info.architecture()).unwrap_or_default(),
             browser_info.as_ref().map(|info| info.device()).unwrap_or_default()
         );
-        let (css_w, css_h) = (
-            canvas.client_width().max(0) as u32,
-            canvas.client_height().max(0) as u32,
-        );
+        let (css_w, css_h) = if paused {
+            (0, 0)
+        } else {
+            (
+                canvas.client_width().max(0) as u32,
+                canvas.client_height().max(0) as u32,
+            )
+        };
         let (cw, ch) = (css_w.max(1), css_h.max(1));
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -546,8 +610,19 @@ impl Renderer {
         });
         let lost = Arc::new(AtomicBool::new(false));
         let lost_signal = lost.clone();
-        device.set_device_lost_callback(move |_reason, _message| {
+        let (sender, receiver) = futures_channel::oneshot::channel::<String>();
+        let sender = std::sync::Mutex::new(Some(sender));
+        let loss_notification = wasm_bindgen_futures::future_to_promise(async move {
+            let message = receiver
+                .await
+                .unwrap_or_else(|_| "device notification closed".into());
+            Ok(JsValue::from_str(&message))
+        });
+        device.set_device_lost_callback(move |reason, message| {
             lost_signal.store(true, Ordering::Release);
+            if let Some(sender) = sender.lock().expect("loss notification mutex").take() {
+                let _ = sender.send(format!("{reason:?}: {message}"));
+            }
         });
         let mut this = Self {
             canvas,
@@ -575,6 +650,7 @@ impl Renderer {
             instance_scratch: Vec::new(),
             scene: None,
             lost,
+            loss_notification,
             diagnostics,
             stats: crate::stats::RendererStats {
                 logical_texture_bytes: expected_bytes as u64,

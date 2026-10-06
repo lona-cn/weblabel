@@ -116,6 +116,25 @@ class FakeEditorFacade implements EditorFacade {
   viewport: Viewport = { scale: 1, tx: 0, ty: 0, css_width: 0, css_height: 0, dpr: 1 };
   deltaFactory: (kind: string) => EditorDelta = () => makeDelta({ repaint: true });
   throwOn: { dispatch?: unknown } = {};
+  deviceState: 'ready' | 'lost' | 'recovering' | 'disposed' = 'ready';
+  private loss = deferred<string>();
+  recovery = deferred<void>();
+  device_lost(): Promise<string> { return this.loss.promise; }
+  get_device_state(): 'ready' | 'lost' | 'recovering' | 'disposed' { return this.deviceState; }
+  loseDevice(): void { this.deviceState = 'lost'; this.loss.resolve('Destroyed: external GPUDevice.destroy'); }
+  async recover_renderer(): Promise<void> {
+    this.deviceState = 'recovering';
+    try {
+      await this.recovery.promise;
+      if (this.get_device_state() === 'disposed') return;
+      this.deviceState = 'ready';
+      this.loss = deferred<string>();
+      this.recovery = deferred<void>();
+    } catch (reason) {
+      if (this.get_device_state() !== 'disposed') this.deviceState = 'lost';
+      throw reason;
+    }
+  }
 
   dispatch(command: EditorCommand): EditorDelta {
     this.dispatchCalls.push(command);
@@ -139,7 +158,14 @@ class FakeEditorFacade implements EditorFacade {
   get_viewport(): Viewport { return this.viewport; }
   set_predictions(sets: SuggestionSet[]): void { this.predictionCalls.push(sets); }
   render(timestamp_ms: number): void { this.renderCalls.push(timestamp_ms); }
-  dispose(): void { this.disposeCount += 1; }
+  dispose(): void { this.disposeCount += 1; this.deviceState = 'disposed'; }
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
 }
 
 interface FakeCreation {
@@ -804,6 +830,101 @@ describe('T09 dirty-flag render scheduling', () => {
     expect(scheduler.flush()).toBe(1);
     expect(facade.renderCalls.length).toBe(settled + 1);
     expect(scheduler.pending.size).toBe(0);
+  });
+});
+
+describe('T30 renderer-only recovery lifecycle', () => {
+  it('keeps CPU reads available, gates edits while recovering, resumes one frame then stays idle', async () => {
+    const { host, factory, scheduler } = makeHost();
+    const canvas = document.createElement('canvas');
+    stubCanvasRect(canvas, { width: 640, height: 480 });
+    host.mount(canvas);
+    const load = host.loadAsset(makeRequest());
+    factory.creations[0].settle();
+    await load;
+    scheduler.flush();
+    const facade = factory.creations[0].facade;
+    host.setLocalFlags(['object_person_001'], { locked: true });
+    const flags = host.getLocalFlags();
+    await act(async () => { facade.loseDevice(); });
+    expect(host.status).toBe('recovering');
+    expect(host.getSnapshot()).toEqual(makeDocument());
+    expect(host.dispatch({ kind: 'undo' })).toBeNull();
+    fireEvent.pointerMove(canvas, { clientX: 10, clientY: 10, pointerId: 1 });
+    expect(facade.pointerCalls).toEqual([]);
+    expect(scheduler.flush()).toBe(0);
+    await act(async () => { facade.recovery.resolve(); });
+    expect(host.status).toBe('ready');
+    expect(host.error).toBeNull();
+    expect(host.getLocalFlags()).toBe(flags);
+    expect(scheduler.flush()).toBe(1);
+    for (let i = 0; i < 10_000; i += 1) expect(scheduler.flush()).toBe(0);
+    expect(host.dispatch({ kind: 'undo' })).not.toBeNull();
+  });
+
+  it('ignores pending rebuild completion after an asset switch and late old loss after disposal', async () => {
+    const { host, factory, scheduler } = makeHost();
+    const canvas = document.createElement('canvas');
+    stubCanvasRect(canvas, { width: 640, height: 480 });
+    host.mount(canvas);
+    const first = host.loadAsset(makeRequest());
+    factory.creations[0].settle();
+    await first;
+    const old = factory.creations[0].facade;
+    await act(async () => { old.loseDevice(); });
+    const next = host.loadAsset(makeRequest({ media: { ...makeMedia(), asset_revision_id: 'next' } }));
+    factory.creations[1].settle();
+    await next;
+    scheduler.flush();
+    await act(async () => { old.recovery.resolve(); });
+    expect(host.status).toBe('ready');
+    expect(host.error).toBeNull();
+    expect(scheduler.flush()).toBe(0);
+    expect(old.disposeCount).toBe(1);
+    host.dispose();
+    await act(async () => { factory.creations[1].facade.loseDevice(); });
+    expect(host.status).toBe('disposed');
+    expect(scheduler.flush()).toBe(0);
+  });
+
+  it('reports failed recovery without losing CPU access and explicit retry remains paused at zero size', async () => {
+    const { host, factory, scheduler } = makeHost();
+    const canvas = document.createElement('canvas');
+    stubCanvasRect(canvas, { width: 0, height: 0 });
+    host.mount(canvas);
+    const load = host.loadAsset(makeRequest());
+    factory.creations[0].settle();
+    await load;
+    const facade = factory.creations[0].facade;
+    await act(async () => { facade.loseDevice(); });
+    await act(async () => { facade.recovery.reject('adapter request denied'); });
+    expect(host.status).toBe('lost');
+    expect(host.error).toMatchObject({ code: 'GPU_RECOVERY_FAILED', message: 'adapter request denied' });
+    expect(host.getSnapshot()).toEqual(makeDocument());
+    facade.recovery = deferred<void>();
+    const retry = host.retryRenderer();
+    facade.recovery.resolve();
+    await retry;
+    expect(host.status).toBe('ready');
+    expect(scheduler.flush()).toBe(0);
+    expect(facade.renderCalls).toEqual([]);
+  });
+
+  it('projects recovery diagnostics and inert canvas without reinitializing the workbench host', async () => {
+    const factory = new FakeFacadeFactory();
+    const ready = vi.fn();
+    render(createElement(CanvasView, { request: makeRequest(), activeTool: 'select',
+      hostOptions: { facadeFactory: factory, scheduler: new FakeRenderScheduler() },
+      onDelta: () => {}, onHostReady: ready }));
+    await act(async () => { await Promise.resolve(); factory.creations[0].settle(); });
+    const canvas = screen.getByTestId('annotation-canvas');
+    await act(async () => { factory.creations[0].facade.loseDevice(); });
+    expect(screen.getByTestId('gpu-status').getAttribute('data-device-state')).toBe('recovering');
+    expect(canvas.inert).toBe(true);
+    await act(async () => { factory.creations[0].facade.recovery.resolve(); });
+    expect(screen.getByTestId('gpu-status').getAttribute('data-device-state')).toBe('ready');
+    expect(canvas.inert).toBe(false);
+    expect(ready).toHaveBeenCalledTimes(1);
   });
 });
 

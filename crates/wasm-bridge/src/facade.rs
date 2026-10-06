@@ -1256,7 +1256,10 @@ pub mod wasm {
     #[wasm_bindgen]
     pub struct EditorFacade {
         session: EditorSession,
-        renderer: renderer_wgpu::Renderer,
+        renderer: std::rc::Rc<std::cell::RefCell<Option<renderer_wgpu::Renderer>>>,
+        disposed: std::rc::Rc<std::cell::Cell<bool>>,
+        last_renderer_stats: std::cell::Cell<renderer_wgpu::stats::RendererStats>,
+        adapter_diagnostics: String,
         canvas: web_sys::HtmlCanvasElement,
         serialized_input_objects: std::cell::Cell<u64>,
     }
@@ -1349,7 +1352,13 @@ pub mod wasm {
 
         /// Read-only diagnostics from the device actually used by this facade.
         pub fn get_render_stats(&self) -> Result<JsValue, JsValue> {
-            to_js(&self.renderer.stats())
+            let renderer = self.renderer.borrow();
+            to_js(
+                &renderer
+                    .as_ref()
+                    .map(|r| r.stats())
+                    .unwrap_or_else(|| self.last_renderer_stats.get()),
+            )
         }
         pub fn get_validation_input_objects(&self) -> f64 {
             self.session.editor.validation_input_objects() as f64
@@ -1358,7 +1367,11 @@ pub mod wasm {
             self.serialized_input_objects.get() as f64
         }
         pub fn get_adapter_diagnostics(&self) -> String {
-            self.renderer.adapter_diagnostics()
+            self.renderer
+                .borrow()
+                .as_ref()
+                .map(|r| r.adapter_diagnostics())
+                .unwrap_or_else(|| self.adapter_diagnostics.clone())
         }
         pub fn get_canvas_labels(&self) -> Result<JsValue, JsValue> {
             to_js(&self.session.canvas_labels())
@@ -1394,16 +1407,80 @@ pub mod wasm {
                 .map_err(to_js_error)?;
             self.session.set_predictions(sets).map_err(to_js_error)
         }
+        /// Returning an owned one-shot promise releases the WASM borrow before
+        /// JS awaits an idle device. It resolves for real Destroyed losses too.
+        pub fn device_lost(&self) -> Result<js_sys::Promise, JsValue> {
+            self.session.ensure_live().map_err(to_js_error)?;
+            self.renderer
+                .borrow()
+                .as_ref()
+                .map(|r| r.device_lost())
+                .ok_or_else(|| to_js_error(api_error("GPU_RECOVERING", "renderer is rebuilding")))
+        }
+
+        pub fn get_device_state(&self) -> String {
+            if self.disposed.get() {
+                "disposed".into()
+            } else {
+                self.renderer
+                    .borrow()
+                    .as_ref()
+                    .map(|r| r.device_state())
+                    .unwrap_or_else(|| "recovering".into())
+            }
+        }
+
+        /// Only the renderer moves into this future. No facade/session borrow
+        /// spans requestAdapter/requestDevice, so dispose and CPU reads remain
+        /// safe while recovery is pending.
+        pub fn recover_renderer(&mut self) -> Result<js_sys::Promise, JsValue> {
+            self.session.ensure_live().map_err(to_js_error)?;
+            let mut renderer = self.renderer.borrow_mut().take().ok_or_else(|| {
+                to_js_error(api_error("GPU_RECOVERING", "renderer is rebuilding"))
+            })?;
+            renderer.set_recovery_viewport(scene_viewport(self.session.get_viewport()));
+            self.last_renderer_stats.set(renderer.stats());
+            self.session.invalidate_frame();
+            let slot = self.renderer.clone();
+            let disposed = self.disposed.clone();
+            Ok(wasm_bindgen_futures::future_to_promise(async move {
+                let result = renderer.recover_with_fence(Some(&disposed)).await;
+                if disposed.get() {
+                    renderer.dispose();
+                    return Ok(JsValue::UNDEFINED);
+                }
+                *slot.borrow_mut() = Some(renderer);
+                result.map(|()| JsValue::UNDEFINED).map_err(|error| {
+                    to_js_error(api_error(
+                        "GPU_RECOVERY_FAILED",
+                        &error
+                            .as_string()
+                            .unwrap_or_else(|| "WebGPU renderer rebuild failed".into()),
+                    ))
+                })
+            }))
+        }
 
         /// A clean session performs no renderer call. Dirty viewport and
         /// projection updates share one native call and one GPU submission;
         /// renderer instances never round-trip through JavaScript.
         pub fn render(&mut self, timestamp_ms: f64) -> Result<(), JsValue> {
             let _ = timestamp_ms;
+            let mut renderer = self.renderer.borrow_mut();
+            if self.disposed.get() || renderer.as_ref().is_none_or(|r| r.is_device_lost()) {
+                return Err(to_js_error(api_error(
+                    "GPU_DEVICE_LOST",
+                    "WebGPU device is not ready; CPU editor retained",
+                )));
+            }
             let Some(frame) = self.session.prepare_frame() else {
                 return Ok(());
             };
-            if let Err(error) = self.renderer.apply_frame(frame.viewport, frame.projection) {
+            if let Err(error) = renderer
+                .as_mut()
+                .expect("ready renderer")
+                .apply_frame(frame.viewport, frame.projection)
+            {
                 self.session.invalidate_frame();
                 return Err(error);
             }
@@ -1417,7 +1494,10 @@ pub mod wasm {
                 return;
             }
             self.session.dispose();
-            self.renderer.dispose();
+            self.disposed.set(true);
+            if let Some(renderer) = self.renderer.borrow_mut().as_mut() {
+                renderer.dispose();
+            }
         }
     }
 
@@ -1466,9 +1546,14 @@ pub mod wasm {
                 };
                 to_js_error(api_error(code, &message))
             })?;
+        let adapter_diagnostics = renderer.adapter_diagnostics();
+        let last_renderer_stats = std::cell::Cell::new(renderer.stats());
         Ok(EditorFacade {
             session,
-            renderer,
+            renderer: std::rc::Rc::new(std::cell::RefCell::new(Some(renderer))),
+            disposed: std::rc::Rc::new(std::cell::Cell::new(false)),
+            last_renderer_stats,
+            adapter_diagnostics,
             canvas,
             serialized_input_objects: std::cell::Cell::new(0),
         })
