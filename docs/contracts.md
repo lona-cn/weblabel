@@ -154,6 +154,9 @@ export interface EditorFacade {
   get_object_hashes(): Record<Id, string>;
   set_predictions(sets: SuggestionSet[]): void;
   render(timestamp_ms: number): void;
+  device_lost(): Promise<string>;
+  get_device_state(): 'ready' | 'lost' | 'recovering' | 'disposed';
+  recover_renderer(): Promise<void>;
   dispose(): void;
 }
 export function create_editor(
@@ -168,6 +171,8 @@ export function create_editor(
 
 C3 的 flags 只属于编辑器会话，不进入保存文档。业务 UI 可持有不可修改的 changed_objects 投影；不直接 mutate。pointer move 只更新交互预览，不增加 generation，不触发完整快照或网络；pointer up 形成一个 command 才增加 generation。set_viewport/selection/hide 不改变业务 generation。取消/无效操作不增加 generation。undo/redo 改变文档且 generation 单调递增，不倒退。
 T28前端只在成功的document_changed/suggestion decision逻辑提交读取committed snapshot；选中/隐藏/锁定仅更新局部UI投影与历史状态，不调用整文档快照或远端保存。local flags投影不可修改且只在Rust成功后发布；INVALID_FLAGS/未知object与locked mutation拒绝不能清空已确认选中/undo状态，切图重新建立会话并清理flags。持久实例buffer按局部对象range更新；视口仅改变uniform和绘制ranges。资源计数来自实际创建/释放/上传/submit，logical texture bytes与V8 heap分别标识，不称真实VRAM。跨JS/WASM bytes当前只计实际RGBA输入，bridge耗时仅涵盖原生桥调用，不认证完整React/SaveQueue CPU或物理可见帧。
+
+T30设备恢复扩展：三项方法是每个facade实现的required能力。device_lost返回当前真实GPUDevice对应的owned one-shot Promise，在原生device lost callback收到Destroyed/Unknown时resolve诊断字符串；JS idle等待不持有WASM borrow，不靠RAF/poll/submit检测。get_device_state只读返回实际renderer状态。recover_renderer只重建GPU资源，不create_editor、不刷新应用、不以snapshot新建会话；同一Rust editor、generation、history、selection、local flags、preview、predictions及既有SaveQueue保留。Host发布lost/recovering期间阻止编辑，CPU只读访问和保存队列继续可用；成功后重订阅新device的loss，dirty一次，零尺寸仍暂停提交；失败为GPU_RECOVERY_FAILED并保留CPU会话，允许显式retry，绝不重新调用AI。异步重建与通知都必须以asset epoch、facade identity、disposed fence隔离切图/卸载；旧请求完成不得配置新画布或访问已free的facade。
 
 Rust 函数边界：`geometry::image_to_css([f64;2], Viewport)->[f64;2]`、`css_to_image`、`validate_bbox(&BBox,w:u32,h:u32)->Result<(),DomainError>`；`editor_core::Editor::new(document,ontology)->Result<Editor,DomainError>`；`Editor::dispatch(EditorCommand)->Result<EditorDelta,DomainError>`；`Editor::snapshot()->AnnotationDocument`。渲染模块依赖只读 render scene，不反向修改 Editor。
 

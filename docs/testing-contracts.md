@@ -54,7 +54,7 @@ T25测试helper的manual模式仅在debug构建显式设置WEBLABEL_TEST_MANUAL_
 | snapshot-create / export-format / export-start / export-download | 固定快照导出 |
 | recovery-banner / conflict-banner / export-local-draft | 恢复与失败救援 |
 
-gpu-status 暴露文本/可测试属性 actual_backend=webgpu、adapter_kind=hardware/software/unknown、device_state=ready/lost/unsupported；不以浏览器支持检查代替真实 device 创建。
+gpu-status 暴露文本/可测试属性 actual_backend=webgpu、adapter_kind=hardware/software/unknown、device_state=loading/ready/lost/recovering/unsupported；不以浏览器支持检查代替真实 device 创建。设备重建中显示recovering且Canvas只读，成功才恢复ready；失败保持lost和GPU_RECOVERY_FAILED诊断，gpu-retry显式重试renderer-only恢复。GPUDevice.destroy必须通过真实device.lost观测并自动触发重建，不调用simulate_device_loss。
 
 测试中需要获取文档时调用正常的 GET annotation API或 Editor 测试 facade；测试 facade只在测试构建可用，不能让生产页面暴露任意内部命令绕过权限。截图只用于可视效果；几何、标签和保存必须用原始数值断言。
 
