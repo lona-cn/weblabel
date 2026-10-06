@@ -82,9 +82,11 @@ function readPublicConfiguration(file, maxBytes, code) {
 export function lockedFilesDiagnostic(repository, weightsRoot, entries, authorized = false) {
   const files = entries.map(entry => {
     const file = path.resolve(weightsRoot, entry.path);
-    if (!existsSync(file)) return { file: entry.path, status: 'missing' };
     let confined;
-    try { confined = confinedFile(repository, file); } catch { return { file: entry.path, status: 'outside_repository_refused' }; }
+    try { confined = confinedFile(repository, file); } catch (error) {
+      const missing = error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+      return { file: entry.path, status: missing ? 'missing' : 'outside_repository_refused' };
+    }
     const size = statSync(confined).size;
     return { file: entry.path, bytes: size, status: size !== entry.bytes ? 'size_mismatch' : authorized ? fileSha256(confined, repository) === entry.sha256 ? 'verified' : 'hash_mismatch' : 'present_size_checked_not_hashed' };
   });

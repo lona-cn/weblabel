@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { resolve, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createServer } from 'node:http';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { bootstrap_admin_for_test, database_path_for_test, start_test_app } from '../support/app';
 import { authorize, seed, startRunBody, type JsonObject, type Seeded } from '../support/t25-ai';
 import { hostExecutionConfigurationHash, lockedFilesDiagnostic, observeRun, readHostBudget, requireObservedIdentity, requirePreviewExecutionConfiguration } from '../../scripts/verify-live.mjs';
@@ -344,11 +346,29 @@ it('default locked-file diagnostic refuses a symlink escape and does not hash a 
   // A directory junction is a real Windows symlink boundary, requires no admin.
   await symlink(outside, weights, process.platform === 'win32' ? 'junction' : 'dir');
   await writeFile(resolve(outside, 'model.safetensors'), 'not-authorized-content');
-  expect(lockedFilesDiagnostic(repository, weights, [{ path: 'model.safetensors', bytes: 22, sha256: '0'.repeat(64) }])).toEqual([{ file: 'model.safetensors', status: 'outside_repository_refused' }]);
-  expect(lockedFilesDiagnostic(repository, weights, [{ path: 'model.safetensors', bytes: 22, sha256: '0'.repeat(64) }], true)).toEqual([{ file: 'model.safetensors', status: 'outside_repository_refused' }]);
-  await writeFile(resolve(repository, 'public-lock-file'), 'public');
-  expect(lockedFilesDiagnostic(repository, repository, [{ path: 'public-lock-file', bytes: 6, sha256: '0'.repeat(64) }])[0].status).toBe('present_size_checked_not_hashed');
-  expect(lockedFilesDiagnostic(repository, repository, [{ path: 'public-lock-file', bytes: 6, sha256: '0'.repeat(64) }], true)[0].status).toBe('hash_mismatch');
+  // Call-through observers retain actual filesystem behavior and ensure an
+  // escaped target is not queried for existence/size before canonical refusal.
+  const existence = vi.spyOn(fs, 'existsSync');
+  const metadata = vi.spyOn(fs, 'statSync');
+  syncBuiltinESMExports();
+  try {
+    expect(lockedFilesDiagnostic(repository, weights, [{ path: 'model.safetensors', bytes: 22, sha256: '0'.repeat(64) }])).toEqual([{ file: 'model.safetensors', status: 'outside_repository_refused' }]);
+    expect(lockedFilesDiagnostic(repository, weights, [{ path: 'model.safetensors', bytes: 22, sha256: '0'.repeat(64) }], true)).toEqual([{ file: 'model.safetensors', status: 'outside_repository_refused' }]);
+    expect(existence.mock.calls).toEqual([]);
+    expect(metadata.mock.calls).toEqual([]);
+    expect(lockedFilesDiagnostic(repository, repository, [{ path: 'missing-public-file', bytes: 6, sha256: '0'.repeat(64) }])).toEqual([{ file: 'missing-public-file', status: 'missing' }]);
+    expect(existence.mock.calls).toEqual([]);
+    expect(metadata.mock.calls).toEqual([]);
+    await writeFile(resolve(repository, 'public-lock-file'), 'public');
+    expect(lockedFilesDiagnostic(repository, repository, [{ path: 'public-lock-file', bytes: 6, sha256: '0'.repeat(64) }])[0].status).toBe('present_size_checked_not_hashed');
+    // Positive control: the observer really captures an allowed metadata read.
+    expect(metadata.mock.calls).toEqual([[fs.realpathSync(resolve(repository, 'public-lock-file'))]]);
+    expect(lockedFilesDiagnostic(repository, repository, [{ path: 'public-lock-file', bytes: 6, sha256: '0'.repeat(64) }], true)[0].status).toBe('hash_mismatch');
+  } finally {
+    existence.mockRestore();
+    metadata.mockRestore();
+    syncBuiltinESMExports();
+  }
 });
 
 it('actual preview binds the checked public provider budget to Rust-WASM canonical configuration before consent/START', async () => {
