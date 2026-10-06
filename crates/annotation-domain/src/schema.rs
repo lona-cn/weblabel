@@ -15,18 +15,20 @@ impl<T: JsonSchema> JsonSchema for Nullable<T> {
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        let mut null_schema = SchemaObject::default();
-        null_schema.instance_type = Some(InstanceType::Null.into());
-
-        let mut schema = SchemaObject::default();
-        schema.subschemas = Some(Box::new(SubschemaValidation {
-            any_of: Some(vec![
-                generator.subschema_for::<T>(),
-                Schema::Object(null_schema),
-            ]),
+        let null_schema = SchemaObject {
+            instance_type: Some(InstanceType::Null.into()),
             ..Default::default()
-        }));
-        Schema::Object(schema)
+        };
+        Schema::Object(SchemaObject {
+            subschemas: Some(Box::new(SubschemaValidation {
+                any_of: Some(vec![
+                    generator.subschema_for::<T>(),
+                    Schema::Object(null_schema),
+                ]),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
     }
 }
 
@@ -38,10 +40,11 @@ impl JsonSchema for UtcTimestamp {
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        let mut schema = SchemaObject::default();
-        schema.instance_type = Some(InstanceType::String.into());
-        schema.format = Some("date-time".to_owned());
-        Schema::Object(schema)
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            format: Some("date-time".to_owned()),
+            ..Default::default()
+        })
     }
 }
 
@@ -53,10 +56,11 @@ impl JsonSchema for False {
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        let mut schema = SchemaObject::default();
-        schema.instance_type = Some(InstanceType::Boolean.into());
-        schema.enum_values = Some(vec![false.into()]);
-        Schema::Object(schema)
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::Boolean.into()),
+            enum_values: Some(vec![false.into()]),
+            ..Default::default()
+        })
     }
 }
 
@@ -68,23 +72,25 @@ impl JsonSchema for AttributeMap {
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        let mut property_name = SchemaObject::default();
-        property_name.instance_type = Some(InstanceType::String.into());
-        property_name.string = Some(Box::new(StringValidation {
-            min_length: Some(1),
-            max_length: Some(128),
+        let property_name = SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                min_length: Some(1),
+                max_length: Some(128),
+                ..Default::default()
+            })),
             ..Default::default()
-        }));
-
-        let mut object = ObjectValidation::default();
-        object.property_names = Some(Box::new(Schema::Object(property_name)));
-        object.additional_properties = Some(Box::new(
-            generator.subschema_for::<crate::document::Scalar>(),
-        ));
-
-        let mut schema = SchemaObject::default();
-        schema.instance_type = Some(InstanceType::Object.into());
-        schema.object = Some(Box::new(object));
-        Schema::Object(schema)
+        };
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::Object.into()),
+            object: Some(Box::new(ObjectValidation {
+                property_names: Some(Box::new(Schema::Object(property_name))),
+                additional_properties: Some(Box::new(
+                    generator.subschema_for::<crate::document::Scalar>(),
+                )),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
     }
 }

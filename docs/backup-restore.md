@@ -22,7 +22,7 @@ node scripts/backup.mjs --data-dir "data" --backup-dir "backups/2026-10-06 中�
 
 保留用户 ID、用户名与审核/创建身份引用，保留标注历史、媒体、快照和审核关系；不把过去审计归给新用户。
 
-移除 session/CSRF、全部旧 password_hash、model profile 私有 `config_json` 和 `secret_ref`，清空外发 preview/consent/run authorization。已知 provider 配置凭证值在持久化可变 JSON/提示词/日志字段中再次出现时脱敏。若该值出现在不可变标注、规范、导入或 snapshot 正文中，命令以 `credential_in_immutable_business_data` 拒绝并删除本次不完整输出，而不是悄悄改写正文使业务 hash 失效；源数据不变。官方 CLI 的 home、OAuth/API key 文件、环境、私有 Host 配置从未被枚举或复制。用户自己放在业务图像/属性/自由文本中的未知秘密不是自动识别承诺，分享前应自行审查。
+移除 session/CSRF、全部旧 password_hash、model profile 私有 `config_json` 和 `secret_ref`，清空外发 preview/consent/run authorization。已知 provider 配置凭证在可变诊断 JSON/日志中再次出现时脱敏；若与不可变标注、规范、导入、预测、event、导出、审核提交/决定/问题的历史 JSON 或审计 reason/message，或 model run 的固定业务 context/prompt 冲突，以 `credential_in_immutable_business_data` 拒绝并删除本次不完整输出，不改写批准绑定、业务 hash 或原审计身份；源数据不变。模型配置快照属于可脱敏凭证配置，不据此改写固定业务输入。官方 CLI 的 home、OAuth/API key 文件、环境、私有 Host 配置从未枚举或复制。未知秘密不是自动识别承诺，分享前应自行审查。
 
 排队/运行中的作业变为 interrupted，模型调用不会恢复后自动继续；活跃任务 holder/expiry 清空，历史 fencing token 和审计身份保留。模型 profile 重新进入 needs_configuration/not_run。备份不包含浏览器尚未同步的 IndexedDB 草稿；先 flush 保存，或单独导出本地草稿救援包。
 
@@ -36,6 +36,8 @@ node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data
 ```
 
 只接受当前发行的精确 schema/迁移，先检查清单、每个文件长度/hash、SQLite 完整性与外键、实际 schema 和当前迁移重建的 schema、实际已应用版本清单、对象引用闭包和认证已清空，全部成功才独占创建新目标。schema SQL 仅将 CRLF 规范为 LF，不放宽字段/约束/trigger 比较。版本不兼容应先使用对应源码发行或另做受审查迁移；没有“忽略 schema”开关。
+
+完成备份只能包含已checkpoint的单一数据库状态；恢复在打开 SQLite 前拒绝任何 `api.sqlite-wal`、`api.sqlite-shm` 或 `api.sqlite-journal`，不能让未列入清单的sidecar影响校验再只复制主文件。不要把运行中目录或手拼主库/WAL目录当完成备份；使用本工具的一致性备份。
 
 `--migrations-dir` 可指向可信发行中的 migrations；不要从不可信备份接受替代迁移。已有目录（包括空目录、正在使用的目录）一律拒绝，没有 overwrite、reset 或隐式清空。复制失败的本次新目录保留以便检查，缺少完成标记，不能当恢复成功；选择另一个新目录重试。
 

@@ -73,14 +73,6 @@ export function runProcessGroup(commands, cwd = process.cwd()) {
 function main() {
   const root = path.resolve(path.dirname(scriptPath), '..');
   process.env.WEBLABEL_COOKIE_SECURE ??= 'false';
-  if (process.argv.includes('--start-local')) {
-    const binary = path.join(root, 'target', 'release', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
-    if (!fs.existsSync(binary)) {
-      console.error('Built local API is missing; run the production build first.');
-      return 1;
-    }
-    return runProcessGroup([[binary]], root);
-  }
   const webManifestPath = path.join(root, 'apps', 'web', 'package.json');
   const webManifest = JSON.parse(fs.readFileSync(webManifestPath, 'utf8'));
   if (!webManifest.scripts?.dev) {

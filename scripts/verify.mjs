@@ -14,15 +14,10 @@ function resolveArgv(argv) {
 }
 const commands = {
   fast: [['cargo', 'test', '--workspace', '--locked'], ['node', '--test', 'tests/bootstrap/t00.test.mjs'], ['node', 'scripts/verify-plan.mjs']],
-  build: [['cargo', 'build', '--workspace', '--locked'], ['cargo', 'build', '-p', 'renderer-wgpu', '--target', 'wasm32-unknown-unknown', '--locked'], ['cargo', 'build', '-p', 'wasm-bridge', '--target', 'wasm32-unknown-unknown', '--locked']],
-  // Real WebGPU visual gate (T05): rebuild the probe from the current renderer
-  // sources, then run the screenshot pixel/device-loss checks. The REQUIRE_*_
-  // flags force a real, non-software adapter and a ready device — a software
-  // GPU or a missing adapter must never pass this gate.
-  gpu: [['pnpm', 'wasm:probe-build'], ['pnpm', 'exec', 'playwright', 'test', 'tests/render/t05.spec.ts', '--project=t05-render']],
+  // T31 rebuilds current release WASM and enforces the complete hardware gate.
+  gpu: [['node', 'scripts/verify-gpu.mjs']],
 };
 const postFastBlocker = 'BLOCKED: TypeScript, generated-contract, formatting, and product Rust checks are not registered until their implementation tasks.';
-const postBuildBlocker = 'BLOCKED: Web, Node Host, generated-contract checks, and product release composition are implemented by downstream tasks; no app build is claimed.';
 const blockers = {
   integration: 'Integration test application does not exist until T06/T10.',
   browser: 'Playwright application and fixtures do not exist until T08/T15.',
@@ -39,11 +34,7 @@ if (blockers[gate]) {
   for (const argv of commands[gate]) {
     const resolved = resolveArgv(argv);
     console.log(`> ${argv.join(' ')}`);
-    const env =
-      gate === 'gpu'
-        ? { ...process.env, REQUIRE_WGPU_DEVICE: '1', REQUIRE_HARDWARE_GPU: '1' }
-        : process.env;
-    const result = spawnSync(resolved[0], resolved.slice(1), { stdio: 'inherit', shell: false, windowsHide: true, env });
+    const result = spawnSync(resolved[0], resolved.slice(1), { stdio: 'inherit', shell: false, windowsHide: true, env: process.env });
     if (result.error) {
       console.error(`${argv[0]}: ${result.error.message}`);
       process.exitCode = 1;
@@ -56,10 +47,6 @@ if (blockers[gate]) {
   }
   if (gate === 'fast' && process.exitCode === undefined) {
     console.error(postFastBlocker);
-    process.exitCode = 1;
-  }
-  if (gate === 'build' && process.exitCode === undefined) {
-    console.error(postBuildBlocker);
     process.exitCode = 1;
   }
 }

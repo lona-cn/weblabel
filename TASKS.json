@@ -1282,7 +1282,9 @@
           "exec",
           "vitest",
           "run",
-          "tests/integration/t33_packaging.test.ts"
+          "tests/integration/t33_packaging.test.ts",
+          "tests/integration/t33_active_host_shutdown.test.ts",
+          "tests/integration/t33_restore_state.test.ts"
         ]
       ],
       "external_gate": false,

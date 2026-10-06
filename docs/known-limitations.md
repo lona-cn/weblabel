@@ -9,7 +9,7 @@
 - 人工编辑无需 Python/官方 CLI/登录模型账号，但需要真实 WebGPU device。无 WebGPU 只读/诊断，不伪造 Canvas2D 降级。
 - GPU logical bytes 与实际 VRAM 不等同；源码/自动化通过不替代目标机器性能验收。T31 的正式测量独立报告，T33 不给 G4/GPU 阈值结论。
 - Windows 停机按受管 PID 树强制结束，SQLite WAL 保证事务原子恢复；不声称收费模型取消已经获得远端终态，费用未知必须保留。
-- T33 已实际验证核心 API/Web 的物理 Ctrl+C 和独立嵌套进程树清理；活跃 Host 的物理信号还涉及 API `RuntimeLease` 提前退出竞态，主 Agent 的最终共享 shutdown 修复/重建/重放尚是集成前置条件。本报告不把无 Host 的测试推断成活跃 Host 已验收。
+- T33已实际验证核心API/Web与活跃configured Host的物理Ctrl+C：独立owned ConPTY内真实keyboard 0x03及direct API控制事件，Host root和detach后忽略SIGINT的descendant在API终止时已退出，端口/锁/SQLite完整性均核对；凭证、策略、preview/consent/START及run-token授权为真实API路径。Host响应为明确synthetic NDJSON工程fixture，不证明官方账号、provider推理、收费取消或G4。
 - 没有自动 GC。磁盘不足时保留错误/草稿，不自动删除历史或用户数据。
 - 备份不包含未同步浏览器草稿，不加密/签名；只支持当前精确 schema，拒绝已有恢复目标。认证清空后使用新的本地身份，而非复制旧 session。
 - 构建使用固定 Rust release 与 wasm-bindgen；不依赖旧 wasm-opt 的优化成功，也不宣称二进制位级重现或每种 OS 已验证。

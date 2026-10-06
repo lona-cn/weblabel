@@ -13,6 +13,11 @@ export function validateBackup(source, migrationDirectory = path.join(root, 'cra
   const expectedFiles = new Set(manifest.files.map(item => item.path));
   if (!expectedFiles.has('api.sqlite')) throw new Error('backup_database_missing');
   for (const file of expectedFiles) if (file !== 'api.sqlite' && !/^objects\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{64}$/.test(file)) throw new Error('backup_unexpected_file');
+  // Completed backups contain one checkpointed database, not a SQLite view
+  // shadowed by unmanifested WAL, shared-memory or recovery-journal state.
+  for (const suffix of ['-wal', '-shm', '-journal']) {
+    if (fs.existsSync(path.join(source, `api.sqlite${suffix}`))) throw new Error('backup_sqlite_sidecar');
+  }
   const db = new DatabaseSync(checkedPath(source, 'api.sqlite'), { readOnly: true });
   try {
     validateDatabase(db);

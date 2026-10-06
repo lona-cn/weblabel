@@ -1,9 +1,18 @@
-use serde::{Deserialize, Serialize};
 use crate::document::Id;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum ActivityKind { Task, Annotation, Correction, Review, Switch, ModelWait }
+pub enum ActivityKind {
+    Task,
+    Annotation,
+    Correction,
+    Review,
+    Switch,
+    ModelWait,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]
 #[serde(deny_unknown_fields)]

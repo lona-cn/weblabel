@@ -14,8 +14,10 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "start:local": "node scripts/dev.mjs --start-local",
-    "build": "node scripts/verify.mjs build",
+    "start:local": "node scripts/start-local.mjs",
+    "build": "node scripts/build.mjs",
+    "backup": "node scripts/backup.mjs",
+    "restore": "node scripts/restore.mjs",
     "doctor": "node scripts/doctor.mjs",
     "test:task": "node scripts/task.mjs",
     "verify:fast": "node scripts/verify.mjs fast",
