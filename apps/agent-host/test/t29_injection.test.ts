@@ -13,7 +13,7 @@ import { BoundedHttpClient } from '../src/providers/http/client';
 import { createAgentToolsServer } from '../src/mcp/server';
 import { startSecurityApp, raw, text, object, root, type SecurityApp } from '../../../tests/fixtures/security/harness';
 import { attacks, injectionImage, injectionText } from '../../../tests/fixtures/security/attacks';
-import { buildHost, runHost, maliciousSse } from '../../../tests/fixtures/security/host';
+import { buildHost, runHost, maliciousSse, toolSse, type SyntheticProviderId } from '../../../tests/fixtures/security/host';
 import { authorize, type Seeded } from '../../../tests/support/t25-ai';
 import { seedSecurity, startSecurityRun as startRunBody, syntheticProfileId } from '../../../tests/fixtures/security/seed';
 
@@ -23,6 +23,8 @@ let modelServer: Server;
 let modelBase: string;
 let selectedTool = 'read_file';
 let selectedArgs: unknown = { path: '.secret' };
+let selectedProvider: SyntheticProviderId = 'mimo_api';
+let observedTurnServed = false;
 const providerCalls: Array<{ headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }> = [];
 let executionConfig: Record<string, unknown>;
 const capabilities = { image_input: true, tools: true, structured_output: true, bbox_output: false, attributes: true };
@@ -43,9 +45,17 @@ beforeAll(async () => {
   modelServer = createServer(async (request, response) => {
     const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
     providerCalls.push({ headers: request.headers, body: object(JSON.parse(Buffer.concat(chunks).toString())) });
-    if (selectedTool === 'credential_echo') {
+    const credential = request.headers.authorization?.replace(/^Bearer /, '') ?? request.headers['x-api-key'];
+    if (typeof credential !== 'string') throw new Error('Synthetic provider did not receive a credential');
+    if (selectedTool === 'sse_name' || (selectedTool === 'sse_id_after_usage' && !observedTurnServed)) {
+      observedTurnServed = true;
+      response.setHeader('content-type', 'text/event-stream');
+      response.end(toolSse(selectedProvider, selectedTool === 'sse_name' ? credential : 'read_region', credential, selectedTool === 'sse_name' ? {} : { region: null }));
+      return;
+    }
+    if (selectedTool === 'http_error' || selectedTool === 'sse_id_after_usage') {
       response.writeHead(502, { 'content-type': 'text/plain' });
-      response.end('Untrusted provider diagnostic echoed ' + request.headers.authorization?.replace(/^Bearer /, ''));
+      response.end('Untrusted provider diagnostic echoed ' + credential);
       return;
     }
     response.setHeader('content-type', 'text/event-stream'); response.end(maliciousSse(selectedTool, selectedArgs));
@@ -54,29 +64,36 @@ beforeAll(async () => {
   const address = modelServer.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port');
   modelBase = `http://127.0.0.1:${address.port}`;
   executionConfig = { profile_id: syntheticProfileId, model_id: 'T29-synthetic-model', credential: { secret_ref: 'env:T29_SYNTHETIC_KEY' }, capabilities, account_model_verified: true, api_base: modelBase, base_approval: { approved: true, approved_by: 'T29-engineering-admin', approved_at: '2026-10-06T00:00:00Z', allow_private_network: true, allow_insecure_http: true }, local_admins: ['T29-engineering-admin'] };
-  const db = new DatabaseSync(join(app.directory, 'api.sqlite'));
-  try { db.prepare("UPDATE model_profiles SET provider_id='mimo_api',model_id='T29-synthetic-model',auth_kind='api_key',verification='not_run',config_json=?,capabilities_json=?,secret_ref='env:T29_SYNTHETIC_KEY' WHERE profile_id=?").run(JSON.stringify(executionConfig), JSON.stringify(capabilities), syntheticProfileId); }
-  finally { db.close(); }
+  configureProfile('mimo_api');
   expect((await app.admin.client.request('PUT', `/api/projects/${seeded.projectId}/external-processing-policy`, { allow_external_processing: true })).status).toBe(200);
 }, 120_000);
 afterAll(async () => {
   if (modelServer) { modelServer.closeAllConnections(); await new Promise<void>(resolveClosed => modelServer.close(() => resolveClosed())); }
   if (app) await app.stop();
-  await writeFile(join(root, 'reports/T29/model-evidence.json'), JSON.stringify({ channel: 'synthetic_loopback_engineering', provider_id: 'mimo_api', model_id: 'T29-synthetic-model', verification: 'not_run', live: 'not_run', software_gpu: 'not_run', hardware_gpu: 'not_run', cases: modelEvidence }, null, 2) + '\n');
+  await writeFile(join(root, 'reports/T29/model-evidence.json'), JSON.stringify({ channel: 'synthetic_loopback_engineering', providers: ['openai_api', 'anthropic_api', 'mimo_api'], model_id: 'T29-synthetic-model', verification: 'not_run', live: 'not_run', software_gpu: 'not_run', hardware_gpu: 'not_run', cases: modelEvidence }, null, 2) + '\n');
 });
+function configureProfile(provider: SyntheticProviderId): void {
+  const db = new DatabaseSync(join(app.directory, 'api.sqlite'));
+  try { db.prepare("UPDATE model_profiles SET provider_id=?,model_id='T29-synthetic-model',auth_kind=?,verification='not_run',config_json=?,capabilities_json=?,secret_ref='env:T29_SYNTHETIC_KEY' WHERE profile_id=?").run(provider, provider === 'codex_local' ? 'official_user_login' : 'api_key', JSON.stringify(executionConfig), JSON.stringify(capabilities), syntheticProfileId); }
+  finally { db.close(); }
+}
 async function authorizedRun() {
   const request = await authorize(app.admin.client, startRunBody(seeded, randomUUID(), injectionText, { intent: 'audit_attributes' }));
   const started = await app.admin.client.request('POST', '/api/ai/runs', request); expect(started.status, JSON.stringify(started.json)).toBe(202);
   const runId = text(started.json, 'run_id'); const token = await app.issue(runId, seeded.projectId);
-  return { request, runId, token };
+  const db = new DatabaseSync(join(app.directory, 'api.sqlite'));
+  try {
+    const row = object(db.prepare('SELECT profile_snapshot_json FROM model_runs WHERE run_id=?').get(runId));
+    return { request, runId, token, profile: object(JSON.parse(text(row, 'profile_snapshot_json'))) };
+  } finally { db.close(); }
 }
 
 it.each(attacks)('image/text injection requesting $tool fails at actual Host and final API permission boundary', async attack => {
   selectedTool = attack.tool; selectedArgs = attack.args;
-  const { request, runId, token } = await authorizedRun();
+  const { request, runId, token, profile } = await authorizedRun();
   const secret = `T29-synthetic-secret-${randomUUID()}`;
   const before = await app.admin.client.request('GET', `/api/assets/${seeded.assetRevisionId}/annotation?ontology_version_id=${seeded.ontologyId}`);
-  const result = await runHost({ directory: app.directory, apiBase: app.base_url, token, secret, provider: 'mimo_api', config: executionConfig, runId, request, profile: { profile_id: request.profile_id, provider_id: 'mimo_api', model_id: 'T29-synthetic-model', auth_kind: 'api_key', capabilities, availability: 'ready', verification: 'not_run', runtime_version: null, verified_at: null } });
+  const result = await runHost({ directory: app.directory, apiBase: app.base_url, token, secret, provider: 'mimo_api', config: executionConfig, runId, request, profile });
   expect(result.exitCode).toBe(0); expect(result.terminal).toMatchObject({ ok: false, status: 'failed', error: { code: 'invalid_tool_call' } });
   expect(result.events).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'failed', data: expect.objectContaining({ error_code: 'invalid_tool_call' }) })]));
   const sent = providerCalls.at(-1)!;
@@ -108,17 +125,26 @@ it.each(attacks)('image/text injection requesting $tool fails at actual Host and
   }
   modelEvidence.push({ requested_tool: attack.tool, prompt_sha256: createHash('sha256').update(injectionText).digest('hex'), canonical_image_sha256: seeded.canonicalSha256, provider_request_sha256: createHash('sha256').update(JSON.stringify(sent.body)).digest('hex'), provider_response_sha256: createHash('sha256').update(maliciousSse(attack.tool, attack.args)).digest('hex'), host_exit_code: result.exitCode, terminal: result.terminal, final_tool_denial: { status: finalDenial.status, code: finalDenial.json.code }, forbidden_argument_denial: { status: smuggled.status, code: smuggled.json.code }, human_approval_denial: { status: humanRoute.status, code: humanRoute.json.code }, annotation_unchanged: true, shell_executed: result.shellExecuted, public_output_contains_credentials: false });
 });
-it('actual Host error events and logs redact arbitrary resolved credential echoed by the provider', async () => {
-  selectedTool = 'credential_echo';
-  const { request, runId, token } = await authorizedRun();
-  const secret = `T29-arbitrary-credential-${randomUUID()}`;
-  const result = await runHost({ directory: app.directory, apiBase: app.base_url, token, secret, provider: 'mimo_api', config: executionConfig, runId, request, profile: { profile_id: request.profile_id, provider_id: 'mimo_api', model_id: 'T29-synthetic-model', auth_kind: 'api_key', capabilities, availability: 'ready', verification: 'not_run', runtime_version: null, verified_at: null } });
-  expect(result.terminal).toMatchObject({ ok: false, status: 'failed', error: { code: 'upstream_5xx' } });
-  expect(result.events).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'failed', data: expect.objectContaining({ error_code: 'upstream_5xx' }) })]));
-  expect(result.exitCode).toBe(0);
-  expect(result.stdout).not.toContain(secret); expect(result.stderr).not.toContain(secret);
-  expect(result.stdout + result.stderr).not.toContain(token);
-  modelEvidence.push({ attack: 'upstream_credential_echo', upstream_http_status: 502, provider_request_sha256: createHash('sha256').update(JSON.stringify(providerCalls.at(-1)!.body)).digest('hex'), host_exit_code: result.exitCode, terminal: result.terminal, event_error_codes: result.events.filter(event => event.type === 'failed').map(event => object(event.data).error_code), public_output_contains_credentials: false });
+const apiThreats = (['openai_api', 'anthropic_api', 'mimo_api'] as const).flatMap(provider => (['http_error', 'sse_name', 'sse_id_after_usage'] as const).map(scenario => ({ provider, scenario })));
+it.each(apiThreats)('actual $provider Host refuses credential reflection through $scenario and preserves usage', async ({ provider, scenario }) => {
+  selectedTool = scenario; selectedProvider = provider; observedTurnServed = false; configureProfile(provider);
+  try {
+    const { request, runId, token, profile } = await authorizedRun();
+    const secret = `T29-arbitrary-credential-${randomUUID()}`;
+    const firstCall = providerCalls.length;
+    const result = await runHost({ directory: app.directory, apiBase: app.base_url, token, secret, provider, config: executionConfig, runId, request, profile });
+    const code = scenario === 'sse_name' ? 'invalid_tool_call' : 'upstream_5xx';
+    const usage = { input_tokens: scenario === 'http_error' ? null : 17, output_tokens: scenario === 'http_error' ? null : 5, cost_usd: null };
+    expect(result.terminal).toMatchObject({ ok: false, status: 'failed', error: { code } });
+    expect(result.events).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'failed', data: expect.objectContaining({ error_code: code, usage, cost_display: 'unknown' }) })]));
+    expect(result.exitCode).toBe(0);
+    const calls = providerCalls.slice(firstCall);
+    expect(calls).toHaveLength(scenario === 'sse_id_after_usage' ? 2 : 1);
+    for (const sent of calls) expect(provider === 'anthropic_api' ? sent.headers['x-api-key'] : sent.headers.authorization).toBe(provider === 'anthropic_api' ? secret : `Bearer ${secret}`);
+    expect(result.stdout).not.toContain(secret); expect(result.stderr).not.toContain(secret);
+    expect(result.stdout + result.stderr).not.toContain(token);
+    modelEvidence.push({ attack: scenario, provider_id: provider, profile, provider_request_sha256: calls.map(sent => createHash('sha256').update(JSON.stringify(sent.body)).digest('hex')), host_exit_code: result.exitCode, terminal: result.terminal, failed_event: result.events.find(event => event.type === 'failed'), public_output_contains_credentials: false });
+  } finally { configureProfile('mimo_api'); }
 });
 it('MCP revalidates hostile arguments and propagates authoritative expired-token refusal', async () => {
   const { runId } = await authorizedRun(); const expired = await app.issue(runId, seeded.projectId, 0);
@@ -135,10 +161,13 @@ it('MCP revalidates hostile arguments and propagates authoritative expired-token
   } finally { await client.close(); await server.close(); }
 });
 it('production Codex dispatch stays UNSUPPORTED_RUNTIME without launching a fake official SDK', async () => {
-  const { request, runId, token } = await authorizedRun(); const calls = providerCalls.length;
-  const result = await runHost({ directory: app.directory, apiBase: app.base_url, token, secret: `T29-synthetic-${randomUUID()}`, provider: 'codex_local', config: executionConfig, runId, request, profile: { profile_id: request.profile_id, provider_id: 'codex_local', model_id: 'T29-synthetic-model', auth_kind: 'official_user_login', capabilities, availability: 'ready', verification: 'not_run', runtime_version: null, verified_at: null } });
-  expect(result.exitCode).toBe(0); expect(result.terminal).toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_RUNTIME' } });
-  expect(providerCalls.length).toBe(calls); expect(result.shellExecuted).toBe(false);
+  configureProfile('codex_local');
+  try {
+    const { request, runId, token, profile } = await authorizedRun(); const calls = providerCalls.length;
+    const result = await runHost({ directory: app.directory, apiBase: app.base_url, token, secret: `T29-synthetic-${randomUUID()}`, provider: 'codex_local', config: executionConfig, runId, request, profile });
+    expect(result.exitCode).toBe(0); expect(result.terminal).toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_RUNTIME' } });
+    expect(providerCalls.length).toBe(calls); expect(result.shellExecuted).toBe(false);
+  } finally { configureProfile('mimo_api'); }
 });
 
 it('grant filesystem containment rejects real junction/symlink escape and portable path bypasses', async () => {

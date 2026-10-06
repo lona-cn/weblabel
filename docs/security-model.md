@@ -48,6 +48,8 @@ Tests may name a metadata address as a redirect target but must not contact it. 
 
 Resolved credentials are private runtime inputs. Error diagnostics can be hostile: a provider may echo a key without a recognizable prefix or label. Redact exact resolved values before emitting a failed run event, in addition to generic header/token/key pattern redaction. Preserve the failure classification and nonsecret diagnostic context. Do not rely solely on an `sk-` prefix or a `Bearer` label.
 
+Sanitize every public provider event, not only the terminal exception: tool names and call identifiers are upstream-controlled and may expose a credential before argument validation fails. Apply exact-value protection to event messages and nested data without granting a forbidden tool or fabricating success. OpenAI, Anthropic and MiMo must preserve the real failure code and any usage already observed. A failure before any usage remains unknown (`null`), not zero.
+
 Production scans build the API executable, browser JavaScript/CSS/WASM, Agent Host bundles and sourcemaps with a fresh synthetic credential sentinel supplied only as private environment values. They scan actual output bytes and build/runtime logs. This proves that the exercised sentinel was not embedded; it is not a universal detector for every possible credential format.
 
 ## Injection and final tool permissions

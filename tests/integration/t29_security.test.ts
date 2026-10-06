@@ -6,7 +6,7 @@ import { inflateRawSync } from 'node:zlib';
 import { beforeAll, afterAll, expect, it } from 'vitest';
 import { authorize, type Seeded } from '../support/t25-ai';
 import { startSecurityApp, raw, session, text, object, type SecurityApp, type Login } from '../fixtures/security/harness';
-import { hostileZip, imageBomb } from '../fixtures/security/attacks';
+import { hostileZip, highRatioZip, imageBomb } from '../fixtures/security/attacks';
 import { seedSecurity, startSecurityRun as startRunBody, syntheticProfileId } from '../fixtures/security/seed';
 
 let app: SecurityApp;
@@ -39,6 +39,15 @@ it.each([
   expect(accepted.status).toBe(200); expect(accepted.json.project_id).toBe(seeded.projectId);
   const denied = await raw(app.base_url, 'POST', '/internal/agent-tools/get_context', {}, { authorization: `Bearer ${validToken}`, ...headers });
   expect(denied.status).toBe(403); expect(denied.json.code).toBe(code);
+});
+it('bearer tools ignore browser session cookies and CSRF, but a cookie cannot replace a capability', async () => {
+  const request = { method: 'POST', body: '{}', headers: { cookie: admin.cookie, 'content-type': 'application/json' } };
+  // Backend tool calls may have no Origin; an incidental browser cookie must
+  // neither force session-CSRF authorization nor become tool authority.
+  const accepted = await fetch(new URL('/internal/agent-tools/get_context', app.base_url), { ...request, headers: { ...request.headers, authorization: `Bearer ${validToken}` } });
+  expect(accepted.status).toBe(200); expect((await accepted.json()).project_id).toBe(seeded.projectId);
+  const denied = await fetch(new URL('/internal/agent-tools/get_context', app.base_url), request);
+  expect(denied.status).toBe(401); expect((await denied.json()).code).toBe('RUN_TOKEN_REQUIRED');
 });
 it('actualRouter preserves active-session CSRF and Origin on login and writes', async () => {
   const credentials = { username: 'local-admin', password: 'T29-synthetic-admin-password' };
@@ -157,15 +166,21 @@ const archiveAttacks = [
   ['UNC', [{ name: '\\\\synthetic-server\\share\\outside.secret' }]],
   ['symlink', [{ name: 'annotations/escape', contents: '../../outside.secret', symlink: true }]],
   ['casefold-collision', [{ name: 'annotations/Case.json' }, { name: 'annotations/case.json' }]],
-  ['archive-bomb', [{ name: 'bomb.bin', declaredSize: 97 * 1024 * 1024 }]],
+  ['archive-bomb', null],
 ] as const;
 it.each(archiveAttacks)('native import rejects synthetic %s atomically', async (_name, entries) => {
   const good = await app.extractArchive(hostileZip([{ name: 'safe.json', contents: '{"synthetic":true}' }]));
   expect(good).toEqual({ accepted: true, files: { 'safe.json': Array.from(Buffer.from('{"synthetic":true}')) } });
-  expect(await app.extractArchive(hostileZip(entries))).toEqual({ accepted: false });
+  const malicious = entries === null ? await highRatioZip() : hostileZip(entries);
+  if (entries === null) {
+    // Same genuine 97 MiB member succeeds with an explicit larger budget,
+    // proving failure is the resource boundary, not a broken ZIP or CRC.
+    expect(await app.extractArchive(malicious, 100 * 1024 * 1024)).toEqual({ accepted: true, file_sizes: { 'bomb.bin': 97 * 1024 * 1024 } });
+  }
+  expect(await app.extractArchive(malicious)).toEqual({ accepted: false });
   const before = await admin.client.request('GET', `/api/assets/${seeded.assetRevisionId}/annotation?ontology_version_id=${seeded.ontologyId}`);
   const form = new FormData(); form.set('format', 'native'); form.set('ontology_version_id', seeded.ontologyId);
-  form.set('data', new Blob([Uint8Array.from(hostileZip(entries)).buffer], { type: 'application/zip' }), 'synthetic-malicious.zip');
+  form.set('data', new Blob([Uint8Array.from(malicious).buffer], { type: 'application/zip' }), 'synthetic-malicious.zip');
   const response = await fetch(new URL(`/api/assets/${seeded.assetRevisionId}/annotation-import-previews`, app.base_url), { method: 'POST', headers: { origin: app.base_url, cookie: admin.cookie, 'x-csrf-token': admin.csrf }, body: form });
   expect(response.status).toBe(422); expect((await response.json()).code).toBe('IMPORT_INVALID');
   const after = await admin.client.request('GET', `/api/assets/${seeded.assetRevisionId}/annotation?ontology_version_id=${seeded.ontologyId}`);

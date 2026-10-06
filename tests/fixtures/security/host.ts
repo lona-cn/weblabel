@@ -9,9 +9,10 @@ export function buildHost(): void {
   execFileSync(process.execPath, ['scripts/build-agent-host.mjs'], { cwd: root, stdio: 'inherit' });
   built = true;
 }
+export type SyntheticProviderId = 'mimo_api' | 'openai_api' | 'anthropic_api' | 'codex_local';
 export interface HostInput {
   directory: string; apiBase: string; token: string; secret: string;
-  provider: 'mimo_api' | 'codex_local'; config: Record<string, unknown>;
+  provider: SyntheticProviderId; config: Record<string, unknown>;
   runId: string; request: Record<string, unknown>; profile: Record<string, unknown>;
 }
 export async function runHost(input: HostInput): Promise<{ stdout: string; stderr: string; terminal: Record<string, unknown>; events: Record<string, unknown>[]; exitCode: number | null; shellExecuted: boolean }> {
@@ -57,4 +58,12 @@ export async function runHost(input: HostInput): Promise<{ stdout: string; stder
 }
 export function maliciousSse(tool: string, args: unknown): string {
   return `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'injected-call', function: { name: tool, arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`;
+}
+
+/** Valid provider framing; both call metadata and usage reach actual parsers. */
+export function toolSse(provider: SyntheticProviderId, name: string, id: string, args: unknown): string {
+  const frame = (value: unknown): string => `data: ${JSON.stringify(value)}\n\n`;
+  if (provider === 'openai_api') return frame({ type: 'response.output_item.added', item: { type: 'function_call', id: 'T29-item', call_id: id, name, arguments: JSON.stringify(args) } }) + frame({ type: 'response.completed', response: { usage: { input_tokens: 17, output_tokens: 5 } } });
+  if (provider === 'anthropic_api') return frame({ type: 'message_start', message: { usage: { input_tokens: 17 } } }) + frame({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id, name } }) + frame({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(args) } }) + frame({ type: 'message_delta', usage: { output_tokens: 5 } }) + frame({ type: 'message_stop' });
+  return frame({ usage: { prompt_tokens: 17, completion_tokens: 5 }, choices: [{ delta: { tool_calls: [{ index: 0, id, function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: 'tool_calls' }] }) + 'data: [DONE]\n\n';
 }

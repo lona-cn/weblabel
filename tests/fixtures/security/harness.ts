@@ -67,7 +67,7 @@ export interface SecurityApp extends TestApp {
   directory: string;
   admin: Login;
   issue(runId: string, projectId: string, ttlMs?: number): Promise<string>;
-  extractArchive(bytes: Uint8Array): Promise<Record<string, unknown>>;
+  extractArchive(bytes: Uint8Array, maximumUncompressedBytes?: number): Promise<Record<string, unknown>>;
   logs(): string;
 }
 let compiledRouter: string | undefined;
@@ -125,8 +125,8 @@ export async function startSecurityApp(): Promise<SecurityApp> {
       child.stdin.write(JSON.stringify({ run_id: runId, project_id: projectId, ttl_ms: ttlMs }) + '\n');
       return text(await next(), 'token');
     },
-    async extractArchive(bytes) {
-      child.stdin.write(JSON.stringify({ archive_bytes: Array.from(bytes) }) + '\n');
+    async extractArchive(bytes, maximumUncompressedBytes) {
+      child.stdin.write(JSON.stringify({ archive_bytes: Array.from(bytes), max_uncompressed_bytes: maximumUncompressedBytes }) + '\n');
       return next();
     },
     async as_user(role) {

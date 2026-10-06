@@ -57,11 +57,20 @@ async fn main() {
             let mut command: Value = serde_json::from_str(&line.unwrap()).unwrap();
             if let Some(bytes) = command.get_mut("archive_bytes") {
                 let bytes: Vec<u8> = serde_json::from_value(bytes.take()).unwrap();
-                let result = dataset_formats::archive::extract_safe_zip(
-                    &bytes,
-                    &dataset_formats::archive::ArchiveLimits::default(),
-                );
+                let mut limits = dataset_formats::archive::ArchiveLimits::default();
+                let diagnostic_budget = command["max_uncompressed_bytes"].as_u64();
+                if let Some(maximum) = diagnostic_budget {
+                    limits.max_uncompressed_bytes = maximum;
+                }
+                let result = dataset_formats::archive::extract_safe_zip(&bytes, &limits);
                 let answer = match result {
+                    Ok(files) if diagnostic_budget.is_some() => {
+                        let sizes: std::collections::BTreeMap<_, _> = files
+                            .into_iter()
+                            .map(|(name, contents)| (name, contents.len()))
+                            .collect();
+                        json!({"accepted": true, "file_sizes": sizes})
+                    }
                     Ok(files) => json!({"accepted": true, "files": files}),
                     Err(_) => json!({"accepted": false}),
                 };
