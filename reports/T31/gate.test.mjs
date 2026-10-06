@@ -17,6 +17,14 @@ test('committed edits cannot hide behind fast pan; raw rows remain unchanged', (
   assert.deepEqual(result.failures, ['committed_edit: CPU P95 28.3 > 8ms', 'committed_edit: double-rAF proxy P95 40 > 33ms']);
   assert.deepEqual(slow, before);
 });
+test('nearest-rank P95 changes at the 51st slow row, retaining every observation', () => {
+  const rows = Array.from({ length: 1000 }, (_, index) => ({ sequence: index, cpu_ms: index < 50 ? 9 : 2, double_raf_ms: index < 50 ? 40 : 20, submissions: 1 }));
+  const before = structuredClone(rows);
+  assert.deepEqual(summarize(rows), { valid_samples: 1000, cpu_p95_ms: 2, double_raf_p95_ms: 20 });
+  assert.deepEqual(rows, before);
+  const boundary = [{ ...rows[50], cpu_ms: 9, double_raf_ms: 40 }, ...rows.filter((_, index) => index !== 50)];
+  assert.deepEqual(summarize(boundary), { valid_samples: 1000, cpu_p95_ms: 9, double_raf_p95_ms: 40 });
+});
 test('10k reports full stress metrics without manufacturing a universal FPS target', () => {
   const rows = Array.from({ length: 1000 }, () => ({ cpu_ms: 110.8, double_raf_ms: 150, submissions: 1 }));
   const result = gate(10000, { pointer_drag: rows, pan: rows, zoom: rows, committed_edit: rows });

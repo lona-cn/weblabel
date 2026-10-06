@@ -1,3 +1,4 @@
+import { measureNativeControls } from '../../reports/T31/native-controls';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -216,7 +217,7 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
     const canonical = snapshot.objects[37].geometry;
     await page.evaluate(async () => {
       const hooks = window.__wl_test!, box = hooks.snapshot().objects[37].geometry;
-      await hooks.zoom(10);
+      await hooks.zoom(64 / (Math.min(box.x_max - box.x_min, box.y_max - box.y_min) * hooks.viewport().scale));
       const view = hooks.viewport();
       await hooks.pan(view.css_width / 2 - (box.x_min + box.x_max) / 2 * view.scale - view.tx, view.css_height / 2 - (box.y_min + box.y_max) / 2 * view.scale - view.ty);
     });
@@ -231,38 +232,9 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
       expect(await page.evaluate(() => window.__wl_test!.snapshot())).toEqual(snapshot);
       expect(Math.abs(projection.label.x_css - (canonical.x_min * projection.view.scale + projection.view.tx))).toBeLessThanOrEqual(0.5);
       expect(Math.abs(projection.label.y_css - (canonical.y_min * projection.view.scale + projection.view.ty))).toBeLessThanOrEqual(0.5);
-      const surface = (await page.getByTestId('annotation-canvas').boundingBox())!;
-      const center = { x: surface.x + (canonical.x_min + canonical.x_max) / 2 * projection.view.scale + projection.view.tx, y: surface.y + canonical.y_max * projection.view.scale + projection.view.ty };
-      const clip = { x: Math.floor(center.x - 8), y: Math.floor(center.y - 8), width: 16, height: 16 };
-      // Isolate GPU pixels: a small box's DOM text otherwise covers the control.
-      const labelVisibility = await page.getByTestId('annotation-canvas').evaluate(canvas => {
-        const labels = canvas.nextElementSibling;
-        if (!(labels instanceof HTMLElement) || labels.getAttribute('aria-hidden') !== 'true') throw new Error('Expected actual CanvasView label overlay');
-        const previous = labels.style.visibility;
-        labels.style.visibility = 'hidden';
-        return previous;
-      });
-      const selected = await page.screenshot({ path: info.outputPath(`handle-selected-dpr-${dpr}.png`), clip, scale: 'css' });
-      await page.evaluate(() => window.__wl_test!.select('dense-17-0'));
-      const unselected = await page.screenshot({ path: info.outputPath(`handle-unselected-dpr-${dpr}.png`), clip, scale: 'css' });
-      await page.getByTestId('annotation-canvas').evaluate((canvas, visibility) => {
-        const labels = canvas.nextElementSibling;
-        if (!(labels instanceof HTMLElement)) throw new Error('Label overlay detached during capture');
-        labels.style.visibility = visibility;
-      }, labelVisibility);
-      const activePixels = await sharp(selected).removeAlpha().raw().toBuffer();
-      const inactivePixels = await sharp(unselected).removeAlpha().raw().toBuffer();
-      const changed: { x: number; y: number }[] = [];
-      for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-        const offset = (y * 16 + x) * 3;
-        if ([0, 1, 2].some(channel => Math.abs(activePixels[offset + channel] - inactivePixels[offset + channel]) > 20)) changed.push({ x, y });
-      }
-      const handle = changed.length ? { width_css: Math.max(...changed.map(pixel => pixel.x)) - Math.min(...changed.map(pixel => pixel.x)) + 1, height_css: Math.max(...changed.map(pixel => pixel.y)) - Math.min(...changed.map(pixel => pixel.y)) + 1 } : { width_css: 0, height_css: 0 };
-      projections.push({ ...projection, handle, measured_control: 'bottom-middle', dom_labels_excluded_from_gpu_crop: true });
+      const native = await measureNativeControls(page, info, canonical, projection.view, dpr);
+      projections.push({ ...projection, ...native });
       evidence.projections = projections; await save();
-      expect.soft(Math.abs(handle.width_css - 8), 'Actual selected control must be 8 CSS px at every DPR/zoom').toBeLessThanOrEqual(1);
-      expect.soft(Math.abs(handle.height_css - 8), 'Actual selected control must be 8 CSS px at every DPR/zoom').toBeLessThanOrEqual(1);
-      await page.evaluate(() => window.__wl_test!.select('dense-17-37'));
       await page.screenshot({ path: info.outputPath(`projection-dpr-${dpr}.png`), scale: 'css' });
     }
     evidence.projections = projections;

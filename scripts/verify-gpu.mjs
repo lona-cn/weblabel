@@ -63,7 +63,7 @@ async function main() {
   try {
     const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
     const files = execFileSync('git', ['ls-files', 'apps/web/src', 'crates', 'Cargo.toml', 'Cargo.lock', 'scripts/verify-gpu.mjs', 'tests/perf/t31_hardware.spec.ts'], { cwd: root, encoding: 'utf8' }).trim().split(/\r?\n/);
-    const sourceFiles = [...new Set([...files.filter(Boolean), 'scripts/verify-gpu.mjs', 'tests/perf/t31_hardware.spec.ts', 'reports/T31/playwright.config.ts', 'reports/T31/vite.config.ts'])];
+    const sourceFiles = [...new Set([...files.filter(Boolean), 'scripts/verify-gpu.mjs', 'tests/perf/t31_hardware.spec.ts', 'reports/T31/native-controls.ts', 'reports/T31/playwright.config.ts', 'reports/T31/vite.config.ts'])];
     source = { commit, files: Object.fromEntries(sourceFiles.map(file => [file, createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex')])) };
     await writeFile(path.join(run, 'source.json'), JSON.stringify(source, null, 2));
     let driver = 'unknown';
