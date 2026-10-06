@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "2cf8e45425527635935a1f66d062b4b0b3119a5e",
-  "last_updated_at": "2026-10-06T11:33:57.849Z",
+  "application_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+  "last_updated_at": "2026-10-06T15:11:12.881Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -370,9 +370,9 @@
     "T31": {
       "status": "running",
       "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": null,
-      "evidence": [],
-      "blockers": []
+      "integrated_commit": "028b6f5c6a26cb08a6758c06f602da449043e6bd",
+      "evidence": ["reports/T31/result.json", "reports/T31/runs/2026-10-06T13-33-09.159Z/result.json", "reports/T31/runs/2026-10-06T13-33-09.159Z/source.json", "reports/T31/main-full-hardware-combined-producers.log", "reports/T31/pixels/2026-10-06T13-04-15.533Z/command.json", "reports/T31/main-independent-core-and-activity-review.json", "reports/T31/main-independent-producer-and-release-review.json", "reports/T31/main-independent-cpu-attribution.json", "reports/T31/cpu-attribution/attribution.json"],
+      "blockers": ["真实RTX5060Ti/Ultra5250KPlus/Chromium153正式8000样本：2k committed-edit CPU P9522.013ms>原8ms，2k其他CPU及全部doubleRAF P95<33ms。64原生controls矩阵/100资产寿命/idle/deviceLoss通过不替代CPU门禁。仅此CPU链路仍在修复，未改harness/场景/1000次数/计时/阈值；独立100commit归因不是正式通过证据。"]
     },
     "T32": {
       "status": "blocked",
@@ -382,17 +382,17 @@
       "blockers": ["G4五渠道真实运行未授权/未满足：官方账号与完整型号/运行时边界、付费和generated-image预算授权、公开锁定权重及真实forward/human review；35项工程闭环和真实诊断不能替代live"]
     },
     "T33": {
-      "status": "running",
+      "status": "done",
       "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": null,
-      "evidence": [],
+      "integrated_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+      "evidence": ["reports/T33/result.json", "reports/T33/main-final-closure.json", "reports/T33/main-registered-t33-business-final.log", "reports/T33/main-current-combined-release-build.log", "reports/T33/main-project-scalar-red.json", "reports/T33/main-project-scalar-green.json", "reports/T33/main-terminal-public-bootstrap-green.log", "reports/T33/main-terminal-bootstrap-password-login.json", "reports/T33/main-independent-final-surface-evidence-review.json", "reports/T33/main-current-native-cpu-contracts-single-job.log", "reports/T33/main-current-native-strict-clippy.log", "reports/T33/main-current-native-release-strict-clippy.log"],
       "blockers": []
     },
     "T34": {
-      "status": "running",
+      "status": "done",
       "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": null,
-      "evidence": [],
+      "integrated_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+      "evidence": ["reports/T34/result.json", "reports/T34/main-final-closure.json", "reports/T33/main-registered-t34-combined.log", "reports/T33/main-web-combined-final.log", "reports/T34/main-current-release-ui-smoke.json", "reports/T34/main-current-release-workbench.png", "reports/T34/keyboard-closure/result.json", "reports/T34/main-zero.json", "reports/T34/main-demo.json", "reports/T34/main-demo.csv", "reports/T33/main-pilot-public-pixel-inventory-green.log", "reports/T33/main-independent-final-surface-evidence-review.json"],
       "blockers": []
     },
     "T35": {
