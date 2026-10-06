@@ -91,7 +91,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&state.auth.pool)
         .await?;
-    if user_count == 0 {
+    let restore_auth_requested = match env::var("WEBLABEL_RESTORE_AUTH") {
+        Ok(value) if value == "1" => true,
+        Ok(value) if value == "0" => false,
+        Err(env::VarError::NotPresent) => false,
+        _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "WEBLABEL_RESTORE_AUTH must be exactly 0 or 1").into()),
+    };
+    let restore_bootstrap = restore_auth_requested && state.auth.enable_restore_bootstrap().await?;
+    if user_count == 0 || restore_bootstrap {
         println!("WEBLABEL_BOOTSTRAP_CODE={launch_code}");
     }
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
@@ -176,6 +183,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         && env::var("WEBLABEL_TEST_MANUAL_MODEL_WORKER").as_deref() == Ok("1");
     let model_queue = queue.clone();
     let model_repository = repository.clone();
+    let media_queue = queue.clone();
+    let media_repository = repository.clone();
     let (shutdown_tx, _) = tokio::sync::watch::channel(false);
     let mut worker_shutdown = shutdown_tx.subscribe();
     let export_worker = tokio::spawn(async move {
@@ -195,6 +204,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(error) => {
                         tracing::error!(%error, "dataset export worker failed");
                         tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                }
+            }
+        }
+    });
+    let mut media_shutdown = shutdown_tx.subscribe();
+    let media_worker = tokio::spawn(async move {
+        if manual_model_worker {
+            let _ = media_shutdown.changed().await;
+            return;
+        }
+        loop {
+            if *media_shutdown.borrow() { break; }
+            tokio::select! {
+                changed = media_shutdown.changed() => { if changed.is_err() || *media_shutdown.borrow() { break; } }
+                result = weblabel_api::jobs::model_jobs::process_media_import_next(&media_repository, &media_queue, "media-import-worker") => {
+                    match result {
+                        Ok(Some(_)) => {}
+                        Ok(None) => tokio::time::sleep(Duration::from_millis(500)).await,
+                        Err(error) => { tracing::error!(%error, "media import worker failed"); tokio::time::sleep(Duration::from_secs(2)).await; }
                     }
                 }
             }
@@ -229,6 +258,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = shutdown_tx.send(true);
     if let Err(error) = export_worker.await {
         tracing::error!(%error, "dataset export worker did not stop cleanly");
+    }
+    if let Err(error) = media_worker.await {
+        tracing::error!(%error, "media import worker did not stop cleanly");
     }
     if let Err(error) = model_worker.await {
         tracing::error!(%error, "model worker did not stop cleanly");

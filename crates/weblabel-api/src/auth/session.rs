@@ -92,16 +92,26 @@ async fn bootstrap(
             .await
             .map_err(|_| ())?
             .0;
-        if existing_user != 0 {
-            return Err(());
-        }
-        sqlx::query("INSERT INTO users(user_id, username, password_hash, created_at, platform_admin) VALUES(?, 'local-admin', ?, ?, 1)")
+        let username: std::borrow::Cow<'static, str> = if existing_user != 0 {
+            if !state.restore_bootstrap_enabled.load(Ordering::Acquire) { return Err(()); }
+            // Recheck inside the write transaction: startup eligibility is not a reset capability.
+            let eligible: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM users WHERE password_hash != '') AND NOT EXISTS(SELECT 1 FROM sessions)")
+                .fetch_one(&mut *tx).await.map_err(|_| ())?;
+            if !eligible { return Err(()); }
+            std::borrow::Cow::Owned(format!("restore-admin-{admin_id}"))
+        } else { std::borrow::Cow::Borrowed("local-admin") };
+        sqlx::query("INSERT INTO users(user_id, username, password_hash, created_at, platform_admin) VALUES(?, ?, ?, ?, 1)")
             .bind(&admin_id)
+            .bind(username.as_ref())
             .bind(password_hash)
             .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
             .execute(&mut *tx)
             .await
             .map_err(|_| ())?;
+        if existing_user != 0 {
+            sqlx::query("INSERT INTO memberships(project_id, user_id, role) SELECT project_id, ?, 'admin' FROM projects")
+                .bind(&admin_id).execute(&mut *tx).await.map_err(|_| ())?;
+        }
         sqlx::query("INSERT INTO sessions(session_id, user_id, expires_at, created_at, csrf_hash) VALUES(?, ?, ?, ?, ?)")
             .bind(digest(&token))
             .bind(&admin_id)
@@ -112,13 +122,13 @@ async fn bootstrap(
             .await
             .map_err(|_| ())?;
         tx.commit().await.map_err(|_| ())?;
-        Ok::<_, ()>((admin_id, token, csrf))
+        Ok::<_, ()>((admin_id, username, token, csrf))
     }.await;
     match result {
-        Ok((admin_id, token, csrf)) => (
+        Ok((admin_id, username, token, csrf)) => (
             StatusCode::OK,
             [(header::SET_COOKIE, cookie(&token, &state, SESSION_SECONDS))],
-            Json(json!({"user_id": admin_id, "username": "local-admin", "csrf_token": csrf})),
+            Json(json!({"user_id": admin_id, "username": username, "csrf_token": csrf})),
         )
             .into_response(),
         Err(()) => {

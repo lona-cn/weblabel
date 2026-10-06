@@ -286,6 +286,16 @@ pub async fn process_model_next(
     Ok(Some(job_id))
 }
 
+/// Production media-import worker that never leases model or export jobs.
+pub async fn process_media_import_next(
+    repository: &Repository, queue: &JobQueue, worker_id: &str,
+) -> Result<Option<String>, ModelJobError> {
+    let Some(lease) = queue.lease_next_kind(worker_id, Duration::from_secs(300), Some("media_import")).await? else { return Ok(None); };
+    let job_id = lease.job_id.clone();
+    ingest::process_import_job(repository, &media_worker(), queue, &lease).await?;
+    Ok(Some(job_id))
+}
+
 /// Production dataset-export worker that never leases unrelated shared-queue jobs.
 pub async fn process_dataset_export_next(
     repository: &Repository,

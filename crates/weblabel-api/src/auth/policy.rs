@@ -30,6 +30,7 @@ pub struct AuthState {
     pub pool: SqlitePool,
     pub config: AuthConfig,
     pub(crate) bootstrap_consumed: Arc<AtomicBool>,
+    pub(crate) restore_bootstrap_enabled: Arc<AtomicBool>,
     pub(crate) login_limiter: Arc<tokio::sync::Mutex<LoginLimiter>>,
     pub(crate) dummy_password_hash: String,
 }
@@ -99,9 +100,18 @@ impl AuthState {
             pool,
             config,
             bootstrap_consumed: Arc::new(AtomicBool::new(false)),
+            restore_bootstrap_enabled: Arc::new(AtomicBool::new(false)),
             login_limiter: Arc::new(tokio::sync::Mutex::new(LoginLimiter::default())),
             dummy_password_hash: super::password::hash("nonexistent-account-password")?,
         })
+    }
+
+    /// Trusted local restore startup only; never resets any surviving credential or session.
+    pub async fn enable_restore_bootstrap(&self) -> Result<bool, sqlx::Error> {
+        let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users) AND NOT EXISTS(SELECT 1 FROM users WHERE password_hash != '') AND NOT EXISTS(SELECT 1 FROM sessions)")
+            .fetch_one(&self.pool).await?;
+        self.restore_bootstrap_enabled.store(eligible, std::sync::atomic::Ordering::Release);
+        Ok(eligible)
     }
 }
 
