@@ -12,6 +12,43 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
+import type { EditorHost } from '../../apps/web/src/lib/editor/EditorHost';
+import type { ApiError, BinaryTransfer, CanonicalFrame, EditorAssetRequest, EditorDelta, EditorHostStatus, Viewport } from '../../apps/web/src/lib/editor/types';
+
+export interface HarnessLog {
+  disposed: number;
+  renders: number;
+  pointer: number;
+  snapshots: number;
+  setViewports: number;
+  argBytes: number;
+  mounted: boolean;
+}
+
+export interface T09Harness {
+  bootHarness(): Promise<boolean>;
+  factory: { gated: boolean; logs: HarnessLog[]; release(index: number): void; releaseAll(): void };
+  frameCounter: { active: number };
+  canvasListenerCounts: Record<string, number>;
+  readyHosts: EditorHost[];
+  deltas: EditorDelta[];
+  makeRequest(rgba: number[], width: number, height: number, id: string): EditorAssetRequest;
+  frames(count: number): Promise<void>;
+  sleep(ms: number): Promise<void>;
+  decode(bytes: number[], width: number, height: number): Promise<CanonicalFrame & { byteLength: number }>;
+  deviceProbe(): Promise<string>;
+  newHost(canvasId: string): boolean;
+  load(request: EditorAssetRequest): Promise<{ status: EditorHostStatus; transfers: readonly BinaryTransfer[] }>;
+  hostState(): { status: EditorHostStatus; error: ApiError | null; transfers: readonly BinaryTransfer[] };
+  facadeRead(index: number): { generation: number; viewport: Viewport };
+  strictMount(containerId: string, request: EditorAssetRequest): boolean;
+  unmountReact(): void;
+  disposeHost(): void;
+}
+
+declare global {
+  interface Window { __t09: T09Harness }
+}
 
 test.use({ channel: 'chromium', launchOptions: { args: ['--enable-unsafe-webgpu'] } });
 
@@ -26,8 +63,15 @@ import { createEditorFacadeFactory, decodeCanonicalFrame, loadWasmBridge } from 
 import { createElement, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CanvasView } from './src/features/workbench/CanvasView';
+import type { Root } from 'react-dom/client';
+import type { EditorAssetRequest, EditorDelta, EditorFacade, EditorFacadeFactory, EditorWasmBridge } from './src/lib/editor/types';
+import type { HarnessLog } from '../../tests/e2e/t09_canvas.spec';
 
-function makeRequest(rgba, width, height, assetRevisionId) {
+function describeFailure(reason: unknown): string {
+  if (reason instanceof Error) return reason.name + ': ' + reason.message + '\\n' + (reason.stack ?? '');
+  return typeof reason === 'string' ? reason : JSON.stringify(reason);
+}
+function makeRequest(rgba: number[], width: number, height: number, assetRevisionId: string): EditorAssetRequest {
   return {
     media: {
       asset_id: 'e2e-asset', asset_revision_id: assetRevisionId, project_id: 'sample-project',
@@ -54,32 +98,27 @@ function makeRequest(rgba, width, height, assetRevisionId) {
   };
 }
 
-class HarnessFactory {
-  constructor(real) {
-    this.real = real;
-    this.logs = [];
-    this.created = [];
-    this.gated = false;
-    this.pending = [];
-  }
-  async create(canvas, request) {
+class HarnessFactory implements EditorFacadeFactory {
+  readonly logs: HarnessLog[] = [];
+  readonly created: EditorFacade[] = [];
+  gated = false;
+  private readonly pending: { index: number; release(): void }[] = [];
+  constructor(private readonly real: EditorFacadeFactory) {}
+  async create(canvas: HTMLCanvasElement, request: EditorAssetRequest) {
     const log = { disposed: 0, renders: 0, pointer: 0, snapshots: 0, setViewports: 0, argBytes: 0, mounted: false };
     this.logs.push(log);
     const index = this.logs.length - 1;
     // Register the gate before the async device init so a test can deterministically
     // hold back delivery of an init that would otherwise resolve late.
-    let gate = null;
-    if (this.gated) {
-      gate = Promise.withResolvers();
-      this.pending.push({ index, release: () => gate.resolve() });
-    }
+    const gate = this.gated ? Promise.withResolvers<void>() : null;
+    if (gate) this.pending.push({ index, release: () => gate.resolve() });
     const created = await this.real.create(canvas, request);
     const facade = instrument(created.facade, log);
     this.created.push(facade);
     if (gate) await gate.promise;
     return { facade, transfer: created.transfer };
   }
-  release(index) {
+  release(index: number) {
     const at = this.pending.findIndex((entry) => entry.index === index);
     if (at >= 0) this.pending.splice(at, 1)[0].release();
   }
@@ -88,12 +127,12 @@ class HarnessFactory {
   }
 }
 
-function instrument(facade, log) {
+function instrument(facade: EditorFacade, log: HarnessLog): EditorFacade {
   return new Proxy(facade, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function') return value;
-      return (...args) => {
+      return (...args: unknown[]) => {
         if (prop === 'pointer') {
           log.pointer += 1;
           log.argBytes = Math.max(log.argBytes, JSON.stringify(args[0]).length);
@@ -111,21 +150,21 @@ function instrument(facade, log) {
   });
 }
 
-const canvasListenerCounts = {};
+const canvasListenerCounts: Record<string, number> = {};
 let listenersInstrumented = false;
 function instrumentCanvasListeners() {
   if (listenersInstrumented) return;
   listenersInstrumented = true;
   const proto = HTMLCanvasElement.prototype;
-  const realAdd = proto.addEventListener;
-  const realRemove = proto.removeEventListener;
-  proto.addEventListener = function (type, ...rest) {
+  const realAdd: EventTarget['addEventListener'] = proto.addEventListener;
+  const realRemove: EventTarget['removeEventListener'] = proto.removeEventListener;
+  proto.addEventListener = function (type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions) {
     canvasListenerCounts[type] = (canvasListenerCounts[type] ?? 0) + 1;
-    return realAdd.call(this, type, ...rest);
+    return realAdd.call(this, type, listener, options);
   };
-  proto.removeEventListener = function (type, ...rest) {
+  proto.removeEventListener = function (type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions) {
     canvasListenerCounts[type] = (canvasListenerCounts[type] ?? 0) - 1;
-    return realRemove.call(this, type, ...rest);
+    return realRemove.call(this, type, listener, options);
   };
 }
 
@@ -135,35 +174,52 @@ function instrumentFrames() {
   if (framesInstrumented) return;
   framesInstrumented = true;
   const realRaf = window.requestAnimationFrame.bind(window);
+  const realCancel = window.cancelAnimationFrame.bind(window);
+  const pending = new Set<number>();
   window.requestAnimationFrame = (callback) => {
-    frameCounter.active += 1;
-    return realRaf((timestamp) => {
-      frameCounter.active -= 1;
+    const id = realRaf((timestamp) => {
+      pending.delete(id);
+      frameCounter.active = pending.size;
       callback(timestamp);
     });
+    pending.add(id);
+    frameCounter.active = pending.size;
+    return id;
+  };
+  window.cancelAnimationFrame = (id) => {
+    pending.delete(id);
+    frameCounter.active = pending.size;
+    realCancel(id);
   };
 }
 
 async function bootHarness() {
   instrumentCanvasListeners();
   instrumentFrames();
-  const bridge = await loadWasmBridge('/wasm/wasm_bridge.js');
+  const bridge = await loadWasmBridge('/wasm/wasm_bridge.js') as EditorWasmBridge & { initialize_browser_device_probe(): Promise<string> };
   const factory = new HarnessFactory(createEditorFacadeFactory(bridge));
-  const state = { factory, host: null, mountReact: null };
+  const state: { factory: HarnessFactory; host: EditorHost | null; mountReact: Root | null } = { factory, host: null, mountReact: null };
+  function host(): EditorHost {
+    if (!state.host) throw new Error('T09 host has not been mounted');
+    return state.host;
+  }
   window.__t09 = {
+    bootHarness,
+    readyHosts: [],
+    deltas: [],
     factory,
     frameCounter,
     canvasListenerCounts,
     makeRequest,
     async frames(count) {
       for (let i = 0; i < count; i += 1) {
-        const gate = Promise.withResolvers();
+        const gate = Promise.withResolvers<number>();
         requestAnimationFrame((ts) => gate.resolve(ts));
         await gate.promise;
       }
     },
     sleep(ms) {
-      const gate = Promise.withResolvers();
+      const gate = Promise.withResolvers<void>();
       setTimeout(() => gate.resolve(), ms);
       return gate.promise;
     },
@@ -172,7 +228,7 @@ async function bootHarness() {
         const frame = await decodeCanonicalFrame(new Blob([Uint8Array.from(bytes)]), { width, height });
         return { width: frame.width, height: frame.height, byteLength: frame.rgba.byteLength, rgba: frame.rgba };
       } catch (reason) {
-        throw new Error('decode rejected: ' + JSON.stringify(reason));
+        throw new Error('decode rejected: ' + describeFailure(reason), { cause: reason });
       }
     },
     async deviceProbe() {
@@ -180,20 +236,21 @@ async function bootHarness() {
     },
     newHost(canvasId) {
       const canvas = document.getElementById(canvasId);
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('T09 canvas missing: ' + canvasId);
       state.host = new EditorHost({ facadeFactory: factory });
       state.host.mount(canvas);
       return true;
     },
     async load(request) {
       try {
-        await state.host.loadAsset(request);
+        await host().loadAsset(request);
       } catch (reason) {
-        throw new Error('loadAsset rejected: ' + JSON.stringify(reason));
+        throw new Error('loadAsset rejected: ' + describeFailure(reason), { cause: reason });
       }
-      return { status: state.host.status, transfers: state.host.transfers };
+      return { status: host().status, transfers: host().transfers };
     },
     hostState() {
-      return { status: state.host.status, error: state.host.error, transfers: state.host.transfers };
+      return { status: host().status, error: host().error, transfers: host().transfers };
     },
     facadeRead(index) {
       const facade = state.factory.created[index];
@@ -201,11 +258,15 @@ async function bootHarness() {
     },
     strictMount(containerId, request) {
       const container = document.getElementById(containerId);
+      if (!container) throw new Error('T09 React container missing: ' + containerId);
       state.mountReact = createRoot(container);
       state.mountReact.render(
         createElement(StrictMode, null, createElement(CanvasView, {
           request,
           hostOptions: { facadeFactory: factory },
+          activeTool: 'select',
+          onDelta: (_host: EditorHost, delta: EditorDelta) => window.__t09.deltas.push(delta),
+          onHostReady: (host: EditorHost) => window.__t09.readyHosts.push(host),
         })),
       );
       return true;
@@ -221,7 +282,7 @@ async function bootHarness() {
   return true;
 }
 
-window.__t09 = { bootHarness };
+Object.assign(window, { __t09: { bootHarness } });
 `;
 
 interface EsbuildLike {
@@ -235,6 +296,7 @@ async function buildHarnessBundle(): Promise<void> {
     absWorkingDir: repoRoot,
     stdin: { contents: HARNESS_ENTRY, resolveDir: path.join(repoRoot, 'apps', 'web'), loader: 'ts' },
     bundle: true,
+    nodePaths: (process.env.NODE_PATH ?? '').split(path.delimiter).filter(Boolean),
     format: 'esm',
     outfile: harnessOut,
     define: { 'process.env.NODE_ENV': '"development"' },
@@ -250,11 +312,13 @@ function buildWasmBundle(): void {
   // unstable codegen-backend that the pinned stable toolchain rejects as an
   // ancestor config (reports/T21 environment_note). RUSTUP_TOOLCHAIN restores
   // the repo pin that rustup would otherwise resolve from the cwd.
-  const env = { ...process.env, RUSTUP_TOOLCHAIN: channel };
+  const compiler = spawnSync('rustup', ['which', '--toolchain', channel, 'rustc'], { encoding: 'utf8', shell: false, windowsHide: true });
+  if (compiler.status !== 0) throw new Error('cannot resolve pinned rustc: ' + compiler.stderr);
+  const env = { ...process.env, RUSTUP_TOOLCHAIN: channel, RUSTC: compiler.stdout.trim() };
   // cwd at the drive root: cargo walks cwd ancestors for config files, so any
   // directory under the user profile picks up the user-global cargo config.
   const neutralCwd = path.parse(repoRoot).root;
-  const build = spawnSync('cargo', ['build', '--target', 'wasm32-unknown-unknown', '-p', 'wasm-bridge', '--manifest-path', path.join(repoRoot, 'Cargo.toml'), '--locked'], {
+  const build = spawnSync('cargo', ['build', '--target', 'wasm32-unknown-unknown', '--target-dir', path.join(repoRoot, 'target'), '-p', 'wasm-bridge', '--manifest-path', path.join(repoRoot, 'Cargo.toml'), '--locked'], {
     cwd: neutralCwd,
     env,
     encoding: 'utf8',
@@ -262,6 +326,9 @@ function buildWasmBundle(): void {
     windowsHide: true,
   });
   if (build.status !== 0) throw new Error(`cargo build for wasm32 failed:\n${build.stdout}\n${build.stderr}`);
+  const version = spawnSync(env.RUSTC, ['--version', '--verbose'], { encoding: 'utf8', shell: false, windowsHide: true });
+  if (version.status !== 0) throw new Error('pinned rustc version failed: ' + version.stderr);
+  console.info('T09_WASM_BUILD target=' + path.join(repoRoot, 'target') + '\\n' + version.stdout + build.stdout + build.stderr);
   const bindgen = spawnSync('wasm-bindgen', ['--target', 'web', '--out-dir', wasmOut, '--out-name', 'wasm_bridge', path.join(repoRoot, 'target', 'wasm32-unknown-unknown', 'debug', 'wasm_bridge.wasm')], {
     cwd: neutralCwd,
     encoding: 'utf8',
@@ -291,8 +358,8 @@ async function bootPage(page: Page): Promise<void> {
     + '<div id="t09-react" style="position:relative;width:640px;height:480px"></div><script type="module" src="/t09-harness.js"></script>',
   );
   try {
-    await page.waitForFunction(() => Boolean((window as unknown as { __t09?: unknown }).__t09?.bootHarness), undefined, { timeout: 15_000 });
-    await page.evaluate(() => (window as unknown as { __t09: { bootHarness(): Promise<boolean> } }).__t09.bootHarness());
+    await page.waitForFunction(() => Boolean(window.__t09?.bootHarness), undefined, { timeout: 15_000 });
+    await page.evaluate(() => window.__t09.bootHarness());
   } catch (error) {
     throw new Error(`harness module failed to boot:\n${pageErrors.join('\n')}\n${String(error)}`);
   }
@@ -320,14 +387,15 @@ function transferBytes(bytes: Uint8Array): number[] {
 const SOFTWARE_ADAPTER = /cpu|software|swiftshader|llvmpipe|lavapipe|mesa|basic render/i;
 
 test.beforeAll(async () => {
+  test.setTimeout(1_200_000);
   buildWasmBundle();
   await buildHarnessBundle();
-}, 1_200_000);
+});
 
-test('T09-A canonical decode keeps EXIF orientation single, crosses RGBA via measured copyBytes and renders on a real GPU', async ({ page }) => {
+test('T09-A canonical decode keeps EXIF orientation single, crosses RGBA via measured copyBytes and renders on a real GPU', async ({ page }, testInfo) => {
   await bootPage(page);
   const probe = await page.evaluate(async () => {
-    const t = (window as unknown as { __t09: { deviceProbe(): Promise<string> } }).__t09;
+    const t = window.__t09;
     const gpu = (navigator as unknown as {
       gpu?: { requestAdapter(): Promise<{ info?: { vendor?: string; architecture?: string; device?: string; description?: string } } | null> };
     }).gpu;
@@ -365,7 +433,7 @@ test('T09-A canonical decode keeps EXIF orientation single, crosses RGBA via mea
     .png()
     .toBuffer();
   const decoded = await page.evaluate(async ({ bytes }) => {
-    const harness = (window as unknown as { __t09: { decode(b: number[], w: number, h: number): Promise<{ width: number; height: number; byteLength: number; rgba: Uint8Array }> } }).__t09;
+    const harness = window.__t09;
     const frame = await harness.decode(bytes, 8, 4);
     const rgba = Array.from(frame.rgba);
     return {
@@ -394,7 +462,7 @@ test('T09-A canonical decode keeps EXIF orientation single, crosses RGBA via mea
     .withMetadata({ orientation: 6 })
     .toBuffer();
   const refusal = await page.evaluate(async ({ bytes }) => {
-    const harness = (window as unknown as { __t09: { decode(b: number[], w: number, h: number): Promise<unknown> } }).__t09;
+    const harness = window.__t09;
     try {
       await harness.decode(bytes, 8, 4);
       return 'decoded';
@@ -407,21 +475,15 @@ test('T09-A canonical decode keeps EXIF orientation single, crosses RGBA via mea
   // Golden quadrants through the full path: real decode, real binary transfer,
   // real create_editor, real WebGPU submission.
   const golden = goldenRgba();
+  const goldenPng = await sharp(Buffer.from(golden), { raw: { width: 640, height: 480, channels: 4 } }).png().toBuffer();
   const result = await page.evaluate(async (bytes) => {
-    const t = (window as unknown as {
-      __t09: {
-        makeRequest(r: number[], w: number, h: number, id: string): unknown;
-        decode(b: number[], w: number, h: number): Promise<{ rgba: Uint8Array }>;
-        newHost(id: string): boolean;
-        load(r: unknown): Promise<{ status: string; transfers: { method: string; byteLength: number; durationMs: number }[] }>;
-        facadeRead(index: number): { generation: number; viewport: Record<string, number> };
-      };
-    }).__t09;
+    const t = window.__t09;
     t.newHost('t09-canvas');
-    const request = t.makeRequest(bytes, 640, 480, 'asset-rev-golden');
+    const frame = await t.decode(bytes, 640, 480);
+    const request = t.makeRequest(Array.from(frame.rgba), 640, 480, 'asset-rev-golden');
     const loaded = await t.load(request);
     return { loaded, read: t.facadeRead(0) };
-  }, transferBytes(golden));
+  }, transferBytes(new Uint8Array(goldenPng)));
 
   expect(result.loaded.status).toBe('ready');
   const [transfer] = result.loaded.transfers;
@@ -433,7 +495,7 @@ test('T09-A canonical decode keeps EXIF orientation single, crosses RGBA via mea
   expect(result.read.generation).toBe(0);
   expect(result.read.viewport).toMatchObject({ css_width: 640, css_height: 480 });
 
-  const screenshot = await page.locator('#t09-canvas').screenshot({ path: 'reports/T09/canvas-render.png' });
+  const screenshot = await page.locator('#t09-canvas').screenshot({ path: testInfo.outputPath('canonical-render.png') });
   const { data, info } = await sharp(screenshot).raw().toBuffer({ resolveWithObject: true });
   expect(info.width).toBe(640);
   expect(info.height).toBe(480);
@@ -456,14 +518,7 @@ test('T09-A canonical decode keeps EXIF orientation single, crosses RGBA via mea
 test('T09-B a stale async init that resolves after a newer asset is destroyed and never mounted', async ({ page }) => {
   await bootPage(page);
   const outcome = await page.evaluate(async () => {
-    const t = (window as unknown as {
-      __t09: {
-        factory: { gated: boolean; logs: unknown[]; release(index: number): void };
-        makeRequest(r: number[], w: number, h: number, id: string): unknown;
-        newHost(id: string): boolean;
-        load(r: unknown): Promise<unknown>;
-      };
-    }).__t09;
+    const t = window.__t09;
     t.factory.gated = true;
     t.newHost('t09-canvas');
     const red = new Uint8Array(64 * 64 * 4);
@@ -482,7 +537,7 @@ test('T09-B a stale async init that resolves after a newer asset is destroyed an
     await t.frames(4);
     return t.factory.logs;
   });
-  const [stale, current] = outcome as { disposed: number; renders: number; mounted: boolean }[];
+  const [stale, current] = outcome;
   expect(stale.disposed).toBe(1);
   expect(stale.renders).toBe(0);
   expect(stale.mounted).toBe(false);
@@ -501,16 +556,7 @@ test.describe('T09-C sizing', () => {
   test('DPR backing store, resize, 0x0 pause and unmount cleanup are exact', async ({ page }) => {
     await bootPage(page);
     const observed = await page.evaluate(async () => {
-      const t = (window as unknown as {
-        __t09: {
-          factory: { logs: { renders: number; setViewports: number; disposed: number; pointer: number }[] };
-          makeRequest(r: number[], w: number, h: number, id: string): unknown;
-          newHost(id: string): boolean;
-          load(r: unknown): Promise<unknown>;
-          disposeHost(): void;
-          frameCounter: { active: number };
-        };
-      }).__t09;
+      const t = window.__t09;
       const canvas = document.getElementById('t09-canvas') as HTMLCanvasElement;
       canvas.style.width = '320px';
       canvas.style.height = '240px';
@@ -569,13 +615,7 @@ test.describe('T09-C sizing', () => {
 test('T09-D one pointermove round submits input only and idle submits no GPU work', async ({ page }) => {
   await bootPage(page);
   await page.evaluate(async () => {
-    const t = (window as unknown as {
-      __t09: {
-        makeRequest(r: number[], w: number, h: number, id: string): unknown;
-        newHost(id: string): boolean;
-        load(r: unknown): Promise<unknown>;
-      };
-    }).__t09;
+    const t = window.__t09;
     t.newHost('t09-canvas');
     const rgba = new Uint8Array(640 * 480 * 4);
     for (let i = 0; i < 640 * 480; i += 1) rgba.set([230, 45, 25, 255], i * 4);
@@ -589,12 +629,7 @@ test('T09-D one pointermove round submits input only and idle submits no GPU wor
     await page.mouse.move(box.x + 40 + step * 30, box.y + 50 + step * 10);
   }
   const afterMoves = await page.evaluate(async () => {
-    const t = (window as unknown as {
-      __t09: {
-        frames(count: number): Promise<void>;
-        factory: { logs: { pointer: number; snapshots: number; argBytes: number; renders: number }[] };
-      };
-    }).__t09;
+    const t = window.__t09;
     await t.frames(4);
     return t.factory.logs[0];
   });
@@ -605,7 +640,7 @@ test('T09-D one pointermove round submits input only and idle submits no GPU wor
   const idleBefore = afterMoves.renders;
   await page.waitForTimeout(600);
   const idleAfter = await page.evaluate(() => {
-    const t = (window as unknown as { __t09: { factory: { logs: { renders: number }[] } } }).__t09;
+    const t = window.__t09;
     return t.factory.logs[0].renders;
   });
   expect(idleAfter, 'idle must not submit GPU work').toBe(idleBefore);
@@ -617,28 +652,17 @@ test('T09-D one pointermove round submits input only and idle submits no GPU wor
   });
   await page.waitForTimeout(100);
   const afterResize = await page.evaluate(() => {
-    const t = (window as unknown as {
-      __t09: {
-        factory: { logs: { renders: number; setViewports: number }[] };
-        frameCounter: { active: number };
-      };
-    }).__t09;
+    const t = window.__t09;
     return { ...t.factory.logs[0], pendingFrames: t.frameCounter.active };
   });
   expect(afterResize.renders).toBe(idleBefore + 1);
   expect(afterResize.setViewports).toBeGreaterThanOrEqual(2);
 });
 
-test('T09-E React StrictMode double mount keeps one listener set and one submit per round', async ({ page }) => {
+test('T09-E React StrictMode remount keeps one listener set and one submit per round', async ({ page }, testInfo) => {
   await bootPage(page);
   await page.evaluate(() => {
-    const t = (window as unknown as {
-      __t09: {
-        factory: { gated: boolean; logs: unknown[]; release(index: number): void; releaseAll(): void };
-        makeRequest(r: number[], w: number, h: number, id: string): unknown;
-        strictMount(id: string, request: unknown): boolean;
-      };
-    }).__t09;
+    const t = window.__t09;
     t.factory.gated = true;
     const rgba = new Uint8Array(32 * 32 * 4);
     for (let i = 0; i < 32 * 32; i += 1) rgba.set([230, 45, 25, 255], i * 4);
@@ -646,25 +670,29 @@ test('T09-E React StrictMode double mount keeps one listener set and one submit 
     t.strictMount('t09-react', request);
     return true;
   });
-  await page.waitForFunction(() => {
-    const harness = (window as unknown as { __t09?: { factory: { logs: unknown[] } } }).__t09;
-    return Boolean(harness) && harness.factory.logs.length >= 2;
-  });
+  await page.waitForFunction(() => window.__t09.factory.logs.length >= 1);
+  // Exercise two actual committed mounts while the first real init is held.
+  // StrictMode may correctly cancel its abandoned effect before creating a device.
   await page.evaluate(() => {
-    const t = (window as unknown as { __t09: { factory: { releaseAll(): void } } }).__t09;
+    const t = window.__t09;
+    t.unmountReact();
+    const rgba = new Uint8Array(32 * 32 * 4);
+    for (let i = 0; i < 32 * 32; i += 1) rgba.set([230, 45, 25, 255], i * 4);
+    t.strictMount('t09-react', t.makeRequest(Array.from(rgba), 32, 32, 'asset-rev-strict-remount'));
+  });
+  await page.waitForFunction(() => window.__t09.factory.logs.length >= 2);
+  await page.evaluate(() => {
+    const t = window.__t09;
     t.factory.releaseAll();
     return true;
   });
-  await page.waitForTimeout(300);
+  await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state', 'ready');
+  await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-adapter-kind', 'hardware');
+  await page.waitForFunction(() => window.__t09.factory.logs.filter(log => log.disposed === 0).length === 1);
 
   const before = await page.evaluate(() => {
-    const t = (window as unknown as {
-      __t09: {
-        factory: { logs: { disposed: number; renders: number; pointer: number; mounted: boolean }[] };
-        canvasListenerCounts: Record<string, number>;
-      };
-    }).__t09;
-    return { logs: t.factory.logs, listeners: { ...t.canvasListenerCounts } };
+    const t = window.__t09;
+    return { logs: t.factory.logs, listeners: { ...t.canvasListenerCounts }, ready: t.readyHosts.length };
   });
   expect(before.logs.length).toBeGreaterThanOrEqual(2);
   const live = before.logs.filter((log) => log.disposed === 0);
@@ -673,13 +701,50 @@ test('T09-E React StrictMode double mount keeps one listener set and one submit 
     if (log !== live[0]) expect(log.disposed).toBeGreaterThanOrEqual(1);
   }
   expect(before.listeners.pointermove ?? 0, 'no duplicated pointermove listeners').toBe(1);
+  expect(before.ready, 'only the current mounted caller receives onHostReady').toBe(1);
+  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'contextmenu', 'wheel']) {
+    expect(before.listeners[type], type + ' has one host listener').toBe(1);
+  }
 
-  const box = await page.getByTestId('annotation-canvas').boundingBox();
+  const canvas = page.getByTestId('annotation-canvas');
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
   if (!box) throw new Error('react canvas has no box');
-  await page.mouse.move(box.x + 20, box.y + 25);
-  const submits = await page.evaluate(() => {
-    const t = (window as unknown as { __t09: { factory: { logs: { pointer: number }[] } } }).__t09;
-    return t.factory.logs.reduce((sum, log) => sum + log.pointer, 0);
+  const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const hit = await page.evaluate(({ point, box }) => {
+    const canvas = document.querySelector('[data-testid="annotation-canvas"]');
+    const target = document.elementFromPoint(point.x, point.y);
+    const oldTarget = document.elementFromPoint(box.x + 20, box.y + 25);
+    return {
+      point, box, isCanvas: target === canvas,
+      target: target?.getAttribute('data-testid') ?? target?.tagName,
+      previousFixtureTarget: oldTarget?.getAttribute('data-testid') ?? oldTarget?.tagName,
+    };
+  }, { point, box });
+  await testInfo.attach('strict-pointer-hit-test', { body: JSON.stringify(hit), contentType: 'application/json' });
+  expect(hit.isCanvas, 'actual pointer round targets the uncovered canvas, not GPU diagnostics').toBe(true);
+  await page.mouse.move(point.x, point.y);
+  const { submits, deltas } = await page.evaluate(() => {
+    const t = window.__t09;
+    return { submits: t.factory.logs.reduce((sum, log) => sum + log.pointer, 0), deltas: t.deltas };
   });
   expect(submits, 'one pointermove round submits exactly once').toBe(1);
+  expect(deltas).toHaveLength(1);
+  expect(deltas[0]).toMatchObject({ generation: 0, document_changed: false, error: null });
+  const cleanup = await page.evaluate(() => {
+    const t = window.__t09;
+    const canvas = document.querySelector('[data-testid="annotation-canvas"]');
+    t.unmountReact();
+    canvas?.dispatchEvent(new PointerEvent('pointermove', { clientX: 20, clientY: 25, pointerId: 1 }));
+    return {
+      listeners: { ...t.canvasListenerCounts },
+      pendingFrames: t.frameCounter.active,
+      submits: t.factory.logs.reduce((sum, log) => sum + log.pointer, 0),
+      live: t.factory.logs.filter(log => log.disposed === 0).length,
+    };
+  });
+  expect(cleanup.submits, 'detached canvas does not retain its host input listener').toBe(submits);
+  expect(cleanup.live).toBe(0);
+  expect(cleanup.pendingFrames).toBe(0);
+  for (const count of Object.values(cleanup.listeners)) expect(count).toBe(0);
 });
