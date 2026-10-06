@@ -35,8 +35,11 @@ function scrub(db) {
     else if (value && typeof value === 'object') for (const [key, item] of Object.entries(value)) { if (privateKey.test(key)) collect(item); else if (item && typeof item === 'object') collect(item); }
   }
   for (const row of db.prepare('SELECT config_json,secret_ref FROM model_profiles').all()) {
-    collect(JSON.parse(row.config_json));
+    collect(parseJson(row.config_json));
     if (typeof row.secret_ref === 'string' && row.secret_ref.length) secrets.add(row.secret_ref);
+  }
+  function parseJson(value) {
+    try { return JSON.parse(value); } catch { throw new Error('database_json_invalid'); }
   }
   function redact(value) {
     if (typeof value === 'string') { let out = value; for (const secret of secrets) out = out.replaceAll(secret, '[REDACTED]'); return out; }
@@ -52,55 +55,58 @@ function scrub(db) {
     }
     return false;
   }
-  // Immutable history includes scalar provenance, hashes and original media names,
-  // not just JSON payloads or human-readable diagnostic columns.
-  const immutableBusiness = new Set([
-    'annotation_revisions', 'ontology_versions', 'dataset_versions', 'annotation_import_batches',
-    'annotation_exports', 'dataset_exports', 'review_submissions', 'review_decisions', 'review_issues',
-    'predictions', 'prediction_audit', 'suggestion_sets', 'suggestion_decisions', 'run_events',
-    'media_assets', 'media_revisions', 'media_object_refs', 'media_metadata',
-  ]);
-  // Match model_runs_pinned_inputs_immutable; profile_snapshot_json remains the
-  // existing credential-configuration exception, not editable business input.
-  const pinnedRunInputs = new Set([
-    'run_id', 'operation_id', 'project_id', 'asset_revision_id', 'annotation_revision_id',
-    'ontology_version_id', 'actor_id', 'job_id', 'profile_id', 'provider_id', 'source',
-    'intent', 'prompt', 'consent_id', 'context_json', 'input_fingerprint', 'request_hash', 'created_at',
-  ]);
+  function containsTextSecret(value, jsonColumn) {
+    if (containsSecret(value)) return true;
+    if (jsonColumn) return containsSecret(parseJson(value));
+    // JSON may also be stored in an uncategorized TEXT column. Ordinary scalar
+    // text need not be valid JSON; parseable text still gets decoded inspection.
+    let decoded;
+    try { decoded = JSON.parse(value); } catch { return false; }
+    return containsSecret(decoded);
+  }
+  function containsSecretKey(value) {
+    return value && typeof value === 'object' && Object.entries(value).some(([key, item]) => containsSecret(key) || containsSecretKey(item));
+  }
+  // Only this live, mutable progress projection is diagnostic (JobQueue.report_progress).
+  // Payloads/results contain business IDs and original media names; audit events,
+  // usage, identities, pinned run inputs and every unclassified TEXT remain protected.
+  const mutableDiagnostics = new Set(['jobs.progress_json']);
+  // The pre-existing profile snapshot credential-configuration exception is
+  // separate from pinned run inputs. Collision-free snapshots retain original bytes.
+  const credentialConfiguration = new Set(['model_runs.profile_snapshot_json']);
   const triggers = db.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger'").all();
   db.exec('PRAGMA foreign_keys=OFF; PRAGMA secure_delete=ON; BEGIN IMMEDIATE');
   try {
     for (const trigger of triggers) db.exec(`DROP TRIGGER ${quote(trigger.name)}`);
     db.exec("DELETE FROM sessions; UPDATE users SET password_hash=''; UPDATE model_profiles SET config_json='{}',secret_ref=NULL,availability='needs_configuration',verification='not_run',verified_at=NULL; DELETE FROM model_run_authorizations; DELETE FROM consents; DELETE FROM ai_run_previews;");
-    // Restoring never resumes a potentially billed AI run or an active lease.
-    db.exec("UPDATE model_runs SET state='interrupted' WHERE state IN ('queued','running'); UPDATE jobs SET state='interrupted',worker_id=NULL,lease_until=NULL WHERE state IN ('queued','running'); UPDATE task_leases SET holder_id=NULL,expires_at=0;");
-    for (const { name: table } of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('schema_migrations','model_profiles')").all()) {
-      const immutableTable = immutableBusiness.has(table);
-      const columns = db.prepare(`PRAGMA table_info(${quote(table)})`).all().filter(column => column.type === 'TEXT' && (immutableTable || (table === 'model_runs' && pinnedRunInputs.has(column.name)) || column.name.endsWith('_json') || ['message', 'reason', 'prompt'].includes(column.name)));
+    for (const { name: table } of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations'").all()) {
+      const columns = db.prepare(`PRAGMA table_info(${quote(table)})`).all().filter(column => column.type.toUpperCase() === 'TEXT');
       for (const column of columns) {
-        const immutableColumn = immutableTable || (table === 'model_runs' && pinnedRunInputs.has(column.name));
+        const mutableColumn = mutableDiagnostics.has(`${table}.${column.name}`) || credentialConfiguration.has(`${table}.${column.name}`);
         const rows = db.prepare(`SELECT rowid AS backup_rowid,${quote(column.name)} AS value FROM ${quote(table)} WHERE ${quote(column.name)} IS NOT NULL`).all();
-        if (immutableColumn) {
+        if (!mutableColumn) {
           for (const row of rows) {
-            // Inspect both stored bytes and decoded JSON (including escaped keys
-            // and values). Never serialize or update collision-free history.
-            if (containsSecret(row.value) || (column.name.endsWith('_json') && containsSecret(JSON.parse(row.value)))) throw new Error('credential_in_immutable_business_data: cannot scrub immutable business history');
+            // Inspect raw bytes and decoded JSON keys/values, without rewriting
+            // any collision-free business text (including whitespace and escapes).
+            if (containsTextSecret(row.value, column.name.endsWith('_json'))) throw new Error('credential_in_immutable_business_data: cannot scrub persisted business data');
           }
           continue;
         }
         const update = db.prepare(`UPDATE ${quote(table)} SET ${quote(column.name)}=? WHERE rowid=?`);
         for (const row of rows) {
-          if (column.name.endsWith('_json')) {
-            const original = JSON.parse(row.value);
-            const value = JSON.stringify(redact(original));
-            if (value !== JSON.stringify(original)) update.run(value, row.backup_rowid);
-          } else {
-            const value = redact(row.value);
-            if (value !== row.value) update.run(value, row.backup_rowid);
-          }
+          const original = parseJson(row.value);
+          // Renaming an unknown JSON key changes its schema/identity. Refuse
+          // rather than leaving a decoded/escaped credential behind.
+          if (containsSecretKey(original)) throw new Error('credential_in_immutable_business_data: cannot scrub JSON keys');
+          const value = JSON.stringify(redact(original));
+          if (containsSecret(value) || containsSecret(parseJson(value))) throw new Error('credential_in_immutable_business_data: cannot scrub persisted JSON');
+          if (value !== JSON.stringify(original)) update.run(value, row.backup_rowid);
         }
       }
     }
+    // Restoring never resumes a potentially billed AI run or an active lease.
+    // Inspect original business/identity fields before applying lifecycle resets.
+    db.exec("UPDATE model_runs SET state='interrupted' WHERE state IN ('queued','running'); UPDATE jobs SET state='interrupted',worker_id=NULL,lease_until=NULL WHERE state IN ('queued','running'); UPDATE task_leases SET holder_id=NULL,expires_at=0;");
     for (const trigger of triggers) db.exec(trigger.sql);
     db.exec('COMMIT; PRAGMA foreign_keys=ON; VACUUM; PRAGMA wal_checkpoint(TRUNCATE)');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
