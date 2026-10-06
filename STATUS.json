@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "4e536c6195e7b6d6cc2aff4ca3ba2b45df9819cd",
-  "last_updated_at": "2026-10-05T17:06:13.340Z",
+  "application_commit": "aaeaefa56cfb6e707e4174e9a4d58e410ccc041d",
+  "last_updated_at": "2026-10-06T03:30:43.455Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -286,17 +286,15 @@
       "blockers": []
     },
     "T24": {
-      "status": "blocked",
+      "status": "done",
       "base_commit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
-      "integrated_commit": "4e536c6195e7b6d6cc2aff4ca3ba2b45df9819cd",
+      "integrated_commit": "aaeaefa56cfb6e707e4174e9a4d58e410ccc041d",
       "evidence": [
         "reports/T24/result.json",
         "reports/T24/tests.log",
         "reports/T24/review.md"
       ],
-      "blockers": [
-        "Production AI prerequisite routes GET /api/model-profiles and POST /api/ai/consents are not registered; actual Workbench GET returned 404. T25 depends on T24, so integrating its consent prerequisite requires explicit task-ownership/dependency resolution. Fixture gates do not substitute for this production chain."
-      ]
+      "blockers": []
     },
     "T25": {
       "status": "running",
