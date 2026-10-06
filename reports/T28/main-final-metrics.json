@@ -1,0 +1,167 @@
+{
+  "source": "Root current fresh --dev WASM hardware registered run; not G4",
+  "files": [
+    "dense-2000-1791272644190.raw.json",
+    "dense-10000-1791272791829.raw.json"
+  ],
+  "scenes": [
+    {
+      "count": 2000,
+      "seed": 17,
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "browser": {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+        "dpr": 1,
+        "viewport": [
+          1280,
+          720
+        ],
+        "adapter": "WebGPU · hardware adapter · 就绪"
+      },
+      "pan": {
+        "p50": 0.5,
+        "p95": 0.699999988079071,
+        "max": 1
+      },
+      "pointer": {
+        "p50": 0.6000000238418579,
+        "p95": 0.9000000059604645,
+        "max": 1.7999999970197678
+      },
+      "zoom": {
+        "p50": 0.5,
+        "p95": 0.7000000178813934,
+        "max": 1
+      },
+      "committed_edit": {
+        "p50": 25.399999991059303,
+        "p95": 28.299999997019768,
+        "max": 28.50000001490116
+      },
+      "next_paint_proxy": {
+        "p50": 33.30000001192093,
+        "p95": 33.8999999910593,
+        "max": 50.20000000298023
+      },
+      "heap": {
+        "source": "Chromium CDP Performance.getMetrics after explicit GC, outside timed actions; V8 JS heap only, excludes physical VRAM/WASM linear memory",
+        "initial": [
+          {
+            "name": "JSHeapUsedSize",
+            "value": 8153368
+          },
+          {
+            "name": "JSHeapTotalSize",
+            "value": 8921088
+          }
+        ],
+        "final": [
+          {
+            "name": "JSHeapUsedSize",
+            "value": 9695076
+          },
+          {
+            "name": "JSHeapTotalSize",
+            "value": 10493952
+          }
+        ]
+      },
+      "first_live": {
+        "textures": 1,
+        "buffers": 3,
+        "decoded": 0
+      },
+      "last_live": {
+        "textures": 1,
+        "buffers": 3,
+        "decoded": 0
+      }
+    },
+    {
+      "count": 10000,
+      "seed": 17,
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "browser": {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+        "dpr": 1,
+        "viewport": [
+          1280,
+          720
+        ],
+        "adapter": "WebGPU · hardware adapter · 就绪"
+      },
+      "pan": {
+        "p50": 0.5999999940395355,
+        "p95": 0.7999999970197678,
+        "max": 1.2000000029802322
+      },
+      "pointer": {
+        "p50": 1.0999999940395355,
+        "p95": 1.300000011920929,
+        "max": 1.800000011920929
+      },
+      "zoom": {
+        "p50": 0.5,
+        "p95": 0.7000000029802322,
+        "max": 1.2000000029802322
+      },
+      "committed_edit": {
+        "p50": 95.1000000089407,
+        "p95": 110.79999999701977,
+        "max": 124.20000000298023
+      },
+      "next_paint_proxy": {
+        "p50": 33.3999999910593,
+        "p95": 33.80000001192093,
+        "max": 50.599999994039536
+      },
+      "heap": {
+        "source": "Chromium CDP Performance.getMetrics after explicit GC, outside timed actions; V8 JS heap only, excludes physical VRAM/WASM linear memory",
+        "initial": [
+          {
+            "name": "JSHeapUsedSize",
+            "value": 11065892
+          },
+          {
+            "name": "JSHeapTotalSize",
+            "value": 12066816
+          }
+        ],
+        "final": [
+          {
+            "name": "JSHeapUsedSize",
+            "value": 12437236
+          },
+          {
+            "name": "JSHeapTotalSize",
+            "value": 13377536
+          }
+        ]
+      },
+      "first_live": {
+        "textures": 1,
+        "buffers": 3,
+        "decoded": 0
+      },
+      "last_live": {
+        "textures": 1,
+        "buffers": 3,
+        "decoded": 0
+      }
+    }
+  ],
+  "limits": [
+    "JS/WASM binary bytes count RGBA inputs only, not total serialized traffic",
+    "bridge_elapsed_ms excludes full React/SaveQueue CPU",
+    "double-rAF is a next-paint scheduling proxy, not physical display latency",
+    "logical texture bytes and renderer live counters are not physical VRAM",
+    "V8 heap growth is observed; no general leak-free claim",
+    "2k committed edit debug p95 28.3ms; 10k 110.8ms; full T31 performance threshold is not certified"
+  ]
+}

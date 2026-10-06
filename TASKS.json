@@ -1094,6 +1094,7 @@
         "crates/geometry/src/spatial_index.rs",
         "apps/web/src/features/workbench/perf.ts",
         "tests/perf/t28_dense.spec.ts",
+        "tests/perf/t28_workbench.spec.ts",
         "scripts/generate-dense-fixtures.mjs"
       ],
       "checks": [
@@ -1103,6 +1104,7 @@
           "playwright",
           "test",
           "tests/perf/t28_dense.spec.ts",
+          "tests/perf/t28_workbench.spec.ts",
           "--project=chromium-webgpu"
         ]
       ],

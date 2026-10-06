@@ -9,6 +9,7 @@ import { useSession } from '../../app/providers';
 import { api, csrfToken, type ApiMedia, type Project } from '../../lib/t15/api';
 import { decodeCanonicalFrame } from '../../lib/editor/loader';
 import { EditorHost } from '../../lib/editor/EditorHost';
+import type { LocalObjectFlagMap } from '../../lib/editor/types';
 import { FetchSaveTransport, SaveQueue } from '../../lib/persistence/save-queue';
 import { IndexedDbDraftStorage } from '../../lib/persistence/draft-store';
 import { runRecovery, type RecoveryReport } from '../../lib/persistence/recovery';
@@ -46,6 +47,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   const [host, setHost] = useState<EditorHost | null>(null);
   const [objects, setObjects] = useState<AnnotationObject[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [localFlags, setLocalFlags] = useState<LocalObjectFlagMap>({});
   const [completionChoice, setCompletionChoice] = useState<'unprocessed' | 'in_progress' | 'complete' | 'confirmed_negative'>('unprocessed');
   const [negativeConfirmed, setNegativeConfirmed] = useState(false);
   const [exportFormat, setExportFormat] = useState<'coco' | 'yolo' | 'native'>('coco');
@@ -155,6 +157,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
     setError(null);
     setHost(null);
     setHistoryState({ canUndo: false, canRedo: false });
+    setLocalFlags({});
     const transport = new FetchSaveTransport({ csrfToken });
     Promise.all([api.annotation(media.asset_revision_id, ontology.ontology_version_id), api.image(media.asset_revision_id)]).then(async ([revision, image]) => {
       const frame = await decodeCanonicalFrame(image, { width: media.canonical_width, height: media.canonical_height });
@@ -207,12 +210,15 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
 
   const applyDelta = useCallback((currentHost: EditorHost, delta: EditorDelta) => {
     if (loaded?.readOnlyPreview || (submissionLockRef.current && delta.document_changed)) return;
-    const snapshot = currentHost.getSnapshot();
-    if (!snapshot || !loaded || loaded.media.asset_revision_id !== selectedAssetId) return;
+    if (!loaded || loaded.media.asset_revision_id !== selectedAssetId) return;
+    if (delta.error) { setError(`${delta.error.code}: ${delta.error.message}`); return; }
+    setSelectedIds(current => current.length === delta.selected_object_ids.length && current.every((id, index) => id === delta.selected_object_ids[index]) ? current : delta.selected_object_ids);
+    setHistoryState(current => current.canUndo === delta.can_undo && current.canRedo === delta.can_redo ? current : { canUndo: delta.can_undo, canRedo: delta.can_redo });
+    setLocalFlags(currentHost.getLocalFlags());
+    const snapshot = currentHost.getCommittedSnapshot(delta);
+    if (!snapshot) return;
     setObjects(snapshot.objects);
-    setSelectedIds(delta.selected_object_ids);
     setCompletionChoice(snapshot.completion);
-    setHistoryState({ canUndo: delta.can_undo, canRedo: delta.can_redo });
     if (delta.document_changed || delta.suggestion_decisions.length > 0) {
       queue.enqueue({ asset_revision_id: loaded.media.asset_revision_id, ontology_version_id: loaded.ontology.ontology_version_id,
         base_revision_id: queue.getStatus(loaded.media.asset_revision_id).base_revision_id ?? loaded.revisionId,
@@ -225,8 +231,14 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   }
 
   function selectObject(objectId: string) {
-    const delta = activeHost?.select([objectId]);
-    if (delta) setSelectedIds(delta.selected_object_ids);
+    activeHost?.select([objectId]);
+  }
+
+  function changeLocalFlags(ids: readonly string[], flags: { hidden?: boolean; locked?: boolean }) {
+    if (!activeHost || activeLoaded?.readOnlyPreview || submissionLockRef.current) return;
+    const delta = activeHost.setLocalFlags(ids, flags);
+    if (!delta) setError('Editor did not accept the transient flag update.');
+    else if (delta.error) setError(`${delta.error.code}: ${delta.error.message}`);
   }
 
   function changeAttribute(key: string, value: Scalar) {
@@ -320,7 +332,10 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
           {assets.map((asset) => <button key={asset.asset_revision_id} type="button" className={`media-thumb${selectedAssetId === asset.asset_revision_id ? ' active' : ''}`} data-testid={`asset-item-${asset.asset_revision_id}`} aria-pressed={selectedAssetId === asset.asset_revision_id} aria-label={`选择媒体 ${asset.original_name}`} onClick={() => selectAsset(asset)}><span>{asset.original_name}</span><small>{asset.canonical_width} × {asset.canonical_height}</small></button>)}
           {!assets.length ? <p role="status">{loadState === 'loading' ? '加载媒体…' : '暂无媒体，请导入图片。'}</p> : null}
         </section>
-        <ObjectList objects={activeObjects} selectedIds={activeSelectedIds} onSelect={selectObject} status={loadState === 'error' ? 'error' : !activeLoaded || loadState === 'loading' ? 'loading' : 'ready'} />
+        <ObjectList objects={activeObjects} selectedIds={activeSelectedIds} localFlags={localFlags}
+          onSelect={selectObject} onSetLocalFlags={changeLocalFlags}
+          flagsEditable={!!activeHost && !activeLoaded?.readOnlyPreview && !submissionLockRef.current}
+          status={loadState === 'error' ? 'error' : !activeLoaded || loadState === 'loading' ? 'loading' : 'ready'} />
         {activeLoaded ? <AttributePanel object={activeObjects.find((item) => activeSelectedIds.includes(item.object_id)) ?? null} ontology={activeLoaded.ontology} onChange={changeAttribute} disabled={!activeHost} /> : null}
       </aside>
       <section className="canvas-column" aria-label="标注工作区">
@@ -330,7 +345,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
           <button type="button" data-testid="redo" disabled={!activeHost || !historyState.canRedo} onClick={() => activeHost?.dispatch({ kind: 'redo' })}>重做</button>
         </div></div>
         <div className="canvas-stage" data-testid="canvas-container">
-          {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}:${activeLoaded.readOnlyPreview}`} request={activeLoaded} readOnly={activeLoaded.readOnlyPreview} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}
+          {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}:${activeLoaded.readOnlyPreview}`} request={activeLoaded} readOnly={activeLoaded.readOnlyPreview} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setLocalFlags(readyHost.getLocalFlags()); setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}
         </div>
         <footer className="canvas-footer"><span>工具：{tool}</span><span>{activeLoaded ? `${activeLoaded.media.canonical_width} × ${activeLoaded.media.canonical_height} canonical` : '—'}</span><span>对象 {activeObjects.length}</span></footer>
         {activeLoaded ? <SaveStatus queue={queue} asset_revision_id={activeLoaded.media.asset_revision_id} recovery={recovery} onViewServer={viewServerRevision} onResumeLocal={resumeLocalDraft} /> : null}

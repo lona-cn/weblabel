@@ -1,11 +1,13 @@
 //! Real browser WebGPU rendering and platform-independent layout invariants.
 
 pub mod buffers;
+pub mod culling;
 #[cfg(target_arch = "wasm32")]
 mod device;
 pub mod image;
 mod renderer;
 pub mod scene;
+pub mod stats;
 
 pub use renderer::{Renderer, RendererError};
 

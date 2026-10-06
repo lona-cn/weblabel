@@ -40,10 +40,25 @@ export interface PointerInput {
 
 export type EditorTool = 'select' | 'box' | 'pan';
 
+/** Transient sidebar state; never part of AnnotationDocument or saved revisions. */
+export type LocalObjectFlags = Readonly<{ hidden: boolean; locked: boolean }>;
+export type LocalObjectFlagMap = Readonly<Record<Id, LocalObjectFlags>>;
+
 /** C3 EditorFacade. Errors surface as `EditorDelta.error`; void setters throw
  *  a structured ApiError value (never a panic). `get_viewport` is the additive
  *  T09 extension documented in reports/T09/review.md: it returns the Rust-owned
  *  view so resize can preserve zoom/pan without duplicating geometry in TS. */
+export interface CanvasLabel { object_id: Id; x_css: number; y_css: number; selected: boolean }
+export interface RenderStats {
+  cpu_calls: number; cpu_elapsed_ns: number; cpu_objects_examined: number;
+
+  gpu_buffer_upload_calls: number; gpu_buffer_upload_bytes: number;
+  gpu_texture_upload_calls: number; gpu_texture_upload_bytes: number;
+  bbox_upload_calls: number; bbox_upload_bytes: number; uniform_upload_bytes: number;
+  draw_calls: number; gpu_submissions: number; live_textures: number;
+  live_buffers: number; buffer_creations: number; buffer_releases: number;
+  visible_instances: number; logical_texture_bytes: number; rejected_resources: number;
+}
 export interface EditorFacade {
   dispatch(command: EditorCommand): EditorDelta;
   pointer(input: PointerInput): EditorDelta;
@@ -53,7 +68,7 @@ export interface EditorFacade {
   zoom_at(x_css: number, y_css: number, factor: number): void;
   fit_image(): void;
   set_selection(ids: Id[]): EditorDelta;
-  set_local_flags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
+  set_local_flags(ids: readonly Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
   get_snapshot(): AnnotationDocument;
   get_generation(): number;
   get_object_hashes(): Record<Id, string>;
@@ -61,6 +76,12 @@ export interface EditorFacade {
   set_predictions(sets: SuggestionSet[]): void;
   render(timestamp_ms: number): void;
   dispose(): void;
+  free?(): void;
+  get_render_stats?(): RenderStats;
+  get_adapter_diagnostics?(): string;
+  get_canvas_labels?(): CanvasLabel[];
+  get_validation_input_objects?(): number;
+  get_serialized_input_objects?(): number;
 }
 
 /** Canonical RGBA pixels: already EXIF-oriented by the server pipeline; the

@@ -12,6 +12,15 @@ import type {
 } from './types';
 
 let requestCounter = 0;
+/** Actual exported WASM function calls and binary RGBA copies; JsValue object references are not byte copies. */
+export const bridgeStats = { calls: 0, binary_bytes: 0, elapsed_ms: 0 };
+export const resourceStats = { live_decoded_bitmaps: 0, decoded_bitmap_creations: 0, decoded_bitmap_releases: 0, rejected_resources: 0 };
+export function assertCanonicalBudget(width: number, height: number): void {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || width > 4096 || height > 4096 || width * height * 4 > 64 * 1024 * 1024) {
+    resourceStats.rejected_resources += 1;
+    throw { code: 'RESOURCE_BUDGET_EXCEEDED', message: 'Canonical image exceeds 4096 dimensions / 64 MiB decoded budget', request_id: newRequestId(), details: null } satisfies ApiError;
+  }
+}
 
 function newRequestId(): Id {
   requestCounter += 1;
@@ -54,9 +63,12 @@ export function toApiError(reason: unknown, fallbackCode: string, nextRequestId:
  * 'none'`; the browser default ('from-image') would rotate them a second time.
  */
 export async function decodeCanonicalFrame(source: Blob, expected: { width: number; height: number }): Promise<CanonicalFrame> {
+  assertCanonicalBudget(expected.width, expected.height);
   const bitmap = await createImageBitmap(source, { imageOrientation: 'none' });
+  resourceStats.live_decoded_bitmaps += 1;
+  resourceStats.decoded_bitmap_creations += 1;
+  try {
   if (bitmap.width !== expected.width || bitmap.height !== expected.height) {
-    bitmap.close();
     throw {
       code: 'CANONICAL_DECODE_MISMATCH',
       message: `decoded ${bitmap.width}x${bitmap.height} does not match canonical ${expected.width}x${expected.height}`,
@@ -69,7 +81,6 @@ export async function decodeCanonicalFrame(source: Blob, expected: { width: numb
   canvas.height = bitmap.height;
   const context = canvas.getContext('2d');
   if (context === null) {
-    bitmap.close();
     throw {
       code: 'CANVAS_2D_UNAVAILABLE',
       message: 'canonical decode requires a 2D canvas context',
@@ -79,9 +90,13 @@ export async function decodeCanonicalFrame(source: Blob, expected: { width: numb
   }
   context.drawImage(bitmap, 0, 0);
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
-  bitmap.close();
   const rgba = new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
   return { width: canvas.width, height: canvas.height, rgba };
+  } finally {
+    bitmap.close();
+    resourceStats.live_decoded_bitmaps -= 1;
+    resourceStats.decoded_bitmap_releases += 1;
+  }
 }
 
 /** Default wasm-bridge bundle location (generated packages/wasm-editor output). */
@@ -99,6 +114,7 @@ export function createEditorFacadeFactory(source: string | URL | EditorWasmBridg
     async create(canvas, request): Promise<CreatedEditor> {
       const bridge = await loadWasmBridge(source);
       const { width, height, rgba } = request.frame;
+      assertCanonicalBudget(width, height);
       const expectedBytes = width * height * 4;
       if (rgba.byteLength !== expectedBytes) {
         throw {
@@ -109,6 +125,8 @@ export function createEditorFacadeFactory(source: string | URL | EditorWasmBridg
         } satisfies ApiError;
       }
       const startedAt = performance.now();
+      bridgeStats.calls += 1;
+      bridgeStats.binary_bytes += rgba.byteLength;
       const pending: Promise<EditorFacade> = bridge.create_editor(
         canvas,
         request.media,
@@ -122,7 +140,19 @@ export function createEditorFacadeFactory(source: string | URL | EditorWasmBridg
         byteLength: rgba.byteLength,
         durationMs: performance.now() - startedAt,
       };
-      return { facade: await pending, transfer };
+      const facade = await pending;
+      return { facade: new Proxy(facade, {
+        get(target, key) {
+          const value = Reflect.get(target, key, target) as unknown;
+          if (typeof value !== 'function') return value;
+          return (...args: unknown[]) => {
+            const started = performance.now();
+            bridgeStats.calls += 1;
+            try { return Reflect.apply(value, target, args); }
+            finally { bridgeStats.elapsed_ms += performance.now() - started; }
+          };
+        },
+      }), transfer };
     },
   };
 }

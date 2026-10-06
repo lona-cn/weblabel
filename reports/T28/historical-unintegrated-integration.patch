@@ -1,0 +1,16 @@
+T28 integration handoff (main-owned paths)
+
+This is a deliberate integration note, not a claim that the runtime behavior is wired. The assigned worker scope excludes `crates/renderer-wgpu/src/lib.rs`, `crates/renderer-wgpu/src/renderer.rs`, WASM facade, test route/router, and root test registration.
+
+1. `crates/renderer-wgpu/src/lib.rs`: register `pub mod culling;` and `pub mod stats;`.
+2. `crates/renderer-wgpu/src/renderer.rs`:
+   - Add a `RendererStats` field initialized on construction and clear it only with renderer replacement/dispose semantics.
+   - Increment bridge call/byte counters only from an exact serialized input-byte source (do not JSON.stringify/copy a second projection just to estimate bytes).
+   - Record actual `queue.write_buffer` / `queue.write_texture` call counts and byte lengths, draw calls and successful `queue.submit`s at their existing callsites; maintain live texture counts on create/release and record actual budget rejection/release.
+   - Add a test-build-only stats snapshot binding for `RendererStats`; do not publish a production `__wl_test` hook.
+   - Integrate viewport culling without re-uploading the complete object projection on pan/zoom. The supplied `visible_instances` helper is CPU-side reference behavior but compacts into a caller-owned scratch Vec; do not call it on each viewport update if that causes an all-box GPU upload. Profile the actual renderer first and choose an approach that preserves the unchanged instance buffer (e.g. GPU-side clip/cull path or indexed visible ranges); capture the sample before deciding.
+3. Main-owned dense harness route `/test-harness/dense?count=2000|10000&seed=17`: load deterministic fixture data from `scripts/generate-dense-fixtures.mjs`; mount the real workbench/editor and WebGPU renderer, real virtualized sidebar, and exactly the test-only `T28TestHooks` declared in `apps/web/src/features/workbench/perf.ts`. Its hook implementation must reflect actual renderer/editor/save/validation counters, not fake counters or fixed success values. Ensure route and hook are omitted from production build.
+4. Resource admission: implement using existing media/GPU budget owner, reject an over-budget decoded/GPU resource before allocation or after releasing it, expose actual live-texture count, and prove rejection does not increase it. The worker-scope patch does not own that resource manager.
+5. Run the task-card command only after the preceding runtime wiring exists. Require the chromium-webgpu project to report hardware (software adapters are not hardware performance evidence), collect raw deterministic samples and p50/p95, and record exact environment/exit code/count in `tests.log`. No such run was made by this worker.
+
+No worker integration patch edits shared files or out-of-scope owner files.

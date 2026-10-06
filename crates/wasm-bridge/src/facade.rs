@@ -3,7 +3,7 @@
 //! `ApiError`. `EditorSession` is target-independent and fully unit tested;
 //! the wasm32 `EditorFacade` adds JsValue wrapping and wgpu submission.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use annotation_domain::{
     AnnotationDocument, ApiError, DomainError, EditorCommand, EditorDelta, Id, OntologyVersion,
@@ -118,6 +118,7 @@ struct ProjectionEntry {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct ProjectionCache {
     entries: Vec<ProjectionEntry>,
+    indices: HashMap<Id, usize>,
 }
 
 impl ProjectionCache {
@@ -129,18 +130,33 @@ impl ProjectionCache {
         color_of: impl Fn(&Id) -> [f32; 4],
     ) -> bool {
         let mut touched = false;
-        for id in removed {
-            let previous_len = self.entries.len();
-            self.entries.retain(|entry| entry.object_id != *id);
-            touched |= self.entries.len() != previous_len;
+        if removed.iter().any(|id| self.indices.contains_key(id)) {
+            if let [id] = removed {
+                self.entries.retain(|entry| entry.object_id != *id);
+            } else {
+                let removing: HashSet<&Id> = removed.iter().collect();
+                self.entries
+                    .retain(|entry| !removing.contains(&entry.object_id));
+            }
+            // Retain document order, then rebuild shifted slots once for the
+            // entire batch, reusing the map's allocation.
+            self.indices.clear();
+            self.indices.extend(
+                self.entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, entry)| (entry.object_id.clone(), i)),
+            );
+            touched = true;
         }
         for object in changed {
             let bounds = bounds_of(object);
             let color = color_of(&object.label_id);
             match self
-                .entries
-                .iter_mut()
-                .find(|entry| entry.object_id == object.object_id)
+                .indices
+                .get(&object.object_id)
+                .copied()
+                .map(|i| &mut self.entries[i])
             {
                 Some(entry) => {
                     if entry.bounds != bounds || entry.color != color {
@@ -150,6 +166,8 @@ impl ProjectionCache {
                     }
                 }
                 None => {
+                    self.indices
+                        .insert(object.object_id.clone(), self.entries.len());
                     self.entries.push(ProjectionEntry {
                         object_id: object.object_id.clone(),
                         bounds,
@@ -165,6 +183,25 @@ impl ProjectionCache {
         touched
     }
 
+    /// History can restore deleted objects between surviving entries. Swap
+    /// into the core's read-only order, updating slots without cloning IDs.
+    fn restore_order(&mut self, objects: &[annotation_domain::AnnotationObject]) {
+        for (target, object) in objects.iter().enumerate() {
+            let current = self.indices[&object.object_id];
+            if current != target {
+                self.entries.swap(target, current);
+                *self
+                    .indices
+                    .get_mut(&self.entries[target].object_id)
+                    .unwrap() = target;
+                *self
+                    .indices
+                    .get_mut(&self.entries[current].object_id)
+                    .unwrap() = current;
+            }
+        }
+    }
+
     pub fn set_selection(&mut self, selected: &[Id]) -> bool {
         let mut touched = false;
         for entry in &mut self.entries {
@@ -178,7 +215,7 @@ impl ProjectionCache {
     }
 
     pub fn set_flags(&mut self, id: &Id, hidden: bool, locked: bool) -> bool {
-        let Some(entry) = self.entries.iter_mut().find(|entry| entry.object_id == *id) else {
+        let Some(entry) = self.indices.get(id).copied().map(|i| &mut self.entries[i]) else {
             return false;
         };
         if entry.hidden == hidden && entry.locked == locked {
@@ -204,7 +241,15 @@ impl ProjectionCache {
     }
 }
 
-/// Everything one `render()` needs to push to the GPU. `None` members were not
+#[derive(serde::Serialize)]
+pub struct CanvasLabel {
+    pub object_id: Id,
+    pub x_css: f32,
+    pub y_css: f32,
+    pub selected: bool,
+}
+
+/// Everything one `render()` needs to push to the GPU.
 /// touched since the previous frame (incremental renderer updates).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedFrame {
@@ -255,13 +300,12 @@ impl EditorSession {
         )
         .map_err(|error| api_error_from_domain(&error))?;
         let mut projection = ProjectionCache::default();
-        for object in editor.snapshot().objects {
-            let color = colors
-                .get(&object.label_id)
+        projection.apply_delta(editor.objects(), &[], |label_id| {
+            colors
+                .get(label_id)
                 .copied()
-                .unwrap_or(UNPAINTED_LABEL_COLOR);
-            projection.apply_delta(&[object], &[], |_| color);
-        }
+                .unwrap_or(UNPAINTED_LABEL_COLOR)
+        });
         Ok(Self {
             editor,
             colors,
@@ -281,8 +325,20 @@ impl EditorSession {
         if self.disposed {
             return self.error_delta(api_error("EDITOR_DISPOSED", "editor session is disposed"));
         }
+        let history = matches!(&command, EditorCommand::Undo | EditorCommand::Redo);
         match self.editor.dispatch(command) {
-            Ok(delta) => self.absorb(delta),
+            Ok(delta) => {
+                let restores_objects = history
+                    && delta
+                        .changed_objects
+                        .iter()
+                        .any(|object| !self.projection.indices.contains_key(&object.object_id));
+                let delta = self.absorb(delta);
+                if restores_objects {
+                    self.projection.restore_order(self.editor.objects());
+                }
+                delta
+            }
             Err(error) => self.error_delta(api_error_from_domain(&error)),
         }
     }
@@ -423,6 +479,44 @@ impl EditorSession {
         self.disposed
     }
 
+    /// Bounded, read-only DOM label projection. Hidden objects never appear;
+    /// selected visible labels retain priority at low zoom.
+    pub fn canvas_labels(&self) -> Vec<CanvasLabel> {
+        let view = scene_viewport(self.view);
+        let left = -view.tx / view.scale;
+        let top = -view.ty / view.scale;
+        let right = (view.css_width - view.tx) / view.scale;
+        let bottom = (view.css_height - view.ty) / view.scale;
+        let mut labels = Vec::with_capacity(renderer_wgpu::culling::MAX_CANVAS_LABELS);
+        for selected in [true, false] {
+            if !selected && !renderer_wgpu::culling::labels_enabled(view) {
+                break;
+            }
+            for entry in &self.projection.entries {
+                let [x0, y0, x1, y1] = entry.bounds;
+                if entry.hidden
+                    || entry.selected != selected
+                    || x0 >= right
+                    || x1 <= left
+                    || y0 >= bottom
+                    || y1 <= top
+                {
+                    continue;
+                }
+                labels.push(CanvasLabel {
+                    object_id: entry.object_id.clone(),
+                    x_css: x0 * view.scale + view.tx,
+                    y_css: y0 * view.scale + view.ty,
+                    selected,
+                });
+                if labels.len() == renderer_wgpu::culling::MAX_CANVAS_LABELS {
+                    return labels;
+                }
+            }
+        }
+        labels
+    }
+
     /// Drains the dirty flags into one frame. A clean session yields `None`, so
     /// idle callers submit no GPU work at all.
     pub fn prepare_frame(&mut self) -> Option<PreparedFrame> {
@@ -560,6 +654,278 @@ mod tests {
 
     fn person() -> Id {
         Id::from("object_person_001")
+    }
+
+    // Count actual native heap allocations on this test's thread, not internal
+    // projection counters or wall time. Other concurrently running tests do
+    // not affect the measurement.
+    #[cfg(not(target_arch = "wasm32"))]
+    mod allocations {
+        use std::alloc::{GlobalAlloc, Layout, System};
+        use std::cell::Cell;
+
+        thread_local! {
+            static ACTIVE: Cell<bool> = const { Cell::new(false) };
+            static CALLS: Cell<usize> = const { Cell::new(0) };
+        }
+
+        struct CountingAllocator;
+        #[global_allocator]
+        static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+        fn record() {
+            let _ = ACTIVE.try_with(|active| {
+                if active.get() {
+                    CALLS.with(|calls| calls.set(calls.get() + 1));
+                }
+            });
+        }
+
+        unsafe impl GlobalAlloc for CountingAllocator {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                record();
+                unsafe { System.alloc(layout) }
+            }
+            unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+                record();
+                unsafe { System.alloc_zeroed(layout) }
+            }
+            unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+                record();
+                unsafe { System.realloc(ptr, layout, size) }
+            }
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                unsafe { System.dealloc(ptr, layout) }
+            }
+        }
+
+        pub fn measure<T>(f: impl FnOnce() -> T) -> (T, usize) {
+            struct Reset;
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    ACTIVE.with(|active| active.set(false));
+                }
+            }
+            CALLS.with(|calls| calls.set(0));
+            ACTIVE.with(|active| assert!(!active.replace(true)));
+            let reset = Reset;
+            let result = f();
+            drop(reset);
+            (result, CALLS.with(Cell::get))
+        }
+    }
+
+    fn dense_session(count: usize) -> EditorSession {
+        let (mut document, ontology) = fixtures();
+        let template = document.objects[0].clone();
+        document.objects = (0..count)
+            .map(|i| {
+                let mut object = template.clone();
+                object.object_id = Id::from(format!("dense_{i:05}"));
+                let x = (i % 50) as f64 * 10.0;
+                let y = (i / 50 % 40) as f64 * 10.0;
+                object.geometry = BBox::new(x, y, x + 5.0, y + 5.0);
+                object
+            })
+            .collect();
+        EditorSession::new(document, ontology).unwrap()
+    }
+
+    fn assert_frame_matches_document(session: &mut EditorSession) {
+        let document = session.get_snapshot();
+        let expected: Vec<_> = document
+            .objects
+            .iter()
+            .filter(|object| !session.editor.local_flags(&object.object_id).hidden)
+            .map(|object| RenderObject {
+                bounds: bounds_of(object),
+                color: session.color_of(&object.label_id),
+                selected: false,
+                locked: session.editor.local_flags(&object.object_id).locked,
+            })
+            .collect();
+        let (objects, overlays) = session.prepare_frame().unwrap().projection.unwrap();
+        assert_eq!(
+            objects, expected,
+            "renderer receives canonical document order"
+        );
+        assert!(overlays.is_empty());
+        assert!(session.prepare_frame().is_none(), "idle after one frame");
+        for (i, object) in document.objects.iter().enumerate() {
+            assert_eq!(session.projection.indices.get(&object.object_id), Some(&i));
+        }
+    }
+
+    #[test]
+    fn batch_delete_history_and_shifted_edits_preserve_renderer_order() {
+        let mut session = dense_session(8);
+        assert_frame_matches_document(&mut session);
+        let original = session.get_snapshot();
+        assert!(session
+            .set_local_flags(
+                &[original.objects[4].object_id.clone()],
+                LocalFlagsArgs {
+                    hidden: Some(true),
+                    locked: None
+                },
+            )
+            .error
+            .is_none());
+        assert!(session
+            .set_local_flags(
+                &[original.objects[7].object_id.clone()],
+                LocalFlagsArgs {
+                    hidden: None,
+                    locked: Some(true)
+                },
+            )
+            .error
+            .is_none());
+        assert_frame_matches_document(&mut session);
+        let deleted = [0, 2, 5]
+            .map(|i| original.objects[i].object_id.clone())
+            .to_vec();
+        let delta = session.dispatch(EditorCommand::Delete {
+            object_ids: deleted.clone(),
+        });
+        assert!(delta.error.is_none());
+        assert_eq!(delta.removed_object_ids, deleted);
+        assert_frame_matches_document(&mut session);
+        // Flag lookup must follow the new slot, without changing another ID.
+        assert!(session
+            .set_local_flags(
+                &[original.objects[3].object_id.clone()],
+                LocalFlagsArgs {
+                    hidden: None,
+                    locked: Some(true)
+                },
+            )
+            .error
+            .is_none());
+        assert_frame_matches_document(&mut session);
+        let survivor = original.objects[6].object_id.clone();
+        let moved = BBox::new(300.0, 200.0, 320.0, 230.0);
+        let delta = session.dispatch(EditorCommand::ReplaceGeometry {
+            object_id: survivor,
+            geometry: moved.clone(),
+        });
+        assert!(delta.error.is_none());
+        assert_eq!(delta.changed_objects[0].geometry, moved);
+        assert_frame_matches_document(&mut session);
+        for command in [
+            EditorCommand::Undo,
+            EditorCommand::Undo,
+            EditorCommand::Redo,
+            EditorCommand::Redo,
+        ] {
+            assert!(session.dispatch(command).error.is_none());
+            assert_frame_matches_document(&mut session);
+        }
+        let mut created = original.objects[0].clone();
+        created.object_id = Id::from("created_after_delete");
+        created.geometry = BBox::new(400.0, 300.0, 410.0, 310.0);
+        assert!(session
+            .dispatch(EditorCommand::Create { object: created })
+            .error
+            .is_none());
+        assert_frame_matches_document(&mut session);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn dense_batch_delete_has_linear_allocations_and_history_renders_correctly() {
+        const COUNT: usize = 10_000;
+        let mut session = dense_session(COUNT);
+        assert_frame_matches_document(&mut session);
+        let original = session.get_snapshot();
+        let ids = original
+            .objects
+            .iter()
+            .map(|o| o.object_id.clone())
+            .collect();
+        let (delta, allocations) =
+            allocations::measure(|| session.dispatch(EditorCommand::Delete { object_ids: ids }));
+        assert!(delta.error.is_none());
+        assert_eq!(
+            delta.removed_object_ids,
+            original
+                .objects
+                .iter()
+                .map(|o| o.object_id.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_frame_matches_document(&mut session);
+        println!("10k Delete: {allocations} actual heap allocations");
+        // Includes core validation, history and delta allocations; the generous
+        // linear envelope rejects per-deletion cloning of all remaining IDs.
+        assert!(
+            allocations < 128 * COUNT,
+            "quadratic batch allocation: {allocations}"
+        );
+        assert!(session.dispatch(EditorCommand::Undo).error.is_none());
+        assert_eq!(session.get_snapshot(), original);
+        assert_frame_matches_document(&mut session);
+        assert!(session.dispatch(EditorCommand::Redo).error.is_none());
+        assert_frame_matches_document(&mut session);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn undo_batch_creation_has_linear_allocations_and_redo_restores_instances() {
+        const COUNT: usize = 1_024;
+        let mut session = dense_session(COUNT);
+        let original = session.get_snapshot();
+        let delta = session.dispatch(EditorCommand::Duplicate {
+            object_ids: original
+                .objects
+                .iter()
+                .map(|o| o.object_id.clone())
+                .collect(),
+            new_ids: (0..COUNT)
+                .map(|i| Id::from(format!("copy_{i:05}")))
+                .collect(),
+        });
+        assert!(delta.error.is_none());
+        assert_eq!(
+            delta
+                .changed_objects
+                .iter()
+                .map(|o| o.object_id.clone())
+                .collect::<Vec<_>>(),
+            (0..COUNT)
+                .map(|i| Id::from(format!("copy_{i:05}")))
+                .collect::<Vec<_>>()
+        );
+        assert_frame_matches_document(&mut session);
+        let copied = session.get_snapshot();
+        let (undo, allocations) = allocations::measure(|| session.dispatch(EditorCommand::Undo));
+        assert!(undo.error.is_none());
+        assert_eq!(session.get_snapshot(), original);
+        assert_frame_matches_document(&mut session);
+        println!("Undo 1024 creations: {allocations} actual heap allocations");
+        assert!(
+            allocations < 128 * COUNT,
+            "quadratic undo allocation: {allocations}"
+        );
+        assert!(session.dispatch(EditorCommand::Redo).error.is_none());
+        assert_eq!(session.get_snapshot(), copied);
+        assert_frame_matches_document(&mut session);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn empty_history_consumers_allocate_nothing_and_do_not_repaint() {
+        let mut session = session();
+        session.prepare_frame().unwrap();
+        let (undo, allocations) = allocations::measure(|| session.dispatch(EditorCommand::Undo));
+        assert_eq!(allocations, 0);
+        assert!(!undo.document_changed);
+        assert_eq!(undo.generation, 0);
+        assert!(session.prepare_frame().is_none());
+        let (redo, allocations) = allocations::measure(|| session.dispatch(EditorCommand::Redo));
+        assert_eq!(allocations, 0);
+        assert!(!redo.document_changed);
+        assert!(session.prepare_frame().is_none());
     }
 
     #[test]
@@ -870,12 +1236,6 @@ pub mod wasm {
     use super::*;
     use annotation_domain::MediaRevision;
 
-    #[derive(serde::Serialize)]
-    struct ProjectionUpdate {
-        objects: Vec<RenderObject>,
-        overlays: Vec<Overlay>,
-    }
-
     fn to_js<T: serde::Serialize>(value: &T) -> Result<JsValue, JsValue> {
         let serializer = serde_wasm_bindgen::Serializer::new()
             .serialize_maps_as_objects(true)
@@ -898,6 +1258,7 @@ pub mod wasm {
         session: EditorSession,
         renderer: renderer_wgpu::Renderer,
         canvas: web_sys::HtmlCanvasElement,
+        serialized_input_objects: std::cell::Cell<u64>,
     }
 
     #[wasm_bindgen]
@@ -971,14 +1332,36 @@ pub mod wasm {
             ids: Vec<String>,
             flags: JsValue,
         ) -> Result<JsValue, JsValue> {
-            let flags =
-                from_js::<crate::input::LocalFlagsArgs>(flags, "INVALID_FLAGS").unwrap_or_default();
+            let flags = match from_js::<crate::input::LocalFlagsArgs>(flags, "INVALID_FLAGS") {
+                Ok(flags) => flags,
+                Err(error) => return to_js(&self.session.error_delta(error)),
+            };
             let ids: Vec<Id> = ids.into_iter().map(Id::from).collect();
             to_js(&self.session.set_local_flags(&ids, flags))
         }
 
         pub fn get_snapshot(&self) -> Result<JsValue, JsValue> {
-            to_js(&self.session.get_snapshot())
+            let snapshot = self.session.get_snapshot();
+            self.serialized_input_objects
+                .set(self.serialized_input_objects.get() + snapshot.objects.len() as u64);
+            to_js(&snapshot)
+        }
+
+        /// Read-only diagnostics from the device actually used by this facade.
+        pub fn get_render_stats(&self) -> Result<JsValue, JsValue> {
+            to_js(&self.renderer.stats())
+        }
+        pub fn get_validation_input_objects(&self) -> f64 {
+            self.session.editor.validation_input_objects() as f64
+        }
+        pub fn get_serialized_input_objects(&self) -> f64 {
+            self.serialized_input_objects.get() as f64
+        }
+        pub fn get_adapter_diagnostics(&self) -> String {
+            self.renderer.adapter_diagnostics()
+        }
+        pub fn get_canvas_labels(&self) -> Result<JsValue, JsValue> {
+            to_js(&self.session.canvas_labels())
         }
 
         pub fn get_object_hashes(&self) -> Result<JsValue, JsValue> {
@@ -1012,27 +1395,17 @@ pub mod wasm {
             self.session.set_predictions(sets).map_err(to_js_error)
         }
 
-        /// One submission path for the dirty-flag scheduler: a clean session
-        /// performs no renderer call at all (idle GPU quiet). A renderer update
-        /// submits exactly one frame; when both view and projection changed the
-        /// two narrow updates each submit (renderer API renders per update).
+        /// A clean session performs no renderer call. Dirty viewport and
+        /// projection updates share one native call and one GPU submission;
+        /// renderer instances never round-trip through JavaScript.
         pub fn render(&mut self, timestamp_ms: f64) -> Result<(), JsValue> {
             let _ = timestamp_ms;
             let Some(frame) = self.session.prepare_frame() else {
                 return Ok(());
             };
-            if let Some(viewport) = frame.viewport {
-                if let Err(error) = self.renderer.update_viewport(to_js(&viewport)?) {
-                    self.session.invalidate_frame();
-                    return Err(error);
-                }
-            }
-            if let Some((objects, overlays)) = frame.projection {
-                let update = ProjectionUpdate { objects, overlays };
-                if let Err(error) = self.renderer.update_objects(to_js(&update)?) {
-                    self.session.invalidate_frame();
-                    return Err(error);
-                }
+            if let Err(error) = self.renderer.apply_frame(frame.viewport, frame.projection) {
+                self.session.invalidate_frame();
+                return Err(error);
             }
             Ok(())
         }
@@ -1097,6 +1470,7 @@ pub mod wasm {
             session,
             renderer,
             canvas,
+            serialized_input_objects: std::cell::Cell::new(0),
         })
     }
 }

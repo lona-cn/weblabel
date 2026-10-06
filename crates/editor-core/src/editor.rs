@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use annotation_domain::{
-    validate_document, AnnotationDocument, AnnotationObject, DomainError, EditorCommand,
-    EditorDelta, Id, OntologyVersion,
+    AnnotationDocument, AnnotationObject, DomainError, EditorCommand, EditorDelta, Id,
+    OntologyVersion,
 };
 use geometry::{css_to_image, Viewport};
 
@@ -42,7 +42,7 @@ impl Editor {
         ontology: OntologyVersion,
         generation: u64,
     ) -> Result<Self, DomainError> {
-        validate_document(&document, &ontology)?;
+        commands::validate_counted(&document, &ontology)?;
         let width = f64::from(document.coordinate_space.width);
         let height = f64::from(document.coordinate_space.height);
         Ok(Self {
@@ -122,8 +122,20 @@ impl Editor {
         }
     }
 
+    /// Thread-local cumulative objects supplied at actual logical validation boundaries.
+    /// Inputs, not visits: failed validation may short-circuit.
+    pub fn validation_input_objects(&self) -> u64 {
+        commands::validation_input_objects()
+    }
+
     pub fn snapshot(&self) -> AnnotationDocument {
         self.document.clone()
+    }
+
+    /// Read-only canonical document order for native renderer projections.
+    /// Unlike `snapshot`, borrowing this slice does not clone geometry or IDs.
+    pub fn objects(&self) -> &[AnnotationObject] {
+        &self.document.objects
     }
 
     /// Pinned AI object content hashes from the validated canonical document.
@@ -319,7 +331,7 @@ impl Editor {
         let before = self.document.clone();
         let mut after = before.clone();
         apply(&mut after, &self.selection)?;
-        validate_document(&after, &self.ontology)?;
+        commands::validate_counted(&after, &self.ontology)?;
         if after == before {
             return Ok(self.delta(false, false, Vec::new(), Vec::new()));
         }

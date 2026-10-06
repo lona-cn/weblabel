@@ -1,0 +1,17 @@
+diff --git a/crates/editor-core/src/editor.rs b/crates/editor-core/src/editor.rs
+index 4d9ecb22..8f70978d 100644
+--- a/crates/editor-core/src/editor.rs
++++ b/crates/editor-core/src/editor.rs
+@@ -132,6 +132,12 @@ impl Editor {
+         self.document.clone()
+     }
+ 
++    /// Read-only canonical document order for native renderer projections.
++    /// Unlike `snapshot`, borrowing this slice does not clone geometry or IDs.
++    pub fn objects(&self) -> &[AnnotationObject] {
++        &self.document.objects
++    }
++
+     /// Pinned AI object content hashes from the validated canonical document.
+     /// Called at run preparation, never from pointer preview or rendering.
+     pub fn object_hashes(&self) -> std::collections::BTreeMap<Id, String> {

@@ -65,6 +65,8 @@ pub struct Renderer {
     instance_scratch: Vec<BBoxInstance>,
     scene: Option<RenderScene>,
     diagnostics: String,
+    stats: crate::stats::RendererStats,
+    visible_ranges: Vec<std::ops::Range<u32>>,
     lost: Arc<AtomicBool>,
 }
 
@@ -161,6 +163,14 @@ impl Renderer {
         if !validate_scene(&scene) {
             return Err(wasm_bindgen::JsValue::from_str("invalid render scene"));
         }
+        if scene.image.width > 4096
+            || scene.image.height > 4096
+            || scene.image.width > self.device.limits().max_texture_dimension_2d
+            || scene.image.height > self.device.limits().max_texture_dimension_2d
+        {
+            self.stats.resource_rejected();
+            return Err(JsValue::from_str("canonical resource budget exceeded"));
+        }
         let plan = scene_upload_plan(self.scene.as_ref(), &scene);
         self.scene = Some(scene);
         if plan.image_changed {
@@ -251,14 +261,55 @@ impl Renderer {
         self.lost.store(true, Ordering::Release);
     }
     pub fn dispose(&mut self) {
+        if self.stats.live_buffers == 0 {
+            return;
+        }
         self.device.destroy();
         self.lost.store(true, Ordering::Release);
         self.scene = None;
+        self.texture.destroy();
+        self.instance_buffer.destroy();
+        self.overlay_buffer.destroy();
+        self.uniform.destroy();
+        self.stats.texture_released();
+        for _ in 0..3 {
+            self.stats.buffer_released();
+        }
+        self.stats.logical_texture_bytes = 0;
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl Renderer {
+    pub fn stats(&self) -> crate::stats::RendererStats {
+        self.stats
+    }
+    /// Native Rust-to-Rust transfer: no serde/JsValue round trip per object.
+    pub fn apply_frame(
+        &mut self,
+        viewport: Option<Viewport>,
+        projection: Option<(Vec<RenderObject>, Vec<Overlay>)>,
+    ) -> Result<(), JsValue> {
+        if let Some(view) = viewport {
+            self.scene
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("no scene"))?
+                .viewport = view;
+        }
+        if let Some((objects, overlays)) = projection {
+            let scene = self
+                .scene
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("no scene"))?;
+            let objects_range = changed_element_range(&scene.objects, &objects);
+            let overlays_range = changed_element_range(&scene.overlays, &overlays);
+            scene.objects = objects;
+            scene.overlays = overlays;
+            self.upload_instance_ranges(objects_range, overlays_range)?;
+        }
+        self.render_saved()
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
     async fn create(
         canvas: web_sys::HtmlCanvasElement,
         width: u32,
@@ -269,6 +320,11 @@ impl Renderer {
             .checked_mul(height as usize)
             .and_then(|n| n.checked_mul(4))
             .ok_or(RendererError::InvalidScene)?;
+        if width > 4096 || height > 4096 || expected_bytes > 64 * 1024 * 1024 {
+            return Err(RendererError::Unsupported(
+                "canonical resource budget exceeded".into(),
+            ));
+        }
         if expected_bytes != rgba.len() {
             return Err(RendererError::InvalidScene);
         }
@@ -283,6 +339,13 @@ impl Renderer {
             })
             .await
             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
+        if width > adapter.limits().max_texture_dimension_2d
+            || height > adapter.limits().max_texture_dimension_2d
+        {
+            return Err(RendererError::Unsupported(
+                "adapter texture limit exceeded".into(),
+            ));
+        }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor::default())
             .await
@@ -302,9 +365,13 @@ impl Renderer {
                 RendererError::Unsupported("surface has no sRGB-encodable format".into())
             })?;
         let info = adapter.get_info();
+        let browser_info = device.as_webgpu().map(|device| device.adapter_info());
         let diagnostics = format!(
-            "backend={:?}; device_type={:?}; name={}; surface={:?}; render_view={:?}",
-            info.backend, info.device_type, info.name, format, render_format
+            "backend={:?}; device_type={:?}; name={}; surface={:?}; render_view={:?}; vendor={}; architecture={}; device={}",
+            info.backend, info.device_type, info.name, format, render_format,
+            browser_info.as_ref().map(|info| info.vendor()).unwrap_or_default(),
+            browser_info.as_ref().map(|info| info.architecture()).unwrap_or_default(),
+            browser_info.as_ref().map(|info| info.device()).unwrap_or_default()
         );
         let (css_w, css_h) = (
             canvas.client_width().max(0) as u32,
@@ -482,7 +549,7 @@ impl Renderer {
         device.set_device_lost_callback(move |_reason, _message| {
             lost_signal.store(true, Ordering::Release);
         });
-        let this = Self {
+        let mut this = Self {
             canvas,
             surface,
             config,
@@ -509,6 +576,11 @@ impl Renderer {
             scene: None,
             lost,
             diagnostics,
+            stats: crate::stats::RendererStats {
+                logical_texture_bytes: expected_bytes as u64,
+                ..Default::default()
+            },
+            visible_ranges: Vec::new(),
         };
         this.canvas.set_width(css_w);
         this.canvas.set_height(css_h);
@@ -536,30 +608,23 @@ impl Renderer {
                 depth_or_array_layers: 1,
             },
         );
+        this.stats.texture_created();
+        for _ in [&this.uniform, &this.instance_buffer, &this.overlay_buffer] {
+            this.stats.buffer_created();
+        }
+        this.stats.record_texture_upload(data.1.len());
         Ok(this)
     }
-    fn upload_scene(&mut self) -> Result<(), wasm_bindgen::JsValue> {
-        if let Some(scene) = &self.scene {
-            bbox_instances_into(&scene.objects, &mut self.instance_scratch);
-            upload_instances(
-                &self.device,
-                &self.queue,
-                &mut self.instance_buffer,
-                &mut self.instance_capacity,
-                &self.instance_scratch,
-                "bbox instances",
-            );
-            overlay_instances_into(&scene.overlays, &mut self.instance_scratch);
-            upload_instances(
-                &self.device,
-                &self.queue,
-                &mut self.overlay_buffer,
-                &mut self.overlay_capacity,
-                &self.instance_scratch,
-                "overlay instances",
-            );
-        }
-        Ok(())
+    fn upload_scene(&mut self) -> Result<(), JsValue> {
+        let Some(scene) = &self.scene else {
+            return Ok(());
+        };
+        let objects = scene.objects.len();
+        let overlays = scene.overlays.len();
+        self.upload_instance_ranges(
+            (objects > 0).then_some(0..objects),
+            (overlays > 0).then_some(0..overlays),
+        )
     }
     fn upload_instance_ranges(
         &mut self,
@@ -579,6 +644,8 @@ impl Renderer {
             "bbox instances",
             &mut self.instance_scratch,
             bbox_instances_into,
+            &mut self.stats,
+            true,
         )?;
         upload_instances_delta(
             &self.device,
@@ -590,6 +657,8 @@ impl Renderer {
             "overlay instances",
             &mut self.instance_scratch,
             overlay_instances_into,
+            &mut self.stats,
+            false,
         )
     }
     fn upload_image(&mut self) -> Result<(), wasm_bindgen::JsValue> {
@@ -626,7 +695,11 @@ impl Renderer {
                     },
                 ],
             });
+            self.texture.destroy();
+            self.stats.texture_released();
             self.texture = texture;
+            self.stats.texture_created();
+            self.stats.logical_texture_bytes = image.rgba.len() as u64;
             self.image_width = image.width;
             self.image_height = image.height;
         }
@@ -637,6 +710,7 @@ impl Renderer {
                 "invalid image dimensions or RGBA data",
             ));
         };
+        self.stats.record_texture_upload(bytes.len());
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -675,10 +749,23 @@ impl Renderer {
             self.canvas.set_height(h);
             self.surface.configure(&self.device, &self.config);
         }
+        let started = now();
+        self.stats.visible_instances = crate::culling::visible_ranges(
+            &scene.objects,
+            scene.viewport,
+            &mut self.visible_ranges,
+        ) as u64;
+        self.stats.record_cpu_call(
+            scene.objects.len(),
+            ((now() - started) * 1_000_000.0) as u64,
+        );
         let s = scene.viewport;
         let uniform = s.render_uniform(scene.image.width, scene.image.height);
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck_bytes(&uniform));
+        self.stats
+            .record_buffer_upload(std::mem::size_of_val(&uniform));
+        self.stats.uniform_upload_bytes += std::mem::size_of_val(&uniform) as u64;
         let (frame, suboptimal) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
@@ -727,12 +814,14 @@ impl Renderer {
             pass.set_pipeline(&self.image_pipeline);
             pass.set_bind_group(1, &self.image_bind, &[]);
             pass.draw(0..6, 0..1);
-            if !scene.objects.is_empty() {
+            if !self.visible_ranges.is_empty() {
                 let bind =
                     instance_bind(&self.device, &self.instance_layout, &self.instance_buffer);
                 pass.set_pipeline(&self.box_pipeline);
                 pass.set_bind_group(1, &bind, &[]);
-                pass.draw(0..6, 0..scene.objects.len() as u32);
+                for range in &self.visible_ranges {
+                    pass.draw(0..6, range.clone());
+                }
             }
             if !scene.overlays.is_empty() {
                 let bind = instance_bind(&self.device, &self.instance_layout, &self.overlay_buffer);
@@ -742,12 +831,22 @@ impl Renderer {
             }
         }
         self.queue.submit([encoder.finish()]);
+        self.stats.record_submission(
+            1 + self.visible_ranges.len() as u64 + u64::from(!scene.overlays.is_empty()),
+        );
         self.queue.present(frame);
         if suboptimal {
             self.surface.configure(&self.device, &self.config);
         }
         Ok(())
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen::prelude::wasm_bindgen(js_namespace = performance)]
+    fn now() -> f64;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -817,6 +916,7 @@ fn upload_instances(
     let bytes = bytemuck_bytes(values);
     if bytes.len() as u64 > *capacity {
         *capacity = (bytes.len() as u64).next_power_of_two().max(48);
+        buffer.destroy();
         *buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
             size: *capacity,
@@ -839,6 +939,8 @@ fn upload_instances_delta<T>(
     label: &str,
     scratch: &mut Vec<BBoxInstance>,
     convert: fn(&[T], &mut Vec<BBoxInstance>),
+    stats: &mut crate::stats::RendererStats,
+    bbox: bool,
 ) -> Result<(), wasm_bindgen::JsValue> {
     let Some(range) = range else {
         return Ok(());
@@ -853,7 +955,14 @@ fn upload_instances_delta<T>(
         .ok_or_else(|| wasm_bindgen::JsValue::from_str("instance buffer size overflow"))?;
     if required_bytes > *capacity {
         convert(source, scratch);
+        stats.buffer_released();
+        stats.buffer_created();
         upload_instances(device, queue, buffer, capacity, scratch, label);
+        stats.record_buffer_upload(std::mem::size_of_val(scratch.as_slice()));
+        if bbox {
+            stats.bbox_upload_calls += 1;
+            stats.bbox_upload_bytes += std::mem::size_of_val(scratch.as_slice()) as u64;
+        }
         return Ok(());
     }
     let byte_range = dirty_byte_range(
@@ -864,6 +973,11 @@ fn upload_instances_delta<T>(
     .ok_or_else(|| wasm_bindgen::JsValue::from_str("invalid instance dirty range"))?;
     convert(&source[range], scratch);
     queue.write_buffer(buffer, byte_range.start, bytemuck_bytes(scratch));
+    stats.record_buffer_upload(std::mem::size_of_val(scratch.as_slice()));
+    if bbox {
+        stats.bbox_upload_calls += 1;
+        stats.bbox_upload_bytes += std::mem::size_of_val(scratch.as_slice()) as u64;
+    }
     Ok(())
 }
 #[cfg(target_arch = "wasm32")]

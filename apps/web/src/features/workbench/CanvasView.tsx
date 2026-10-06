@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { EditorHost } from '../../lib/editor/EditorHost';
 import { toApiError } from '../../lib/editor/loader';
-import type { ApiError, EditorAssetRequest, EditorHostOptions, EditorTool } from '../../lib/editor/types';
+import type { ApiError, CanvasLabel, EditorAssetRequest, EditorHostOptions, EditorTool } from '../../lib/editor/types';
 import type { EditorDelta } from '../../../../../packages/contracts/generated/EditorDelta';
 
 export interface CanvasViewProps {
@@ -13,24 +13,10 @@ export interface CanvasViewProps {
   onHostReady: (host: EditorHost) => void;
 }
 
-type GpuInfo = { vendor?: string; device?: string; architecture?: string; description?: string };
-type GpuAdapter = { info?: GpuInfo };
-type GpuNavigator = Navigator & { gpu?: { requestAdapter(): Promise<GpuAdapter | null> } };
-
-async function adapterKind(): Promise<'hardware' | 'software' | 'unknown'> {
-  try {
-    const gpu = (navigator as GpuNavigator).gpu;
-    if (!gpu) return 'unknown';
-    const adapter = await gpu.requestAdapter();
-    if (!adapter) return 'unknown';
-    const info = adapter.info;
-    if (!info) return 'unknown';
-    const description = [info.vendor, info.device, info.architecture, info.description].join(' ').toLowerCase();
-    if (/swiftshader|llvmpipe|lavapipe|software|mesa|basic render|cpu/.test(description)) return 'software';
-    return info.vendor || info.device || info.architecture ? 'hardware' : 'unknown';
-  } catch {
-    return 'unknown';
-  }
+function adapterKind(diagnostics: string): 'hardware' | 'software' | 'unknown' {
+  if (/swiftshader|llvmpipe|lavapipe|software|basic render|device_type=Cpu/i.test(diagnostics)) return 'software';
+  if (/DiscreteGpu|IntegratedGpu|nvidia|intel|amd|apple|blackwell/i.test(diagnostics)) return 'hardware';
+  return 'unknown';
 }
 
 export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostReady, readOnly = false }: CanvasViewProps) {
@@ -44,6 +30,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
   const [error, setError] = useState<ApiError | null>(null);
   const [deviceState, setDeviceState] = useState<'loading' | 'ready' | 'unsupported' | 'lost'>('loading');
   const [adapter, setAdapter] = useState<'hardware' | 'software' | 'unknown'>('unknown');
+  const [labels, setLabels] = useState<CanvasLabel[]>([]);
   requestRef.current = request;
   optionsRef.current = hostOptions;
   deltaRef.current = onDelta;
@@ -53,6 +40,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
   useEffect(() => {
     let active = true;
     let host: EditorHost | null = null;
+    let unsubscribe: (() => void) | undefined;
     queueMicrotask(() => {
       const canvas = canvasRef.current;
       if (!active || !canvas) return;
@@ -60,6 +48,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
         if (host !== null) deltaRef.current(host, delta);
       } });
       hostRef.current = host;
+      unsubscribe = host.subscribeRendered(() => { if (active && host) setLabels(host.getCanvasLabels()); });
       host.mount(canvas);
       setError(null);
       setDeviceState('loading');
@@ -67,7 +56,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
         if (!active || host?.status !== 'ready') return;
         host.setTool(toolRef.current);
         readyRef.current(host);
-        const kind = await adapterKind();
+        const kind = adapterKind(host.getAdapterDiagnostics());
         if (!active) return;
         setAdapter(kind);
         setDeviceState('ready');
@@ -79,6 +68,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
     });
     return () => {
       active = false;
+      unsubscribe?.();
       host?.dispose();
       if (hostRef.current === host) hostRef.current = null;
     };
@@ -97,7 +87,12 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
     <div className="gpu-diagnostics" data-testid="gpu-status" data-actual-backend={deviceState === 'ready' ? 'webgpu' : 'none'} data-adapter-kind={adapter} data-device-state={deviceState} role="status" aria-live="polite">
       {deviceState === 'ready' ? `WebGPU · ${adapter} adapter · 就绪` : deviceState === 'unsupported' ? 'WebGPU 不支持；仅可查看对象' : deviceState === 'lost' ? 'WebGPU 初始化失败' : '正在初始化真实 WebGPU…'}
     </div>
-    <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
+      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+        {labels.map((label) => <span key={label.object_id} data-testid="canvas-label" data-object-id={label.object_id} data-selected={label.selected} style={{ position: 'absolute', transform: 'translate('+label.x_css+'px, '+label.y_css+'px)', fontSize: 11, color: label.selected ? '#fff' : '#f1d68a', background: '#17212be6', padding: '1px 3px' }}>{label.object_id}</span>)}
+      </div>
+    </div>
     {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
   </>;
 }

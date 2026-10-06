@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useSession } from './providers';
 import { Login } from '../features/projects/Login';
 import { Projects } from '../features/projects/Projects';
@@ -6,7 +6,18 @@ import { Workbench } from '../features/workbench/Workbench';
 import { Datasets } from '../features/datasets/Datasets';
 import type { Project } from '../lib/t15/api';
 
+const DenseHarness = import.meta.env.MODE === 'test' ? lazy(() => import('../features/workbench/DenseHarness')) : null;
+
 export function RouteView() {
+  if (location.pathname.startsWith('/test-harness/')) {
+    return import.meta.env.MODE === 'test' && location.pathname === '/test-harness/dense' && DenseHarness
+      ? <Suspense fallback={<p>Loading dense workload…</p>}><DenseHarness /></Suspense>
+      : <main role="alert">Test harness unavailable in release builds</main>;
+  }
+  return <StandardRoutes />;
+}
+
+function StandardRoutes() {
   const { session, loading } = useSession();
   const [projectId, setProjectId] = useState(() => new URLSearchParams(location.search).get('project_id'));
   const [datasetView, setDatasetView] = useState(() => new URLSearchParams(location.search).get('dataset_view') === '1');

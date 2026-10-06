@@ -2,7 +2,8 @@
 // DPR-aware viewport + canvas-local pointer routing, dirty-flag render
 // scheduling, and idempotent disposal. Geometry math lives in Rust
 // (geometry::viewport); this class only forwards browser facts.
-import { createEditorFacadeFactory, DEFAULT_WASM_BRIDGE_URL, toApiError } from './loader';
+import { assertCanonicalBudget, bridgeStats, createEditorFacadeFactory, DEFAULT_WASM_BRIDGE_URL, toApiError } from './loader';
+import type { CanvasLabel, RenderStats, LocalObjectFlagMap, LocalObjectFlags } from './types';
 import type {
   AnnotationDocument,
   ApiError,
@@ -23,6 +24,8 @@ import type {
   Viewport,
 } from './types';
 
+const EMPTY_LOCAL_FLAGS: LocalObjectFlagMap = Object.freeze(Object.create(null));
+const DEFAULT_OBJECT_FLAGS: LocalObjectFlags = Object.freeze({ hidden: false, locked: false });
 const CANVAS_POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'] as const;
 
 type CanvasPointerEvent = (typeof CANVAS_POINTER_EVENTS)[number];
@@ -61,6 +64,7 @@ export class EditorHost {
   private size: CanvasSize | null = null;
   private statusValue: EditorHostStatus = 'idle';
   private errorValue: ApiError | null = null;
+  private localFlagsValue: LocalObjectFlagMap = EMPTY_LOCAL_FLAGS;
   private transfersValue: BinaryTransfer[] = [];
   private dirty = false;
   private paused = true;
@@ -69,6 +73,22 @@ export class EditorHost {
   private disposed = false;
   /** Identity of the asset the host currently initializes or mounted. */
   private assetToken = 0;
+  private readonly renderedListeners = new Set<() => void>();
+  private retiredStats: Partial<RenderStats> = {};
+  subscribeRendered(listener: () => void): () => void { this.renderedListeners.add(listener); return () => { this.renderedListeners.delete(listener); }; }
+  getCanvasLabels(): CanvasLabel[] { return this.facade?.get_canvas_labels?.() ?? []; }
+  getAdapterDiagnostics(): string { return this.facade?.get_adapter_diagnostics?.() ?? ''; }
+  getValidationInputObjects(): number { return this.facade?.get_validation_input_objects?.() ?? 0; }
+  getSerializedInputObjects(): number { return this.facade?.get_serialized_input_objects?.() ?? 0; }
+  getRenderStats(): RenderStats | null {
+    const current = this.facade?.get_render_stats?.();
+    if (!current) return null;
+    const result = { ...current };
+    for (const key of Object.keys(this.retiredStats) as (keyof RenderStats)[]) result[key] += this.retiredStats[key] ?? 0;
+    return result;
+  }
+  getBridgeStats(): { calls: number; binary_bytes: number; elapsed_ms: number } { return { ...bridgeStats }; }
+
   /** Invalidated on dispose; in-flight creations compare it before mounting. */
   private disposeToken = 0;
   /** Pointer ids captured by this host so every capture pairs with a release. */
@@ -118,6 +138,7 @@ export class EditorHost {
    * and never mounted onto the canvas.
    */
   async loadAsset(request: EditorAssetRequest): Promise<void> {
+    assertCanonicalBudget(request.frame.width, request.frame.height);
     const assetToken = this.assetToken + 1;
     this.assetToken = assetToken;
     const disposeToken = this.disposeToken;
@@ -145,9 +166,11 @@ export class EditorHost {
     }
     if (this.stale(assetToken, disposeToken)) {
       created.facade.dispose();
+      created.facade.free?.();
       return;
     }
     this.facade = created.facade;
+
     this.transfersValue = [...this.transfersValue, created.transfer];
     this.statusValue = 'ready';
     this.applyViewport();
@@ -184,8 +207,30 @@ export class EditorHost {
     return this.consumeDelta(this.guard((facade) => facade.set_selection(ids), 'EDITOR_BRIDGE_FAILURE'));
   }
 
-  setLocalFlags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta | null {
-    return this.consumeDelta(this.guard((facade) => facade.set_local_flags(ids, flags), 'EDITOR_BRIDGE_FAILURE'));
+  getLocalFlags(): LocalObjectFlagMap { return this.localFlagsValue; }
+
+  setLocalFlags(ids: readonly Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta | null {
+    const delta = this.guard((facade) => facade.set_local_flags(ids, flags), 'EDITOR_BRIDGE_FAILURE');
+    if (delta && delta.error === null) {
+      let next: Record<Id, LocalObjectFlags> | null = null;
+      for (const id of ids) {
+        const previous = this.localFlagsValue[id] ?? DEFAULT_OBJECT_FLAGS;
+        const hidden = flags.hidden ?? previous.hidden;
+        const locked = flags.locked ?? previous.locked;
+        if (hidden === previous.hidden && locked === previous.locked) continue;
+        next ??= Object.assign(Object.create(null), this.localFlagsValue);
+        if (!hidden && !locked) delete next![id];
+        else next![id] = Object.freeze({ hidden, locked });
+      }
+      if (next) this.localFlagsValue = Object.freeze(next);
+    }
+    // Delta consumers see accepted transient state before deciding whether to serialize.
+    return this.consumeDelta(delta);
+  }
+
+  pan(dx: number, dy: number): void {
+    this.guard((facade) => { const view = facade.get_viewport(); facade.set_viewport({ ...view, tx: view.tx + dx, ty: view.ty + dy }); return null; }, 'EDITOR_BRIDGE_FAILURE');
+    this.markDirty();
   }
 
   zoomAt(xCss: number, yCss: number, factor: number): void {
@@ -209,6 +254,10 @@ export class EditorHost {
       facade.set_predictions(sets);
       return null;
     }, 'EDITOR_BRIDGE_FAILURE');
+  }
+
+  getCommittedSnapshot(delta: EditorDelta): AnnotationDocument | null {
+    return delta.document_changed || delta.suggestion_decisions.length > 0 ? this.getSnapshot() : null;
   }
 
   getSnapshot(): AnnotationDocument | null {
@@ -287,7 +336,16 @@ export class EditorHost {
   private releaseFacade(): void {
     const facade = this.facade;
     this.facade = null;
-    facade?.dispose();
+    this.localFlagsValue = EMPTY_LOCAL_FLAGS;
+    if (facade) {
+      facade.dispose();
+      const stats = facade.get_render_stats?.();
+      if (stats) for (const key of Object.keys(stats) as (keyof RenderStats)[]) {
+        if (['live_textures', 'live_buffers', 'logical_texture_bytes', 'visible_instances'].includes(key)) continue;
+        this.retiredStats[key] = (this.retiredStats[key] ?? 0) + stats[key];
+      }
+      facade.free?.();
+    }
   }
 
   private guard<T>(action: (facade: EditorFacade) => T, fallbackCode: string): T | null {
@@ -304,6 +362,15 @@ export class EditorHost {
   private consumeDelta(delta: EditorDelta | null): EditorDelta | null {
     if (delta === null) return null;
     if (delta.error !== null) this.errorValue = delta.error;
+    else if (delta.removed_object_ids.length) {
+      let next: Record<Id, LocalObjectFlags> | null = null;
+      for (const id of delta.removed_object_ids) {
+        if (!Object.hasOwn(this.localFlagsValue, id)) continue;
+        next ??= Object.assign(Object.create(null), this.localFlagsValue);
+        delete next![id];
+      }
+      if (next) this.localFlagsValue = Object.freeze(next);
+    }
     if (delta.repaint) this.markDirty();
     this.onDelta?.(delta);
     return delta;
@@ -342,6 +409,7 @@ export class EditorHost {
       facade.render(timestampMs);
       return null;
     }, 'RENDER_FAILED');
+    for (const listener of this.renderedListeners) listener();
   };
 
   private handleResize = (): void => {

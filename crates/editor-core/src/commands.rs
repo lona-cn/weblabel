@@ -6,6 +6,18 @@ use annotation_domain::{
 };
 
 use crate::Selection;
+thread_local! { static VALIDATION_INPUT_OBJECTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+pub(crate) fn validation_input_objects() -> u64 {
+    VALIDATION_INPUT_OBJECTS.with(|count| count.get())
+}
+pub(crate) fn validate_counted(
+    document: &AnnotationDocument,
+    ontology: &OntologyVersion,
+) -> Result<(), DomainError> {
+    VALIDATION_INPUT_OBJECTS
+        .with(|count| count.set(count.get().saturating_add(document.objects.len() as u64)));
+    validate_document(document, ontology)
+}
 
 pub(crate) fn apply(
     document: &mut AnnotationDocument,
@@ -116,7 +128,7 @@ pub(crate) fn apply(
             ));
         }
     }
-    validate_document(document, ontology)
+    validate_counted(document, ontology)
 }
 
 fn ensure_targets(document: &AnnotationDocument, ids: &[Id]) -> Result<(), DomainError> {

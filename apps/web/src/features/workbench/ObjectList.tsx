@@ -1,17 +1,27 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
+import type { LocalObjectFlagMap } from '../../lib/editor/types';
 
+const EMPTY_LOCAL_FLAGS: LocalObjectFlagMap = Object.freeze(Object.create(null));
 const ROW_HEIGHT = 40;
 
 type Props = {
   objects: readonly AnnotationObject[];
   selectedIds: readonly string[];
   onSelect: (id: string) => void;
+  localFlags?: LocalObjectFlagMap;
+  onSetLocalFlags?: (ids: readonly string[], flags: { hidden?: boolean; locked?: boolean }) => void;
+  flagsEditable?: boolean;
   status?: 'ready' | 'loading' | 'error' | 'empty' | 'unsupported';
 };
 
-export function ObjectList({ objects, selectedIds, onSelect, status = objects.length ? 'ready' : 'empty' }: Props) {
+export function ObjectList({ objects, selectedIds, onSelect, localFlags = EMPTY_LOCAL_FLAGS, onSetLocalFlags, flagsEditable = true, status = objects.length ? 'ready' : 'empty' }: Props) {
+  const allHidden = selectedIds.length > 0 && selectedIds.every(id => localFlags[id]?.hidden);
+  const someHidden = selectedIds.some(id => localFlags[id]?.hidden);
+  const allLocked = selectedIds.length > 0 && selectedIds.every(id => localFlags[id]?.locked);
+  const someLocked = selectedIds.some(id => localFlags[id]?.locked);
+  const hiddenIds = useMemo(() => Object.keys(localFlags).filter(id => localFlags[id].hidden), [localFlags]);
   const viewportRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: objects.length,
@@ -39,6 +49,16 @@ export function ObjectList({ objects, selectedIds, onSelect, status = objects.le
   return (
     <section className="object-panel" aria-labelledby="object-heading">
       <div className="panel-heading"><h2 id="object-heading">对象</h2><span>{objects.length.toLocaleString('zh-CN')}</span></div>
+      {onSetLocalFlags ? <div role="group" aria-label="对象显示与锁定" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: 8 }}>
+        <button type="button" data-testid="object-hide-selected" aria-pressed={someHidden && !allHidden ? 'mixed' : allHidden}
+          disabled={!flagsEditable || status !== 'ready' || !selectedIds.length}
+          onClick={() => onSetLocalFlags(selectedIds, { hidden: !allHidden })}>{allHidden ? '显示选中' : '隐藏选中'}</button>
+        <button type="button" data-testid="object-lock-selected" aria-pressed={someLocked && !allLocked ? 'mixed' : allLocked}
+          disabled={!flagsEditable || status !== 'ready' || !selectedIds.length}
+          onClick={() => onSetLocalFlags(selectedIds, { locked: !allLocked })}>{allLocked ? '解锁选中' : '锁定选中'}</button>
+        <button type="button" data-testid="object-show-all" disabled={!flagsEditable || status !== 'ready' || !hiddenIds.length}
+          onClick={() => onSetLocalFlags(hiddenIds, { hidden: false })}>显示全部</button>
+      </div> : null}
       <div
         className="object-viewport"
         data-testid="object-list"
@@ -78,8 +98,12 @@ export function ObjectList({ objects, selectedIds, onSelect, status = objects.le
                   key={object.object_id}
                   id={`object-option-${object.object_id}`}
                   role="option"
+                  aria-setsize={objects.length}
+                  aria-posinset={virtualRow.index + 1}
                   aria-selected={selected}
-                  aria-label={`对象 ${object.object_id}`}
+                  aria-label={`对象 ${object.object_id}${localFlags[object.object_id]?.hidden ? '，已隐藏' : ''}${localFlags[object.object_id]?.locked ? '，已锁定' : ''}`}
+                  data-hidden={localFlags[object.object_id]?.hidden ?? false}
+                  data-locked={localFlags[object.object_id]?.locked ?? false}
                   data-testid={`object-item-${object.object_id}`}
                   className={`object-row${selected ? ' selected' : ''}`}
                   style={{ position: 'absolute', top: virtualRow.start, height: virtualRow.size }}

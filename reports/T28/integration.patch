@@ -1,16 +1,2931 @@
-T28 integration handoff (main-owned paths)
-
-This is a deliberate integration note, not a claim that the runtime behavior is wired. The assigned worker scope excludes `crates/renderer-wgpu/src/lib.rs`, `crates/renderer-wgpu/src/renderer.rs`, WASM facade, test route/router, and root test registration.
-
-1. `crates/renderer-wgpu/src/lib.rs`: register `pub mod culling;` and `pub mod stats;`.
-2. `crates/renderer-wgpu/src/renderer.rs`:
-   - Add a `RendererStats` field initialized on construction and clear it only with renderer replacement/dispose semantics.
-   - Increment bridge call/byte counters only from an exact serialized input-byte source (do not JSON.stringify/copy a second projection just to estimate bytes).
-   - Record actual `queue.write_buffer` / `queue.write_texture` call counts and byte lengths, draw calls and successful `queue.submit`s at their existing callsites; maintain live texture counts on create/release and record actual budget rejection/release.
-   - Add a test-build-only stats snapshot binding for `RendererStats`; do not publish a production `__wl_test` hook.
-   - Integrate viewport culling without re-uploading the complete object projection on pan/zoom. The supplied `visible_instances` helper is CPU-side reference behavior but compacts into a caller-owned scratch Vec; do not call it on each viewport update if that causes an all-box GPU upload. Profile the actual renderer first and choose an approach that preserves the unchanged instance buffer (e.g. GPU-side clip/cull path or indexed visible ranges); capture the sample before deciding.
-3. Main-owned dense harness route `/test-harness/dense?count=2000|10000&seed=17`: load deterministic fixture data from `scripts/generate-dense-fixtures.mjs`; mount the real workbench/editor and WebGPU renderer, real virtualized sidebar, and exactly the test-only `T28TestHooks` declared in `apps/web/src/features/workbench/perf.ts`. Its hook implementation must reflect actual renderer/editor/save/validation counters, not fake counters or fixed success values. Ensure route and hook are omitted from production build.
-4. Resource admission: implement using existing media/GPU budget owner, reject an over-budget decoded/GPU resource before allocation or after releasing it, expose actual live-texture count, and prove rejection does not increase it. The worker-scope patch does not own that resource manager.
-5. Run the task-card command only after the preceding runtime wiring exists. Require the chromium-webgpu project to report hardware (software adapters are not hardware performance evidence), collect raw deterministic samples and p50/p95, and record exact environment/exit code/count in `tests.log`. No such run was made by this worker.
-
-No worker integration patch edits shared files or out-of-scope owner files.
+diff --git a/TASKS.json b/TASKS.json
+index 03f71cf5..e0cee14f 100644
+--- a/TASKS.json
++++ b/TASKS.json
+@@ -1094,6 +1094,7 @@
+         "crates/geometry/src/spatial_index.rs",
+         "apps/web/src/features/workbench/perf.ts",
+         "tests/perf/t28_dense.spec.ts",
++        "tests/perf/t28_workbench.spec.ts",
+         "scripts/generate-dense-fixtures.mjs"
+       ],
+       "checks": [
+@@ -1103,6 +1104,7 @@
+           "playwright",
+           "test",
+           "tests/perf/t28_dense.spec.ts",
++          "tests/perf/t28_workbench.spec.ts",
+           "--project=chromium-webgpu"
+         ]
+       ],
+diff --git a/apps/web/src/app/routes.tsx b/apps/web/src/app/routes.tsx
+index fae89913..ab4646d7 100644
+--- a/apps/web/src/app/routes.tsx
++++ b/apps/web/src/app/routes.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useState } from 'react';
++import { lazy, Suspense, useEffect, useState } from 'react';
+ import { useSession } from './providers';
+ import { Login } from '../features/projects/Login';
+ import { Projects } from '../features/projects/Projects';
+@@ -6,7 +6,18 @@ import { Workbench } from '../features/workbench/Workbench';
+ import { Datasets } from '../features/datasets/Datasets';
+ import type { Project } from '../lib/t15/api';
+ 
++const DenseHarness = import.meta.env.MODE === 'test' ? lazy(() => import('../features/workbench/DenseHarness')) : null;
++
+ export function RouteView() {
++  if (location.pathname.startsWith('/test-harness/')) {
++    return import.meta.env.MODE === 'test' && location.pathname === '/test-harness/dense' && DenseHarness
++      ? <Suspense fallback={<p>Loading dense workload…</p>}><DenseHarness /></Suspense>
++      : <main role="alert">Test harness unavailable in release builds</main>;
++  }
++  return <StandardRoutes />;
++}
++
++function StandardRoutes() {
+   const { session, loading } = useSession();
+   const [projectId, setProjectId] = useState(() => new URLSearchParams(location.search).get('project_id'));
+   const [datasetView, setDatasetView] = useState(() => new URLSearchParams(location.search).get('dataset_view') === '1');
+diff --git a/apps/web/src/features/workbench/CanvasView.tsx b/apps/web/src/features/workbench/CanvasView.tsx
+index 9460e9f0..ff6a3bcf 100644
+--- a/apps/web/src/features/workbench/CanvasView.tsx
++++ b/apps/web/src/features/workbench/CanvasView.tsx
+@@ -1,7 +1,7 @@
+ import { useEffect, useRef, useState } from 'react';
+ import { EditorHost } from '../../lib/editor/EditorHost';
+ import { toApiError } from '../../lib/editor/loader';
+-import type { ApiError, EditorAssetRequest, EditorHostOptions, EditorTool } from '../../lib/editor/types';
++import type { ApiError, CanvasLabel, EditorAssetRequest, EditorHostOptions, EditorTool } from '../../lib/editor/types';
+ import type { EditorDelta } from '../../../../../packages/contracts/generated/EditorDelta';
+ 
+ export interface CanvasViewProps {
+@@ -13,24 +13,10 @@ export interface CanvasViewProps {
+   onHostReady: (host: EditorHost) => void;
+ }
+ 
+-type GpuInfo = { vendor?: string; device?: string; architecture?: string; description?: string };
+-type GpuAdapter = { info?: GpuInfo };
+-type GpuNavigator = Navigator & { gpu?: { requestAdapter(): Promise<GpuAdapter | null> } };
+-
+-async function adapterKind(): Promise<'hardware' | 'software' | 'unknown'> {
+-  try {
+-    const gpu = (navigator as GpuNavigator).gpu;
+-    if (!gpu) return 'unknown';
+-    const adapter = await gpu.requestAdapter();
+-    if (!adapter) return 'unknown';
+-    const info = adapter.info;
+-    if (!info) return 'unknown';
+-    const description = [info.vendor, info.device, info.architecture, info.description].join(' ').toLowerCase();
+-    if (/swiftshader|llvmpipe|lavapipe|software|mesa|basic render|cpu/.test(description)) return 'software';
+-    return info.vendor || info.device || info.architecture ? 'hardware' : 'unknown';
+-  } catch {
+-    return 'unknown';
+-  }
++function adapterKind(diagnostics: string): 'hardware' | 'software' | 'unknown' {
++  if (/swiftshader|llvmpipe|lavapipe|software|basic render|device_type=Cpu/i.test(diagnostics)) return 'software';
++  if (/DiscreteGpu|IntegratedGpu|nvidia|intel|amd|apple|blackwell/i.test(diagnostics)) return 'hardware';
++  return 'unknown';
+ }
+ 
+ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostReady, readOnly = false }: CanvasViewProps) {
+@@ -44,6 +30,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+   const [error, setError] = useState<ApiError | null>(null);
+   const [deviceState, setDeviceState] = useState<'loading' | 'ready' | 'unsupported' | 'lost'>('loading');
+   const [adapter, setAdapter] = useState<'hardware' | 'software' | 'unknown'>('unknown');
++  const [labels, setLabels] = useState<CanvasLabel[]>([]);
+   requestRef.current = request;
+   optionsRef.current = hostOptions;
+   deltaRef.current = onDelta;
+@@ -53,6 +40,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+   useEffect(() => {
+     let active = true;
+     let host: EditorHost | null = null;
++    let unsubscribe: (() => void) | undefined;
+     queueMicrotask(() => {
+       const canvas = canvasRef.current;
+       if (!active || !canvas) return;
+@@ -60,6 +48,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+         if (host !== null) deltaRef.current(host, delta);
+       } });
+       hostRef.current = host;
++      unsubscribe = host.subscribeRendered(() => { if (active && host) setLabels(host.getCanvasLabels()); });
+       host.mount(canvas);
+       setError(null);
+       setDeviceState('loading');
+@@ -67,7 +56,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+         if (!active || host?.status !== 'ready') return;
+         host.setTool(toolRef.current);
+         readyRef.current(host);
+-        const kind = await adapterKind();
++        const kind = adapterKind(host.getAdapterDiagnostics());
+         if (!active) return;
+         setAdapter(kind);
+         setDeviceState('ready');
+@@ -79,6 +68,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+     });
+     return () => {
+       active = false;
++      unsubscribe?.();
+       host?.dispose();
+       if (hostRef.current === host) hostRef.current = null;
+     };
+@@ -97,7 +87,12 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+     <div className="gpu-diagnostics" data-testid="gpu-status" data-actual-backend={deviceState === 'ready' ? 'webgpu' : 'none'} data-adapter-kind={adapter} data-device-state={deviceState} role="status" aria-live="polite">
+       {deviceState === 'ready' ? `WebGPU · ${adapter} adapter · 就绪` : deviceState === 'unsupported' ? 'WebGPU 不支持；仅可查看对象' : deviceState === 'lost' ? 'WebGPU 初始化失败' : '正在初始化真实 WebGPU…'}
+     </div>
+-    <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
++    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
++      <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
++      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
++        {labels.map((label) => <span key={label.object_id} data-testid="canvas-label" data-object-id={label.object_id} data-selected={label.selected} style={{ position: 'absolute', transform: 'translate('+label.x_css+'px, '+label.y_css+'px)', fontSize: 11, color: label.selected ? '#fff' : '#f1d68a', background: '#17212be6', padding: '1px 3px' }}>{label.object_id}</span>)}
++      </div>
++    </div>
+     {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
+   </>;
+ }
+diff --git a/apps/web/src/features/workbench/DenseHarness.tsx b/apps/web/src/features/workbench/DenseHarness.tsx
+new file mode 100644
+index 00000000..b85327c7
+--- /dev/null
++++ b/apps/web/src/features/workbench/DenseHarness.tsx
+@@ -0,0 +1,134 @@
++import { useEffect, useRef, useState } from 'react';
++import { generateDenseWorkload } from '../../../../../scripts/generate-dense-fixtures.mjs';
++import { api, csrfToken, setCsrfToken } from '../../lib/t15/api';
++import { decodeCanonicalFrame, resourceStats } from '../../lib/editor/loader';
++import type { AnnotationDocument, EditorAssetRequest, EditorDelta, MediaRevision, LocalObjectFlagMap } from '../../lib/editor/types';
++import { EditorHost } from '../../lib/editor/EditorHost';
++import { IndexedDbDraftStorage } from '../../lib/persistence/draft-store';
++import { FetchSaveTransport, SaveQueue } from '../../lib/persistence/save-queue';
++import { CanvasView } from './CanvasView';
++import { ObjectList } from './ObjectList';
++import { installT28TestHooks, removeT28TestHooks, type T28TestHooks } from './perf';
++
++const settled = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
++
++/** TEST BUILD ONLY: synthetic annotations on authenticated, real API media.
++ * The canvas, editor host, queue, IndexedDB and HTTP transport are production consumers. */
++export default function DenseHarness() {
++  const [request, setRequest] = useState<EditorAssetRequest | null>(null);
++  const [objects, setObjects] = useState<AnnotationDocument['objects']>([]);
++  const [selected, setSelected] = useState<string[]>([]);
++  const [localFlags, setLocalFlags] = useState<LocalObjectFlagMap>({});
++  const [error, setError] = useState<string | null>(null);
++  const hostRef = useRef<EditorHost | null>(null);
++  const currentRef = useRef<EditorAssetRequest | null>(null);
++  const assetsRef = useRef<MediaRevision[]>([]);
++  const saveCount = useRef(0);
++  const baseRevisions = useRef(new Map<string, string>());
++  const queueRef = useRef<SaveQueue | null>(null);
++  if (!queueRef.current) queueRef.current = new SaveQueue({ storage: new IndexedDbDraftStorage(), transport: new FetchSaveTransport({ csrfToken,
++    fetchImpl: (input, init) => { if (init?.method === 'PUT') saveCount.current += 1; return fetch(input, init); },
++  }) });
++
++  useEffect(() => {
++    let alive = true;
++    if (import.meta.env.MODE !== 'test') { setError('Test harness unavailable'); return; }
++    setCsrfToken(sessionStorage.getItem('weblabel_csrf'));
++    const query = new URLSearchParams(location.search);
++    const project = query.get('project_id');
++    const count = Number(query.get('count') ?? 2000);
++    const seed = Number(query.get('seed') ?? 17);
++    void (async () => {
++      if (!project) throw new Error('Dense harness requires an authenticated synthetic project_id');
++      const assets = await api.assets(project);
++      if (!alive) return;
++      const ontology = (await api.ontologies(project)).items[0];
++      const media = assets.find((asset) => asset.asset_revision_id === query.get('asset_revision_id')) ?? assets[0];
++      if (!media || !ontology) throw new Error('Synthetic media and ontology prerequisites are missing');
++      const head = await api.annotation(media.asset_revision_id, ontology.ontology_version_id);
++      const workload = generateDenseWorkload(count, seed, media.canonical_width, media.canonical_height);
++      const document: AnnotationDocument = { ...head.document, objects: workload.objects };
++      if (!alive) return;
++      const saved = await api.request<{ revision: { annotation_revision_id: string } }>(`/api/assets/${media.asset_revision_id}/annotation`, { method: 'PUT', body: JSON.stringify({ operation_id: crypto.randomUUID(), base_revision_id: head.annotation_revision_id, document, lease: null, suggestion_decisions: [] }) });
++      const frame = await decodeCanonicalFrame(await api.image(media.asset_revision_id), { width: media.canonical_width, height: media.canonical_height });
++      if (!alive) return;
++      const next: EditorAssetRequest = { media, ontology, document, frame, initial_generation: 7 };
++      assetsRef.current = [media, ...assets.filter((asset) => asset !== media)];
++      currentRef.current = next;
++      baseRevisions.current.set(media.asset_revision_id, saved.revision.annotation_revision_id);
++      queueRef.current!.enqueue({ asset_revision_id: media.asset_revision_id, ontology_version_id: ontology.ontology_version_id, base_revision_id: saved.revision.annotation_revision_id, generation: 7, document, suggestion_decisions: [] });
++      await queueRef.current!.flush(media.asset_revision_id);
++      if (!alive) return;
++      setObjects(document.objects);
++      setRequest(next);
++    })().catch((reason: unknown) => { if (alive) setError(reason instanceof Error ? reason.message : JSON.stringify(reason)); });
++    return () => { alive = false; removeT28TestHooks(); };
++  }, []);
++
++  function consume(host: EditorHost, delta: EditorDelta) {
++    if (delta.error) { setError(`${delta.error.code}: ${delta.error.message}`); return; }
++    setError(null);
++    setSelected(current => current.length === delta.selected_object_ids.length && current.every((id, index) => id === delta.selected_object_ids[index]) ? current : delta.selected_object_ids);
++    setLocalFlags(host.getLocalFlags());
++    const document = host.getCommittedSnapshot(delta);
++    const current = currentRef.current;
++    if (!document || !current) return;
++    current.document = document;
++    setObjects(document.objects);
++    queueRef.current!.enqueue({ asset_revision_id: current.media.asset_revision_id, ontology_version_id: current.ontology.ontology_version_id,
++      base_revision_id: queueRef.current!.getStatus(current.media.asset_revision_id).base_revision_id ?? baseRevisions.current.get(current.media.asset_revision_id)!, generation: delta.generation, document, suggestion_decisions: delta.suggestion_decisions });
++  }
++
++  async function ready(host: EditorHost) {
++    hostRef.current = host;
++    host.setActiveLabel(currentRef.current!.ontology.labels[0].label_id);
++    host.select([currentRef.current!.document.objects[37].object_id]);
++    await settled();
++    const hooks: T28TestHooks = {
++      ready: true,
++      tool: (tool) => host.setTool(tool),
++      undo: async () => { host.dispatch({ kind: 'undo' }); await settled(); },
++      stats: () => { const stats = host.getRenderStats(); if (!stats) throw new Error('Real renderer instrumentation missing'); const bridge = host.getBridgeStats();
++        return { ...stats, js_wasm_calls: bridge.calls, js_wasm_bytes: bridge.binary_bytes, js_wasm_binary_bytes: bridge.binary_bytes, bridge_elapsed_ms: bridge.elapsed_ms,
++          ...resourceStats, rejected_resources: stats.rejected_resources + resourceStats.rejected_resources }; },
++      pan: async (dx, dy) => { host.pan(dx, dy); await settled(); },
++      zoom: async (factor) => { host.zoomAt(200, 150, factor); await settled(); },
++      editObject: async (index, dx = 1) => { const object = currentRef.current!.document.objects[index]; host.dispatch({ kind: 'replace_geometry', object_id: object.object_id, geometry: { ...object.geometry, x_max: object.geometry.x_max + dx } }); await settled(); },
++      select: async (id) => { host.select([id]); await settled(); },
++      setFlags: async (ids, flags) => { host.setLocalFlags(ids, flags); await settled(); },
++      commitBulkAttributes: async () => { host.dispatch({ kind: 'set_attributes', object_ids: currentRef.current!.document.objects.map((object) => object.object_id), values: { helmet_state: 'wearing' } }); await settled(); },
++      changeAsset: async (index) => {
++        const current = currentRef.current!;
++        await queueRef.current!.flush(current.media.asset_revision_id);
++        const media = assetsRef.current[index % assetsRef.current.length];
++        const head = await api.annotation(media.asset_revision_id, current.ontology.ontology_version_id);
++        const frame = await decodeCanonicalFrame(await api.image(media.asset_revision_id), { width: media.canonical_width, height: media.canonical_height });
++        const next = { media, ontology: current.ontology, document: head.document, frame, initial_generation: queueRef.current!.getStatus(media.asset_revision_id).local_generation };
++        currentRef.current = next;
++        baseRevisions.current.set(media.asset_revision_id, head.annotation_revision_id);
++        setObjects(next.document.objects);
++        await host.loadAsset(next);
++        host.setActiveLabel(next.ontology.labels[0].label_id);
++        setSelected([]);
++        setLocalFlags(host.getLocalFlags());
++        await settled();
++      },
++      tryOverBudgetAsset: async () => { const current = currentRef.current!; try { await host.loadAsset({ ...current, frame: { width: 8192, height: 8192, rgba: new Uint8Array(0) } }); return true; } catch (reason) { if (!reason || typeof reason !== 'object' || !('code' in reason) || reason.code !== 'RESOURCE_BUDGET_EXCEEDED') throw reason; return false; } },
++      flush: async () => { await queueRef.current!.flush(currentRef.current!.media.asset_revision_id); },
++      snapshot: () => host.getSnapshot()!, viewport: () => host.getViewport()!, labels: () => host.getCanvasLabels(),
++      saveCount: () => saveCount.current, validationInputObjects: () => host.getValidationInputObjects(), serializedInputObjects: () => host.getSerializedInputObjects(), generation: () => host.getGeneration()!,
++    };
++    installT28TestHooks(hooks);
++  }
++
++  return <main style={{ padding: 20 }}>
++    <header><h1>Dense annotation laboratory</h1><p>Synthetic workload · actual Rust / WASM / WebGPU · authenticated API saves</p></header>
++    {error ? <p role="alert">{error}</p> : null}
++    {request ? <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 300px', gap: 20 }}>
++      <section style={{ height: 640 }} aria-label="Dense annotation canvas"><CanvasView request={request} activeTool="select" onDelta={consume} onHostReady={(host) => { void ready(host); }} /></section>
++      <ObjectList objects={objects} selectedIds={selected} localFlags={localFlags}
++        onSetLocalFlags={(ids, flags) => { hostRef.current?.setLocalFlags(ids, flags); }}
++        onSelect={(id) => { hostRef.current?.select([id]); }} />
++    </div> : <p role="status">Preparing authenticated synthetic workload…</p>}
++  </main>;
++}
+diff --git a/apps/web/src/features/workbench/ObjectList.tsx b/apps/web/src/features/workbench/ObjectList.tsx
+index 271a4129..ce0d6542 100644
+--- a/apps/web/src/features/workbench/ObjectList.tsx
++++ b/apps/web/src/features/workbench/ObjectList.tsx
+@@ -1,17 +1,27 @@
+-import { useRef } from 'react';
++import { useMemo, useRef } from 'react';
+ import { useVirtualizer } from '@tanstack/react-virtual';
+ import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
++import type { LocalObjectFlagMap } from '../../lib/editor/types';
+ 
++const EMPTY_LOCAL_FLAGS: LocalObjectFlagMap = Object.freeze(Object.create(null));
+ const ROW_HEIGHT = 40;
+ 
+ type Props = {
+   objects: readonly AnnotationObject[];
+   selectedIds: readonly string[];
+   onSelect: (id: string) => void;
++  localFlags?: LocalObjectFlagMap;
++  onSetLocalFlags?: (ids: readonly string[], flags: { hidden?: boolean; locked?: boolean }) => void;
++  flagsEditable?: boolean;
+   status?: 'ready' | 'loading' | 'error' | 'empty' | 'unsupported';
+ };
+ 
+-export function ObjectList({ objects, selectedIds, onSelect, status = objects.length ? 'ready' : 'empty' }: Props) {
++export function ObjectList({ objects, selectedIds, onSelect, localFlags = EMPTY_LOCAL_FLAGS, onSetLocalFlags, flagsEditable = true, status = objects.length ? 'ready' : 'empty' }: Props) {
++  const allHidden = selectedIds.length > 0 && selectedIds.every(id => localFlags[id]?.hidden);
++  const someHidden = selectedIds.some(id => localFlags[id]?.hidden);
++  const allLocked = selectedIds.length > 0 && selectedIds.every(id => localFlags[id]?.locked);
++  const someLocked = selectedIds.some(id => localFlags[id]?.locked);
++  const hiddenIds = useMemo(() => Object.keys(localFlags).filter(id => localFlags[id].hidden), [localFlags]);
+   const viewportRef = useRef<HTMLDivElement>(null);
+   const virtualizer = useVirtualizer({
+     count: objects.length,
+@@ -39,6 +49,16 @@ export function ObjectList({ objects, selectedIds, onSelect, status = objects.le
+   return (
+     <section className="object-panel" aria-labelledby="object-heading">
+       <div className="panel-heading"><h2 id="object-heading">对象</h2><span>{objects.length.toLocaleString('zh-CN')}</span></div>
++      {onSetLocalFlags ? <div role="group" aria-label="对象显示与锁定" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: 8 }}>
++        <button type="button" data-testid="object-hide-selected" aria-pressed={someHidden && !allHidden ? 'mixed' : allHidden}
++          disabled={!flagsEditable || status !== 'ready' || !selectedIds.length}
++          onClick={() => onSetLocalFlags(selectedIds, { hidden: !allHidden })}>{allHidden ? '显示选中' : '隐藏选中'}</button>
++        <button type="button" data-testid="object-lock-selected" aria-pressed={someLocked && !allLocked ? 'mixed' : allLocked}
++          disabled={!flagsEditable || status !== 'ready' || !selectedIds.length}
++          onClick={() => onSetLocalFlags(selectedIds, { locked: !allLocked })}>{allLocked ? '解锁选中' : '锁定选中'}</button>
++        <button type="button" data-testid="object-show-all" disabled={!flagsEditable || status !== 'ready' || !hiddenIds.length}
++          onClick={() => onSetLocalFlags(hiddenIds, { hidden: false })}>显示全部</button>
++      </div> : null}
+       <div
+         className="object-viewport"
+         data-testid="object-list"
+@@ -78,8 +98,12 @@ export function ObjectList({ objects, selectedIds, onSelect, status = objects.le
+                   key={object.object_id}
+                   id={`object-option-${object.object_id}`}
+                   role="option"
++                  aria-setsize={objects.length}
++                  aria-posinset={virtualRow.index + 1}
+                   aria-selected={selected}
+-                  aria-label={`对象 ${object.object_id}`}
++                  aria-label={`对象 ${object.object_id}${localFlags[object.object_id]?.hidden ? '，已隐藏' : ''}${localFlags[object.object_id]?.locked ? '，已锁定' : ''}`}
++                  data-hidden={localFlags[object.object_id]?.hidden ?? false}
++                  data-locked={localFlags[object.object_id]?.locked ?? false}
+                   data-testid={`object-item-${object.object_id}`}
+                   className={`object-row${selected ? ' selected' : ''}`}
+                   style={{ position: 'absolute', top: virtualRow.start, height: virtualRow.size }}
+diff --git a/apps/web/src/features/workbench/Workbench.tsx b/apps/web/src/features/workbench/Workbench.tsx
+index 462f4f9c..a3fc3250 100644
+--- a/apps/web/src/features/workbench/Workbench.tsx
++++ b/apps/web/src/features/workbench/Workbench.tsx
+@@ -9,6 +9,7 @@ import { useSession } from '../../app/providers';
+ import { api, csrfToken, type ApiMedia, type Project } from '../../lib/t15/api';
+ import { decodeCanonicalFrame } from '../../lib/editor/loader';
+ import { EditorHost } from '../../lib/editor/EditorHost';
++import type { LocalObjectFlagMap } from '../../lib/editor/types';
+ import { FetchSaveTransport, SaveQueue } from '../../lib/persistence/save-queue';
+ import { IndexedDbDraftStorage } from '../../lib/persistence/draft-store';
+ import { runRecovery, type RecoveryReport } from '../../lib/persistence/recovery';
+@@ -46,6 +47,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets =
+   const [host, setHost] = useState<EditorHost | null>(null);
+   const [objects, setObjects] = useState<AnnotationObject[]>([]);
+   const [selectedIds, setSelectedIds] = useState<string[]>([]);
++  const [localFlags, setLocalFlags] = useState<LocalObjectFlagMap>({});
+   const [completionChoice, setCompletionChoice] = useState<'unprocessed' | 'in_progress' | 'complete' | 'confirmed_negative'>('unprocessed');
+   const [negativeConfirmed, setNegativeConfirmed] = useState(false);
+   const [exportFormat, setExportFormat] = useState<'coco' | 'yolo' | 'native'>('coco');
+@@ -155,6 +157,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets =
+     setError(null);
+     setHost(null);
+     setHistoryState({ canUndo: false, canRedo: false });
++    setLocalFlags({});
+     const transport = new FetchSaveTransport({ csrfToken });
+     Promise.all([api.annotation(media.asset_revision_id, ontology.ontology_version_id), api.image(media.asset_revision_id)]).then(async ([revision, image]) => {
+       const frame = await decodeCanonicalFrame(image, { width: media.canonical_width, height: media.canonical_height });
+@@ -207,12 +210,15 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets =
+ 
+   const applyDelta = useCallback((currentHost: EditorHost, delta: EditorDelta) => {
+     if (loaded?.readOnlyPreview || (submissionLockRef.current && delta.document_changed)) return;
+-    const snapshot = currentHost.getSnapshot();
+-    if (!snapshot || !loaded || loaded.media.asset_revision_id !== selectedAssetId) return;
++    if (!loaded || loaded.media.asset_revision_id !== selectedAssetId) return;
++    if (delta.error) { setError(`${delta.error.code}: ${delta.error.message}`); return; }
++    setSelectedIds(current => current.length === delta.selected_object_ids.length && current.every((id, index) => id === delta.selected_object_ids[index]) ? current : delta.selected_object_ids);
++    setHistoryState(current => current.canUndo === delta.can_undo && current.canRedo === delta.can_redo ? current : { canUndo: delta.can_undo, canRedo: delta.can_redo });
++    setLocalFlags(currentHost.getLocalFlags());
++    const snapshot = currentHost.getCommittedSnapshot(delta);
++    if (!snapshot) return;
+     setObjects(snapshot.objects);
+-    setSelectedIds(delta.selected_object_ids);
+     setCompletionChoice(snapshot.completion);
+-    setHistoryState({ canUndo: delta.can_undo, canRedo: delta.can_redo });
+     if (delta.document_changed || delta.suggestion_decisions.length > 0) {
+       queue.enqueue({ asset_revision_id: loaded.media.asset_revision_id, ontology_version_id: loaded.ontology.ontology_version_id,
+         base_revision_id: queue.getStatus(loaded.media.asset_revision_id).base_revision_id ?? loaded.revisionId,
+@@ -225,8 +231,14 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets =
+   }
+ 
+   function selectObject(objectId: string) {
+-    const delta = activeHost?.select([objectId]);
+-    if (delta) setSelectedIds(delta.selected_object_ids);
++    activeHost?.select([objectId]);
++  }
++
++  function changeLocalFlags(ids: readonly string[], flags: { hidden?: boolean; locked?: boolean }) {
++    if (!activeHost || activeLoaded?.readOnlyPreview || submissionLockRef.current) return;
++    const delta = activeHost.setLocalFlags(ids, flags);
++    if (!delta) setError('Editor did not accept the transient flag update.');
++    else if (delta.error) setError(`${delta.error.code}: ${delta.error.message}`);
+   }
+ 
+   function changeAttribute(key: string, value: Scalar) {
+@@ -320,7 +332,10 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets =
+           {assets.map((asset) => <button key={asset.asset_revision_id} type="button" className={`media-thumb${selectedAssetId === asset.asset_revision_id ? ' active' : ''}`} data-testid={`asset-item-${asset.asset_revision_id}`} aria-pressed={selectedAssetId === asset.asset_revision_id} aria-label={`选择媒体 ${asset.original_name}`} onClick={() => selectAsset(asset)}><span>{asset.original_name}</span><small>{asset.canonical_width} × {asset.canonical_height}</small></button>)}
+           {!assets.length ? <p role="status">{loadState === 'loading' ? '加载媒体…' : '暂无媒体，请导入图片。'}</p> : null}
+         </section>
+-        <ObjectList objects={activeObjects} selectedIds={activeSelectedIds} onSelect={selectObject} status={loadState === 'error' ? 'error' : !activeLoaded || loadState === 'loading' ? 'loading' : 'ready'} />
++        <ObjectList objects={activeObjects} selectedIds={activeSelectedIds} localFlags={localFlags}
++          onSelect={selectObject} onSetLocalFlags={changeLocalFlags}
++          flagsEditable={!!activeHost && !activeLoaded?.readOnlyPreview && !submissionLockRef.current}
++          status={loadState === 'error' ? 'error' : !activeLoaded || loadState === 'loading' ? 'loading' : 'ready'} />
+         {activeLoaded ? <AttributePanel object={activeObjects.find((item) => activeSelectedIds.includes(item.object_id)) ?? null} ontology={activeLoaded.ontology} onChange={changeAttribute} disabled={!activeHost} /> : null}
+       </aside>
+       <section className="canvas-column" aria-label="标注工作区">
+@@ -330,7 +345,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets =
+           <button type="button" data-testid="redo" disabled={!activeHost || !historyState.canRedo} onClick={() => activeHost?.dispatch({ kind: 'redo' })}>重做</button>
+         </div></div>
+         <div className="canvas-stage" data-testid="canvas-container">
+-          {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}:${activeLoaded.readOnlyPreview}`} request={activeLoaded} readOnly={activeLoaded.readOnlyPreview} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}
++          {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}:${activeLoaded.readOnlyPreview}`} request={activeLoaded} readOnly={activeLoaded.readOnlyPreview} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setLocalFlags(readyHost.getLocalFlags()); setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}
+         </div>
+         <footer className="canvas-footer"><span>工具：{tool}</span><span>{activeLoaded ? `${activeLoaded.media.canonical_width} × ${activeLoaded.media.canonical_height} canonical` : '—'}</span><span>对象 {activeObjects.length}</span></footer>
+         {activeLoaded ? <SaveStatus queue={queue} asset_revision_id={activeLoaded.media.asset_revision_id} recovery={recovery} onViewServer={viewServerRevision} onResumeLocal={resumeLocalDraft} /> : null}
+diff --git a/apps/web/src/features/workbench/perf.ts b/apps/web/src/features/workbench/perf.ts
+new file mode 100644
+index 00000000..a2fed562
+--- /dev/null
++++ b/apps/web/src/features/workbench/perf.ts
+@@ -0,0 +1,37 @@
++import type { AnnotationDocument, CanvasLabel, RenderStats, Viewport } from '../../lib/editor/types';
++
++export type T28Stats = RenderStats & {
++  js_wasm_calls: number; js_wasm_bytes: number;
++  /** Only actual binary RGBA copies. JsValue object references are not byte copies. */
++  js_wasm_binary_bytes: number;
++  bridge_elapsed_ms: number;
++  live_decoded_bitmaps: number; decoded_bitmap_creations: number; decoded_bitmap_releases: number;
++};
++export interface T28TestHooks {
++  ready: boolean;
++  stats(): T28Stats;
++  pan(dx: number, dy: number): Promise<void>;
++  zoom(factor: number): Promise<void>;
++  editObject(index: number, dx?: number): Promise<void>;
++  changeAsset(index: number): Promise<void>;
++  tryOverBudgetAsset(): Promise<boolean>;
++  setFlags(ids: string[], flags: { hidden?: boolean; locked?: boolean }): Promise<void>;
++  select(id: string): Promise<void>;
++  commitBulkAttributes(): Promise<void>;
++  flush(): Promise<void>;
++  snapshot(): AnnotationDocument;
++  viewport(): Viewport;
++  labels(): CanvasLabel[];
++  saveCount(): number;
++  validationInputObjects(): number;
++  serializedInputObjects(): number;
++  generation(): number;
++  tool(tool: 'select' | 'box' | 'pan'): void;
++  undo(): Promise<void>;
++}
++declare global { interface Window { __wl_test?: T28TestHooks } }
++export function installT28TestHooks(hooks: T28TestHooks): void {
++  if (import.meta.env.MODE !== 'test') throw new Error('T28 test hooks are unavailable outside test builds');
++  Object.defineProperty(window, '__wl_test', { configurable: true, enumerable: false, value: hooks });
++}
++export function removeT28TestHooks(): void { if (import.meta.env.MODE === 'test') delete window.__wl_test; }
+diff --git a/apps/web/src/lib/editor/EditorHost.ts b/apps/web/src/lib/editor/EditorHost.ts
+index 0693beef..ecd51487 100644
+--- a/apps/web/src/lib/editor/EditorHost.ts
++++ b/apps/web/src/lib/editor/EditorHost.ts
+@@ -2,7 +2,8 @@
+ // DPR-aware viewport + canvas-local pointer routing, dirty-flag render
+ // scheduling, and idempotent disposal. Geometry math lives in Rust
+ // (geometry::viewport); this class only forwards browser facts.
+-import { createEditorFacadeFactory, DEFAULT_WASM_BRIDGE_URL, toApiError } from './loader';
++import { assertCanonicalBudget, bridgeStats, createEditorFacadeFactory, DEFAULT_WASM_BRIDGE_URL, toApiError } from './loader';
++import type { CanvasLabel, RenderStats, LocalObjectFlagMap, LocalObjectFlags } from './types';
+ import type {
+   AnnotationDocument,
+   ApiError,
+@@ -23,6 +24,8 @@ import type {
+   Viewport,
+ } from './types';
+ 
++const EMPTY_LOCAL_FLAGS: LocalObjectFlagMap = Object.freeze(Object.create(null));
++const DEFAULT_OBJECT_FLAGS: LocalObjectFlags = Object.freeze({ hidden: false, locked: false });
+ const CANVAS_POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'] as const;
+ 
+ type CanvasPointerEvent = (typeof CANVAS_POINTER_EVENTS)[number];
+@@ -61,6 +64,7 @@ export class EditorHost {
+   private size: CanvasSize | null = null;
+   private statusValue: EditorHostStatus = 'idle';
+   private errorValue: ApiError | null = null;
++  private localFlagsValue: LocalObjectFlagMap = EMPTY_LOCAL_FLAGS;
+   private transfersValue: BinaryTransfer[] = [];
+   private dirty = false;
+   private paused = true;
+@@ -69,6 +73,22 @@ export class EditorHost {
+   private disposed = false;
+   /** Identity of the asset the host currently initializes or mounted. */
+   private assetToken = 0;
++  private readonly renderedListeners = new Set<() => void>();
++  private retiredStats: Partial<RenderStats> = {};
++  subscribeRendered(listener: () => void): () => void { this.renderedListeners.add(listener); return () => { this.renderedListeners.delete(listener); }; }
++  getCanvasLabels(): CanvasLabel[] { return this.facade?.get_canvas_labels?.() ?? []; }
++  getAdapterDiagnostics(): string { return this.facade?.get_adapter_diagnostics?.() ?? ''; }
++  getValidationInputObjects(): number { return this.facade?.get_validation_input_objects?.() ?? 0; }
++  getSerializedInputObjects(): number { return this.facade?.get_serialized_input_objects?.() ?? 0; }
++  getRenderStats(): RenderStats | null {
++    const current = this.facade?.get_render_stats?.();
++    if (!current) return null;
++    const result = { ...current };
++    for (const key of Object.keys(this.retiredStats) as (keyof RenderStats)[]) result[key] += this.retiredStats[key] ?? 0;
++    return result;
++  }
++  getBridgeStats(): { calls: number; binary_bytes: number; elapsed_ms: number } { return { ...bridgeStats }; }
++
+   /** Invalidated on dispose; in-flight creations compare it before mounting. */
+   private disposeToken = 0;
+   /** Pointer ids captured by this host so every capture pairs with a release. */
+@@ -118,6 +138,7 @@ export class EditorHost {
+    * and never mounted onto the canvas.
+    */
+   async loadAsset(request: EditorAssetRequest): Promise<void> {
++    assertCanonicalBudget(request.frame.width, request.frame.height);
+     const assetToken = this.assetToken + 1;
+     this.assetToken = assetToken;
+     const disposeToken = this.disposeToken;
+@@ -145,9 +166,11 @@ export class EditorHost {
+     }
+     if (this.stale(assetToken, disposeToken)) {
+       created.facade.dispose();
++      created.facade.free?.();
+       return;
+     }
+     this.facade = created.facade;
++
+     this.transfersValue = [...this.transfersValue, created.transfer];
+     this.statusValue = 'ready';
+     this.applyViewport();
+@@ -184,8 +207,30 @@ export class EditorHost {
+     return this.consumeDelta(this.guard((facade) => facade.set_selection(ids), 'EDITOR_BRIDGE_FAILURE'));
+   }
+ 
+-  setLocalFlags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta | null {
+-    return this.consumeDelta(this.guard((facade) => facade.set_local_flags(ids, flags), 'EDITOR_BRIDGE_FAILURE'));
++  getLocalFlags(): LocalObjectFlagMap { return this.localFlagsValue; }
++
++  setLocalFlags(ids: readonly Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta | null {
++    const delta = this.guard((facade) => facade.set_local_flags(ids, flags), 'EDITOR_BRIDGE_FAILURE');
++    if (delta && delta.error === null) {
++      let next: Record<Id, LocalObjectFlags> | null = null;
++      for (const id of ids) {
++        const previous = this.localFlagsValue[id] ?? DEFAULT_OBJECT_FLAGS;
++        const hidden = flags.hidden ?? previous.hidden;
++        const locked = flags.locked ?? previous.locked;
++        if (hidden === previous.hidden && locked === previous.locked) continue;
++        next ??= Object.assign(Object.create(null), this.localFlagsValue);
++        if (!hidden && !locked) delete next![id];
++        else next![id] = Object.freeze({ hidden, locked });
++      }
++      if (next) this.localFlagsValue = Object.freeze(next);
++    }
++    // Delta consumers see accepted transient state before deciding whether to serialize.
++    return this.consumeDelta(delta);
++  }
++
++  pan(dx: number, dy: number): void {
++    this.guard((facade) => { const view = facade.get_viewport(); facade.set_viewport({ ...view, tx: view.tx + dx, ty: view.ty + dy }); return null; }, 'EDITOR_BRIDGE_FAILURE');
++    this.markDirty();
+   }
+ 
+   zoomAt(xCss: number, yCss: number, factor: number): void {
+@@ -211,6 +256,10 @@ export class EditorHost {
+     }, 'EDITOR_BRIDGE_FAILURE');
+   }
+ 
++  getCommittedSnapshot(delta: EditorDelta): AnnotationDocument | null {
++    return delta.document_changed || delta.suggestion_decisions.length > 0 ? this.getSnapshot() : null;
++  }
++
+   getSnapshot(): AnnotationDocument | null {
+     return this.guard((facade) => facade.get_snapshot(), 'EDITOR_BRIDGE_FAILURE');
+   }
+@@ -287,7 +336,16 @@ export class EditorHost {
+   private releaseFacade(): void {
+     const facade = this.facade;
+     this.facade = null;
+-    facade?.dispose();
++    this.localFlagsValue = EMPTY_LOCAL_FLAGS;
++    if (facade) {
++      facade.dispose();
++      const stats = facade.get_render_stats?.();
++      if (stats) for (const key of Object.keys(stats) as (keyof RenderStats)[]) {
++        if (['live_textures', 'live_buffers', 'logical_texture_bytes', 'visible_instances'].includes(key)) continue;
++        this.retiredStats[key] = (this.retiredStats[key] ?? 0) + stats[key];
++      }
++      facade.free?.();
++    }
+   }
+ 
+   private guard<T>(action: (facade: EditorFacade) => T, fallbackCode: string): T | null {
+@@ -304,6 +362,15 @@ export class EditorHost {
+   private consumeDelta(delta: EditorDelta | null): EditorDelta | null {
+     if (delta === null) return null;
+     if (delta.error !== null) this.errorValue = delta.error;
++    else if (delta.removed_object_ids.length) {
++      let next: Record<Id, LocalObjectFlags> | null = null;
++      for (const id of delta.removed_object_ids) {
++        if (!Object.hasOwn(this.localFlagsValue, id)) continue;
++        next ??= Object.assign(Object.create(null), this.localFlagsValue);
++        delete next![id];
++      }
++      if (next) this.localFlagsValue = Object.freeze(next);
++    }
+     if (delta.repaint) this.markDirty();
+     this.onDelta?.(delta);
+     return delta;
+@@ -342,6 +409,7 @@ export class EditorHost {
+       facade.render(timestampMs);
+       return null;
+     }, 'RENDER_FAILED');
++    for (const listener of this.renderedListeners) listener();
+   };
+ 
+   private handleResize = (): void => {
+diff --git a/apps/web/src/lib/editor/loader.ts b/apps/web/src/lib/editor/loader.ts
+index fc1edd97..68ceadfe 100644
+--- a/apps/web/src/lib/editor/loader.ts
++++ b/apps/web/src/lib/editor/loader.ts
+@@ -12,6 +12,15 @@ import type {
+ } from './types';
+ 
+ let requestCounter = 0;
++/** Actual exported WASM function calls and binary RGBA copies; JsValue object references are not byte copies. */
++export const bridgeStats = { calls: 0, binary_bytes: 0, elapsed_ms: 0 };
++export const resourceStats = { live_decoded_bitmaps: 0, decoded_bitmap_creations: 0, decoded_bitmap_releases: 0, rejected_resources: 0 };
++export function assertCanonicalBudget(width: number, height: number): void {
++  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || width > 4096 || height > 4096 || width * height * 4 > 64 * 1024 * 1024) {
++    resourceStats.rejected_resources += 1;
++    throw { code: 'RESOURCE_BUDGET_EXCEEDED', message: 'Canonical image exceeds 4096 dimensions / 64 MiB decoded budget', request_id: newRequestId(), details: null } satisfies ApiError;
++  }
++}
+ 
+ function newRequestId(): Id {
+   requestCounter += 1;
+@@ -54,9 +63,12 @@ export function toApiError(reason: unknown, fallbackCode: string, nextRequestId:
+  * 'none'`; the browser default ('from-image') would rotate them a second time.
+  */
+ export async function decodeCanonicalFrame(source: Blob, expected: { width: number; height: number }): Promise<CanonicalFrame> {
++  assertCanonicalBudget(expected.width, expected.height);
+   const bitmap = await createImageBitmap(source, { imageOrientation: 'none' });
++  resourceStats.live_decoded_bitmaps += 1;
++  resourceStats.decoded_bitmap_creations += 1;
++  try {
+   if (bitmap.width !== expected.width || bitmap.height !== expected.height) {
+-    bitmap.close();
+     throw {
+       code: 'CANONICAL_DECODE_MISMATCH',
+       message: `decoded ${bitmap.width}x${bitmap.height} does not match canonical ${expected.width}x${expected.height}`,
+@@ -69,7 +81,6 @@ export async function decodeCanonicalFrame(source: Blob, expected: { width: numb
+   canvas.height = bitmap.height;
+   const context = canvas.getContext('2d');
+   if (context === null) {
+-    bitmap.close();
+     throw {
+       code: 'CANVAS_2D_UNAVAILABLE',
+       message: 'canonical decode requires a 2D canvas context',
+@@ -79,9 +90,13 @@ export async function decodeCanonicalFrame(source: Blob, expected: { width: numb
+   }
+   context.drawImage(bitmap, 0, 0);
+   const image = context.getImageData(0, 0, canvas.width, canvas.height);
+-  bitmap.close();
+   const rgba = new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
+   return { width: canvas.width, height: canvas.height, rgba };
++  } finally {
++    bitmap.close();
++    resourceStats.live_decoded_bitmaps -= 1;
++    resourceStats.decoded_bitmap_releases += 1;
++  }
+ }
+ 
+ /** Default wasm-bridge bundle location (generated packages/wasm-editor output). */
+@@ -99,6 +114,7 @@ export function createEditorFacadeFactory(source: string | URL | EditorWasmBridg
+     async create(canvas, request): Promise<CreatedEditor> {
+       const bridge = await loadWasmBridge(source);
+       const { width, height, rgba } = request.frame;
++      assertCanonicalBudget(width, height);
+       const expectedBytes = width * height * 4;
+       if (rgba.byteLength !== expectedBytes) {
+         throw {
+@@ -109,6 +125,8 @@ export function createEditorFacadeFactory(source: string | URL | EditorWasmBridg
+         } satisfies ApiError;
+       }
+       const startedAt = performance.now();
++      bridgeStats.calls += 1;
++      bridgeStats.binary_bytes += rgba.byteLength;
+       const pending: Promise<EditorFacade> = bridge.create_editor(
+         canvas,
+         request.media,
+@@ -122,7 +140,19 @@ export function createEditorFacadeFactory(source: string | URL | EditorWasmBridg
+         byteLength: rgba.byteLength,
+         durationMs: performance.now() - startedAt,
+       };
+-      return { facade: await pending, transfer };
++      const facade = await pending;
++      return { facade: new Proxy(facade, {
++        get(target, key) {
++          const value = Reflect.get(target, key, target) as unknown;
++          if (typeof value !== 'function') return value;
++          return (...args: unknown[]) => {
++            const started = performance.now();
++            bridgeStats.calls += 1;
++            try { return Reflect.apply(value, target, args); }
++            finally { bridgeStats.elapsed_ms += performance.now() - started; }
++          };
++        },
++      }), transfer };
+     },
+   };
+ }
+diff --git a/apps/web/src/lib/editor/types.ts b/apps/web/src/lib/editor/types.ts
+index 2546731c..d03198f1 100644
+--- a/apps/web/src/lib/editor/types.ts
++++ b/apps/web/src/lib/editor/types.ts
+@@ -40,10 +40,25 @@ export interface PointerInput {
+ 
+ export type EditorTool = 'select' | 'box' | 'pan';
+ 
++/** Transient sidebar state; never part of AnnotationDocument or saved revisions. */
++export type LocalObjectFlags = Readonly<{ hidden: boolean; locked: boolean }>;
++export type LocalObjectFlagMap = Readonly<Record<Id, LocalObjectFlags>>;
++
+ /** C3 EditorFacade. Errors surface as `EditorDelta.error`; void setters throw
+  *  a structured ApiError value (never a panic). `get_viewport` is the additive
+  *  T09 extension documented in reports/T09/review.md: it returns the Rust-owned
+  *  view so resize can preserve zoom/pan without duplicating geometry in TS. */
++export interface CanvasLabel { object_id: Id; x_css: number; y_css: number; selected: boolean }
++export interface RenderStats {
++  cpu_calls: number; cpu_elapsed_ns: number; cpu_objects_examined: number;
++
++  gpu_buffer_upload_calls: number; gpu_buffer_upload_bytes: number;
++  gpu_texture_upload_calls: number; gpu_texture_upload_bytes: number;
++  bbox_upload_calls: number; bbox_upload_bytes: number; uniform_upload_bytes: number;
++  draw_calls: number; gpu_submissions: number; live_textures: number;
++  live_buffers: number; buffer_creations: number; buffer_releases: number;
++  visible_instances: number; logical_texture_bytes: number; rejected_resources: number;
++}
+ export interface EditorFacade {
+   dispatch(command: EditorCommand): EditorDelta;
+   pointer(input: PointerInput): EditorDelta;
+@@ -53,7 +68,7 @@ export interface EditorFacade {
+   zoom_at(x_css: number, y_css: number, factor: number): void;
+   fit_image(): void;
+   set_selection(ids: Id[]): EditorDelta;
+-  set_local_flags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
++  set_local_flags(ids: readonly Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
+   get_snapshot(): AnnotationDocument;
+   get_generation(): number;
+   get_object_hashes(): Record<Id, string>;
+@@ -61,6 +76,12 @@ export interface EditorFacade {
+   set_predictions(sets: SuggestionSet[]): void;
+   render(timestamp_ms: number): void;
+   dispose(): void;
++  free?(): void;
++  get_render_stats?(): RenderStats;
++  get_adapter_diagnostics?(): string;
++  get_canvas_labels?(): CanvasLabel[];
++  get_validation_input_objects?(): number;
++  get_serialized_input_objects?(): number;
+ }
+ 
+ /** Canonical RGBA pixels: already EXIF-oriented by the server pipeline; the
+diff --git a/crates/editor-core/src/commands.rs b/crates/editor-core/src/commands.rs
+index a473289b..ee472c05 100644
+--- a/crates/editor-core/src/commands.rs
++++ b/crates/editor-core/src/commands.rs
+@@ -6,6 +6,18 @@ use annotation_domain::{
+ };
+ 
+ use crate::Selection;
++thread_local! { static VALIDATION_INPUT_OBJECTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
++pub(crate) fn validation_input_objects() -> u64 {
++    VALIDATION_INPUT_OBJECTS.with(|count| count.get())
++}
++pub(crate) fn validate_counted(
++    document: &AnnotationDocument,
++    ontology: &OntologyVersion,
++) -> Result<(), DomainError> {
++    VALIDATION_INPUT_OBJECTS
++        .with(|count| count.set(count.get().saturating_add(document.objects.len() as u64)));
++    validate_document(document, ontology)
++}
+ 
+ pub(crate) fn apply(
+     document: &mut AnnotationDocument,
+@@ -116,7 +128,7 @@ pub(crate) fn apply(
+             ));
+         }
+     }
+-    validate_document(document, ontology)
++    validate_counted(document, ontology)
+ }
+ 
+ fn ensure_targets(document: &AnnotationDocument, ids: &[Id]) -> Result<(), DomainError> {
+diff --git a/crates/editor-core/src/editor.rs b/crates/editor-core/src/editor.rs
+index 935688c6..8f70978d 100644
+--- a/crates/editor-core/src/editor.rs
++++ b/crates/editor-core/src/editor.rs
+@@ -1,8 +1,8 @@
+ use std::collections::{HashMap, HashSet};
+ 
+ use annotation_domain::{
+-    validate_document, AnnotationDocument, AnnotationObject, DomainError, EditorCommand,
+-    EditorDelta, Id, OntologyVersion,
++    AnnotationDocument, AnnotationObject, DomainError, EditorCommand, EditorDelta, Id,
++    OntologyVersion,
+ };
+ use geometry::{css_to_image, Viewport};
+ 
+@@ -42,7 +42,7 @@ impl Editor {
+         ontology: OntologyVersion,
+         generation: u64,
+     ) -> Result<Self, DomainError> {
+-        validate_document(&document, &ontology)?;
++        commands::validate_counted(&document, &ontology)?;
+         let width = f64::from(document.coordinate_space.width);
+         let height = f64::from(document.coordinate_space.height);
+         Ok(Self {
+@@ -122,10 +122,22 @@ impl Editor {
+         }
+     }
+ 
++    /// Thread-local cumulative objects supplied at actual logical validation boundaries.
++    /// Inputs, not visits: failed validation may short-circuit.
++    pub fn validation_input_objects(&self) -> u64 {
++        commands::validation_input_objects()
++    }
++
+     pub fn snapshot(&self) -> AnnotationDocument {
+         self.document.clone()
+     }
+ 
++    /// Read-only canonical document order for native renderer projections.
++    /// Unlike `snapshot`, borrowing this slice does not clone geometry or IDs.
++    pub fn objects(&self) -> &[AnnotationObject] {
++        &self.document.objects
++    }
++
+     /// Pinned AI object content hashes from the validated canonical document.
+     /// Called at run preparation, never from pointer preview or rendering.
+     pub fn object_hashes(&self) -> std::collections::BTreeMap<Id, String> {
+@@ -319,7 +331,7 @@ impl Editor {
+         let before = self.document.clone();
+         let mut after = before.clone();
+         apply(&mut after, &self.selection)?;
+-        validate_document(&after, &self.ontology)?;
++        commands::validate_counted(&after, &self.ontology)?;
+         if after == before {
+             return Ok(self.delta(false, false, Vec::new(), Vec::new()));
+         }
+diff --git a/crates/renderer-wgpu/src/culling.rs b/crates/renderer-wgpu/src/culling.rs
+new file mode 100644
+index 00000000..6874283b
+--- /dev/null
++++ b/crates/renderer-wgpu/src/culling.rs
+@@ -0,0 +1,235 @@
++use crate::scene::{RenderObject, Viewport};
++
++/// Contiguous draw ranges in the persistent instance buffer. Pan/zoom changes
++/// only these CPU ranges and the view uniform, never bbox uploads.
++pub fn visible_ranges(
++    objects: &[RenderObject],
++    view: Viewport,
++    out: &mut Vec<std::ops::Range<u32>>,
++) -> usize {
++    out.clear();
++    if !view.valid() {
++        return 0;
++    }
++    // The shader centers its CSS-space stroke on each geometric edge. DPR
++    // affects rasterization, not this CSS margin or canonical coordinates.
++    let margin = crate::scene::bbox_stroke_css_pixels() / 2.0;
++    let left = (-view.tx - margin) / view.scale;
++    let top = (-view.ty - margin) / view.scale;
++    let right = (view.css_width - view.tx + margin) / view.scale;
++    let bottom = (view.css_height - view.ty + margin) / view.scale;
++    let mut visible = 0;
++    for (i, object) in objects.iter().enumerate() {
++        let [x0, y0, x1, y1] = object.bounds;
++        if x0 < right && x1 > left && y0 < bottom && y1 > top {
++            visible += 1;
++            let i = i as u32;
++            if let Some(last) = out.last_mut().filter(|range| range.end == i) {
++                last.end += 1;
++            } else {
++                out.push(i..i + 1);
++            }
++        }
++    }
++    visible
++}
++
++/// Labels are intentionally a smaller DOM/UI concern, independent of instance culling.
++pub const MAX_CANVAS_LABELS: usize = 100;
++/// Labels disappear below this CSS-pixel scale unless selected.
++pub const LABEL_MIN_SCALE: f32 = 0.35;
++
++/// Select visible instances without changing document order.
++pub fn visible_instances<'a>(
++    objects: &'a [RenderObject],
++    viewport: Viewport,
++    output: &mut Vec<&'a RenderObject>,
++) {
++    output.clear();
++    if !viewport.valid() {
++        return;
++    }
++    let left = -viewport.tx / viewport.scale;
++    let top = -viewport.ty / viewport.scale;
++    let right = (viewport.css_width - viewport.tx) / viewport.scale;
++    let bottom = (viewport.css_height - viewport.ty) / viewport.scale;
++    output.reserve(objects.len());
++    for object in objects {
++        let [x_min, y_min, x_max, y_max] = object.bounds;
++        if x_min < right && x_max > left && y_min < bottom && y_max > top {
++            output.push(object);
++        }
++    }
++}
++
++/// Canvas label candidates: visible selected objects first, then visible
++/// objects in document order, capped to keep DOM growth bounded.
++pub fn label_candidates<'a>(
++    objects: &'a [RenderObject],
++    viewport: Viewport,
++    output: &mut Vec<&'a RenderObject>,
++) {
++    output.clear();
++    if !viewport.valid() {
++        return;
++    }
++    let left = -viewport.tx / viewport.scale;
++    let top = -viewport.ty / viewport.scale;
++    let right = (viewport.css_width - viewport.tx) / viewport.scale;
++    let bottom = (viewport.css_height - viewport.ty) / viewport.scale;
++    output.reserve(MAX_CANVAS_LABELS);
++    for selected_pass in [true, false] {
++        if !selected_pass && !labels_enabled(viewport) {
++            break;
++        }
++        for object in objects {
++            if object.selected != selected_pass {
++                continue;
++            }
++            let [x_min, y_min, x_max, y_max] = object.bounds;
++            if x_min < right && x_max > left && y_min < bottom && y_max > top {
++                output.push(object);
++                if output.len() == MAX_CANVAS_LABELS {
++                    return;
++                }
++            }
++        }
++    }
++}
++
++pub fn labels_enabled(viewport: Viewport) -> bool {
++    viewport.valid() && viewport.scale >= LABEL_MIN_SCALE
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn object(selected: bool, bounds: [f32; 4]) -> RenderObject {
++        RenderObject {
++            bounds,
++            color: [1.0; 4],
++            selected,
++            locked: false,
++        }
++    }
++
++    fn view(scale: f32) -> Viewport {
++        Viewport {
++            scale,
++            tx: 0.0,
++            ty: 0.0,
++            css_width: 100.0,
++            css_height: 100.0,
++            dpr: 2.0,
++        }
++    }
++
++    #[test]
++    fn draw_ranges_preserve_sparse_instance_indices_and_merge_adjacent_visible_objects() {
++        let objects = [
++            object(false, [1.0, 1.0, 5.0, 5.0]),
++            object(false, [2.0, 2.0, 6.0, 6.0]),
++            object(false, [200.0, 200.0, 205.0, 205.0]),
++            object(false, [3.0, 3.0, 7.0, 7.0]),
++        ];
++        let mut ranges = Vec::new();
++        assert_eq!(visible_ranges(&objects, view(1.0), &mut ranges), 3);
++        assert_eq!(ranges, vec![0..2, 3..4]);
++        let mut panned = view(1.0);
++        panned.tx = -200.0;
++        panned.ty = -200.0;
++        assert_eq!(visible_ranges(&objects, panned, &mut ranges), 1);
++        assert_eq!(ranges, vec![2..3]);
++    }
++
++    #[test]
++    fn draw_ranges_keep_shader_strokes_at_all_view_edges_across_zoom_and_dpr() {
++        for scale in [0.25, 1.0, 4.0] {
++            for dpr in [1.0, 1.25, 2.0, 3.0] {
++                let mut viewport = view(scale);
++                viewport.tx = -10.0 * scale;
++                viewport.ty = -10.0 * scale;
++                viewport.dpr = dpr;
++                for gap_css in [0.0, 0.5, 0.75, 1.0] {
++                    // Construct in CSS space, independently of the culler.
++                    // At gap 0.5/DPR 2 the first pixel center (0.25 CSS px)
++                    // still lies in the shader's 0.75 CSS px outer stroke.
++                    let css_boxes = [
++                        [-10.0, 20.0, -gap_css, 30.0],
++                        [100.0 + gap_css, 20.0, 110.0, 30.0],
++                        [20.0, -10.0, 30.0, -gap_css],
++                        [20.0, 100.0 + gap_css, 30.0, 110.0],
++                    ];
++                    let objects: Vec<_> = css_boxes
++                        .map(|b| {
++                            object(
++                                false,
++                                [
++                                    (b[0] - viewport.tx) / scale,
++                                    (b[1] - viewport.ty) / scale,
++                                    (b[2] - viewport.tx) / scale,
++                                    (b[3] - viewport.ty) / scale,
++                                ],
++                            )
++                        })
++                        .into();
++                    let mut ranges = Vec::new();
++                    visible_ranges(&objects, viewport, &mut ranges);
++                    assert_eq!(
++                        ranges,
++                        if gap_css < 0.75 { vec![0..4] } else { vec![] },
++                        "scale={scale} dpr={dpr} gap_css={gap_css}"
++                    );
++                    let mut labels = Vec::new();
++                    label_candidates(&objects, viewport, &mut labels);
++                    assert!(
++                        labels.is_empty(),
++                        "stroke margin must not expand DOM labels"
++                    );
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn selected_labels_win_the_cap_and_low_zoom_never_admits_unselected_labels() {
++        let mut objects = vec![object(false, [1.0, 1.0, 5.0, 5.0]); 150];
++        objects[149].selected = true;
++        let mut labels = Vec::new();
++        label_candidates(&objects, view(1.0), &mut labels);
++        assert_eq!(labels.len(), MAX_CANVAS_LABELS);
++        assert!(std::ptr::eq(labels[0], &objects[149]));
++        label_candidates(&objects, view(0.1), &mut labels);
++        assert_eq!(labels.len(), 1);
++        assert!(std::ptr::eq(labels[0], &objects[149]));
++    }
++
++    #[test]
++    fn viewport_culling_excludes_offscreen_objects_without_reordering_visible_ones() {
++        let objects = [
++            object(false, [1.0, 1.0, 5.0, 5.0]),
++            object(true, [2.0, 2.0, 6.0, 6.0]),
++            object(false, [200.0, 200.0, 205.0, 205.0]),
++        ];
++        let mut visible = Vec::new();
++        visible_instances(&objects, view(1.0), &mut visible);
++
++        assert_eq!(visible.len(), 2);
++        assert!(std::ptr::eq(visible[0], &objects[0]));
++        assert!(std::ptr::eq(visible[1], &objects[1]));
++    }
++
++    #[test]
++    fn labels_keep_selection_at_low_zoom_and_drop_offscreen_objects() {
++        let objects = [
++            object(false, [1.0, 1.0, 5.0, 5.0]),
++            object(true, [2.0, 2.0, 6.0, 6.0]),
++            object(true, [2000.0, 2000.0, 2005.0, 2005.0]),
++        ];
++        let mut labels = Vec::new();
++        label_candidates(&objects, view(0.1), &mut labels);
++
++        assert_eq!(labels.len(), 1);
++        assert!(labels[0].selected);
++    }
++}
+diff --git a/crates/renderer-wgpu/src/lib.rs b/crates/renderer-wgpu/src/lib.rs
+index ad3feac6..87b165d5 100644
+--- a/crates/renderer-wgpu/src/lib.rs
++++ b/crates/renderer-wgpu/src/lib.rs
+@@ -1,11 +1,13 @@
+ //! Real browser WebGPU rendering and platform-independent layout invariants.
+ 
+ pub mod buffers;
++pub mod culling;
+ #[cfg(target_arch = "wasm32")]
+ mod device;
+ pub mod image;
+ mod renderer;
+ pub mod scene;
++pub mod stats;
+ 
+ pub use renderer::{Renderer, RendererError};
+ 
+diff --git a/crates/renderer-wgpu/src/renderer.rs b/crates/renderer-wgpu/src/renderer.rs
+index 3505cb42..76aa53b5 100644
+--- a/crates/renderer-wgpu/src/renderer.rs
++++ b/crates/renderer-wgpu/src/renderer.rs
+@@ -65,6 +65,8 @@ pub struct Renderer {
+     instance_scratch: Vec<BBoxInstance>,
+     scene: Option<RenderScene>,
+     diagnostics: String,
++    stats: crate::stats::RendererStats,
++    visible_ranges: Vec<std::ops::Range<u32>>,
+     lost: Arc<AtomicBool>,
+ }
+ 
+@@ -161,6 +163,14 @@ impl Renderer {
+         if !validate_scene(&scene) {
+             return Err(wasm_bindgen::JsValue::from_str("invalid render scene"));
+         }
++        if scene.image.width > 4096
++            || scene.image.height > 4096
++            || scene.image.width > self.device.limits().max_texture_dimension_2d
++            || scene.image.height > self.device.limits().max_texture_dimension_2d
++        {
++            self.stats.resource_rejected();
++            return Err(JsValue::from_str("canonical resource budget exceeded"));
++        }
+         let plan = scene_upload_plan(self.scene.as_ref(), &scene);
+         self.scene = Some(scene);
+         if plan.image_changed {
+@@ -251,14 +261,55 @@ impl Renderer {
+         self.lost.store(true, Ordering::Release);
+     }
+     pub fn dispose(&mut self) {
++        if self.stats.live_buffers == 0 {
++            return;
++        }
+         self.device.destroy();
+         self.lost.store(true, Ordering::Release);
+         self.scene = None;
++        self.texture.destroy();
++        self.instance_buffer.destroy();
++        self.overlay_buffer.destroy();
++        self.uniform.destroy();
++        self.stats.texture_released();
++        for _ in 0..3 {
++            self.stats.buffer_released();
++        }
++        self.stats.logical_texture_bytes = 0;
+     }
+ }
+ 
+ #[cfg(target_arch = "wasm32")]
+ impl Renderer {
++    pub fn stats(&self) -> crate::stats::RendererStats {
++        self.stats
++    }
++    /// Native Rust-to-Rust transfer: no serde/JsValue round trip per object.
++    pub fn apply_frame(
++        &mut self,
++        viewport: Option<Viewport>,
++        projection: Option<(Vec<RenderObject>, Vec<Overlay>)>,
++    ) -> Result<(), JsValue> {
++        if let Some(view) = viewport {
++            self.scene
++                .as_mut()
++                .ok_or_else(|| JsValue::from_str("no scene"))?
++                .viewport = view;
++        }
++        if let Some((objects, overlays)) = projection {
++            let scene = self
++                .scene
++                .as_mut()
++                .ok_or_else(|| JsValue::from_str("no scene"))?;
++            let objects_range = changed_element_range(&scene.objects, &objects);
++            let overlays_range = changed_element_range(&scene.overlays, &overlays);
++            scene.objects = objects;
++            scene.overlays = overlays;
++            self.upload_instance_ranges(objects_range, overlays_range)?;
++        }
++        self.render_saved()
++            .map_err(|e| JsValue::from_str(&e.to_string()))
++    }
+     async fn create(
+         canvas: web_sys::HtmlCanvasElement,
+         width: u32,
+@@ -269,6 +320,11 @@ impl Renderer {
+             .checked_mul(height as usize)
+             .and_then(|n| n.checked_mul(4))
+             .ok_or(RendererError::InvalidScene)?;
++        if width > 4096 || height > 4096 || expected_bytes > 64 * 1024 * 1024 {
++            return Err(RendererError::Unsupported(
++                "canonical resource budget exceeded".into(),
++            ));
++        }
+         if expected_bytes != rgba.len() {
+             return Err(RendererError::InvalidScene);
+         }
+@@ -283,6 +339,13 @@ impl Renderer {
+             })
+             .await
+             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
++        if width > adapter.limits().max_texture_dimension_2d
++            || height > adapter.limits().max_texture_dimension_2d
++        {
++            return Err(RendererError::Unsupported(
++                "adapter texture limit exceeded".into(),
++            ));
++        }
+         let (device, queue) = adapter
+             .request_device(&wgpu::DeviceDescriptor::default())
+             .await
+@@ -302,9 +365,13 @@ impl Renderer {
+                 RendererError::Unsupported("surface has no sRGB-encodable format".into())
+             })?;
+         let info = adapter.get_info();
++        let browser_info = device.as_webgpu().map(|device| device.adapter_info());
+         let diagnostics = format!(
+-            "backend={:?}; device_type={:?}; name={}; surface={:?}; render_view={:?}",
+-            info.backend, info.device_type, info.name, format, render_format
++            "backend={:?}; device_type={:?}; name={}; surface={:?}; render_view={:?}; vendor={}; architecture={}; device={}",
++            info.backend, info.device_type, info.name, format, render_format,
++            browser_info.as_ref().map(|info| info.vendor()).unwrap_or_default(),
++            browser_info.as_ref().map(|info| info.architecture()).unwrap_or_default(),
++            browser_info.as_ref().map(|info| info.device()).unwrap_or_default()
+         );
+         let (css_w, css_h) = (
+             canvas.client_width().max(0) as u32,
+@@ -482,7 +549,7 @@ impl Renderer {
+         device.set_device_lost_callback(move |_reason, _message| {
+             lost_signal.store(true, Ordering::Release);
+         });
+-        let this = Self {
++        let mut this = Self {
+             canvas,
+             surface,
+             config,
+@@ -509,6 +576,11 @@ impl Renderer {
+             scene: None,
+             lost,
+             diagnostics,
++            stats: crate::stats::RendererStats {
++                logical_texture_bytes: expected_bytes as u64,
++                ..Default::default()
++            },
++            visible_ranges: Vec::new(),
+         };
+         this.canvas.set_width(css_w);
+         this.canvas.set_height(css_h);
+@@ -536,30 +608,23 @@ impl Renderer {
+                 depth_or_array_layers: 1,
+             },
+         );
++        this.stats.texture_created();
++        for _ in [&this.uniform, &this.instance_buffer, &this.overlay_buffer] {
++            this.stats.buffer_created();
++        }
++        this.stats.record_texture_upload(data.1.len());
+         Ok(this)
+     }
+-    fn upload_scene(&mut self) -> Result<(), wasm_bindgen::JsValue> {
+-        if let Some(scene) = &self.scene {
+-            bbox_instances_into(&scene.objects, &mut self.instance_scratch);
+-            upload_instances(
+-                &self.device,
+-                &self.queue,
+-                &mut self.instance_buffer,
+-                &mut self.instance_capacity,
+-                &self.instance_scratch,
+-                "bbox instances",
+-            );
+-            overlay_instances_into(&scene.overlays, &mut self.instance_scratch);
+-            upload_instances(
+-                &self.device,
+-                &self.queue,
+-                &mut self.overlay_buffer,
+-                &mut self.overlay_capacity,
+-                &self.instance_scratch,
+-                "overlay instances",
+-            );
+-        }
+-        Ok(())
++    fn upload_scene(&mut self) -> Result<(), JsValue> {
++        let Some(scene) = &self.scene else {
++            return Ok(());
++        };
++        let objects = scene.objects.len();
++        let overlays = scene.overlays.len();
++        self.upload_instance_ranges(
++            (objects > 0).then_some(0..objects),
++            (overlays > 0).then_some(0..overlays),
++        )
+     }
+     fn upload_instance_ranges(
+         &mut self,
+@@ -579,6 +644,8 @@ impl Renderer {
+             "bbox instances",
+             &mut self.instance_scratch,
+             bbox_instances_into,
++            &mut self.stats,
++            true,
+         )?;
+         upload_instances_delta(
+             &self.device,
+@@ -590,6 +657,8 @@ impl Renderer {
+             "overlay instances",
+             &mut self.instance_scratch,
+             overlay_instances_into,
++            &mut self.stats,
++            false,
+         )
+     }
+     fn upload_image(&mut self) -> Result<(), wasm_bindgen::JsValue> {
+@@ -626,7 +695,11 @@ impl Renderer {
+                     },
+                 ],
+             });
++            self.texture.destroy();
++            self.stats.texture_released();
+             self.texture = texture;
++            self.stats.texture_created();
++            self.stats.logical_texture_bytes = image.rgba.len() as u64;
+             self.image_width = image.width;
+             self.image_height = image.height;
+         }
+@@ -637,6 +710,7 @@ impl Renderer {
+                 "invalid image dimensions or RGBA data",
+             ));
+         };
++        self.stats.record_texture_upload(bytes.len());
+         self.queue.write_texture(
+             wgpu::TexelCopyTextureInfo {
+                 texture: &self.texture,
+@@ -675,10 +749,23 @@ impl Renderer {
+             self.canvas.set_height(h);
+             self.surface.configure(&self.device, &self.config);
+         }
++        let started = now();
++        self.stats.visible_instances = crate::culling::visible_ranges(
++            &scene.objects,
++            scene.viewport,
++            &mut self.visible_ranges,
++        ) as u64;
++        self.stats.record_cpu_call(
++            scene.objects.len(),
++            ((now() - started) * 1_000_000.0) as u64,
++        );
+         let s = scene.viewport;
+         let uniform = s.render_uniform(scene.image.width, scene.image.height);
+         self.queue
+             .write_buffer(&self.uniform, 0, bytemuck_bytes(&uniform));
++        self.stats
++            .record_buffer_upload(std::mem::size_of_val(&uniform));
++        self.stats.uniform_upload_bytes += std::mem::size_of_val(&uniform) as u64;
+         let (frame, suboptimal) = match self.surface.get_current_texture() {
+             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
+             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
+@@ -727,12 +814,14 @@ impl Renderer {
+             pass.set_pipeline(&self.image_pipeline);
+             pass.set_bind_group(1, &self.image_bind, &[]);
+             pass.draw(0..6, 0..1);
+-            if !scene.objects.is_empty() {
++            if !self.visible_ranges.is_empty() {
+                 let bind =
+                     instance_bind(&self.device, &self.instance_layout, &self.instance_buffer);
+                 pass.set_pipeline(&self.box_pipeline);
+                 pass.set_bind_group(1, &bind, &[]);
+-                pass.draw(0..6, 0..scene.objects.len() as u32);
++                for range in &self.visible_ranges {
++                    pass.draw(0..6, range.clone());
++                }
+             }
+             if !scene.overlays.is_empty() {
+                 let bind = instance_bind(&self.device, &self.instance_layout, &self.overlay_buffer);
+@@ -742,6 +831,9 @@ impl Renderer {
+             }
+         }
+         self.queue.submit([encoder.finish()]);
++        self.stats.record_submission(
++            1 + self.visible_ranges.len() as u64 + u64::from(!scene.overlays.is_empty()),
++        );
+         self.queue.present(frame);
+         if suboptimal {
+             self.surface.configure(&self.device, &self.config);
+@@ -750,6 +842,13 @@ impl Renderer {
+     }
+ }
+ 
++#[cfg(target_arch = "wasm32")]
++#[wasm_bindgen::prelude::wasm_bindgen]
++extern "C" {
++    #[wasm_bindgen::prelude::wasm_bindgen(js_namespace = performance)]
++    fn now() -> f64;
++}
++
+ #[cfg(target_arch = "wasm32")]
+ fn instance_bind(
+     device: &wgpu::Device,
+@@ -817,6 +916,7 @@ fn upload_instances(
+     let bytes = bytemuck_bytes(values);
+     if bytes.len() as u64 > *capacity {
+         *capacity = (bytes.len() as u64).next_power_of_two().max(48);
++        buffer.destroy();
+         *buffer = device.create_buffer(&wgpu::BufferDescriptor {
+             label: Some(label),
+             size: *capacity,
+@@ -839,6 +939,8 @@ fn upload_instances_delta<T>(
+     label: &str,
+     scratch: &mut Vec<BBoxInstance>,
+     convert: fn(&[T], &mut Vec<BBoxInstance>),
++    stats: &mut crate::stats::RendererStats,
++    bbox: bool,
+ ) -> Result<(), wasm_bindgen::JsValue> {
+     let Some(range) = range else {
+         return Ok(());
+@@ -853,7 +955,14 @@ fn upload_instances_delta<T>(
+         .ok_or_else(|| wasm_bindgen::JsValue::from_str("instance buffer size overflow"))?;
+     if required_bytes > *capacity {
+         convert(source, scratch);
++        stats.buffer_released();
++        stats.buffer_created();
+         upload_instances(device, queue, buffer, capacity, scratch, label);
++        stats.record_buffer_upload(std::mem::size_of_val(scratch.as_slice()));
++        if bbox {
++            stats.bbox_upload_calls += 1;
++            stats.bbox_upload_bytes += std::mem::size_of_val(scratch.as_slice()) as u64;
++        }
+         return Ok(());
+     }
+     let byte_range = dirty_byte_range(
+@@ -864,6 +973,11 @@ fn upload_instances_delta<T>(
+     .ok_or_else(|| wasm_bindgen::JsValue::from_str("invalid instance dirty range"))?;
+     convert(&source[range], scratch);
+     queue.write_buffer(buffer, byte_range.start, bytemuck_bytes(scratch));
++    stats.record_buffer_upload(std::mem::size_of_val(scratch.as_slice()));
++    if bbox {
++        stats.bbox_upload_calls += 1;
++        stats.bbox_upload_bytes += std::mem::size_of_val(scratch.as_slice()) as u64;
++    }
+     Ok(())
+ }
+ #[cfg(target_arch = "wasm32")]
+diff --git a/crates/renderer-wgpu/src/stats.rs b/crates/renderer-wgpu/src/stats.rs
+new file mode 100644
+index 00000000..1a348b62
+--- /dev/null
++++ b/crates/renderer-wgpu/src/stats.rs
+@@ -0,0 +1,69 @@
++/// Actual GPU uploads/submissions and CPU culling, cumulative since creation.
++/// Owned-resource gauges are logical counts, not physical VRAM measurements.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
++pub struct RendererStats {
++    pub cpu_calls: u64,
++    pub cpu_elapsed_ns: u64,
++    pub cpu_objects_examined: u64,
++    pub gpu_buffer_upload_calls: u64,
++    pub gpu_buffer_upload_bytes: u64,
++    pub gpu_texture_upload_calls: u64,
++    pub gpu_texture_upload_bytes: u64,
++    pub draw_calls: u64,
++    pub gpu_submissions: u64,
++    pub live_textures: u64,
++    pub live_buffers: u64,
++    pub buffer_creations: u64,
++    pub buffer_releases: u64,
++    pub rejected_resources: u64,
++    pub bbox_upload_calls: u64,
++    pub bbox_upload_bytes: u64,
++    pub uniform_upload_bytes: u64,
++    pub visible_instances: u64,
++    pub logical_texture_bytes: u64,
++}
++
++impl RendererStats {
++    pub fn buffer_created(&mut self) {
++        self.live_buffers += 1;
++        self.buffer_creations += 1;
++    }
++    pub fn buffer_released(&mut self) {
++        self.live_buffers = self.live_buffers.saturating_sub(1);
++        self.buffer_releases += 1;
++    }
++
++    pub fn record_cpu_call(&mut self, objects_examined: usize, elapsed_ns: u64) {
++        self.cpu_calls = self.cpu_calls.saturating_add(1);
++        self.cpu_elapsed_ns = self.cpu_elapsed_ns.saturating_add(elapsed_ns);
++        self.cpu_objects_examined = self
++            .cpu_objects_examined
++            .saturating_add(objects_examined as u64);
++    }
++
++    pub fn texture_created(&mut self) {
++        self.live_textures = self.live_textures.saturating_add(1);
++    }
++
++    pub fn texture_released(&mut self) {
++        self.live_textures = self.live_textures.saturating_sub(1);
++    }
++
++    pub fn resource_rejected(&mut self) {
++        self.rejected_resources = self.rejected_resources.saturating_add(1);
++    }
++    pub fn record_buffer_upload(&mut self, bytes: usize) {
++        self.gpu_buffer_upload_calls = self.gpu_buffer_upload_calls.saturating_add(1);
++        self.gpu_buffer_upload_bytes = self.gpu_buffer_upload_bytes.saturating_add(bytes as u64);
++    }
++
++    pub fn record_texture_upload(&mut self, bytes: usize) {
++        self.gpu_texture_upload_calls = self.gpu_texture_upload_calls.saturating_add(1);
++        self.gpu_texture_upload_bytes = self.gpu_texture_upload_bytes.saturating_add(bytes as u64);
++    }
++
++    pub fn record_submission(&mut self, draw_calls: u64) {
++        self.gpu_submissions = self.gpu_submissions.saturating_add(1);
++        self.draw_calls = self.draw_calls.saturating_add(draw_calls);
++    }
++}
+diff --git a/crates/wasm-bridge/src/facade.rs b/crates/wasm-bridge/src/facade.rs
+index 5c745e13..87865fce 100644
+--- a/crates/wasm-bridge/src/facade.rs
++++ b/crates/wasm-bridge/src/facade.rs
+@@ -3,7 +3,7 @@
+ //! `ApiError`. `EditorSession` is target-independent and fully unit tested;
+ //! the wasm32 `EditorFacade` adds JsValue wrapping and wgpu submission.
+ 
+-use std::collections::HashMap;
++use std::collections::{HashMap, HashSet};
+ 
+ use annotation_domain::{
+     AnnotationDocument, ApiError, DomainError, EditorCommand, EditorDelta, Id, OntologyVersion,
+@@ -118,6 +118,7 @@ struct ProjectionEntry {
+ #[derive(Debug, Default, Clone, PartialEq)]
+ pub struct ProjectionCache {
+     entries: Vec<ProjectionEntry>,
++    indices: HashMap<Id, usize>,
+ }
+ 
+ impl ProjectionCache {
+@@ -129,18 +130,33 @@ impl ProjectionCache {
+         color_of: impl Fn(&Id) -> [f32; 4],
+     ) -> bool {
+         let mut touched = false;
+-        for id in removed {
+-            let previous_len = self.entries.len();
+-            self.entries.retain(|entry| entry.object_id != *id);
+-            touched |= self.entries.len() != previous_len;
++        if removed.iter().any(|id| self.indices.contains_key(id)) {
++            if let [id] = removed {
++                self.entries.retain(|entry| entry.object_id != *id);
++            } else {
++                let removing: HashSet<&Id> = removed.iter().collect();
++                self.entries
++                    .retain(|entry| !removing.contains(&entry.object_id));
++            }
++            // Retain document order, then rebuild shifted slots once for the
++            // entire batch, reusing the map's allocation.
++            self.indices.clear();
++            self.indices.extend(
++                self.entries
++                    .iter()
++                    .enumerate()
++                    .map(|(i, entry)| (entry.object_id.clone(), i)),
++            );
++            touched = true;
+         }
+         for object in changed {
+             let bounds = bounds_of(object);
+             let color = color_of(&object.label_id);
+             match self
+-                .entries
+-                .iter_mut()
+-                .find(|entry| entry.object_id == object.object_id)
++                .indices
++                .get(&object.object_id)
++                .copied()
++                .map(|i| &mut self.entries[i])
+             {
+                 Some(entry) => {
+                     if entry.bounds != bounds || entry.color != color {
+@@ -150,6 +166,8 @@ impl ProjectionCache {
+                     }
+                 }
+                 None => {
++                    self.indices
++                        .insert(object.object_id.clone(), self.entries.len());
+                     self.entries.push(ProjectionEntry {
+                         object_id: object.object_id.clone(),
+                         bounds,
+@@ -165,6 +183,25 @@ impl ProjectionCache {
+         touched
+     }
+ 
++    /// History can restore deleted objects between surviving entries. Swap
++    /// into the core's read-only order, updating slots without cloning IDs.
++    fn restore_order(&mut self, objects: &[annotation_domain::AnnotationObject]) {
++        for (target, object) in objects.iter().enumerate() {
++            let current = self.indices[&object.object_id];
++            if current != target {
++                self.entries.swap(target, current);
++                *self
++                    .indices
++                    .get_mut(&self.entries[target].object_id)
++                    .unwrap() = target;
++                *self
++                    .indices
++                    .get_mut(&self.entries[current].object_id)
++                    .unwrap() = current;
++            }
++        }
++    }
++
+     pub fn set_selection(&mut self, selected: &[Id]) -> bool {
+         let mut touched = false;
+         for entry in &mut self.entries {
+@@ -178,7 +215,7 @@ impl ProjectionCache {
+     }
+ 
+     pub fn set_flags(&mut self, id: &Id, hidden: bool, locked: bool) -> bool {
+-        let Some(entry) = self.entries.iter_mut().find(|entry| entry.object_id == *id) else {
++        let Some(entry) = self.indices.get(id).copied().map(|i| &mut self.entries[i]) else {
+             return false;
+         };
+         if entry.hidden == hidden && entry.locked == locked {
+@@ -204,7 +241,15 @@ impl ProjectionCache {
+     }
+ }
+ 
+-/// Everything one `render()` needs to push to the GPU. `None` members were not
++#[derive(serde::Serialize)]
++pub struct CanvasLabel {
++    pub object_id: Id,
++    pub x_css: f32,
++    pub y_css: f32,
++    pub selected: bool,
++}
++
++/// Everything one `render()` needs to push to the GPU.
+ /// touched since the previous frame (incremental renderer updates).
+ #[derive(Debug, Clone, PartialEq)]
+ pub struct PreparedFrame {
+@@ -255,13 +300,12 @@ impl EditorSession {
+         )
+         .map_err(|error| api_error_from_domain(&error))?;
+         let mut projection = ProjectionCache::default();
+-        for object in editor.snapshot().objects {
+-            let color = colors
+-                .get(&object.label_id)
++        projection.apply_delta(editor.objects(), &[], |label_id| {
++            colors
++                .get(label_id)
+                 .copied()
+-                .unwrap_or(UNPAINTED_LABEL_COLOR);
+-            projection.apply_delta(&[object], &[], |_| color);
+-        }
++                .unwrap_or(UNPAINTED_LABEL_COLOR)
++        });
+         Ok(Self {
+             editor,
+             colors,
+@@ -281,8 +325,20 @@ impl EditorSession {
+         if self.disposed {
+             return self.error_delta(api_error("EDITOR_DISPOSED", "editor session is disposed"));
+         }
++        let history = matches!(&command, EditorCommand::Undo | EditorCommand::Redo);
+         match self.editor.dispatch(command) {
+-            Ok(delta) => self.absorb(delta),
++            Ok(delta) => {
++                let restores_objects = history
++                    && delta
++                        .changed_objects
++                        .iter()
++                        .any(|object| !self.projection.indices.contains_key(&object.object_id));
++                let delta = self.absorb(delta);
++                if restores_objects {
++                    self.projection.restore_order(self.editor.objects());
++                }
++                delta
++            }
+             Err(error) => self.error_delta(api_error_from_domain(&error)),
+         }
+     }
+@@ -423,6 +479,44 @@ impl EditorSession {
+         self.disposed
+     }
+ 
++    /// Bounded, read-only DOM label projection. Hidden objects never appear;
++    /// selected visible labels retain priority at low zoom.
++    pub fn canvas_labels(&self) -> Vec<CanvasLabel> {
++        let view = scene_viewport(self.view);
++        let left = -view.tx / view.scale;
++        let top = -view.ty / view.scale;
++        let right = (view.css_width - view.tx) / view.scale;
++        let bottom = (view.css_height - view.ty) / view.scale;
++        let mut labels = Vec::with_capacity(renderer_wgpu::culling::MAX_CANVAS_LABELS);
++        for selected in [true, false] {
++            if !selected && !renderer_wgpu::culling::labels_enabled(view) {
++                break;
++            }
++            for entry in &self.projection.entries {
++                let [x0, y0, x1, y1] = entry.bounds;
++                if entry.hidden
++                    || entry.selected != selected
++                    || x0 >= right
++                    || x1 <= left
++                    || y0 >= bottom
++                    || y1 <= top
++                {
++                    continue;
++                }
++                labels.push(CanvasLabel {
++                    object_id: entry.object_id.clone(),
++                    x_css: x0 * view.scale + view.tx,
++                    y_css: y0 * view.scale + view.ty,
++                    selected,
++                });
++                if labels.len() == renderer_wgpu::culling::MAX_CANVAS_LABELS {
++                    return labels;
++                }
++            }
++        }
++        labels
++    }
++
+     /// Drains the dirty flags into one frame. A clean session yields `None`, so
+     /// idle callers submit no GPU work at all.
+     pub fn prepare_frame(&mut self) -> Option<PreparedFrame> {
+@@ -562,6 +656,278 @@ mod tests {
+         Id::from("object_person_001")
+     }
+ 
++    // Count actual native heap allocations on this test's thread, not internal
++    // projection counters or wall time. Other concurrently running tests do
++    // not affect the measurement.
++    #[cfg(not(target_arch = "wasm32"))]
++    mod allocations {
++        use std::alloc::{GlobalAlloc, Layout, System};
++        use std::cell::Cell;
++
++        thread_local! {
++            static ACTIVE: Cell<bool> = const { Cell::new(false) };
++            static CALLS: Cell<usize> = const { Cell::new(0) };
++        }
++
++        struct CountingAllocator;
++        #[global_allocator]
++        static ALLOCATOR: CountingAllocator = CountingAllocator;
++
++        fn record() {
++            let _ = ACTIVE.try_with(|active| {
++                if active.get() {
++                    CALLS.with(|calls| calls.set(calls.get() + 1));
++                }
++            });
++        }
++
++        unsafe impl GlobalAlloc for CountingAllocator {
++            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
++                record();
++                unsafe { System.alloc(layout) }
++            }
++            unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
++                record();
++                unsafe { System.alloc_zeroed(layout) }
++            }
++            unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
++                record();
++                unsafe { System.realloc(ptr, layout, size) }
++            }
++            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
++                unsafe { System.dealloc(ptr, layout) }
++            }
++        }
++
++        pub fn measure<T>(f: impl FnOnce() -> T) -> (T, usize) {
++            struct Reset;
++            impl Drop for Reset {
++                fn drop(&mut self) {
++                    ACTIVE.with(|active| active.set(false));
++                }
++            }
++            CALLS.with(|calls| calls.set(0));
++            ACTIVE.with(|active| assert!(!active.replace(true)));
++            let reset = Reset;
++            let result = f();
++            drop(reset);
++            (result, CALLS.with(Cell::get))
++        }
++    }
++
++    fn dense_session(count: usize) -> EditorSession {
++        let (mut document, ontology) = fixtures();
++        let template = document.objects[0].clone();
++        document.objects = (0..count)
++            .map(|i| {
++                let mut object = template.clone();
++                object.object_id = Id::from(format!("dense_{i:05}"));
++                let x = (i % 50) as f64 * 10.0;
++                let y = (i / 50 % 40) as f64 * 10.0;
++                object.geometry = BBox::new(x, y, x + 5.0, y + 5.0);
++                object
++            })
++            .collect();
++        EditorSession::new(document, ontology).unwrap()
++    }
++
++    fn assert_frame_matches_document(session: &mut EditorSession) {
++        let document = session.get_snapshot();
++        let expected: Vec<_> = document
++            .objects
++            .iter()
++            .filter(|object| !session.editor.local_flags(&object.object_id).hidden)
++            .map(|object| RenderObject {
++                bounds: bounds_of(object),
++                color: session.color_of(&object.label_id),
++                selected: false,
++                locked: session.editor.local_flags(&object.object_id).locked,
++            })
++            .collect();
++        let (objects, overlays) = session.prepare_frame().unwrap().projection.unwrap();
++        assert_eq!(
++            objects, expected,
++            "renderer receives canonical document order"
++        );
++        assert!(overlays.is_empty());
++        assert!(session.prepare_frame().is_none(), "idle after one frame");
++        for (i, object) in document.objects.iter().enumerate() {
++            assert_eq!(session.projection.indices.get(&object.object_id), Some(&i));
++        }
++    }
++
++    #[test]
++    fn batch_delete_history_and_shifted_edits_preserve_renderer_order() {
++        let mut session = dense_session(8);
++        assert_frame_matches_document(&mut session);
++        let original = session.get_snapshot();
++        assert!(session
++            .set_local_flags(
++                &[original.objects[4].object_id.clone()],
++                LocalFlagsArgs {
++                    hidden: Some(true),
++                    locked: None
++                },
++            )
++            .error
++            .is_none());
++        assert!(session
++            .set_local_flags(
++                &[original.objects[7].object_id.clone()],
++                LocalFlagsArgs {
++                    hidden: None,
++                    locked: Some(true)
++                },
++            )
++            .error
++            .is_none());
++        assert_frame_matches_document(&mut session);
++        let deleted = [0, 2, 5]
++            .map(|i| original.objects[i].object_id.clone())
++            .to_vec();
++        let delta = session.dispatch(EditorCommand::Delete {
++            object_ids: deleted.clone(),
++        });
++        assert!(delta.error.is_none());
++        assert_eq!(delta.removed_object_ids, deleted);
++        assert_frame_matches_document(&mut session);
++        // Flag lookup must follow the new slot, without changing another ID.
++        assert!(session
++            .set_local_flags(
++                &[original.objects[3].object_id.clone()],
++                LocalFlagsArgs {
++                    hidden: None,
++                    locked: Some(true)
++                },
++            )
++            .error
++            .is_none());
++        assert_frame_matches_document(&mut session);
++        let survivor = original.objects[6].object_id.clone();
++        let moved = BBox::new(300.0, 200.0, 320.0, 230.0);
++        let delta = session.dispatch(EditorCommand::ReplaceGeometry {
++            object_id: survivor,
++            geometry: moved.clone(),
++        });
++        assert!(delta.error.is_none());
++        assert_eq!(delta.changed_objects[0].geometry, moved);
++        assert_frame_matches_document(&mut session);
++        for command in [
++            EditorCommand::Undo,
++            EditorCommand::Undo,
++            EditorCommand::Redo,
++            EditorCommand::Redo,
++        ] {
++            assert!(session.dispatch(command).error.is_none());
++            assert_frame_matches_document(&mut session);
++        }
++        let mut created = original.objects[0].clone();
++        created.object_id = Id::from("created_after_delete");
++        created.geometry = BBox::new(400.0, 300.0, 410.0, 310.0);
++        assert!(session
++            .dispatch(EditorCommand::Create { object: created })
++            .error
++            .is_none());
++        assert_frame_matches_document(&mut session);
++    }
++
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn dense_batch_delete_has_linear_allocations_and_history_renders_correctly() {
++        const COUNT: usize = 10_000;
++        let mut session = dense_session(COUNT);
++        assert_frame_matches_document(&mut session);
++        let original = session.get_snapshot();
++        let ids = original
++            .objects
++            .iter()
++            .map(|o| o.object_id.clone())
++            .collect();
++        let (delta, allocations) =
++            allocations::measure(|| session.dispatch(EditorCommand::Delete { object_ids: ids }));
++        assert!(delta.error.is_none());
++        assert_eq!(
++            delta.removed_object_ids,
++            original
++                .objects
++                .iter()
++                .map(|o| o.object_id.clone())
++                .collect::<Vec<_>>()
++        );
++        assert_frame_matches_document(&mut session);
++        println!("10k Delete: {allocations} actual heap allocations");
++        // Includes core validation, history and delta allocations; the generous
++        // linear envelope rejects per-deletion cloning of all remaining IDs.
++        assert!(
++            allocations < 128 * COUNT,
++            "quadratic batch allocation: {allocations}"
++        );
++        assert!(session.dispatch(EditorCommand::Undo).error.is_none());
++        assert_eq!(session.get_snapshot(), original);
++        assert_frame_matches_document(&mut session);
++        assert!(session.dispatch(EditorCommand::Redo).error.is_none());
++        assert_frame_matches_document(&mut session);
++    }
++
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn undo_batch_creation_has_linear_allocations_and_redo_restores_instances() {
++        const COUNT: usize = 1_024;
++        let mut session = dense_session(COUNT);
++        let original = session.get_snapshot();
++        let delta = session.dispatch(EditorCommand::Duplicate {
++            object_ids: original
++                .objects
++                .iter()
++                .map(|o| o.object_id.clone())
++                .collect(),
++            new_ids: (0..COUNT)
++                .map(|i| Id::from(format!("copy_{i:05}")))
++                .collect(),
++        });
++        assert!(delta.error.is_none());
++        assert_eq!(
++            delta
++                .changed_objects
++                .iter()
++                .map(|o| o.object_id.clone())
++                .collect::<Vec<_>>(),
++            (0..COUNT)
++                .map(|i| Id::from(format!("copy_{i:05}")))
++                .collect::<Vec<_>>()
++        );
++        assert_frame_matches_document(&mut session);
++        let copied = session.get_snapshot();
++        let (undo, allocations) = allocations::measure(|| session.dispatch(EditorCommand::Undo));
++        assert!(undo.error.is_none());
++        assert_eq!(session.get_snapshot(), original);
++        assert_frame_matches_document(&mut session);
++        println!("Undo 1024 creations: {allocations} actual heap allocations");
++        assert!(
++            allocations < 128 * COUNT,
++            "quadratic undo allocation: {allocations}"
++        );
++        assert!(session.dispatch(EditorCommand::Redo).error.is_none());
++        assert_eq!(session.get_snapshot(), copied);
++        assert_frame_matches_document(&mut session);
++    }
++
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn empty_history_consumers_allocate_nothing_and_do_not_repaint() {
++        let mut session = session();
++        session.prepare_frame().unwrap();
++        let (undo, allocations) = allocations::measure(|| session.dispatch(EditorCommand::Undo));
++        assert_eq!(allocations, 0);
++        assert!(!undo.document_changed);
++        assert_eq!(undo.generation, 0);
++        assert!(session.prepare_frame().is_none());
++        let (redo, allocations) = allocations::measure(|| session.dispatch(EditorCommand::Redo));
++        assert_eq!(allocations, 0);
++        assert!(!redo.document_changed);
++        assert!(session.prepare_frame().is_none());
++    }
++
+     #[test]
+     fn resumed_generation_keeps_new_edits_and_undo_ahead_of_the_saved_baseline() {
+         let (document, ontology) = fixtures();
+@@ -870,12 +1236,6 @@ pub mod wasm {
+     use super::*;
+     use annotation_domain::MediaRevision;
+ 
+-    #[derive(serde::Serialize)]
+-    struct ProjectionUpdate {
+-        objects: Vec<RenderObject>,
+-        overlays: Vec<Overlay>,
+-    }
+-
+     fn to_js<T: serde::Serialize>(value: &T) -> Result<JsValue, JsValue> {
+         let serializer = serde_wasm_bindgen::Serializer::new()
+             .serialize_maps_as_objects(true)
+@@ -898,6 +1258,7 @@ pub mod wasm {
+         session: EditorSession,
+         renderer: renderer_wgpu::Renderer,
+         canvas: web_sys::HtmlCanvasElement,
++        serialized_input_objects: std::cell::Cell<u64>,
+     }
+ 
+     #[wasm_bindgen]
+@@ -971,14 +1332,36 @@ pub mod wasm {
+             ids: Vec<String>,
+             flags: JsValue,
+         ) -> Result<JsValue, JsValue> {
+-            let flags =
+-                from_js::<crate::input::LocalFlagsArgs>(flags, "INVALID_FLAGS").unwrap_or_default();
++            let flags = match from_js::<crate::input::LocalFlagsArgs>(flags, "INVALID_FLAGS") {
++                Ok(flags) => flags,
++                Err(error) => return to_js(&self.session.error_delta(error)),
++            };
+             let ids: Vec<Id> = ids.into_iter().map(Id::from).collect();
+             to_js(&self.session.set_local_flags(&ids, flags))
+         }
+ 
+         pub fn get_snapshot(&self) -> Result<JsValue, JsValue> {
+-            to_js(&self.session.get_snapshot())
++            let snapshot = self.session.get_snapshot();
++            self.serialized_input_objects
++                .set(self.serialized_input_objects.get() + snapshot.objects.len() as u64);
++            to_js(&snapshot)
++        }
++
++        /// Read-only diagnostics from the device actually used by this facade.
++        pub fn get_render_stats(&self) -> Result<JsValue, JsValue> {
++            to_js(&self.renderer.stats())
++        }
++        pub fn get_validation_input_objects(&self) -> f64 {
++            self.session.editor.validation_input_objects() as f64
++        }
++        pub fn get_serialized_input_objects(&self) -> f64 {
++            self.serialized_input_objects.get() as f64
++        }
++        pub fn get_adapter_diagnostics(&self) -> String {
++            self.renderer.adapter_diagnostics()
++        }
++        pub fn get_canvas_labels(&self) -> Result<JsValue, JsValue> {
++            to_js(&self.session.canvas_labels())
+         }
+ 
+         pub fn get_object_hashes(&self) -> Result<JsValue, JsValue> {
+@@ -1012,27 +1395,17 @@ pub mod wasm {
+             self.session.set_predictions(sets).map_err(to_js_error)
+         }
+ 
+-        /// One submission path for the dirty-flag scheduler: a clean session
+-        /// performs no renderer call at all (idle GPU quiet). A renderer update
+-        /// submits exactly one frame; when both view and projection changed the
+-        /// two narrow updates each submit (renderer API renders per update).
++        /// A clean session performs no renderer call. Dirty viewport and
++        /// projection updates share one native call and one GPU submission;
++        /// renderer instances never round-trip through JavaScript.
+         pub fn render(&mut self, timestamp_ms: f64) -> Result<(), JsValue> {
+             let _ = timestamp_ms;
+             let Some(frame) = self.session.prepare_frame() else {
+                 return Ok(());
+             };
+-            if let Some(viewport) = frame.viewport {
+-                if let Err(error) = self.renderer.update_viewport(to_js(&viewport)?) {
+-                    self.session.invalidate_frame();
+-                    return Err(error);
+-                }
+-            }
+-            if let Some((objects, overlays)) = frame.projection {
+-                let update = ProjectionUpdate { objects, overlays };
+-                if let Err(error) = self.renderer.update_objects(to_js(&update)?) {
+-                    self.session.invalidate_frame();
+-                    return Err(error);
+-                }
++            if let Err(error) = self.renderer.apply_frame(frame.viewport, frame.projection) {
++                self.session.invalidate_frame();
++                return Err(error);
+             }
+             Ok(())
+         }
+@@ -1097,6 +1470,7 @@ pub mod wasm {
+             session,
+             renderer,
+             canvas,
++            serialized_input_objects: std::cell::Cell::new(0),
+         })
+     }
+ }
+diff --git a/playwright.config.ts b/playwright.config.ts
+index a5280944..c9b55f48 100644
+--- a/playwright.config.ts
++++ b/playwright.config.ts
+@@ -11,7 +11,8 @@ export default defineConfig({
+     },
+     {
+       name: 'chromium-webgpu',
+-      testDir: './tests/e2e',
++      testDir: './tests',
++      testMatch: ['e2e/**/*.spec.ts', 'perf/**/*.spec.ts'],
+       // T15 and downstream integration gates require an actual Chromium WebGPU device.
+       use: { channel: 'chromium', launchOptions: { args: ['--enable-unsafe-webgpu'] } },
+     },
+@@ -29,13 +30,14 @@ export default defineConfig({
+       timeout: 10_000,
+     },
+     {
+-      command: 'pnpm --filter @weblabel/web run dev',
++      command: 'node scripts/build-web-bridge.mjs && pnpm --filter @weblabel/web exec vite --host 127.0.0.1 --port 5173 --strictPort --mode test',
+       url: 'http://127.0.0.1:5173/',
+-      reuseExistingServer: !process.env.CI,
++      reuseExistingServer: false,
+       timeout: 120_000,
+     },
+   ],
+   use: {
++    baseURL: 'http://127.0.0.1:5173',
+     trace: 'retain-on-failure',
+     screenshot: 'only-on-failure',
+     launchOptions: { args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader'] },
+diff --git a/scripts/generate-dense-fixtures.d.mts b/scripts/generate-dense-fixtures.d.mts
+new file mode 100644
+index 00000000..a336ea69
+--- /dev/null
++++ b/scripts/generate-dense-fixtures.d.mts
+@@ -0,0 +1,7 @@
++import type { AnnotationObject } from '../packages/contracts/generated/AnnotationObject';
++export interface DenseWorkload {
++  fixture_kind: 'synthetic_dense_workload'; seed: number; count: number; width: number; height: number;
++  objects: AnnotationObject[];
++  operations: ({ kind: 'pan'; dx: number; dy: number } | { kind: 'zoom'; factor: number } | { kind: 'edit'; object_id: string; dx: number } | { kind: 'idle_ms'; duration: number } | { kind: 'asset_cycle'; count: number })[];
++}
++export function generateDenseWorkload(count: number, seed?: number, width?: number, height?: number): DenseWorkload;
+diff --git a/scripts/generate-dense-fixtures.mjs b/scripts/generate-dense-fixtures.mjs
+new file mode 100644
+index 00000000..7fba1276
+--- /dev/null
++++ b/scripts/generate-dense-fixtures.mjs
+@@ -0,0 +1,35 @@
++export function generateDenseWorkload(count, seed = 17, width = 4096, height = 4096) {
++  if (![2000, 10000].includes(count) || !Number.isSafeInteger(seed) || seed < 0 || !Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64 || width > 4096 || height > 4096) throw new Error('invalid synthetic workload dimensions/count/seed');
++  let state = (seed ^ count) >>> 0;
++  const next = () => { state = (Math.imul(state, 1664525) + 1013904223) >>> 0; return state / 0x1_0000_0000; };
++  const objects = Array.from({ length: count }, (_, index) => {
++    const x = Math.floor(next() * (width - 32));
++    const y = Math.floor(next() * (height - 32));
++    const w = 4 + Math.floor(next() * 24);
++    const h = 4 + Math.floor(next() * 24);
++    return {
++      object_id: `dense-${seed}-${index}`,
++      label_id: 'label_person',
++      geometry: { type: 'bbox_xyxy', x_min: x, y_min: y, x_max: x + w, y_max: y + h },
++      attributes: { helmet_state: 'unknown' },
++      origin: { type: 'manual', prediction_id: null, model_run_id: null, import_batch_id: null },
++    };
++  });
++  return { fixture_kind: 'synthetic_dense_workload', seed, count, width, height, objects, operations: [
++    { kind: 'pan', dx: 17, dy: -9 }, { kind: 'zoom', factor: 0.9 },
++    { kind: 'edit', object_id: `dense-${seed}-37`, dx: 1 },
++    { kind: 'idle_ms', duration: 10000 }, { kind: 'asset_cycle', count: 100 },
++  ] };
++}
++
++// Importing this deterministic generator in the test-build browser does no I/O.
++if (typeof process !== 'undefined' && process.argv[1]?.replaceAll('\\', '/').endsWith('/generate-dense-fixtures.mjs')) {
++  const { mkdir, writeFile } = await import('node:fs/promises');
++  const { dirname, resolve } = await import('node:path');
++  const { fileURLToPath } = await import('node:url');
++  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
++  const output = resolve(root, 'tests/fixtures/perf');
++  const seed = Number(process.argv[2] ?? 17);
++  await mkdir(output, { recursive: true });
++  for (const count of [2000, 10000]) await writeFile(resolve(output, `dense-${count}-seed-${seed}.json`), `${JSON.stringify(generateDenseWorkload(count, seed))}\n`);
++}
+diff --git a/tasks/T28.md b/tasks/T28.md
+index 499c201b..aa904797 100644
+--- a/tasks/T28.md
++++ b/tasks/T28.md
+@@ -17,6 +17,7 @@
+ - `crates/geometry/src/spatial_index.rs`
+ - `apps/web/src/features/workbench/perf.ts`
+ - `tests/perf/t28_dense.spec.ts`
++- `tests/perf/t28_workbench.spec.ts`（真实对象栏拒绝恢复与native/SaveQueue消费者）
+ - `scripts/generate-dense-fixtures.mjs`
+ 
+ 花括号表示明确的一组文件，不是让你创建字面包含花括号的文件名。通配符只限该模块的新增文件。根manifest/锁文件/router装配/导航/统一脚本注册由主Agent按integration.patch串行集成；不因本卡列出相关文件就获得并行共享写权限。
+@@ -64,7 +65,7 @@ test('idle canvas does not submit forever',async({page})=>{
+ T00完成后统一入口：`pnpm test:task T28`。它必须实际执行：
+ 
+ ```text
+-pnpm exec playwright test tests/perf/t28_dense.spec.ts --project=chromium-webgpu
++pnpm exec playwright test tests/perf/t28_dense.spec.ts tests/perf/t28_workbench.spec.ts --project=chromium-webgpu
+ ```
+ 
+ 还需通过受影响语言的格式/类型/contract检查。测试命令不存在、匹配0条、未启用该provider或测试仅skip时均不满足验收。T00本身先实现入口再调用入口，不形成递归。
+diff --git a/tests/perf/t28_dense.spec.ts b/tests/perf/t28_dense.spec.ts
+new file mode 100644
+index 00000000..4abe5e42
+--- /dev/null
++++ b/tests/perf/t28_dense.spec.ts
+@@ -0,0 +1,268 @@
++import { mkdir, writeFile } from 'node:fs/promises';
++import sharp from 'sharp';
++import { test, expect } from '../e2e/fixtures';
++import type {} from '../../apps/web/src/features/workbench/perf';
++import type { MediaRevision } from '../../packages/contracts/generated/MediaRevision';
++
++
++test.use({ trace: 'on', screenshot: 'on' });
++
++for (const count of [2000, 10000] as const) test(`${count} real dense workload: incremental uploads, culling, consumer guards, 10s idle and 100 switches`, async ({ adminPage: page, seededProject }, testInfo) => {
++  test.setTimeout(180_000);
++  const png = await sharp({ create: { width: 2048, height: 2048, channels: 4, background: { r: 28, g: 37, b: 49, alpha: 1 } } }).png().toBuffer();
++  const uploaded = await seededProject.api.upload(`/api/projects/${seededProject.project_id}/assets`, png, `dense-${count}-2048.png`, crypto.randomUUID(), 'image/png');
++  expect(uploaded.status).toBe(202);
++  const drained = await seededProject.api.request('POST', '/internal/test/jobs/drain', {});
++  expect(drained.status).toBe(200);
++  const assets = await seededProject.api.request<{ items: MediaRevision[] }>('GET', `/api/projects/${seededProject.project_id}/assets`);
++  const denseMedia = assets.json.items.find((asset) => asset.original_name === `dense-${count}-2048.png`);
++  expect(denseMedia).toBeDefined();
++  await page.goto(`/test-harness/dense?count=${count}&seed=17&project_id=${seededProject.project_id}&asset_revision_id=${denseMedia!.asset_revision_id}`);
++  await page.waitForFunction(() => window.__wl_test?.ready === true || document.querySelector('[role="alert"]') !== null);
++  await expect(page.getByRole('alert')).toHaveCount(0);
++  expect(await page.evaluate(() => window.__wl_test?.ready)).toBe(true);
++  await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-actual-backend', 'webgpu');
++  await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-adapter-kind', 'hardware');
++  const cdp = await page.context().newCDPSession(page);
++  await cdp.send('Performance.enable');
++  await cdp.send('HeapProfiler.collectGarbage');
++  const heapInitial = (await cdp.send('Performance.getMetrics')).metrics.filter(metric => metric.name === 'JSHeapUsedSize' || metric.name === 'JSHeapTotalSize');
++  const initial = await page.evaluate(() => window.__wl_test!.stats());
++  const original = await page.evaluate(() => window.__wl_test!.snapshot());
++  expect(original.coordinate_space).toMatchObject({ width: 2048, height: 2048 });
++  expect(original.objects).toHaveLength(count);
++  expect(await page.evaluate(() => window.__wl_test!.generation())).toBe(7);
++  expect(await page.getByTestId('object-list').getByRole('option').count()).toBeLessThan(100);
++  await expect(page.getByTestId('object-list').getByRole('option').first()).toHaveAttribute('aria-setsize', String(count));
++  expect(await page.getByTestId('canvas-label').count()).toBeLessThanOrEqual(100);
++  await expect(page.locator('[data-testid="canvas-label"][data-object-id="dense-17-37"]')).toHaveCount(1);
++
++  await page.screenshot({ path: `reports/T28/dense-${count}-loaded-${Date.now()}.png`, fullPage: true });
++  const view = await page.evaluate(() => window.__wl_test!.viewport());
++  const highScale = view.scale * 3;
++  const halfWidth = view.css_width / (2 * highScale), halfHeight = view.css_height / (2 * highScale);
++  const candidate = original.objects.filter(({ geometry: box }) =>
++    box.x_min > 1024 - halfWidth && box.x_max < 1024 + halfWidth &&
++    box.y_min > 1024 - halfHeight && box.y_max < 1024 + halfHeight).at(-1)!;
++  await page.evaluate(async ({ id }) => {
++    const hooks = window.__wl_test!;
++    await hooks.select(id); await hooks.zoom(3);
++    const current = hooks.viewport();
++    await hooks.pan(current.css_width / 2 - (1024 * current.scale + current.tx), current.css_height / 2 - (1024 * current.scale + current.ty));
++  }, { id: candidate.object_id });
++  await expect(page.getByTestId('canvas-label')).toHaveCount(100);
++  await expect(page.getByTestId('canvas-label').first()).toHaveAttribute('data-object-id', candidate.object_id);
++  await expect(page.getByTestId('canvas-label').first()).toHaveAttribute('data-selected', 'true');
++  await page.screenshot({ path: `reports/T28/dense-${count}-capped-labels-${Date.now()}.png`, fullPage: true });
++  await page.evaluate(async ({ originalView, id }) => {
++    const hooks = window.__wl_test!; await hooks.zoom(1 / 3);
++    const current = hooks.viewport(); await hooks.pan(originalView.tx - current.tx, originalView.ty - current.ty);
++    await hooks.select(id);
++  }, { originalView: view, id: original.objects[37].object_id });
++  const beforePan = await page.evaluate(() => window.__wl_test!.stats());
++  await page.evaluate(async () => { await window.__wl_test!.pan(17, -9); await window.__wl_test!.zoom(2); });
++  const panned = await page.evaluate(() => window.__wl_test!.stats());
++  expect(panned.bbox_upload_bytes).toBe(beforePan.bbox_upload_bytes);
++  expect(panned.gpu_texture_upload_bytes).toBe(beforePan.gpu_texture_upload_bytes);
++  expect(panned.js_wasm_binary_bytes).toBe(beforePan.js_wasm_binary_bytes);
++  expect(panned.visible_instances).toBeLessThan(count);
++  expect(panned.uniform_upload_bytes).toBeGreaterThan(beforePan.uniform_upload_bytes);
++  await page.evaluate(async () => { await window.__wl_test!.zoom(0.5); await window.__wl_test!.pan(-17, 9); });
++  expect(await page.evaluate(() => window.__wl_test!.viewport().scale)).toBeCloseTo(view.scale);
++
++  const beforeEdit = await page.evaluate(() => window.__wl_test!.stats());
++  await page.evaluate(() => window.__wl_test!.editObject(37));
++  const edited = await page.evaluate(() => window.__wl_test!.stats());
++  expect(edited.bbox_upload_bytes - beforeEdit.bbox_upload_bytes).toBe(48);
++  expect(edited.bbox_upload_calls - beforeEdit.bbox_upload_calls).toBe(1);
++  const afterEdit = await page.evaluate(() => window.__wl_test!.snapshot());
++  expect(afterEdit.objects[37].geometry.x_max).toBe(original.objects[37].geometry.x_max + 1);
++  expect(afterEdit.objects.filter((object, index) => JSON.stringify(object) !== JSON.stringify(original.objects[index])).map((object) => object.object_id)).toEqual(['dense-17-37']);
++  expect(await page.evaluate(() => window.__wl_test!.generation())).toBe(8);
++  await page.evaluate(() => window.__wl_test!.flush());
++  const remote = await seededProject.api.request<{ document: typeof original; annotation_revision_id: string }>('GET', `/api/assets/${denseMedia!.asset_revision_id}/annotation?ontology_version_id=${seededProject.ontology_version_id}`);
++  expect(remote.status).toBe(200);
++  expect(remote.json.document.objects[37].geometry).toEqual(afterEdit.objects[37].geometry);
++
++  const flagGuards = await page.evaluate(() => ({ saves: window.__wl_test!.saveCount(), validation: window.__wl_test!.validationInputObjects(), serialized: window.__wl_test!.serializedInputObjects(), generation: window.__wl_test!.generation(), visible: window.__wl_test!.stats().visible_instances }));
++  const firstRow = page.getByTestId('object-item-dense-17-0');
++  await firstRow.click();
++  await page.getByTestId('object-hide-selected').click({ timeout: 5000 });
++  await expect(firstRow).toHaveAttribute('data-hidden', 'true');
++  await expect.poll(() => page.evaluate(() => window.__wl_test!.stats().visible_instances)).toBe(flagGuards.visible - 1);
++  await expect(page.locator('[data-testid="canvas-label"][data-object-id="dense-17-0"]')).toHaveCount(0);
++  await page.getByTestId('object-show-all').click();
++  await expect(firstRow).toHaveAttribute('data-hidden', 'false');
++  await expect.poll(() => page.evaluate(() => window.__wl_test!.stats().visible_instances)).toBe(flagGuards.visible);
++  await firstRow.click();
++  const lockButton = page.getByTestId('object-lock-selected');
++  await lockButton.focus();
++  await page.keyboard.press('Space');
++  await expect(lockButton).toHaveAttribute('aria-pressed', 'true');
++  await expect(firstRow).toHaveAttribute('data-locked', 'true');
++  expect(await page.evaluate(() => ({ saves: window.__wl_test!.saveCount(), validation: window.__wl_test!.validationInputObjects(), serialized: window.__wl_test!.serializedInputObjects(), generation: window.__wl_test!.generation() }))).toEqual({ saves: flagGuards.saves, validation: flagGuards.validation, serialized: flagGuards.serialized, generation: flagGuards.generation });
++  // Native rejection must not publish optimistic transient state for a known target.
++  await page.evaluate(() => window.__wl_test!.setFlags(['dense-17-0', 'missing-object'], { hidden: true, locked: false }));
++  await page.evaluate(() => window.__wl_test!.setFlags(['dense-17-0'], { hidden: 'invalid' as unknown as boolean }));
++  await expect(firstRow).toHaveAttribute('data-hidden', 'false');
++  await expect(firstRow).toHaveAttribute('data-locked', 'true');
++  expect(await page.evaluate(() => window.__wl_test!.stats().visible_instances)).toBe(flagGuards.visible);
++  // A valid geometry command is rejected by the native lock, not just styled in React.
++  await page.evaluate(() => window.__wl_test!.editObject(0));
++  await expect(page.getByRole('alert')).toBeVisible();
++  expect(await page.evaluate(() => window.__wl_test!.generation())).toBe(flagGuards.generation);
++  expect((await page.evaluate(() => window.__wl_test!.snapshot())).objects[0].geometry).toEqual(afterEdit.objects[0].geometry);
++  await page.waitForTimeout(500);
++  const flagHead = await seededProject.api.request<{ annotation_revision_id: string }>('GET', `/api/assets/${denseMedia!.asset_revision_id}/annotation?ontology_version_id=${seededProject.ontology_version_id}`);
++  expect(flagHead.json.annotation_revision_id).toBe(remote.json.annotation_revision_id);
++  expect(await page.evaluate(() => window.__wl_test!.saveCount())).toBe(flagGuards.saves);
++  await lockButton.focus();
++  await page.keyboard.press('Space');
++  await expect(lockButton).toHaveAttribute('aria-pressed', 'false');
++  await page.getByTestId('object-hide-selected').click();
++  await lockButton.click();
++  await page.evaluate(async () => { await window.__wl_test!.changeAsset(1); await window.__wl_test!.changeAsset(0); });
++  await expect(firstRow).toHaveAttribute('data-hidden', 'false');
++  await expect(firstRow).toHaveAttribute('data-locked', 'false');
++  await firstRow.click();
++  await expect(lockButton).toHaveAttribute('aria-pressed', 'false');
++  await page.screenshot({ path: `reports/T28/dense-${count}-sidebar-flags-${Date.now()}.png` });
++  const guards = await page.evaluate(() => ({ saves: window.__wl_test!.saveCount(), validation: window.__wl_test!.validationInputObjects(), serialized: window.__wl_test!.serializedInputObjects(), generation: window.__wl_test!.generation() }));
++  await page.evaluate(async () => { await window.__wl_test!.select('dense-17-37'); await window.__wl_test!.zoom(0.1); });
++  await expect(page.getByTestId('canvas-label')).toHaveCount(1);
++  await expect(page.getByTestId('canvas-label')).toHaveAttribute('data-object-id', 'dense-17-37');
++  await page.evaluate(() => window.__wl_test!.zoom(10));
++  // A newly published ontology cannot silently rebind the current document.
++  const ontology = await seededProject.api.request<{ items: { labels: unknown[]; guidelines_markdown: string }[] }>('GET', `/api/projects/${seededProject.project_id}/ontologies`);
++  const published = await seededProject.api.request('POST', `/api/projects/${seededProject.project_id}/ontologies`, { labels: ontology.json.items[0].labels, guidelines_markdown: 'Synthetic logical ontology publication during dense interaction' });
++  expect(published.status).toBe(201);
++  const canvas = page.getByTestId('annotation-canvas');
++  const box = await canvas.boundingBox();
++  expect(box).not.toBeNull();
++  await page.evaluate(() => window.__wl_test!.tool('box'));
++  const startX = box!.x + box!.width / 2;
++  const startY = box!.y + box!.height / 2;
++  await page.mouse.move(startX, startY);
++  await page.mouse.down();
++  for (let i = 0; i < 40; i++) await page.mouse.move(startX + i, startY + i);
++  const pointerSamples = await page.evaluate(async ({ x, y }) => {
++    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="annotation-canvas"]')!;
++    const rows = [];
++    for (let i = 0; i < 1000; i++) {
++      const started = performance.now(); const before = window.__wl_test!.stats();
++      canvas.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: x + 2 + i % 80, clientY: y + 2 + (i % 80) / 2, button: 0, buttons: 1, bubbles: true }));
++      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
++      const after = window.__wl_test!.stats();
++      rows.push({ sequence: i, next_paint_boundary_ms: performance.now() - started, bridge_cpu_ms: after.bridge_elapsed_ms - before.bridge_elapsed_ms, submissions: after.gpu_submissions - before.gpu_submissions });
++    }
++    return rows;
++  }, { x: startX, y: startY });
++  expect(pointerSamples.every(sample => sample.submissions === 1)).toBe(true);
++  await page.waitForTimeout(500);
++  expect(await page.evaluate(() => ({ saves: window.__wl_test!.saveCount(), validation: window.__wl_test!.validationInputObjects(), serialized: window.__wl_test!.serializedInputObjects(), generation: window.__wl_test!.generation() }))).toEqual(guards);
++  await page.mouse.up();
++  await expect.poll(() => page.evaluate(() => window.__wl_test!.generation())).toBe(guards.generation + 1);
++  expect((await page.evaluate(() => window.__wl_test!.snapshot())).objects).toHaveLength(count + 1);
++  await page.evaluate(() => window.__wl_test!.undo());
++  expect((await page.evaluate(() => window.__wl_test!.snapshot())).objects).toHaveLength(count);
++  await page.evaluate(() => window.__wl_test!.flush());
++  const beforeBulk = await page.evaluate(() => ({ validation: window.__wl_test!.validationInputObjects(), generation: window.__wl_test!.generation() }));
++  await page.evaluate(() => window.__wl_test!.commitBulkAttributes());
++  expect(await page.evaluate(() => window.__wl_test!.validationInputObjects()) - beforeBulk.validation).toBe(count);
++  expect(await page.evaluate(() => window.__wl_test!.generation())).toBe(beforeBulk.generation + 1);
++  await page.evaluate(() => window.__wl_test!.flush());
++  const committed = await page.evaluate(() => window.__wl_test!.snapshot());
++  expect(committed.ontology_version_id).toBe(original.ontology_version_id);
++  expect(committed.objects.every((object) => object.attributes.helmet_state === 'wearing')).toBe(true);
++
++  await page.getByTestId('object-list').focus();
++  await page.keyboard.press('End');
++  await expect(page.getByTestId(`object-item-dense-17-${count - 1}`)).toBeVisible();
++  await expect(page.getByTestId(`object-item-dense-17-${count - 1}`)).toHaveAttribute('aria-selected', 'true');
++  await expect(page.getByTestId(`object-item-dense-17-${count - 1}`)).toHaveAttribute('aria-posinset', String(count));
++  await page.keyboard.press('Home');
++  await expect(page.getByTestId('object-item-dense-17-0')).toBeVisible();
++  expect(await page.getByTestId('object-list').getByRole('option').count()).toBeLessThan(100);
++
++  const { pan: samples, zoom: zoomSamples, edit: editSamples } = await page.evaluate(async () => {
++    const rows = [];
++    for (let i = 0; i < 1000; i++) {
++      const start = performance.now(); const before = window.__wl_test!.stats();
++      await window.__wl_test!.pan(i % 2 ? -1 : 1, 0);
++      const after = window.__wl_test!.stats();
++      rows.push({ sequence: i, elapsed_ms: performance.now() - start, bridge_cpu_ms: after.bridge_elapsed_ms - before.bridge_elapsed_ms, bbox_bytes: after.bbox_upload_bytes - before.bbox_upload_bytes, submissions: after.gpu_submissions - before.gpu_submissions });
++    }
++    const zooms = [];
++    for (let i = 0; i < 1000; i++) {
++      const start = performance.now(); const before = window.__wl_test!.stats();
++      await window.__wl_test!.zoom(i % 2 ? 1 / 1.005 : 1.005);
++      const after = window.__wl_test!.stats();
++      zooms.push({ sequence: i, elapsed_ms: performance.now() - start, bridge_cpu_ms: after.bridge_elapsed_ms - before.bridge_elapsed_ms, bbox_bytes: after.bbox_upload_bytes - before.bbox_upload_bytes, submissions: after.gpu_submissions - before.gpu_submissions });
++    }
++    const edits = [];
++    for (let i = 0; i < 30; i++) {
++      const start = performance.now(); const before = window.__wl_test!.stats();
++      await window.__wl_test!.editObject(37, i % 2 ? -1 : 1);
++      const after = window.__wl_test!.stats();
++      edits.push({ sequence: i, elapsed_ms: performance.now() - start, bridge_cpu_ms: after.bridge_elapsed_ms - before.bridge_elapsed_ms, bbox_bytes: after.bbox_upload_bytes - before.bbox_upload_bytes, bbox_calls: after.bbox_upload_calls - before.bbox_upload_calls, submissions: after.gpu_submissions - before.gpu_submissions });
++    }
++    return { pan: rows, zoom: zooms, edit: edits };
++  });
++  expect(samples.every((sample) => sample.bbox_bytes === 0 && sample.submissions === 1)).toBe(true);
++  expect(zoomSamples.every((sample) => sample.bbox_bytes === 0 && sample.submissions === 1)).toBe(true);
++  expect(editSamples.every((sample) => sample.bbox_bytes === 48 && sample.bbox_calls === 1 && sample.submissions === 1)).toBe(true);
++  await page.evaluate(() => window.__wl_test!.flush());
++  if (count === 2000) {
++    const sorted = samples.map((sample) => sample.bridge_cpu_ms).sort((a, b) => a - b);
++    expect(sorted[Math.ceil(sorted.length * 0.95) - 1]).toBeLessThanOrEqual(8);
++  }
++  const idleBefore = await page.evaluate(() => window.__wl_test!.stats().gpu_submissions);
++  await page.waitForTimeout(10_000);
++  expect(await page.evaluate(() => window.__wl_test!.stats().gpu_submissions)).toBe(idleBefore);
++  const budgetBefore = await page.evaluate(() => window.__wl_test!.stats());
++  expect(await page.evaluate(() => window.__wl_test!.tryOverBudgetAsset())).toBe(false);
++  const rejected = await page.evaluate(() => window.__wl_test!.stats());
++  expect(rejected.rejected_resources).toBe(budgetBefore.rejected_resources + 1);
++  expect(rejected.live_textures).toBe(budgetBefore.live_textures);
++  expect(rejected.gpu_texture_upload_calls).toBe(budgetBefore.gpu_texture_upload_calls);
++  const resourceSamples = [];
++  for (let index = 0; index < 100; index++) {
++    await page.evaluate((asset) => window.__wl_test!.changeAsset(asset), index);
++    const stats = await page.evaluate(() => window.__wl_test!.stats());
++    resourceSamples.push({ sequence: index, ...stats });
++    expect(stats.live_textures).toBe(initial.live_textures);
++    expect(stats.live_buffers).toBe(initial.live_buffers);
++    expect(stats.buffer_creations - stats.buffer_releases).toBe(initial.live_buffers);
++    expect(stats.live_decoded_bitmaps).toBe(0);
++    expect(stats.decoded_bitmap_creations).toBe(stats.decoded_bitmap_releases);
++    expect(stats.logical_texture_bytes).toBeLessThanOrEqual(2048 * 2048 * 4);
++  }
++  expect(resourceSamples.at(-1)!.decoded_bitmap_creations - rejected.decoded_bitmap_creations).toBe(100);
++  expect(resourceSamples.at(-1)!.gpu_texture_upload_calls - rejected.gpu_texture_upload_calls).toBe(100);
++  await cdp.send('HeapProfiler.collectGarbage');
++  const heapFinal = (await cdp.send('Performance.getMetrics')).metrics.filter(metric => metric.name === 'JSHeapUsedSize' || metric.name === 'JSHeapTotalSize');
++  await cdp.detach();
++  const summarize = (values: number[]) => {
++    const sorted = [...values].sort((a, b) => a - b);
++    return { p50: sorted[Math.ceil(sorted.length * .5) - 1], p95: sorted[Math.ceil(sorted.length * .95) - 1], max: sorted.at(-1) };
++  };
++  const evidence = {
++    count, seed: 17, dimensions: [2048, 2048], initial, edited, rejected,
++    samples, pointer_samples: pointerSamples, zoom_samples: zoomSamples, edit_samples: editSamples,
++    resources: resourceSamples, quantiles: summarize(samples.map(sample => sample.bridge_cpu_ms)),
++    pointer_quantiles: summarize(pointerSamples.map(sample => sample.bridge_cpu_ms)),
++    next_paint_boundary_quantiles: summarize(pointerSamples.map(sample => sample.next_paint_boundary_ms)),
++    zoom_quantiles: summarize(zoomSamples.map(sample => sample.bridge_cpu_ms)),
++    edit_quantiles: summarize(editSamples.map(sample => sample.bridge_cpu_ms)),
++    heap: { source: 'Chromium CDP Performance.getMetrics after explicit GC, outside timed actions; V8 JS heap only, excludes physical VRAM/WASM linear memory', initial: heapInitial, final: heapFinal },
++    browser: await page.evaluate(() => ({
++      user_agent: navigator.userAgent, dpr: devicePixelRatio, viewport: [innerWidth, innerHeight],
++      adapter: document.querySelector('[data-testid="gpu-status"]')?.textContent,
++    })),
++  };
++  await mkdir('reports/T28', { recursive: true });
++  const filename = `reports/T28/dense-${count}-${Date.now()}.raw.json`;
++  await writeFile(filename, JSON.stringify(evidence, null, 2));
++  await testInfo.attach('dense-raw-samples', { path: filename, contentType: 'application/json' });
++  await page.screenshot({ path: `reports/T28/dense-${count}-${Date.now()}.png`, fullPage: true });
++});
+diff --git a/tests/perf/t28_workbench.spec.ts b/tests/perf/t28_workbench.spec.ts
+new file mode 100644
+index 00000000..ae1674e1
+--- /dev/null
++++ b/tests/perf/t28_workbench.spec.ts
+@@ -0,0 +1,405 @@
++import { mkdir, writeFile } from 'node:fs/promises';
++import type { Page } from '@playwright/test';
++import { expect, test } from '../e2e/fixtures';
++import type { AnnotationDocument } from '../../packages/contracts/generated/AnnotationDocument';
++import type { AnnotationRevision } from '../../packages/contracts/generated/AnnotationRevision';
++import type { SaveRequest } from '../../packages/contracts/generated/SaveRequest';
++import type { SaveResponse } from '../../packages/contracts/generated/SaveResponse';
++import type { EditorHost } from '../../apps/web/src/lib/editor/EditorHost';
++import type { LocalObjectFlagMap } from '../../apps/web/src/lib/editor/types';
++
++interface TransientObservation {
++  counters: { snapshots: number; committedDocuments: number };
++  serializedObjects: number;
++  validationObjects: number;
++  generation: number | null;
++  objects: AnnotationDocument['objects'];
++}
++
++// No production hook: resolve the host which CanvasView actually mounted. Only
++// snapshot methods are instrumented; both wrappers always execute the original.
++async function mounted(page: Page, action: 'observe' | 'document' | 'nativeDelete' | 'consumerInvalidSelect' = 'observe', objectId = '') {
++  return page.evaluate(({ action, objectId }) => {
++    interface Fiber {
++      type?: { name?: string }; return?: Fiber; child?: Fiber; sibling?: Fiber;
++      stateNode?: { current?: Fiber }; memoizedState?: Hook; memoizedProps?: unknown;
++    }
++    interface Hook { memoizedState: unknown; next?: Hook }
++    interface Counters { snapshots: number; committedChecks: number; committedDocuments: number }
++    interface Probe { host: EditorHost; counters: Counters }
++    type FiberElement = HTMLElement & { __t28Probe?: Probe };
++    function owner(element: HTMLElement, name: string): Fiber {
++      const key = Object.keys(element).find(key => key.startsWith('__reactFiber$'));
++      if (!key) throw new Error(`No React fiber on ${element.dataset.testid}`);
++      let root = (element as unknown as Record<string, Fiber>)[key];
++      while (root.return) root = root.return;
++      // DOM's fiber pointer can retain the previous alternate after a commit.
++      // Read the committed tree, not stale props from that pointer.
++      const current = root.stateNode?.current;
++      if (!current) throw new Error('Committed React root not found');
++      const pending = [current];
++      while (pending.length) {
++        const fiber = pending.pop()!;
++        if (fiber.type?.name === name) return fiber;
++        if (fiber.sibling) pending.push(fiber.sibling);
++        if (fiber.child) pending.push(fiber.child);
++      }
++      throw new Error(`Actual ${name} owner not found`);
++    }
++    const canvas = document.querySelector<FiberElement>('[data-testid="annotation-canvas"]');
++    const list = document.querySelector<HTMLElement>('[data-testid="object-list"]');
++    if (!canvas || !list) throw new Error('Production Workbench is not mounted');
++    const ref = owner(canvas, 'CanvasView').memoizedState?.next?.next?.memoizedState as { current: EditorHost | null };
++    const host = ref.current;
++    if (!host || host.status !== 'ready') throw new Error('Actual mounted host is not ready');
++    if (!canvas.__t28Probe) {
++      const counters: Counters = { snapshots: 0, committedChecks: 0, committedDocuments: 0 };
++      const snapshot = host.getSnapshot;
++      const committed = host.getCommittedSnapshot;
++      host.getSnapshot = function () { counters.snapshots += 1; return snapshot.call(this); };
++      host.getCommittedSnapshot = function (delta) {
++        counters.committedChecks += 1;
++        const document = committed.call(this, delta);
++        if (document !== null) counters.committedDocuments += 1;
++        return document;
++      };
++      canvas.__t28Probe = { host, counters };
++    }
++    if (canvas.__t28Probe.host !== host) throw new Error('Canvas host changed during observation');
++    const delta = action === 'nativeDelete' ? host.dispatch({ kind: 'delete', object_ids: [objectId] }) : null;
++    const documentSnapshot = action === 'document' ? host.getSnapshot() : null;
++    const consumer = owner(list, 'ObjectList').memoizedProps as {
++      objects: AnnotationDocument['objects']; selectedIds: string[]; localFlags: LocalObjectFlagMap; onSelect(id: string): void;
++    };
++    if (action === 'consumerInvalidSelect') consumer.onSelect(objectId);
++    return {
++      document: documentSnapshot, delta, error: host.error,
++      objects: consumer.objects, selectedIds: consumer.selectedIds,
++      consumerFlags: consumer.localFlags, nativeFlags: host.getLocalFlags(),
++      generation: host.getGeneration(), counters: { ...canvas.__t28Probe.counters },
++      serializedObjects: host.getSerializedInputObjects(), validationObjects: host.getValidationInputObjects(),
++      adapter: host.getAdapterDiagnostics(),
++    };
++  }, { action, objectId });
++}
++
++async function hardwareReady(page: Page) {
++  const gpu = page.getByTestId('gpu-status');
++  await expect(gpu).toHaveAttribute('data-device-state', 'ready', { timeout: 30_000 });
++  await expect(gpu).toHaveAttribute('data-actual-backend', 'webgpu');
++  await expect(gpu).toHaveAttribute('data-adapter-kind', 'hardware');
++}
++
++async function boundedObjects(page: Page, total: number) {
++  const options = page.getByTestId('object-list').getByRole('option');
++  await expect(options.first()).toHaveAttribute('aria-setsize', String(total));
++  const objectRows = await options.count();
++  const canvasLabels = await page.getByTestId('canvas-label').count();
++  expect(objectRows).toBeLessThan(100);
++  expect(canvasLabels).toBeLessThanOrEqual(100);
++  return { total, objectRows, canvasLabels };
++}
++
++test.use({ trace: 'on', screenshot: 'on' });
++
++test('T28 actual Workbench: transient flags, locked native delete recovery, persisted delete and UI undo', async ({ page, seededProject }, testInfo) => {
++  test.setTimeout(90_000);
++  const asset = seededProject.assets.find(asset => asset.width === 320 && asset.height === 240 && asset.exif_orientation === 1);
++  const other = seededProject.assets.find(item => item.asset_revision_id !== asset?.asset_revision_id);
++  if (!asset || !other) throw new Error('Real synthetic media fixture requires two assets');
++  const annotationPath = `/api/assets/${asset.asset_revision_id}/annotation`;
++  const readHead = async () => {
++    const response = await seededProject.api.request<AnnotationRevision>('GET', `${annotationPath}?ontology_version_id=${seededProject.ontology_version_id}`);
++    expect(response.status).toBe(200);
++    return response.json;
++  };
++  const initial = await readHead();
++  const document: AnnotationDocument = {
++    ...initial.document, completion: 'in_progress',
++    objects: Array.from({ length: 2000 }, (_, index) => ({
++      object_id: `t28-human-${String(index).padStart(4, '0')}`, label_id: 'label_person',
++      geometry: { type: 'bbox_xyxy', x_min: 5 + (index % 50) * 6, y_min: 4 + Math.floor(index / 50) * 5.5,
++        x_max: 9 + (index % 50) * 6, y_max: 8 + Math.floor(index / 50) * 5.5 },
++      attributes: { helmet_state: 'unknown' },
++      origin: { type: 'manual', prediction_id: null, model_run_id: null, import_batch_id: null },
++    })),
++  };
++  const seedPayload: SaveRequest = { operation_id: crypto.randomUUID(), base_revision_id: initial.annotation_revision_id,
++    document, lease: null, suggestion_decisions: [] };
++  const seeded = await seededProject.api.request<SaveResponse>('PUT', annotationPath, seedPayload);
++  expect(seeded.status, JSON.stringify(seeded.json)).toBe(200);
++  const baseline = await readHead();
++  expect(baseline.document).toEqual(document);
++  expect(baseline.document.coordinate_space).toEqual({ type: 'canonical_image_pixels', width: 320, height: 240 });
++
++  // Same real session/API fixture as e2e/fixtures, with the configured origin so
++  // isolated verification never needs Main's canonical 5173 server.
++  const origin = String(testInfo.project.use.baseURL ?? 'http://127.0.0.1:5173');
++  await page.route(`${origin}/api/**`, async route => {
++    const request = route.request();
++    const incoming = new URL(request.url());
++    const headers: Record<string, string> = { ...request.headers(), origin: seededProject.apiBaseUrl };
++    delete headers.host;
++    delete headers['content-length'];
++    await route.fulfill({ response: await route.fetch({
++      url: new URL(`${incoming.pathname}${incoming.search}`, seededProject.apiBaseUrl).href,
++      headers, method: request.method(), postData: request.postDataBuffer() ?? undefined,
++    }) });
++  });
++  const puts: SaveRequest[] = [];
++  const putResponses: { status: number; response: SaveResponse }[] = [];
++  const pendingResponses: Promise<void>[] = [];
++  const browserErrors: string[] = [];
++  page.on('pageerror', error => browserErrors.push(error.message));
++  page.on('request', request => {
++    if (request.method() === 'PUT' && new URL(request.url()).pathname.endsWith('/annotation')) puts.push(request.postDataJSON() as SaveRequest);
++  });
++  page.on('response', response => {
++    if (response.request().method() === 'PUT' && new URL(response.url()).pathname.endsWith('/annotation')) {
++      pendingResponses.push(response.json().then(body => { putResponses.push({ status: response.status(), response: body as SaveResponse }); }));
++    }
++  });
++  const evidence: Record<string, unknown> = { surface: 'actual production Workbench (not DenseHarness)', origin, seedPayload, baseline };
++  const evidencePrefix = `reports/T28/workbench-main-${testInfo.project.name}-${testInfo.retry}-${Date.now()}`;
++  await mkdir('reports/T28', { recursive: true });
++  const screenshot = async (name: string) => page.screenshot({ path: `${evidencePrefix}-${name}.png`, fullPage: true });
++  const idleWithoutSave = async () => {
++    // Covers the real SaveQueue debounce, not only the synchronous event handler.
++    await page.waitForTimeout(1000);
++    expect(puts).toEqual([]);
++    expect(await readHead()).toEqual(baseline);
++  };
++  const noTransientDocument = (before: TransientObservation, after: TransientObservation) => {
++    expect(after.counters.snapshots).toBe(before.counters.snapshots);
++    expect(after.counters.committedDocuments).toBe(before.counters.committedDocuments);
++    expect(after.serializedObjects).toBe(before.serializedObjects);
++    expect(after.validationObjects).toBe(before.validationObjects);
++    expect(after.generation).toBe(before.generation);
++    expect(after.objects).toEqual(baseline.document.objects);
++  };
++  try {
++    await page.goto(origin);
++    await page.getByTestId('login-username').fill(seededProject.login.username);
++    await page.getByTestId('login-password').fill(seededProject.login.password);
++    await page.getByTestId('login-submit').click();
++    await expect(page.getByTestId('login-submit')).toHaveCount(0);
++    await page.goto(`${origin}/?project_id=${seededProject.project_id}&asset_revision_id=${asset.asset_revision_id}`);
++    await hardwareReady(page);
++    evidence.denseDom = await boundedObjects(page, 2000);
++    const start = await mounted(page, 'document');
++    expect(start.document).toEqual(baseline.document);
++    expect(start.objects).toEqual(baseline.document.objects);
++    expect(start.consumerFlags).toEqual({});
++    expect(start.nativeFlags).toEqual({});
++    await expect(page.getByTestId('undo')).toBeDisabled();
++    await expect(page.getByTestId('redo')).toBeDisabled();
++    evidence.start = start;
++    await screenshot('loaded');
++
++    const firstId = document.objects[0].object_id;
++    const secondId = document.objects[1].object_id;
++    const first = page.getByTestId(`object-item-${firstId}`);
++    const list = page.getByTestId('object-list');
++    await first.click();
++    await expect(first).toHaveAttribute('aria-selected', 'true');
++    await list.focus();
++    await page.keyboard.press('ArrowDown');
++    await expect(page.getByTestId(`object-item-${secondId}`)).toHaveAttribute('aria-selected', 'true');
++    await expect(list).toHaveAttribute('aria-activedescendant', `object-option-${secondId}`);
++    await page.keyboard.press('End');
++    const lastId = document.objects[1999].object_id;
++    await expect(page.getByTestId(`object-item-${lastId}`)).toHaveAttribute('aria-selected', 'true');
++    await expect(list).toHaveAttribute('aria-activedescendant', `object-option-${lastId}`);
++    await boundedObjects(page, 2000);
++    await page.keyboard.press('Home');
++    await expect(first).toHaveAttribute('aria-selected', 'true');
++    await page.getByTestId('object-hide-selected').click();
++    await expect(first).toHaveAttribute('data-hidden', 'true');
++    await expect(page.getByTestId('object-hide-selected')).toHaveAttribute('aria-pressed', 'true');
++    await page.getByTestId('object-lock-selected').click();
++    await expect(first).toHaveAttribute('data-locked', 'true');
++    await expect(first).toHaveAccessibleName(`对象 ${firstId}，已隐藏，已锁定`);
++    const flagged = await mounted(page);
++    expect(flagged.selectedIds).toEqual([firstId]);
++    expect(flagged.consumerFlags).toEqual({ [firstId]: { hidden: true, locked: true } });
++    expect(flagged.nativeFlags).toEqual(flagged.consumerFlags);
++    noTransientDocument(start, flagged);
++    await screenshot('flags');
++    await page.getByTestId('object-show-all').click();
++    await expect(first).toHaveAttribute('data-hidden', 'false');
++    await expect(first).toHaveAttribute('data-locked', 'true');
++    await expect(page.getByTestId('object-show-all')).toBeDisabled();
++    await page.getByTestId('object-lock-selected').click();
++    await expect(first).toHaveAttribute('data-locked', 'false');
++    await expect(page.getByTestId('object-lock-selected')).toHaveAttribute('aria-pressed', 'false');
++    const cleared = await mounted(page);
++    expect(cleared.consumerFlags).toEqual({});
++    expect(cleared.nativeFlags).toEqual({});
++    noTransientDocument(start, cleared);
++    await idleWithoutSave();
++
++    // Leave flags set, then switch away and back using real media buttons.
++    await page.getByTestId('object-hide-selected').click();
++    await page.getByTestId('object-lock-selected').click();
++    const beforeSwitch = await mounted(page);
++    noTransientDocument(start, beforeSwitch);
++    await page.getByTestId(`asset-item-${other.asset_revision_id}`).click();
++    await hardwareReady(page);
++    expect((await mounted(page)).nativeFlags).toEqual({});
++    await page.getByTestId(`asset-item-${asset.asset_revision_id}`).click();
++    await hardwareReady(page);
++    await boundedObjects(page, 2000);
++    const returned = await mounted(page, 'document');
++    expect(returned.document).toEqual(baseline.document);
++    expect(returned.objects).toEqual(baseline.document.objects);
++    expect(returned.selectedIds).toEqual([]);
++    expect(returned.consumerFlags).toEqual({});
++    expect(returned.nativeFlags).toEqual({});
++    await expect(first).toHaveAttribute('data-hidden', 'false');
++    await expect(first).toHaveAttribute('data-locked', 'false');
++    await idleWithoutSave();
++    evidence.transient = { flagged, cleared, beforeSwitch, returned, puts: [...puts] };
++
++    await first.click();
++    await page.getByTestId('object-lock-selected').click();
++    const beforeLockedDelete = await mounted(page);
++    // Delete has no UI shortcut today. Dispatch only through this CanvasView's
++    // mounted instance: real WASM -> existing onDelta -> existing SaveQueue.
++    const lockedDelete = await mounted(page, 'nativeDelete', firstId);
++    expect(lockedDelete.error?.code).toBe('OBJECT_LOCKED');
++    if (lockedDelete.delta) {
++      expect(lockedDelete.delta.error?.code).toBe('OBJECT_LOCKED');
++      expect(lockedDelete.delta.document_changed).toBe(false);
++      expect(lockedDelete.delta.suggestion_decisions).toEqual([]);
++    }
++    noTransientDocument(beforeLockedDelete, lockedDelete);
++    const lockedDocument = await mounted(page, 'document');
++    expect(lockedDocument.document).toEqual(baseline.document);
++    expect(lockedDelete.selectedIds).toEqual([firstId]);
++    expect(lockedDelete.consumerFlags).toEqual({ [firstId]: { hidden: false, locked: true } });
++    expect(lockedDelete.nativeFlags).toEqual(lockedDelete.consumerFlags);
++    await expect(first).toHaveAttribute('aria-selected', 'true');
++    await expect(page.getByTestId('undo')).toBeDisabled();
++    await expect(page.getByTestId('redo')).toBeDisabled();
++    await expect(page.getByTestId('object-lock-selected')).toBeEnabled();
++    await expect(page.getByTestId('object-hide-selected')).toBeEnabled();
++    await list.focus();
++    await page.keyboard.press('ArrowDown');
++    await expect(page.getByTestId(`object-item-${secondId}`)).toHaveAttribute('aria-selected', 'true');
++    await page.keyboard.press('Home');
++    await expect(first).toHaveAttribute('aria-selected', 'true');
++    await idleWithoutSave();
++    evidence.lockedDelete = { lockedDelete, lockedDocument };
++    await screenshot('locked-delete-recovered');
++
++    await page.getByTestId('object-lock-selected').click();
++    await expect(first).toHaveAttribute('data-locked', 'false');
++    const beforeDelete = await mounted(page);
++    noTransientDocument(lockedDocument, beforeDelete);
++    const nativeDelete = await mounted(page, 'nativeDelete', firstId);
++    expect(nativeDelete.delta).toMatchObject({ document_changed: true, removed_object_ids: [firstId],
++      selected_object_ids: [], can_undo: true, can_redo: false, suggestion_decisions: [], error: null });
++    await expect(page.getByTestId('undo')).toBeEnabled();
++    await expect(page.getByTestId('redo')).toBeDisabled();
++    await boundedObjects(page, 1999);
++    const deleted = await mounted(page, 'document');
++    const deletedDocument = { ...document, objects: document.objects.slice(1) };
++    expect(deleted.document).toEqual(deletedDocument);
++    expect(deleted.objects).toEqual(deletedDocument.objects);
++    expect(deleted.selectedIds).toEqual([]);
++    expect(deleted.consumerFlags).toEqual({});
++    expect(deleted.nativeFlags).toEqual({});
++    expect(deleted.generation).toBe(returned.generation! + 1);
++    await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase', 'synced');
++    const deletedHead = await readHead();
++    expect(deletedHead.document).toEqual(deletedDocument);
++    expect(deletedHead.parent_revision_id).toBe(baseline.annotation_revision_id);
++    expect(deletedHead.revision_no).toBe(baseline.revision_no + 1);
++    expect(puts).toHaveLength(1);
++    expect(puts[0]).toMatchObject({ base_revision_id: baseline.annotation_revision_id, document: deletedDocument,
++      suggestion_decisions: [], lease: null });
++    evidence.nativeDelete = { nativeDelete, deleted, deletedHead };
++    await screenshot('deleted');
++
++    await page.getByTestId('undo').click();
++    await boundedObjects(page, 2000);
++    await expect(page.getByTestId('undo')).toBeDisabled();
++    await expect(page.getByTestId('redo')).toBeEnabled();
++    const undone = await mounted(page, 'document');
++    expect(undone.document).toEqual(baseline.document);
++    expect(undone.objects).toEqual(baseline.document.objects);
++    expect(undone.consumerFlags).toEqual({});
++    expect(undone.nativeFlags).toEqual({});
++    expect(undone.generation).toBe(deleted.generation! + 1);
++    expect(undone.counters.committedDocuments - returned.counters.committedDocuments).toBe(2);
++    await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase', 'synced');
++    const undoHead = await readHead();
++    expect(undoHead.document).toEqual(baseline.document);
++    expect(undoHead.parent_revision_id).toBe(deletedHead.annotation_revision_id);
++    expect(undoHead.revision_no).toBe(baseline.revision_no + 2);
++    expect(puts).toHaveLength(2);
++    expect(puts[1]).toMatchObject({ base_revision_id: deletedHead.annotation_revision_id, document: baseline.document,
++      suggestion_decisions: [], lease: null });
++    await Promise.all(pendingResponses);
++    expect(putResponses.map(item => item.status)).toEqual([200, 200]);
++    expect(browserErrors).toEqual([]);
++    evidence.undo = { undone, undoHead };
++    await screenshot('undo');
++
++    // Nonempty redo history must also survive the native error. Testing only
++    // the initial empty stack would miss an error which silently clears it.
++    await first.click();
++    await page.getByTestId('object-lock-selected').click();
++    const historyBeforeError = await mounted(page);
++    const historyError = await mounted(page, 'nativeDelete', firstId);
++    expect(historyError.error?.code).toBe('OBJECT_LOCKED');
++    noTransientDocument(historyBeforeError, historyError);
++    expect(historyError.selectedIds).toEqual([firstId]);
++    expect(historyError.nativeFlags).toEqual({ [firstId]: { hidden: false, locked: true } });
++    await expect(first).toHaveAttribute('aria-selected', 'true');
++    await expect(page.getByTestId('undo')).toBeDisabled();
++    await expect(page.getByTestId('redo')).toBeEnabled();
++    await expect(page.getByTestId('object-lock-selected')).toBeEnabled();
++    await page.getByTestId('object-lock-selected').click();
++    await expect(first).toHaveAttribute('data-locked', 'false');
++    await expect(page.getByTestId('redo')).toBeEnabled();
++    const recoveredHistory = await mounted(page, 'document');
++    expect(recoveredHistory.document).toEqual(baseline.document);
++    expect(recoveredHistory.objects).toEqual(baseline.document.objects);
++    expect(recoveredHistory.consumerFlags).toEqual({});
++    expect(recoveredHistory.nativeFlags).toEqual({});
++    await page.waitForTimeout(1000);
++    expect(puts).toHaveLength(2);
++    expect(await readHead()).toEqual(undoHead);
++    expect(browserErrors).toEqual([]);
++    evidence.nonemptyHistoryError = { historyBeforeError, historyError, recoveredHistory };
++    await screenshot('history-error-recovered');
++    await page.getByTestId('object-lock-selected').click();
++    await expect(first).toHaveAttribute('data-locked', 'true');
++    const beforeRejectedSelection = await mounted(page);
++    expect(beforeRejectedSelection.nativeFlags[firstId]?.locked).toBe(true);
++    await mounted(page, 'consumerInvalidSelect', 't28-no-longer-present-object');
++    await expect(page.getByRole('alert').filter({ hasText: 'OBJECT_NOT_FOUND' })).toBeVisible();
++    await expect(first).toHaveAttribute('aria-selected', 'true');
++    await expect(first).toHaveAttribute('data-locked', 'true');
++    await expect(page.getByTestId('undo')).toBeDisabled();
++    await expect(page.getByTestId('redo')).toBeEnabled();
++    const afterRejectedSelection = await mounted(page);
++    noTransientDocument(beforeRejectedSelection, afterRejectedSelection);
++    expect(afterRejectedSelection.selectedIds).toEqual([firstId]);
++    expect(afterRejectedSelection.nativeFlags).toEqual(beforeRejectedSelection.nativeFlags);
++    await page.waitForTimeout(1000);
++    expect(puts).toHaveLength(2);
++    expect(await readHead()).toEqual(undoHead);
++    evidence.rejectedSelection = { beforeRejectedSelection, afterRejectedSelection };
++    console.log(JSON.stringify({ surface: evidence.surface, origin, objects: 2000, denseDom: evidence.denseDom,
++      transientSnapshotCalls: flagged.counters.snapshots - start.counters.snapshots,
++      transientPUTs: 0, lockedDelete: lockedDelete.error?.code,
++      savedObjectCounts: puts.map(put => put.document.objects.length),
++      committedDocuments: undone.counters.committedDocuments, adapter: undone.adapter }));
++  } finally {
++    await Promise.allSettled(pendingResponses);
++    await writeFile(`${evidencePrefix}.raw.json`, JSON.stringify({ ...evidence, puts, putResponses, browserErrors }, null, 2));
++    await testInfo.attach('actual-workbench-consumer-evidence', { path: `${evidencePrefix}.raw.json`, contentType: 'application/json' });
++  }
++});
