@@ -233,6 +233,18 @@ export interface RunEvent {
 
 原始 provider 输出、usage、预处理变换单独保存为 Prediction/ModelRun 内部记录；API 返回做过大小限制和敏感信息处理的内容，不给前端任意文件路径。SuggestionSet.state 可变化，Prediction 内容不可覆盖。
 
+T32 named API receipt（仅 `openai_api` / `mimo_api`）：终态 succeeded/failed/cancelled 的 `data.receipts` 按实际尝试的上游 HTTP turn 顺序保存，`data.receipt` 为最新项，无上游请求时为 null、receipts=[]。被本地配置/turn budget 阻止而未尝试的请求不产生 receipt；HTTP 502 等已尝试但未给身份的 turn 保留 null 身份项，不能用上一 turn 或请求配置填充。
+
+每项形状：`{provider_id,requested_model_id,actual_model_id,response_id,auth_kind,transport,runtime_version,runtime_version_status,budgets}`。`provider_id`/`requested_model_id` 为 Host 已配置事实；`auth_kind='api_key'`；transport 为 `openai_responses_sse` / `mimo_chat_completions_sse`（协议而非官方 endpoint/付费账户的证明）。上游 metadata 不得改变这些事实、内部工具 call/result ID、schema 或权限。
+
+`actual_model_id` 和 `response_id` 仅取 OpenAI Responses 已识别 lifecycle event 的 `response.model/id` 或 MiMo SSE 的 `chunk.model/id` 非空字符串；缺失/非字符串为 null，绝不回退 requested_model_id。已观测值在同一 turn 后续缺字段时不被清空；不同 turn 分别保存。未知嵌套 metadata 和营销/配置别名不是实际模型身份。
+
+HTTP server runtime 版本未正式暴露：`runtime_version=null,runtime_version_status='not_exposed'`；Node/Host 构建版本是另一个本地事实，不能冒充服务端版本。`budgets={max_tool_turns,max_run_ms,max_total_bytes,request_timeout_ms,cost_usd:null}` 记录当前实际强制配置；max_run_ms 在 beginTurn 边界检查，不承诺硬墙钟中断；request_timeout_ms 是每次 HTTP/SSE deadline，max_total_bytes 是累计已消费 SSE data UTF-8 字节，max_tool_turns 是允许请求回合上限。未强制货币上限、未知费用保持 null，不虚构 currency cap。
+
+先观测 receipt/usage 再解析工具或处理终态；失败、超时、取消保留之前已观测证据。成功但未报告 usage 的 turn 使总量保持 unknown；未返回任何 usage 的 HTTP 失败不能清除之前已观测量。所有 receipt（含 receipts 数组及最新项）仍经过同一递归 exact-known-credential public redactor，不改内部工具 ID。C4 RunEvent.data 已是通用 unknown JSON，Rust model_jobs→ai/events→events API 原样脱敏持久化，无 DTO/migration。
+
+现有 16 KiB event data cap 不扩大。默认 8 turn 常规完整 ID 记录仍可持久化；恶意超长 model/id 或配置过大 turn 上限可能触发现有 event_data_too_large，届时 live consumer 必须诊断缺证据/blocked，不能把 requested identity 当成功或扩大预算。账户权限、付费、图像能力、视觉结果仍由显式 opt-in live 验证，工程 loopback receipt 不升级 G4。
+
 `object_hash` 由 annotation-domain 的共享 Rust 规范化函数产生：按固定字段顺序包含 label、bbox 和排序后的 attributes；排除显示 flags 和 audit 时间。WASM 和服务端使用同函数，JS 不自行拼 JSON 算哈希。T01 用同一 golden fixture 交叉验证。request_hash 与 input_fingerprint 同样明确定义、包含全部相关输入和 provider profile 版本。
 
 接受候选必须同时验证 asset/ontology/revision、当前 generation、object hash、类别/属性和 change_id 未重复接受。首期整批原子接受；任何一项失败整批不改。部分接受是用户选择一个子集后重新形成独立原子命令。撤销不删除原始预测；接受关系可以变为 reverted 并保留审计。
