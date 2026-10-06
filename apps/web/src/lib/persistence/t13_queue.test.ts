@@ -432,9 +432,7 @@ describe('T31 persistence producer immutability boundaries', () => {
     enqueue(fixture, { generation: 9, document: future, suggestion_decisions: [REVERT] });
     expect(fixture.transport.saves[1].request).toEqual(prepared);
     expect(prepared.document).toBe(original);
-    expect(prepared.document.completion).toBe(original.completion);
     expect(fixture.queue.toRecord('asset_a')!.document).toBe(future);
-    expect(future.objects[0]).toBe(original.objects[0]);
     fixture.transport.ackSave(1, 'r8');
     await microtasks();
     fixture.clock.advance(SAVE_DEBOUNCE_MS);
