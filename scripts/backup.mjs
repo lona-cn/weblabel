@@ -44,6 +44,29 @@ function scrub(db) {
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redact(item)]));
     return value;
   }
+  function containsSecret(value) {
+    if (typeof value === 'string') {
+      for (const secret of secrets) if (value.includes(secret)) return true;
+    } else if (value && typeof value === 'object') {
+      for (const [key, item] of Object.entries(value)) if (containsSecret(key) || containsSecret(item)) return true;
+    }
+    return false;
+  }
+  // Immutable history includes scalar provenance, hashes and original media names,
+  // not just JSON payloads or human-readable diagnostic columns.
+  const immutableBusiness = new Set([
+    'annotation_revisions', 'ontology_versions', 'dataset_versions', 'annotation_import_batches',
+    'annotation_exports', 'dataset_exports', 'review_submissions', 'review_decisions', 'review_issues',
+    'predictions', 'prediction_audit', 'suggestion_sets', 'suggestion_decisions', 'run_events',
+    'media_assets', 'media_revisions', 'media_object_refs', 'media_metadata',
+  ]);
+  // Match model_runs_pinned_inputs_immutable; profile_snapshot_json remains the
+  // existing credential-configuration exception, not editable business input.
+  const pinnedRunInputs = new Set([
+    'run_id', 'operation_id', 'project_id', 'asset_revision_id', 'annotation_revision_id',
+    'ontology_version_id', 'actor_id', 'job_id', 'profile_id', 'provider_id', 'source',
+    'intent', 'prompt', 'consent_id', 'context_json', 'input_fingerprint', 'request_hash', 'created_at',
+  ]);
   const triggers = db.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger'").all();
   db.exec('PRAGMA foreign_keys=OFF; PRAGMA secure_delete=ON; BEGIN IMMEDIATE');
   try {
@@ -52,27 +75,28 @@ function scrub(db) {
     // Restoring never resumes a potentially billed AI run or an active lease.
     db.exec("UPDATE model_runs SET state='interrupted' WHERE state IN ('queued','running'); UPDATE jobs SET state='interrupted',worker_id=NULL,lease_until=NULL WHERE state IN ('queued','running'); UPDATE task_leases SET holder_id=NULL,expires_at=0;");
     for (const { name: table } of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('schema_migrations','model_profiles')").all()) {
-      const columns = db.prepare(`PRAGMA table_info(${quote(table)})`).all().filter(column => column.type === 'TEXT' && (column.name.endsWith('_json') || ['message', 'reason', 'prompt'].includes(column.name)));
-      // Keep immutable content, approval bindings and audit history byte-for-byte.
-      // Model profile snapshots are credential configuration; only pinned business inputs fail closed.
-      const immutableBusiness = ['annotation_revisions', 'ontology_versions', 'dataset_versions', 'annotation_import_batches', 'annotation_exports', 'dataset_exports', 'review_submissions', 'review_decisions', 'review_issues', 'predictions', 'prediction_audit', 'suggestion_sets', 'run_events'].includes(table);
+      const immutableTable = immutableBusiness.has(table);
+      const columns = db.prepare(`PRAGMA table_info(${quote(table)})`).all().filter(column => column.type === 'TEXT' && (immutableTable || (table === 'model_runs' && pinnedRunInputs.has(column.name)) || column.name.endsWith('_json') || ['message', 'reason', 'prompt'].includes(column.name)));
       for (const column of columns) {
+        const immutableColumn = immutableTable || (table === 'model_runs' && pinnedRunInputs.has(column.name));
         const rows = db.prepare(`SELECT rowid AS backup_rowid,${quote(column.name)} AS value FROM ${quote(table)} WHERE ${quote(column.name)} IS NOT NULL`).all();
+        if (immutableColumn) {
+          for (const row of rows) {
+            // Inspect both stored bytes and decoded JSON (including escaped keys
+            // and values). Never serialize or update collision-free history.
+            if (containsSecret(row.value) || (column.name.endsWith('_json') && containsSecret(JSON.parse(row.value)))) throw new Error('credential_in_immutable_business_data: cannot scrub immutable business history');
+          }
+          continue;
+        }
         const update = db.prepare(`UPDATE ${quote(table)} SET ${quote(column.name)}=? WHERE rowid=?`);
         for (const row of rows) {
           if (column.name.endsWith('_json')) {
             const original = JSON.parse(row.value);
             const value = JSON.stringify(redact(original));
-            if (value !== JSON.stringify(original)) {
-              if (immutableBusiness || (table === 'model_runs' && column.name === 'context_json')) throw new Error('credential_in_immutable_business_data: cannot scrub immutable business history');
-              update.run(value, row.backup_rowid);
-            }
+            if (value !== JSON.stringify(original)) update.run(value, row.backup_rowid);
           } else {
             const value = redact(row.value);
-            if (value !== row.value) {
-              if (immutableBusiness || (table === 'model_runs' && column.name === 'prompt')) throw new Error('credential_in_immutable_business_data: cannot scrub immutable business history');
-              update.run(value, row.backup_rowid);
-            }
+            if (value !== row.value) update.run(value, row.backup_rowid);
           }
         }
       }

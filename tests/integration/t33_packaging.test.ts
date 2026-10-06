@@ -115,13 +115,13 @@ it('terminates a real owned child and grandchild tree, not just its parent PID',
     await expect(fetch(`http://127.0.0.1:${descendantPort}`)).rejects.toThrow();
   } finally { await stopTree(child); }
 }, 30000);
-async function approvedReview(data: string) {
+async function approvedReview(data: string, originalName = '测试 image.jpg') {
   const running = await launch(data); const admin = await authenticated(running.base, running.code);
   const project = await admin.request('POST', '/api/projects', { name: 'T33 business', description: 'keep audit identity', allow_self_review: true }); expect(project.status).toBe(201);
   const projectId = project.body.project_id;
   const ontology = await admin.request('POST', `/api/projects/${projectId}/ontologies`, { guidelines_markdown: 'T33', labels: [{ label_id: 'person', name: 'Person', color: '#0099ff', shortcut: null, allowed_geometry_types: ['bbox_xyxy'], attributes: [] }] }); expect(ontology.status).toBe(201);
   const ontologyId = ontology.body.ontology_version_id;
-  const form = new FormData(); form.append('images', new Blob([fs.readFileSync(path.join(root, 'tests/fixtures/media/orientation-1.jpg'))], { type: 'image/jpeg' }), '测试 image.jpg');
+  const form = new FormData(); form.append('images', new Blob([fs.readFileSync(path.join(root, 'tests/fixtures/media/orientation-1.jpg'))], { type: 'image/jpeg' }), originalName);
   const upload = await fetch(running.base + `/api/projects/${projectId}/assets`, { method: 'POST', headers: { cookie: admin.cookie, origin: running.base, 'x-csrf-token': admin.csrf, 'idempotency-key': crypto.randomUUID() }, body: form }); expect(upload.status).toBe(202);
   let asset: Value | undefined;
   // Poll the real release media worker; its OS clock cannot be advanced by Vitest.
@@ -166,21 +166,91 @@ it('fails closed on immutable approval bindings and audit reasons before any sna
     db.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: 'unrelated-configuration-secret' }), 'review-collision');
     const backupDir = path.join(scratch, 'preserved approval'), restored = path.join(scratch, 'restored approval');
     success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
-    const copy = new DatabaseSync(path.join(backupDir, 'api.sqlite'), { readOnly: true });
+    const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null });
+    expect(snapshot.status, JSON.stringify(snapshot.body)).toBe(201);
+    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+    const copy = new DatabaseSync(path.join(restored, 'api.sqlite'), { readOnly: true });
     try {
       expect(copy.prepare('SELECT * FROM review_submissions ORDER BY review_id').all()).toEqual(before.submissions);
       expect(copy.prepare('SELECT * FROM review_decisions ORDER BY review_id').all()).toEqual(before.decisions);
       expect(copy.prepare('SELECT * FROM annotation_revisions ORDER BY annotation_revision_id').all()).toEqual(before.revisions);
     } finally { copy.close(); }
-    const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null });
-    expect(snapshot.status, JSON.stringify(snapshot.body)).toBe(201);
-    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
     const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code);
     try {
       expect((await fresh.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
       const recoveredSnapshot = await fresh.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null });
       expect(recoveredSnapshot.status, JSON.stringify(recoveredSnapshot.body)).toBe(201);
     } finally { await stop(recovered.child); }
+  } finally { db.close(); await stop(running.child); }
+}, 60000);
+it('refuses an authenticated scalar issue-code credential collision before snapshots and restores unchanged history after removing only the credential configuration', async () => {
+  const data = path.join(scratch, 'API issue scalar collision');
+  const { running, admin, projectId, ontologyId, assetId, revision, reviewId } = await approvedReview(data);
+  const secret = 'owned-synthetic-api-key-scalar';
+  const issue = await admin.request('POST', `/api/reviews/${reviewId}/issues`, { annotation_revision_id: revision.annotation_revision_id, object_id: null, code: secret, message: 'ordinary review observation', region: null });
+  expect(issue.status).toBe(200);
+  const db = new DatabaseSync(path.join(data, 'api.sqlite'));
+  const tables = ['review_issues', 'review_submissions', 'review_decisions', 'annotation_revisions', 'media_revisions', 'media_metadata'];
+  try {
+    expect(db.prepare('SELECT COUNT(*) AS n FROM dataset_versions').get()!.n).toBe(0);
+    db.prepare("INSERT INTO model_profiles VALUES('scalar-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,?,NULL,?)").run(JSON.stringify({ api_key: secret }), new Date().toISOString());
+    const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+    const sourceFiles = ['api.sqlite', 'api.sqlite-wal'].filter(file => fs.existsSync(path.join(data, file)));
+    const sourceHashes = sourceFiles.map(file => sha(path.join(data, file)));
+    const destination = path.join(scratch, 'refused issue-code backup');
+    const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', destination]);
+    // On RED, a successful backup actually contains the credential in the API-created issue.
+    const leaked = result.status === 0 ? new DatabaseSync(path.join(destination, 'api.sqlite'), { readOnly: true }) : undefined;
+    const leakDiagnostic = leaked?.prepare('SELECT code FROM review_issues WHERE issue_id=?').get(issue.body.issue_id)?.code === secret;
+    leaked?.close();
+    expect(result.status, `API issue accepted; backup credential leak=${leakDiagnostic}; ${result.stdout}${result.stderr}`).toBe(1);
+    expect(result.stderr).toContain('credential_in_immutable_business_data');
+    expect(result.stdout + result.stderr).not.toContain(secret);
+    expect(fs.existsSync(destination)).toBe(false);
+    expect(tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before);
+    expect(sourceFiles.map(file => sha(path.join(data, file)))).toEqual(sourceHashes);
+    expect((await admin.request('GET', `/api/reviews/${reviewId}/issues`)).body.items).toEqual([issue.body]);
+    expect((await admin.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
+    db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='scalar-profile'").run(JSON.stringify({ api_key: 'unrelated-config-credential' }));
+    const backupDir = path.join(scratch, 'issue-history backup'), restored = path.join(scratch, 'issue-history restored');
+    success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
+    const snapshotPayload = { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null };
+    expect((await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, snapshotPayload)).status).toBe(201);
+    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+    const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code);
+    try {
+      expect(fresh.userId).not.toBe(admin.userId);
+      const recoveredDb = new DatabaseSync(path.join(restored, 'api.sqlite'), { readOnly: true });
+      try { expect(tables.map(table => recoveredDb.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before); } finally { recoveredDb.close(); }
+      expect((await fresh.request('GET', `/api/reviews/${reviewId}/issues`)).body.items).toEqual([issue.body]);
+      expect((await fresh.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
+      expect((await fresh.request('POST', `/api/projects/${projectId}/dataset-versions`, { ...snapshotPayload, operation_id: crypto.randomUUID() })).status).toBe(201);
+    } finally { await stop(recovered.child); }
+  } finally { db.close(); await stop(running.child); }
+}, 60000);
+it('refuses a credential in immutable media original_name even when mutable ingest diagnostics can be scrubbed', async () => {
+  const data = path.join(scratch, 'media scalar boundary');
+  const secret = 'owned-synthetic-media-name';
+  const { running, admin, projectId, ontologyId, assetId, revision } = await approvedReview(data, `${secret}.jpg`);
+  const db = new DatabaseSync(path.join(data, 'api.sqlite'));
+  try {
+    expect(db.prepare('SELECT COUNT(*) AS n FROM dataset_versions').get()!.n).toBe(0);
+    db.prepare("INSERT INTO model_profiles VALUES('media-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,?,NULL,?)").run(JSON.stringify({ api_key: secret }), new Date().toISOString());
+    const tables = ['media_revisions', 'media_metadata', 'media_object_refs', 'annotation_revisions', 'review_decisions'];
+    const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+    const sourceFiles = ['api.sqlite', 'api.sqlite-wal'].filter(file => fs.existsSync(path.join(data, file)));
+    const sourceHashes = sourceFiles.map(file => sha(path.join(data, file)));
+    const destination = path.join(scratch, 'refused media-name backup');
+    const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', destination]);
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain('credential_in_immutable_business_data');
+    expect(result.stdout + result.stderr).not.toContain(secret);
+    expect(fs.existsSync(destination)).toBe(false);
+    expect(tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before);
+    expect(sourceFiles.map(file => sha(path.join(data, file)))).toEqual(sourceHashes);
+    expect((await admin.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
+    const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null });
+    expect(snapshot.status).toBe(201);
   } finally { db.close(); await stop(running.child); }
 }, 60000);
 it('refuses credential collisions in immutable review, prediction, event and export audit fields without rewriting source history', async () => {
@@ -223,6 +293,7 @@ it('refuses credential collisions in immutable review, prediction, event and exp
       ['dataset_exports.loss_report_json', 'dataset-loss-report-collision'],
       ['model_runs.context_json.actor_id', 'pinned-context-actor-collision'],
       ['model_runs.prompt', 'pinned-prompt-collision'],
+      ['model_runs.input_fingerprint', 'audit-fingerprint'],
     ]) {
       db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='audit-profile'").run(JSON.stringify({ api_key: secret }));
       const destination = path.join(scratch, field);
@@ -248,10 +319,6 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   const bytes = fs.readFileSync(path.join(backupDir, 'api.sqlite'));
   for (const secret of [originalPassword, ...originalSessions, 'T33-secret-config-value', 'T33-secret-ref']) expect(bytes.includes(Buffer.from(secret))).toBe(false);
   expect((await admin.request('GET', '/api/session')).status).toBe(200);
-  const backupDb = new DatabaseSync(path.join(backupDir, 'api.sqlite'), { readOnly: true });
-  expect(backupDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()!.n).toBe(0);
-  expect(backupDb.prepare('SELECT created_by FROM annotation_revisions WHERE annotation_revision_id=?').get(revision.annotation_revision_id)!.created_by).toBe(admin.userId);
-  expect(backupDb.prepare('SELECT manifest_sha256 FROM dataset_versions').get()!.manifest_sha256).toBe(snapshot.body.manifest_sha256); backupDb.close();
   const collisionDb = new DatabaseSync(path.join(data, 'api.sqlite'));
   collisionDb.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: 't33-object' }), 't33-profile'); collisionDb.close();
   const collisionTarget = path.join(scratch, 'no-immutable-corruption');
@@ -281,6 +348,10 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   fs.writeFileSync(path.join(forgedObject, 'backup.json'), JSON.stringify(objectManifest));
   expect(cli('restore.mjs', ['--backup-dir', forgedObject, '--data-dir', path.join(scratch, 'no-forged-object')]).stderr).toMatch(/backup_object_missing_or_corrupt/);
   success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+  const backupDb = new DatabaseSync(path.join(restored, 'api.sqlite'), { readOnly: true });
+  expect(backupDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()!.n).toBe(0);
+  expect(backupDb.prepare('SELECT created_by FROM annotation_revisions WHERE annotation_revision_id=?').get(revision.annotation_revision_id)!.created_by).toBe(admin.userId);
+  expect(backupDb.prepare('SELECT manifest_sha256 FROM dataset_versions').get()!.manifest_sha256).toBe(snapshot.body.manifest_sha256); backupDb.close();
   const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code); expect(fresh.userId).not.toBe(admin.userId);
   const profiles = await fresh.request('GET', '/api/model-profiles');
   expect(profiles.status).toBe(200);
