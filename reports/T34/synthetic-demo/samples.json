@@ -1,0 +1,2476 @@
+{
+  "schema_version": 1,
+  "samples": [
+    {
+      "sample_id": "SYNTHETIC-image-01",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-01",
+      "image_sha256": "efe937174d4ebcdfe50642b386d929cdb2820d685bf8c39b605f558be3994f7f",
+      "task_id": "synthetic-task-0",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10000,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-0-0",
+        "gt-0-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-0-0"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 1,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-01",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-01",
+      "image_sha256": "efe937174d4ebcdfe50642b386d929cdb2820d685bf8c39b605f558be3994f7f",
+      "task_id": "synthetic-task-0",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9000,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-0-0",
+        "gt-0-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-0-0"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-0-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 1,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-01",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-01",
+      "image_sha256": "efe937174d4ebcdfe50642b386d929cdb2820d685bf8c39b605f558be3994f7f",
+      "task_id": "synthetic-task-0",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8000,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-0-0",
+        "gt-0-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-0-0"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-0-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 1,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-02",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-02",
+      "image_sha256": "0ec789d638b9fb12cb93932149e06b896bdb2b6e95baa1135923eac561c7016c",
+      "task_id": "synthetic-task-1",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10010,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-1-0",
+        "gt-1-1",
+        "gt-1-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-1-0",
+        "gt-1-1",
+        "gt-1-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-02",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-02",
+      "image_sha256": "0ec789d638b9fb12cb93932149e06b896bdb2b6e95baa1135923eac561c7016c",
+      "task_id": "synthetic-task-1",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9010,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-1-0",
+        "gt-1-1",
+        "gt-1-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-1-0",
+        "gt-1-1",
+        "gt-1-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-1-0",
+        "gt-1-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-02",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-02",
+      "image_sha256": "0ec789d638b9fb12cb93932149e06b896bdb2b6e95baa1135923eac561c7016c",
+      "task_id": "synthetic-task-1",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8010,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-1-0",
+        "gt-1-1",
+        "gt-1-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-1-0",
+        "gt-1-1",
+        "gt-1-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-1-0",
+        "gt-1-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-03",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-03",
+      "image_sha256": "fc2b7d17585ff8a96fc57ca73fe091afa569957dcec1ea357f7a83395e7a5799",
+      "task_id": "synthetic-task-2",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10020,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-2-0",
+        "gt-2-1",
+        "gt-2-2",
+        "gt-2-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-2-0",
+        "gt-2-1",
+        "gt-2-2",
+        "gt-2-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-03",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-03",
+      "image_sha256": "fc2b7d17585ff8a96fc57ca73fe091afa569957dcec1ea357f7a83395e7a5799",
+      "task_id": "synthetic-task-2",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9020,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-2-0",
+        "gt-2-1",
+        "gt-2-2",
+        "gt-2-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-2-0",
+        "gt-2-1",
+        "gt-2-2",
+        "gt-2-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-2-0",
+        "gt-2-1",
+        "gt-2-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-03",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-03",
+      "image_sha256": "fc2b7d17585ff8a96fc57ca73fe091afa569957dcec1ea357f7a83395e7a5799",
+      "task_id": "synthetic-task-2",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8020,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-2-0",
+        "gt-2-1",
+        "gt-2-2",
+        "gt-2-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-2-0",
+        "gt-2-1",
+        "gt-2-2",
+        "gt-2-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-2-0",
+        "gt-2-1",
+        "gt-2-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-04",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-04",
+      "image_sha256": "b08c121891f29e6ac039c363e727b4f227969639e54de565f0b84e6dca382c10",
+      "task_id": "synthetic-task-3",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10030,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-3-0",
+        "gt-3-1",
+        "gt-3-2",
+        "gt-3-3",
+        "gt-3-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-3-0",
+        "gt-3-1",
+        "gt-3-2",
+        "gt-3-3",
+        "gt-3-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-04",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-04",
+      "image_sha256": "b08c121891f29e6ac039c363e727b4f227969639e54de565f0b84e6dca382c10",
+      "task_id": "synthetic-task-3",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9030,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-3-0",
+        "gt-3-1",
+        "gt-3-2",
+        "gt-3-3",
+        "gt-3-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-3-0",
+        "gt-3-1",
+        "gt-3-2",
+        "gt-3-3",
+        "gt-3-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-3-0",
+        "gt-3-1",
+        "gt-3-2",
+        "gt-3-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-04",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-04",
+      "image_sha256": "b08c121891f29e6ac039c363e727b4f227969639e54de565f0b84e6dca382c10",
+      "task_id": "synthetic-task-3",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8030,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-3-0",
+        "gt-3-1",
+        "gt-3-2",
+        "gt-3-3",
+        "gt-3-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-3-0",
+        "gt-3-1",
+        "gt-3-2",
+        "gt-3-3",
+        "gt-3-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-3-0",
+        "gt-3-1",
+        "gt-3-2",
+        "gt-3-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-05",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-05",
+      "image_sha256": "7e41fe08ce31852460eff1f7bc199e2ce50ea080d6ab8b89fe1a791efad2cf03",
+      "task_id": "synthetic-task-4",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10040,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-4-0",
+        "gt-4-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-4-0",
+        "gt-4-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-05",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-05",
+      "image_sha256": "7e41fe08ce31852460eff1f7bc199e2ce50ea080d6ab8b89fe1a791efad2cf03",
+      "task_id": "synthetic-task-4",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9040,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-4-0",
+        "gt-4-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-4-0",
+        "gt-4-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-4-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-05",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-05",
+      "image_sha256": "7e41fe08ce31852460eff1f7bc199e2ce50ea080d6ab8b89fe1a791efad2cf03",
+      "task_id": "synthetic-task-4",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8040,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-4-0",
+        "gt-4-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-4-0",
+        "gt-4-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-4-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-06",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-06",
+      "image_sha256": "22eaaa557e0c6bad16c0ed7caac8a6d1beeaebfe6fcc17f592c64e91197fa3e0",
+      "task_id": "synthetic-task-5",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10050,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-5-0",
+        "gt-5-1",
+        "gt-5-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-5-0",
+        "gt-5-1",
+        "gt-5-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-06",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-06",
+      "image_sha256": "22eaaa557e0c6bad16c0ed7caac8a6d1beeaebfe6fcc17f592c64e91197fa3e0",
+      "task_id": "synthetic-task-5",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9050,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-5-0",
+        "gt-5-1",
+        "gt-5-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-5-0",
+        "gt-5-1",
+        "gt-5-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-5-0",
+        "gt-5-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-06",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-06",
+      "image_sha256": "22eaaa557e0c6bad16c0ed7caac8a6d1beeaebfe6fcc17f592c64e91197fa3e0",
+      "task_id": "synthetic-task-5",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8050,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-5-0",
+        "gt-5-1",
+        "gt-5-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-5-0",
+        "gt-5-1",
+        "gt-5-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-5-0",
+        "gt-5-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-07",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-07",
+      "image_sha256": "7f409579cfdab9409e1429e937bd5e3592c3b39d69580920d58b54541ebc3a00",
+      "task_id": "synthetic-task-6",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10060,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-6-0",
+        "gt-6-1",
+        "gt-6-2",
+        "gt-6-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-6-0",
+        "gt-6-1",
+        "gt-6-2",
+        "gt-6-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-07",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-07",
+      "image_sha256": "7f409579cfdab9409e1429e937bd5e3592c3b39d69580920d58b54541ebc3a00",
+      "task_id": "synthetic-task-6",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9060,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-6-0",
+        "gt-6-1",
+        "gt-6-2",
+        "gt-6-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-6-0",
+        "gt-6-1",
+        "gt-6-2",
+        "gt-6-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-6-0",
+        "gt-6-1",
+        "gt-6-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-07",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-07",
+      "image_sha256": "7f409579cfdab9409e1429e937bd5e3592c3b39d69580920d58b54541ebc3a00",
+      "task_id": "synthetic-task-6",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8060,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-6-0",
+        "gt-6-1",
+        "gt-6-2",
+        "gt-6-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-6-0",
+        "gt-6-1",
+        "gt-6-2",
+        "gt-6-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-6-0",
+        "gt-6-1",
+        "gt-6-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-08",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-08",
+      "image_sha256": "a5867fa74638e1517cae98341bba761bb2a27f6a3730eefcd6b9bba1b89085f7",
+      "task_id": "synthetic-task-7",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10070,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-7-0",
+        "gt-7-1",
+        "gt-7-2",
+        "gt-7-3",
+        "gt-7-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-7-0",
+        "gt-7-1",
+        "gt-7-2",
+        "gt-7-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-08",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-08",
+      "image_sha256": "a5867fa74638e1517cae98341bba761bb2a27f6a3730eefcd6b9bba1b89085f7",
+      "task_id": "synthetic-task-7",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9070,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-7-0",
+        "gt-7-1",
+        "gt-7-2",
+        "gt-7-3",
+        "gt-7-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-7-0",
+        "gt-7-1",
+        "gt-7-2",
+        "gt-7-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-7-0",
+        "gt-7-1",
+        "gt-7-2",
+        "gt-7-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-08",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-08",
+      "image_sha256": "a5867fa74638e1517cae98341bba761bb2a27f6a3730eefcd6b9bba1b89085f7",
+      "task_id": "synthetic-task-7",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8070,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-7-0",
+        "gt-7-1",
+        "gt-7-2",
+        "gt-7-3",
+        "gt-7-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-7-0",
+        "gt-7-1",
+        "gt-7-2",
+        "gt-7-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-7-0",
+        "gt-7-1",
+        "gt-7-2",
+        "gt-7-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-09",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-09",
+      "image_sha256": "ff8fbcff566a2e1f84ec559f8ddfeb46fda9423042c3fd8cc089f8a96f10691a",
+      "task_id": "synthetic-task-8",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10080,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-8-0",
+        "gt-8-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-8-0",
+        "gt-8-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-09",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-09",
+      "image_sha256": "ff8fbcff566a2e1f84ec559f8ddfeb46fda9423042c3fd8cc089f8a96f10691a",
+      "task_id": "synthetic-task-8",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9080,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-8-0",
+        "gt-8-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-8-0",
+        "gt-8-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-8-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-09",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-09",
+      "image_sha256": "ff8fbcff566a2e1f84ec559f8ddfeb46fda9423042c3fd8cc089f8a96f10691a",
+      "task_id": "synthetic-task-8",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8080,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-8-0",
+        "gt-8-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-8-0",
+        "gt-8-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-8-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-10",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-10",
+      "image_sha256": "14bb4b01e57c765f23b7b282337860d864d540e5a26c9ef0ad429c2bdd895cb4",
+      "task_id": "synthetic-task-9",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10090,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-9-0",
+        "gt-9-1",
+        "gt-9-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-9-0",
+        "gt-9-1",
+        "gt-9-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-10",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-10",
+      "image_sha256": "14bb4b01e57c765f23b7b282337860d864d540e5a26c9ef0ad429c2bdd895cb4",
+      "task_id": "synthetic-task-9",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9090,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-9-0",
+        "gt-9-1",
+        "gt-9-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-9-0",
+        "gt-9-1",
+        "gt-9-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-9-0",
+        "gt-9-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-10",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-10",
+      "image_sha256": "14bb4b01e57c765f23b7b282337860d864d540e5a26c9ef0ad429c2bdd895cb4",
+      "task_id": "synthetic-task-9",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8090,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-9-0",
+        "gt-9-1",
+        "gt-9-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-9-0",
+        "gt-9-1",
+        "gt-9-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-9-0",
+        "gt-9-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-11",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-11",
+      "image_sha256": "9c2f5357e86da56a8f258c2de461aa4cc64a5a6058068ea4f1fed4ecd69b0975",
+      "task_id": "synthetic-task-10",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10100,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-10-0",
+        "gt-10-1",
+        "gt-10-2",
+        "gt-10-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-10-0",
+        "gt-10-1",
+        "gt-10-2",
+        "gt-10-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-11",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-11",
+      "image_sha256": "9c2f5357e86da56a8f258c2de461aa4cc64a5a6058068ea4f1fed4ecd69b0975",
+      "task_id": "synthetic-task-10",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9100,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-10-0",
+        "gt-10-1",
+        "gt-10-2",
+        "gt-10-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-10-0",
+        "gt-10-1",
+        "gt-10-2",
+        "gt-10-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-10-0",
+        "gt-10-1",
+        "gt-10-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-11",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-11",
+      "image_sha256": "9c2f5357e86da56a8f258c2de461aa4cc64a5a6058068ea4f1fed4ecd69b0975",
+      "task_id": "synthetic-task-10",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8100,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-10-0",
+        "gt-10-1",
+        "gt-10-2",
+        "gt-10-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-10-0",
+        "gt-10-1",
+        "gt-10-2",
+        "gt-10-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-10-0",
+        "gt-10-1",
+        "gt-10-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-12",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-12",
+      "image_sha256": "9c9ab20d7db8de86d7f3401deae5a691141d7414b71a35e003867d65028f366e",
+      "task_id": "synthetic-task-11",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10110,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-11-0",
+        "gt-11-1",
+        "gt-11-2",
+        "gt-11-3",
+        "gt-11-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-11-0",
+        "gt-11-1",
+        "gt-11-2",
+        "gt-11-3",
+        "gt-11-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 1,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-12",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-12",
+      "image_sha256": "9c9ab20d7db8de86d7f3401deae5a691141d7414b71a35e003867d65028f366e",
+      "task_id": "synthetic-task-11",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9110,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-11-0",
+        "gt-11-1",
+        "gt-11-2",
+        "gt-11-3",
+        "gt-11-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-11-0",
+        "gt-11-1",
+        "gt-11-2",
+        "gt-11-3",
+        "gt-11-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-11-0",
+        "gt-11-1",
+        "gt-11-2",
+        "gt-11-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 1,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-12",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-12",
+      "image_sha256": "9c9ab20d7db8de86d7f3401deae5a691141d7414b71a35e003867d65028f366e",
+      "task_id": "synthetic-task-11",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8110,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-11-0",
+        "gt-11-1",
+        "gt-11-2",
+        "gt-11-3",
+        "gt-11-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-11-0",
+        "gt-11-1",
+        "gt-11-2",
+        "gt-11-3",
+        "gt-11-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-11-0",
+        "gt-11-1",
+        "gt-11-2",
+        "gt-11-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 1,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-13",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-13",
+      "image_sha256": "fa6ad4d3407942e9019d0711500b65db30e74b89cdb9a2bc36e8fd111c76b7d7",
+      "task_id": "synthetic-task-12",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10120,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-12-0",
+        "gt-12-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-12-0",
+        "gt-12-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-13",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-13",
+      "image_sha256": "fa6ad4d3407942e9019d0711500b65db30e74b89cdb9a2bc36e8fd111c76b7d7",
+      "task_id": "synthetic-task-12",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9120,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-12-0",
+        "gt-12-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-12-0",
+        "gt-12-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-12-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-13",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-13",
+      "image_sha256": "fa6ad4d3407942e9019d0711500b65db30e74b89cdb9a2bc36e8fd111c76b7d7",
+      "task_id": "synthetic-task-12",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8120,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-12-0",
+        "gt-12-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-12-0",
+        "gt-12-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-12-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-14",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-14",
+      "image_sha256": "453973a93f7fb8ed71c980e659748648a562d08ef447615df3ec25cd1443b2b7",
+      "task_id": "synthetic-task-13",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10130,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-13-0",
+        "gt-13-1",
+        "gt-13-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-13-0",
+        "gt-13-1",
+        "gt-13-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-14",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-14",
+      "image_sha256": "453973a93f7fb8ed71c980e659748648a562d08ef447615df3ec25cd1443b2b7",
+      "task_id": "synthetic-task-13",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9130,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-13-0",
+        "gt-13-1",
+        "gt-13-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-13-0",
+        "gt-13-1",
+        "gt-13-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-13-0",
+        "gt-13-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-14",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-14",
+      "image_sha256": "453973a93f7fb8ed71c980e659748648a562d08ef447615df3ec25cd1443b2b7",
+      "task_id": "synthetic-task-13",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8130,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-13-0",
+        "gt-13-1",
+        "gt-13-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-13-0",
+        "gt-13-1",
+        "gt-13-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-13-0",
+        "gt-13-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-15",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-15",
+      "image_sha256": "d14b154e39a6317ac8bfc96c65d7f1e5412876a9dbefb74662c635dcc3ebac14",
+      "task_id": "synthetic-task-14",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10140,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-14-0",
+        "gt-14-1",
+        "gt-14-2",
+        "gt-14-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-14-0",
+        "gt-14-1",
+        "gt-14-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-15",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-15",
+      "image_sha256": "d14b154e39a6317ac8bfc96c65d7f1e5412876a9dbefb74662c635dcc3ebac14",
+      "task_id": "synthetic-task-14",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9140,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-14-0",
+        "gt-14-1",
+        "gt-14-2",
+        "gt-14-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-14-0",
+        "gt-14-1",
+        "gt-14-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-14-0",
+        "gt-14-1",
+        "gt-14-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-15",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-15",
+      "image_sha256": "d14b154e39a6317ac8bfc96c65d7f1e5412876a9dbefb74662c635dcc3ebac14",
+      "task_id": "synthetic-task-14",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8140,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-14-0",
+        "gt-14-1",
+        "gt-14-2",
+        "gt-14-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-14-0",
+        "gt-14-1",
+        "gt-14-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-14-0",
+        "gt-14-1",
+        "gt-14-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 1,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-16",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-16",
+      "image_sha256": "1c33ceeea430f5ee026811f7f231761d6a5d752ed8fe785ded65ff2fe5a4afc6",
+      "task_id": "synthetic-task-15",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10150,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-15-0",
+        "gt-15-1",
+        "gt-15-2",
+        "gt-15-3",
+        "gt-15-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-15-0",
+        "gt-15-1",
+        "gt-15-2",
+        "gt-15-3",
+        "gt-15-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-16",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-16",
+      "image_sha256": "1c33ceeea430f5ee026811f7f231761d6a5d752ed8fe785ded65ff2fe5a4afc6",
+      "task_id": "synthetic-task-15",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9150,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-15-0",
+        "gt-15-1",
+        "gt-15-2",
+        "gt-15-3",
+        "gt-15-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-15-0",
+        "gt-15-1",
+        "gt-15-2",
+        "gt-15-3",
+        "gt-15-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-15-0",
+        "gt-15-1",
+        "gt-15-2",
+        "gt-15-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-16",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-16",
+      "image_sha256": "1c33ceeea430f5ee026811f7f231761d6a5d752ed8fe785ded65ff2fe5a4afc6",
+      "task_id": "synthetic-task-15",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8150,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-15-0",
+        "gt-15-1",
+        "gt-15-2",
+        "gt-15-3",
+        "gt-15-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-15-0",
+        "gt-15-1",
+        "gt-15-2",
+        "gt-15-3",
+        "gt-15-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-15-0",
+        "gt-15-1",
+        "gt-15-2",
+        "gt-15-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-17",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-17",
+      "image_sha256": "d2f0bd9f265cc0114f6d054f9e29bd37e19a693e6bb48b301095cd0e4cd0d5a3",
+      "task_id": "synthetic-task-16",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10160,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-16-0",
+        "gt-16-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-16-0",
+        "gt-16-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-17",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-17",
+      "image_sha256": "d2f0bd9f265cc0114f6d054f9e29bd37e19a693e6bb48b301095cd0e4cd0d5a3",
+      "task_id": "synthetic-task-16",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9160,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-16-0",
+        "gt-16-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-16-0",
+        "gt-16-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-16-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-17",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-17",
+      "image_sha256": "d2f0bd9f265cc0114f6d054f9e29bd37e19a693e6bb48b301095cd0e4cd0d5a3",
+      "task_id": "synthetic-task-16",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8160,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-16-0",
+        "gt-16-1"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-16-0",
+        "gt-16-1"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-16-0"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-18",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-18",
+      "image_sha256": "1588efa456e91ce2436edbeed2946328a4f6a0ef450697d4b12dceb8f4f212e5",
+      "task_id": "synthetic-task-17",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10170,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-17-0",
+        "gt-17-1",
+        "gt-17-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-17-0",
+        "gt-17-1",
+        "gt-17-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-18",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-18",
+      "image_sha256": "1588efa456e91ce2436edbeed2946328a4f6a0ef450697d4b12dceb8f4f212e5",
+      "task_id": "synthetic-task-17",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9170,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-17-0",
+        "gt-17-1",
+        "gt-17-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-17-0",
+        "gt-17-1",
+        "gt-17-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-17-0",
+        "gt-17-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-18",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-18",
+      "image_sha256": "1588efa456e91ce2436edbeed2946328a4f6a0ef450697d4b12dceb8f4f212e5",
+      "task_id": "synthetic-task-17",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8170,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-17-0",
+        "gt-17-1",
+        "gt-17-2"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-17-0",
+        "gt-17-1",
+        "gt-17-2"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-17-0",
+        "gt-17-1"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-19",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-19",
+      "image_sha256": "0b7d65cf0e518e6d81bbb05d7f76fbc756e96d29f4829d5c501f3db4e591f162",
+      "task_id": "synthetic-task-18",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10180,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-18-0",
+        "gt-18-1",
+        "gt-18-2",
+        "gt-18-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-18-0",
+        "gt-18-1",
+        "gt-18-2",
+        "gt-18-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-19",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-19",
+      "image_sha256": "0b7d65cf0e518e6d81bbb05d7f76fbc756e96d29f4829d5c501f3db4e591f162",
+      "task_id": "synthetic-task-18",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9180,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-18-0",
+        "gt-18-1",
+        "gt-18-2",
+        "gt-18-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-18-0",
+        "gt-18-1",
+        "gt-18-2",
+        "gt-18-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-18-0",
+        "gt-18-1",
+        "gt-18-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-19",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-19",
+      "image_sha256": "0b7d65cf0e518e6d81bbb05d7f76fbc756e96d29f4829d5c501f3db4e591f162",
+      "task_id": "synthetic-task-18",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8180,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-18-0",
+        "gt-18-1",
+        "gt-18-2",
+        "gt-18-3"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-18-0",
+        "gt-18-1",
+        "gt-18-2",
+        "gt-18-3"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-18-0",
+        "gt-18-1",
+        "gt-18-2"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-20",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-20",
+      "image_sha256": "5b9aa49fa2bcca181e9c7d2b8838481db85307b35a27646f1282daef21166e07",
+      "task_id": "synthetic-task-19",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "human_only",
+      "ai_configuration": null,
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 10190,
+        "correction": 0,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 0
+      },
+      "ground_truth_object_ids": [
+        "gt-19-0",
+        "gt-19-1",
+        "gt-19-2",
+        "gt-19-3",
+        "gt-19-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-19-0",
+        "gt-19-1",
+        "gt-19-2",
+        "gt-19-3",
+        "gt-19-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": null,
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-20",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-20",
+      "image_sha256": "5b9aa49fa2bcca181e9c7d2b8838481db85307b35a27646f1282daef21166e07",
+      "task_id": "synthetic-task-19",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "current_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 9190,
+        "correction": 900,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-19-0",
+        "gt-19-1",
+        "gt-19-2",
+        "gt-19-3",
+        "gt-19-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-19-0",
+        "gt-19-1",
+        "gt-19-2",
+        "gt-19-3",
+        "gt-19-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-19-0",
+        "gt-19-1",
+        "gt-19-2",
+        "gt-19-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    },
+    {
+      "sample_id": "SYNTHETIC-image-20",
+      "sample_unit": "image",
+      "image_id": "SYNTHETIC-image-20",
+      "image_sha256": "5b9aa49fa2bcca181e9c7d2b8838481db85307b35a27646f1282daef21166e07",
+      "task_id": "synthetic-task-19",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "auditor": "programmatic_synthetic_inventory",
+      "quality_method": "exact_synthetic_ID_inventory_not_human_audit",
+      "arm": "this_tool_same_AI",
+      "ai_configuration": "SYNTHETIC_same_AI_no_model_called",
+      "durations_ms": {
+        "task": 1000,
+        "annotation": 8190,
+        "correction": 1800,
+        "review": 2000,
+        "switch": 100,
+        "model_wait": 5000
+      },
+      "ground_truth_object_ids": [
+        "gt-19-0",
+        "gt-19-1",
+        "gt-19-2",
+        "gt-19-3",
+        "gt-19-4"
+      ],
+      "final_ground_truth_object_ids": [
+        "gt-19-0",
+        "gt-19-1",
+        "gt-19-2",
+        "gt-19-3",
+        "gt-19-4"
+      ],
+      "ai_proposed_ground_truth_object_ids": [
+        "gt-19-0",
+        "gt-19-1",
+        "gt-19-2",
+        "gt-19-3"
+      ],
+      "wrong_objects": 0,
+      "wrong_labels": 0,
+      "wrong_attributes": 0,
+      "returned_tasks": 0,
+      "reviewed_tasks": 1,
+      "fees_usd": null
+    }
+  ]
+}

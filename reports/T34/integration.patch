@@ -1,9 +1,0 @@
-diff --git a/apps/web/src/features/ai/useRun.ts b/apps/web/src/features/ai/useRun.ts
---- a/apps/web/src/features/ai/useRun.ts
-+++ b/apps/web/src/features/ai/useRun.ts
-@@ -393,1 +393,4 @@
--  const modelWaiting = runIds.some((id) => runContexts.current.get(id)?.project_id === options.context.project_id && !finishedRuns.current.has(id));
-+  const modelWaiting = runIds.some((id) =>
-+    runContexts.current.get(id)?.project_id === options.context.project_id &&
-+    !eventsByRun.get(id)?.some((event) => event.type === 'succeeded' || event.type === 'failed' || event.type === 'cancelled'),
-+  );

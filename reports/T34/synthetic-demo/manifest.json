@@ -1,0 +1,926 @@
+{
+  "evidence_kind": "SYNTHETIC_FORMAT_DEMO",
+  "seed": "T34-public-synthetic-20261006",
+  "images": [
+    {
+      "image_id": "SYNTHETIC-image-01",
+      "path": "SYNTHETIC-image-01.png",
+      "image_sha256": "efe937174d4ebcdfe50642b386d929cdb2820d685bf8c39b605f558be3994f7f",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-0-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            10,
+            28,
+            35
+          ]
+        },
+        {
+          "object_id": "gt-0-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            10,
+            63,
+            35
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-02",
+      "path": "SYNTHETIC-image-02.png",
+      "image_sha256": "0ec789d638b9fb12cb93932149e06b896bdb2b6e95baa1135923eac561c7016c",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-1-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            11,
+            28,
+            36
+          ]
+        },
+        {
+          "object_id": "gt-1-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            11,
+            63,
+            36
+          ]
+        },
+        {
+          "object_id": "gt-1-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            11,
+            98,
+            36
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-03",
+      "path": "SYNTHETIC-image-03.png",
+      "image_sha256": "fc2b7d17585ff8a96fc57ca73fe091afa569957dcec1ea357f7a83395e7a5799",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-2-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            12,
+            28,
+            37
+          ]
+        },
+        {
+          "object_id": "gt-2-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            12,
+            63,
+            37
+          ]
+        },
+        {
+          "object_id": "gt-2-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            12,
+            98,
+            37
+          ]
+        },
+        {
+          "object_id": "gt-2-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            12,
+            133,
+            37
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-04",
+      "path": "SYNTHETIC-image-04.png",
+      "image_sha256": "b08c121891f29e6ac039c363e727b4f227969639e54de565f0b84e6dca382c10",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-3-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            13,
+            28,
+            38
+          ]
+        },
+        {
+          "object_id": "gt-3-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            13,
+            63,
+            38
+          ]
+        },
+        {
+          "object_id": "gt-3-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            13,
+            98,
+            38
+          ]
+        },
+        {
+          "object_id": "gt-3-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            13,
+            133,
+            38
+          ]
+        },
+        {
+          "object_id": "gt-3-4",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            148,
+            13,
+            168,
+            38
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-05",
+      "path": "SYNTHETIC-image-05.png",
+      "image_sha256": "7e41fe08ce31852460eff1f7bc199e2ce50ea080d6ab8b89fe1a791efad2cf03",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-4-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            14,
+            28,
+            39
+          ]
+        },
+        {
+          "object_id": "gt-4-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            14,
+            63,
+            39
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-06",
+      "path": "SYNTHETIC-image-06.png",
+      "image_sha256": "22eaaa557e0c6bad16c0ed7caac8a6d1beeaebfe6fcc17f592c64e91197fa3e0",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-5-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            15,
+            28,
+            40
+          ]
+        },
+        {
+          "object_id": "gt-5-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            15,
+            63,
+            40
+          ]
+        },
+        {
+          "object_id": "gt-5-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            15,
+            98,
+            40
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-07",
+      "path": "SYNTHETIC-image-07.png",
+      "image_sha256": "7f409579cfdab9409e1429e937bd5e3592c3b39d69580920d58b54541ebc3a00",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-6-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            16,
+            28,
+            41
+          ]
+        },
+        {
+          "object_id": "gt-6-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            16,
+            63,
+            41
+          ]
+        },
+        {
+          "object_id": "gt-6-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            16,
+            98,
+            41
+          ]
+        },
+        {
+          "object_id": "gt-6-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            16,
+            133,
+            41
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-08",
+      "path": "SYNTHETIC-image-08.png",
+      "image_sha256": "a5867fa74638e1517cae98341bba761bb2a27f6a3730eefcd6b9bba1b89085f7",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-7-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            17,
+            28,
+            42
+          ]
+        },
+        {
+          "object_id": "gt-7-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            17,
+            63,
+            42
+          ]
+        },
+        {
+          "object_id": "gt-7-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            17,
+            98,
+            42
+          ]
+        },
+        {
+          "object_id": "gt-7-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            17,
+            133,
+            42
+          ]
+        },
+        {
+          "object_id": "gt-7-4",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            148,
+            17,
+            168,
+            42
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-09",
+      "path": "SYNTHETIC-image-09.png",
+      "image_sha256": "ff8fbcff566a2e1f84ec559f8ddfeb46fda9423042c3fd8cc089f8a96f10691a",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-8-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            18,
+            28,
+            43
+          ]
+        },
+        {
+          "object_id": "gt-8-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            18,
+            63,
+            43
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-10",
+      "path": "SYNTHETIC-image-10.png",
+      "image_sha256": "14bb4b01e57c765f23b7b282337860d864d540e5a26c9ef0ad429c2bdd895cb4",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-9-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            19,
+            28,
+            44
+          ]
+        },
+        {
+          "object_id": "gt-9-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            19,
+            63,
+            44
+          ]
+        },
+        {
+          "object_id": "gt-9-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            19,
+            98,
+            44
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-11",
+      "path": "SYNTHETIC-image-11.png",
+      "image_sha256": "9c2f5357e86da56a8f258c2de461aa4cc64a5a6058068ea4f1fed4ecd69b0975",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-10-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            10,
+            28,
+            35
+          ]
+        },
+        {
+          "object_id": "gt-10-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            10,
+            63,
+            35
+          ]
+        },
+        {
+          "object_id": "gt-10-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            10,
+            98,
+            35
+          ]
+        },
+        {
+          "object_id": "gt-10-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            10,
+            133,
+            35
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-12",
+      "path": "SYNTHETIC-image-12.png",
+      "image_sha256": "9c9ab20d7db8de86d7f3401deae5a691141d7414b71a35e003867d65028f366e",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-11-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            11,
+            28,
+            36
+          ]
+        },
+        {
+          "object_id": "gt-11-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            11,
+            63,
+            36
+          ]
+        },
+        {
+          "object_id": "gt-11-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            11,
+            98,
+            36
+          ]
+        },
+        {
+          "object_id": "gt-11-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            11,
+            133,
+            36
+          ]
+        },
+        {
+          "object_id": "gt-11-4",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            148,
+            11,
+            168,
+            36
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-13",
+      "path": "SYNTHETIC-image-13.png",
+      "image_sha256": "fa6ad4d3407942e9019d0711500b65db30e74b89cdb9a2bc36e8fd111c76b7d7",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-12-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            12,
+            28,
+            37
+          ]
+        },
+        {
+          "object_id": "gt-12-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            12,
+            63,
+            37
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-14",
+      "path": "SYNTHETIC-image-14.png",
+      "image_sha256": "453973a93f7fb8ed71c980e659748648a562d08ef447615df3ec25cd1443b2b7",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-13-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            13,
+            28,
+            38
+          ]
+        },
+        {
+          "object_id": "gt-13-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            13,
+            63,
+            38
+          ]
+        },
+        {
+          "object_id": "gt-13-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            13,
+            98,
+            38
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-15",
+      "path": "SYNTHETIC-image-15.png",
+      "image_sha256": "d14b154e39a6317ac8bfc96c65d7f1e5412876a9dbefb74662c635dcc3ebac14",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-14-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            14,
+            28,
+            39
+          ]
+        },
+        {
+          "object_id": "gt-14-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            14,
+            63,
+            39
+          ]
+        },
+        {
+          "object_id": "gt-14-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            14,
+            98,
+            39
+          ]
+        },
+        {
+          "object_id": "gt-14-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            14,
+            133,
+            39
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-16",
+      "path": "SYNTHETIC-image-16.png",
+      "image_sha256": "1c33ceeea430f5ee026811f7f231761d6a5d752ed8fe785ded65ff2fe5a4afc6",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-15-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            15,
+            28,
+            40
+          ]
+        },
+        {
+          "object_id": "gt-15-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            15,
+            63,
+            40
+          ]
+        },
+        {
+          "object_id": "gt-15-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            15,
+            98,
+            40
+          ]
+        },
+        {
+          "object_id": "gt-15-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            15,
+            133,
+            40
+          ]
+        },
+        {
+          "object_id": "gt-15-4",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            148,
+            15,
+            168,
+            40
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-17",
+      "path": "SYNTHETIC-image-17.png",
+      "image_sha256": "d2f0bd9f265cc0114f6d054f9e29bd37e19a693e6bb48b301095cd0e4cd0d5a3",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-16-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            16,
+            28,
+            41
+          ]
+        },
+        {
+          "object_id": "gt-16-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            16,
+            63,
+            41
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-18",
+      "path": "SYNTHETIC-image-18.png",
+      "image_sha256": "1588efa456e91ce2436edbeed2946328a4f6a0ef450697d4b12dceb8f4f212e5",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-17-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            17,
+            28,
+            42
+          ]
+        },
+        {
+          "object_id": "gt-17-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            17,
+            63,
+            42
+          ]
+        },
+        {
+          "object_id": "gt-17-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            17,
+            98,
+            42
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-19",
+      "path": "SYNTHETIC-image-19.png",
+      "image_sha256": "0b7d65cf0e518e6d81bbb05d7f76fbc756e96d29f4829d5c501f3db4e591f162",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-18-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            18,
+            28,
+            43
+          ]
+        },
+        {
+          "object_id": "gt-18-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            18,
+            63,
+            43
+          ]
+        },
+        {
+          "object_id": "gt-18-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            18,
+            98,
+            43
+          ]
+        },
+        {
+          "object_id": "gt-18-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            18,
+            133,
+            43
+          ]
+        }
+      ]
+    },
+    {
+      "image_id": "SYNTHETIC-image-20",
+      "path": "SYNTHETIC-image-20.png",
+      "image_sha256": "5b9aa49fa2bcca181e9c7d2b8838481db85307b35a27646f1282daef21166e07",
+      "seed": "T34-public-synthetic-20261006",
+      "synthetic": true,
+      "width": 192,
+      "height": 120,
+      "ground_truth": [
+        {
+          "object_id": "gt-19-0",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            8,
+            19,
+            28,
+            44
+          ]
+        },
+        {
+          "object_id": "gt-19-1",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            43,
+            19,
+            63,
+            44
+          ]
+        },
+        {
+          "object_id": "gt-19-2",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            78,
+            19,
+            98,
+            44
+          ]
+        },
+        {
+          "object_id": "gt-19-3",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            113,
+            19,
+            133,
+            44
+          ]
+        },
+        {
+          "object_id": "gt-19-4",
+          "label": "synthetic_rectangle",
+          "bbox_xyxy": [
+            148,
+            19,
+            168,
+            44
+          ]
+        }
+      ]
+    }
+  ]
+}
