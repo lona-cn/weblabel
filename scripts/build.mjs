@@ -20,8 +20,11 @@ export function requireNode() {
 }
 export function command(argv, cwd = root, env = process.env) {
   const [exe, ...args] = resolveArgv(argv);
+  console.log(`> ${JSON.stringify(argv)}`);
   const r = spawnSync(exe, args, { cwd, env, shell: false, windowsHide: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`command_failed: ${JSON.stringify(argv)} exit=${r.status} ${r.error?.message ?? ''}\n${r.stdout ?? ''}${r.stderr ?? ''}`);
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
   return (r.stdout ?? '').trim();
 }
 export function sha(file) {

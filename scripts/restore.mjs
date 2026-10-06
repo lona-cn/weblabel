@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { createHash } from 'node:crypto';
 import { root, options, requireNode, validateEntries, checkedPath, sha, mainGuard } from './build.mjs';
 import { schemaHash, migrations, validateDatabase, objectHashes, objectName } from './backup.mjs';
+requireNode();
+const { DatabaseSync } = await import('node:sqlite');
 
 export function validateBackup(source, migrationDirectory = path.join(root, 'crates/weblabel-api/migrations')) {
   const manifestFile = checkedPath(source, 'backup.json');
@@ -18,14 +18,14 @@ export function validateBackup(source, migrationDirectory = path.join(root, 'cra
     validateDatabase(db);
     if (schemaHash(db) !== manifest.schema_hash || JSON.stringify(migrations(db)) !== JSON.stringify(manifest.migrations)) throw new Error('backup_schema_mismatch');
     const sqlFiles = fs.readdirSync(migrationDirectory).filter(name => /^\d+_.+\.sql$/.test(name)).sort();
-    if (sqlFiles.length !== manifest.migrations.length) throw new Error('schema_incompatible');
-    for (let i = 0; i < sqlFiles.length; i++) {
-      const name = sqlFiles[i], applied = manifest.migrations[i];
-      const hash = createHash('sha384').update(fs.readFileSync(path.join(migrationDirectory, name))).digest('hex').toUpperCase();
-      if (Number(name.split('_')[0]) !== applied.version || applied.success !== 1 || applied.checksum !== hash) throw new Error(`schema_incompatible: ${name}`);
+    const versionedFiles = sqlFiles.filter(name => name !== '0001_core.sql');
+    if (versionedFiles.length !== manifest.migrations.length) throw new Error('schema_incompatible');
+    for (let i = 0; i < versionedFiles.length; i++) {
+      if (versionedFiles[i].slice(0, -4) !== manifest.migrations[i].version) throw new Error(`schema_incompatible: ${versionedFiles[i]}`);
     }
     const expected = new DatabaseSync(':memory:');
     try {
+      expected.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY NOT NULL,applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
       for (const name of sqlFiles) expected.exec(fs.readFileSync(path.join(migrationDirectory, name), 'utf8'));
       if (schemaHash(expected) !== schemaHash(db)) throw new Error('schema_incompatible: actual schema differs from shipped migrations');
     } finally { expected.close(); }

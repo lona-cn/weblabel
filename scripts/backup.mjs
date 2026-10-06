@@ -1,15 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync, backup } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { root, options, requireNode, sha, entries, checkedPath, mainGuard } from './build.mjs';
+requireNode();
+const { DatabaseSync, backup } = await import('node:sqlite');
 
 const quote = value => `"${value.replaceAll('"', '""')}"`;
 export function schemaHash(db) {
-  return createHash('sha256').update(JSON.stringify(db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name<>'_sqlx_migrations' ORDER BY type,name").all())).digest('hex');
+  const schema = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all().map(row => ({ ...row, sql: row.sql?.replaceAll('\r\n', '\n') ?? null }));
+  return createHash('sha256').update(JSON.stringify(schema)).digest('hex');
 }
 export function migrations(db) {
-  return db.prepare('SELECT version,description,success,hex(checksum) AS checksum FROM _sqlx_migrations ORDER BY version').all();
+  return db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
 }
 export function validateDatabase(db) {
   if (db.prepare('PRAGMA integrity_check').get().integrity_check !== 'ok' || db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('database_invalid');
@@ -49,7 +51,7 @@ function scrub(db) {
     db.exec("DELETE FROM sessions; UPDATE users SET password_hash=''; UPDATE model_profiles SET config_json='{}',secret_ref=NULL,availability='needs_configuration',verification='not_run',verified_at=NULL; DELETE FROM model_run_authorizations; DELETE FROM consents; DELETE FROM ai_run_previews;");
     // Restoring never resumes a potentially billed AI run or an active lease.
     db.exec("UPDATE model_runs SET state='interrupted' WHERE state IN ('queued','running'); UPDATE jobs SET state='interrupted',worker_id=NULL,lease_until=NULL WHERE state IN ('queued','running'); UPDATE task_leases SET holder_id=NULL,expires_at=0;");
-    for (const { name: table } of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_sqlx_migrations','model_profiles')").all()) {
+    for (const { name: table } of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('schema_migrations','model_profiles')").all()) {
       const columns = db.prepare(`PRAGMA table_info(${quote(table)})`).all().filter(column => column.type === 'TEXT' && (column.name.endsWith('_json') || ['message', 'reason', 'prompt'].includes(column.name)));
       for (const column of columns) {
         const rows = db.prepare(`SELECT rowid AS backup_rowid,${quote(column.name)} AS value FROM ${quote(table)} WHERE ${quote(column.name)} IS NOT NULL`).all();

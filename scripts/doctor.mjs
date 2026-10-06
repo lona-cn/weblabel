@@ -3,12 +3,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { root, pins, options, mainGuard } from './build.mjs';
 import { resolveArgv } from './task.mjs';
-import { validateRelease } from './start-local.mjs';
+import { validateRelease, taskkillPath } from './start-local.mjs';
 
 export function diagnose(argv = process.argv.slice(2)) {
   const args = options(argv, ['--build-dir', '--cargo-cwd']);
   const cwd = path.resolve(args['--cargo-cwd'] ?? root);
   const result = { format: 'weblabel-doctor', version: 1, readonly: true, tools: [], release: { status: 'missing' }, configuration: {}, capabilities: { webgpu: 'browser-device-probe-required', models: 'live-not-run', manual_editor: 'requires-release-and-real-WebGPU; no-Python-or-official-CLI-required' } };
+  result.capabilities.process_tree = taskkillPath ? (fs.existsSync(taskkillPath) ? 'windows-taskkill-available' : 'missing') : 'posix-process-group';
   for (const [name, expected] of [['node', `v${pins.node}`], ['pnpm', pins.pnpm], ['rustc', `rustc ${pins.rust} `], ['cargo', `cargo ${pins.rust} `], ['wasm-pack', `wasm-pack ${pins.wasm_pack}`], ['wasm-bindgen', `wasm-bindgen ${pins.wasm_bindgen}`]]) {
     let actual = 'unavailable', status = 'missing';
     try {
@@ -24,7 +25,7 @@ export function diagnose(argv = process.argv.slice(2)) {
   }
   for (const key of ['WEBLABEL_HOST_CONFIG', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'MIMO_API_KEY', 'WEBLABEL_DETECTOR_WEIGHTS_ROOT']) result.configuration[key] = process.env[key] ? 'environment-present-not-validated' : 'not-configured';
   console.log(JSON.stringify(result, null, 2));
-  if (result.tools.some(tool => tool.status !== 'pinned') || result.release.status !== 'hashes_valid') process.exitCode = 1;
+  if (result.tools.some(tool => tool.status !== 'pinned') || result.release.status !== 'hashes_valid' || result.capabilities.process_tree === 'missing') process.exitCode = 1;
   return result;
 }
 mainGuard(import.meta.url, () => diagnose());
