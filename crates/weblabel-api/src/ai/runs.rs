@@ -39,7 +39,7 @@ pub const MAX_PROMPT_CHARS: usize = 8192;
 pub const MAX_OBJECT_HASHES: usize = 10_000;
 pub const MAX_RUN_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 
-const RUN_ID_NAMESPACE: Uuid = Uuid::from_u128(0x9b6d_1f2a_4c8e_4a17_9b0d_3e5f7a9c2b41);
+const RUN_ID_NAMESPACE: Uuid = Uuid::from_u128(0x9b6d_1f2a_4c8e_4a17_9b0d_3e5f_7a9c_2b41);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -504,7 +504,7 @@ pub async fn create_batch(
             snapshot.clone()
         } else {
             let snapshot =
-                resolve_profile_on(tx.connection(), &*request.profile_id, allow_mock_runs).await?;
+                resolve_profile_on(tx.connection(), &request.profile_id, allow_mock_runs).await?;
             profile_cache.insert(request.profile_id.to_string(), snapshot.clone());
             snapshot
         };
@@ -931,7 +931,7 @@ pub(crate) async fn validate_context_on(
     let project_id: String = row
         .try_get("project_id")
         .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not validate run context"))?;
-    if &*project_id != &*context.project_id {
+    if *project_id != *context.project_id {
         return Err(RunFailure::new(
             StatusCode::NOT_FOUND,
             "ASSET_NOT_FOUND",

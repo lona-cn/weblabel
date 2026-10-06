@@ -11,6 +11,7 @@
 //!   4. `taskkill /pid <orphan> /F` for each surviving descendant, identity
 //!      re-checked right before the kill;
 //!   5. a bounded resnapshot proves that no same-identity target pid remains.
+//!
 //! POSIX uses the same algorithm with `ps` snapshots and `kill -9`.
 
 use std::collections::{HashMap, HashSet};
@@ -154,10 +155,10 @@ fn still_same_process(
 pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnError> {
     let cutoff_ms = now_ms();
     let table = snapshot_records();
-    let root_is_ours = table.get(&root.root_pid).map_or(true, |record| {
+    let root_is_ours = table.get(&root.root_pid).is_none_or(|record| {
         record
             .created_ms
-            .map_or(true, |created| created <= root.spawned_at_ms)
+            .is_none_or(|created| created <= root.spawned_at_ms)
     });
     let descendants: Vec<u32> = find_descendants(root.root_pid, &table)
         .into_iter()
@@ -165,7 +166,7 @@ pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnErr
             table
                 .get(pid)
                 .and_then(|record| record.created_ms)
-                .map_or(true, |created| {
+                .is_none_or(|created| {
                     created >= root.spawned_at_ms
                         && created <= root.exited_at_ms.unwrap_or(cutoff_ms)
                 })

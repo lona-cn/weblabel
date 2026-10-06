@@ -63,7 +63,7 @@ pub(crate) async fn host_and_origin(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    if let Err(response) = policy::check_host_and_origin(&state, &request) {
+    if let Some(response) = policy::check_host_and_origin(&state, &request) {
         return response;
     }
     next.run(request).await
@@ -74,7 +74,7 @@ pub(crate) async fn csrf_and_origin(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    if let Err(response) = policy::check_request(&state, &request) {
+    if let Some(response) = policy::check_request(&state, &request) {
         return response;
     }
     let method = request.method().as_str();

@@ -314,7 +314,7 @@ async fn consent_preview(
             .try_get::<String, _>("input_fingerprint")
             .map_err(storage)?
             != fixed.fingerprint
-        || row.try_get::<String, _>("profile_id").map_err(storage)? != &*request.profile_id
+        || row.try_get::<String, _>("profile_id").map_err(storage)? != *request.profile_id
         || serde_json::from_str::<AiApprovedGrants>(
             &row.try_get::<String, _>("approved_grants_json")
                 .map_err(storage)?,
@@ -445,7 +445,7 @@ async fn authorize_run_state(
     .await?;
     let context = record.context().map_err(storage)?;
     if context != fixed.request.context
-        || record.profile_id != &*fixed.request.profile_id
+        || record.profile_id != *fixed.request.profile_id
         || record.prompt != fixed.request.prompt
         || record.intent != runs::intent_str(fixed.request.intent)
         || row

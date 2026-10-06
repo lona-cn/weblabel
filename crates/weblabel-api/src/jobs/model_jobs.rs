@@ -1170,7 +1170,7 @@ fn default_audit_candidate(driver: &RunDriver) -> Value {
         "changes": [{
             "kind": "set_attributes",
             "change_id": "mock-change-1",
-            "object_id": &*object_id,
+            "object_id": object_id,
             "values": {},
             "before_hash": before_hash,
             "reason": "synthetic mock attribute audit (source: mock)"

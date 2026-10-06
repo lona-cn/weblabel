@@ -174,14 +174,12 @@ async fn save_in_transaction(
         for task in tasks {
             let task_id: String = task.try_get("task_id").map_err(|_| storage_failure())?;
             let state: String = task.try_get("state").map_err(|_| storage_failure())?;
-            if state == "open" {
-                if open_task_id.replace(task_id).is_some() {
-                    return Err(Failure::new(
-                        StatusCode::CONFLICT,
-                        "TASK_STATE_INVALID",
-                        "Multiple open tasks exist for this asset",
-                    ));
-                }
+            if state == "open" && open_task_id.replace(task_id).is_some() {
+                return Err(Failure::new(
+                    StatusCode::CONFLICT,
+                    "TASK_STATE_INVALID",
+                    "Multiple open tasks exist for this asset",
+                ));
             }
         }
         let Some(open_task_id) = open_task_id else {
@@ -464,7 +462,7 @@ async fn save_in_transaction(
     crate::ai::acceptance::record(
         transaction.connection(),
         &prepared,
-        &*revision.annotation_revision_id,
+        &revision.annotation_revision_id,
         &principal.user_id,
         &revision.created_at,
     )

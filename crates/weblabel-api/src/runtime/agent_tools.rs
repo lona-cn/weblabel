@@ -147,9 +147,9 @@ fn bearer_token(headers: &HeaderMap) -> Result<&str, TokenError> {
     Ok(token)
 }
 
-fn check_argument_keys(value: &Value) -> Result<(), Response> {
+fn check_argument_keys(value: &Value) -> Option<Response> {
     let Some(object) = value.as_object() else {
-        return Err(simple_error(
+        return Some(simple_error(
             StatusCode::BAD_REQUEST,
             "INVALID_ARGUMENTS",
             "tool arguments must be a JSON object",
@@ -157,21 +157,21 @@ fn check_argument_keys(value: &Value) -> Result<(), Response> {
     };
     for key in object.keys() {
         if IDENTITY_KEYS.contains(&key.as_str()) {
-            return Err(simple_error(
+            return Some(simple_error(
                 StatusCode::BAD_REQUEST,
                 "IDENTITY_OVERRIDE",
                 "project, run and actor identity come from the run token and cannot be overridden",
             ));
         }
         if FORBIDDEN_KEYS.contains(&key.as_str()) {
-            return Err(simple_error(
+            return Some(simple_error(
                 StatusCode::BAD_REQUEST,
                 "FORBIDDEN_ARGUMENT",
                 "tools never accept file paths, URLs, grants or commands",
             ));
         }
     }
-    Ok(())
+    None
 }
 
 fn invalid_arguments(error: impl std::fmt::Display) -> Response {
@@ -443,7 +443,7 @@ async fn invoke_tool(
         Ok(value) => value,
         Err(error) => return invalid_arguments(error),
     };
-    if let Err(response) = check_argument_keys(&arguments) {
+    if let Some(response) = check_argument_keys(&arguments) {
         return response;
     }
     let grant = match state.tokens.verify(&token) {
@@ -632,7 +632,7 @@ fn list_objects(facts: &RunFacts, arguments: &Value) -> Response {
 
 fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = u32::from(chunk[0]);
         let b1 = u32::from(*chunk.get(1).unwrap_or(&0));

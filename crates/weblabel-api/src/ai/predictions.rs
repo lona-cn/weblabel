@@ -157,7 +157,7 @@ pub async fn record_candidate(
             .await?;
     let terminal = current_state
         .as_deref()
-        .and_then(|state| runs_state(state))
+        .and_then(runs_state)
         .is_some_and(|state| state.is_terminal());
     let redacted_json = serde_json::to_string(&redacted).unwrap_or_else(|_| "{}".to_owned());
     if terminal {

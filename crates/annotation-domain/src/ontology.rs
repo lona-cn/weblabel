@@ -223,13 +223,13 @@ pub fn validate_document(
                     "object attribute is not defined by ontology",
                 )
             })?;
-            let valid_kind = match (def.kind, value) {
-                (_, Scalar::Null) => true,
-                (AttributeKind::Enum | AttributeKind::Text, Scalar::String(_)) => true,
-                (AttributeKind::Boolean, Scalar::Boolean(_)) => true,
-                (AttributeKind::Number, Scalar::Number(_)) => true,
-                _ => false,
-            };
+            let valid_kind = matches!(
+                (def.kind, value),
+                (_, Scalar::Null)
+                    | (AttributeKind::Enum | AttributeKind::Text, Scalar::String(_))
+                    | (AttributeKind::Boolean, Scalar::Boolean(_))
+                    | (AttributeKind::Number, Scalar::Number(_))
+            );
             if !valid_kind {
                 return Err(DomainError::new(
                     "ATTRIBUTE_TYPE_MISMATCH",

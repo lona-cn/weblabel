@@ -35,9 +35,9 @@ fn conflict() -> Failure {
         "Session version or committed interval prefix differs",
     )
 }
-fn validate(intervals: &[ActivityInterval]) -> Result<(), Failure> {
+fn validate(intervals: &[ActivityInterval]) -> Result<(), ()> {
     if intervals.is_empty() || intervals.len() > 10_000 {
-        return Err(invalid());
+        return Err(());
     }
     let mut total = 0u64;
     for (index, interval) in intervals.iter().enumerate() {
@@ -45,13 +45,11 @@ fn validate(intervals: &[ActivityInterval]) -> Result<(), Failure> {
             || interval.duration_ms == 0
             || interval.duration_ms > 86_400_000
         {
-            return Err(invalid());
+            return Err(());
         }
-        total = total
-            .checked_add(interval.duration_ms)
-            .ok_or_else(invalid)?;
+        total = total.checked_add(interval.duration_ms).ok_or(())?;
         if total > 86_400_000 {
-            return Err(invalid());
+            return Err(());
         }
     }
     Ok(())
@@ -78,7 +76,7 @@ pub(super) async fn checkpoint(
     )
     .await?;
     annotation_domain::document::validate_id(&session_id).map_err(|_| invalid())?;
-    validate(&body.intervals)?;
+    validate(&body.intervals).map_err(|()| invalid())?;
     let mut tx = state
         .repository
         .begin_write()

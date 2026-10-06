@@ -176,7 +176,7 @@ pub(crate) fn now() -> i64 {
 pub(crate) fn check_host_and_origin(
     state: &AuthState,
     request: &Request<Body>,
-) -> Result<(), axum::response::Response> {
+) -> Option<axum::response::Response> {
     let host = request
         .headers()
         .get(header::HOST)
@@ -188,7 +188,7 @@ pub(crate) fn check_host_and_origin(
         .iter()
         .any(|expected| expected.eq_ignore_ascii_case(host))
     {
-        return Err(error(
+        return Some(error(
             StatusCode::FORBIDDEN,
             "HOST_NOT_ALLOWED",
             "Host is not allowed",
@@ -205,21 +205,23 @@ pub(crate) fn check_host_and_origin(
             .iter()
             .any(|expected| expected == origin)
         {
-            return Err(error(
+            return Some(error(
                 StatusCode::FORBIDDEN,
                 "ORIGIN_NOT_ALLOWED",
                 "Origin is not allowed",
             ));
         }
     }
-    Ok(())
+    None
 }
 
 pub(crate) fn check_request(
     state: &AuthState,
     request: &Request<Body>,
-) -> Result<(), axum::response::Response> {
-    check_host_and_origin(state, request)?;
+) -> Option<axum::response::Response> {
+    if let Some(response) = check_host_and_origin(state, request) {
+        return Some(response);
+    }
     if request
         .headers()
         .get(header::ORIGIN)
@@ -236,13 +238,13 @@ pub(crate) fn check_request(
                     .any(|part| part.trim().starts_with("weblabel_session="))
             })
     {
-        return Err(error(
+        return Some(error(
             StatusCode::FORBIDDEN,
             "ORIGIN_REQUIRED",
             "Origin is required for session writes",
         ));
     }
-    Ok(())
+    None
 }
 
 pub(crate) fn cookie(token: &str, state: &AuthState, max_age: u64) -> String {

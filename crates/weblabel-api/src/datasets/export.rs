@@ -369,20 +369,14 @@ fn make_archive(
                 &mut files,
                 &limits,
                 &mut uncompressed_bytes,
-                format!(
-                    "original/{}.bin",
-                    asset.media_revision.asset_revision_id.to_string()
-                ),
+                format!("original/{}.bin", &*asset.media_revision.asset_revision_id),
                 original,
             )?;
             insert_file(
                 &mut files,
                 &limits,
                 &mut uncompressed_bytes,
-                format!(
-                    "media/{}.png",
-                    asset.media_revision.asset_revision_id.to_string()
-                ),
+                format!("media/{}.png", &*asset.media_revision.asset_revision_id),
                 image,
             )?;
             let annotation_json =
@@ -393,7 +387,7 @@ fn make_archive(
                 &mut uncompressed_bytes,
                 format!(
                     "annotations/{}.json",
-                    asset.media_revision.asset_revision_id.to_string()
+                    &*asset.media_revision.asset_revision_id
                 ),
                 annotation_json,
             )?;
