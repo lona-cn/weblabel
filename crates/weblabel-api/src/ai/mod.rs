@@ -155,8 +155,12 @@ pub(crate) fn redact_json(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for (key, entry) in map.iter_mut() {
+                // Usage counters are public C4 scalars, not credentials; malformed values remain redacted.
+                let public_usage = matches!(key.as_str(), "input_tokens" | "output_tokens")
+                    && (entry.is_null()
+                        || entry.as_u64().is_some_and(|count| count <= 9_007_199_254_740_991));
                 let lower = key.to_ascii_lowercase();
-                if SECRET_KEY_FRAGMENTS
+                if !public_usage && SECRET_KEY_FRAGMENTS
                     .iter()
                     .any(|fragment| lower.contains(fragment))
                 {
@@ -175,5 +179,27 @@ pub(crate) fn redact_json(value: &mut Value) {
             *text = redact_text(text);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod usage_redaction_tests {
+    #[test]
+    fn public_usage_keeps_only_exact_safe_counters_and_unknown_null() {
+        let mut value = serde_json::json!({
+            "usage": {"input_tokens": null, "output_tokens": 17},
+            "limits": {"input_tokens": 9007199254740991_u64, "output_tokens": 0},
+            "malformed": {"input_tokens": "sk-private-value", "output_tokens": -1},
+            "unsafe": {"input_tokens": 9007199254740992_u64, "output_tokens": 1.5},
+            "other": {"token": null, "refresh_token": 17, "Input_tokens": 17}
+        });
+        super::redact_json(&mut value);
+        assert_eq!(value, serde_json::json!({
+            "usage": {"input_tokens": null, "output_tokens": 17},
+            "limits": {"input_tokens": 9007199254740991_u64, "output_tokens": 0},
+            "malformed": {"input_tokens": "[REDACTED]", "output_tokens": "[REDACTED]"},
+            "unsafe": {"input_tokens": "[REDACTED]", "output_tokens": "[REDACTED]"},
+            "other": {"token": "[REDACTED]", "refresh_token": "[REDACTED]", "Input_tokens": "[REDACTED]"}
+        }));
     }
 }
