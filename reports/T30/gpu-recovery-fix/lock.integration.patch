@@ -1,0 +1,34 @@
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1486,10 +1486,12 @@
+ name = "renderer-wgpu"
+ version = "0.1.0"
+ dependencies = [
++ "futures-channel",
++ "js-sys",
+  "serde",
+  "serde-wasm-bindgen",
+  "wasm-bindgen",
+  "wasm-bindgen-futures",
+  "web-sys",
+  "wgpu",
+ ]
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2261,15 +2263,16 @@
+ name = "wasm-bridge"
+ version = "0.1.0"
+ dependencies = [
+  "annotation-domain",
+  "editor-core",
+  "geometry",
++ "js-sys",
+  "renderer-wgpu",
+  "serde",
+  "serde-wasm-bindgen",
+  "serde_json",
+  "uuid",
+  "wasm-bindgen",
+  "wasm-bindgen-futures",
+  "web-sys",
+ ]

@@ -1,0 +1,811 @@
+diff --git a/apps/web/src/features/workbench/CanvasView.tsx b/apps/web/src/features/workbench/CanvasView.tsx
+index ff6a3bcf..fc7311a9 100644
+--- a/apps/web/src/features/workbench/CanvasView.tsx
++++ b/apps/web/src/features/workbench/CanvasView.tsx
+@@ -28,7 +28,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+   const readyRef = useRef(onHostReady);
+   const toolRef = useRef(activeTool);
+   const [error, setError] = useState<ApiError | null>(null);
+-  const [deviceState, setDeviceState] = useState<'loading' | 'ready' | 'unsupported' | 'lost'>('loading');
++  const [deviceState, setDeviceState] = useState<'loading' | 'ready' | 'unsupported' | 'lost' | 'recovering'>('loading');
+   const [adapter, setAdapter] = useState<'hardware' | 'software' | 'unknown'>('unknown');
+   const [labels, setLabels] = useState<CanvasLabel[]>([]);
+   requestRef.current = request;
+@@ -41,6 +41,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+     let active = true;
+     let host: EditorHost | null = null;
+     let unsubscribe: (() => void) | undefined;
++    let unsubscribeStatus: (() => void) | undefined;
+     queueMicrotask(() => {
+       const canvas = canvasRef.current;
+       if (!active || !canvas) return;
+@@ -49,6 +50,18 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+       } });
+       hostRef.current = host;
+       unsubscribe = host.subscribeRendered(() => { if (active && host) setLabels(host.getCanvasLabels()); });
++      unsubscribeStatus = host.subscribeStatus(() => {
++        if (!active || !host) return;
++        const status = host.status;
++        if (status === 'ready' || status === 'lost' || status === 'recovering') {
++          setDeviceState(status);
++          setError(host.error);
++          if (status === 'ready') setAdapter(adapterKind(host.getAdapterDiagnostics()));
++        } else if (status === 'error') {
++          setDeviceState('lost');
++          setError(host.error);
++        }
++      });
+       host.mount(canvas);
+       setError(null);
+       setDeviceState('loading');
+@@ -69,15 +82,16 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+     return () => {
+       active = false;
+       unsubscribe?.();
++      unsubscribeStatus?.();
+       host?.dispose();
+       if (hostRef.current === host) hostRef.current = null;
+     };
+   }, [request.media.asset_revision_id]);
+ 
+   useEffect(() => {
+-    if (canvasRef.current) canvasRef.current.inert = readOnly;
++    if (canvasRef.current) canvasRef.current.inert = readOnly || deviceState !== 'ready';
+     if (readOnly) hostRef.current?.cancelGesture();
+-  }, [readOnly]);
++  }, [readOnly, deviceState]);
+ 
+   useEffect(() => {
+     hostRef.current?.setTool(activeTool);
+@@ -85,7 +99,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+ 
+   return <>
+     <div className="gpu-diagnostics" data-testid="gpu-status" data-actual-backend={deviceState === 'ready' ? 'webgpu' : 'none'} data-adapter-kind={adapter} data-device-state={deviceState} role="status" aria-live="polite">
+-      {deviceState === 'ready' ? `WebGPU · ${adapter} adapter · 就绪` : deviceState === 'unsupported' ? 'WebGPU 不支持；仅可查看对象' : deviceState === 'lost' ? 'WebGPU 初始化失败' : '正在初始化真实 WebGPU…'}
++      {deviceState === 'ready' ? `WebGPU · ${adapter} adapter · 就绪` : deviceState === 'unsupported' ? 'WebGPU 不支持；仅可查看对象' : deviceState === 'recovering' ? 'WebGPU 设备丢失；正在重建渲染器，未保存内容和撤销历史已保留…' : deviceState === 'lost' ? 'WebGPU 不可用；仅可查看，CPU 文档和未保存内容已保留' : '正在初始化真实 WebGPU…'}
+     </div>
+     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+       <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
+@@ -94,5 +108,6 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+       </div>
+     </div>
+     {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
++    {deviceState === 'lost' && hostRef.current?.status === 'lost' ? <button type="button" data-testid="gpu-retry" onClick={() => { void hostRef.current?.retryRenderer(); }}>重试 WebGPU 渲染器</button> : null}
+   </>;
+ }
+diff --git a/apps/web/src/lib/editor/EditorHost.ts b/apps/web/src/lib/editor/EditorHost.ts
+index ecd51487..631ba677 100644
+--- a/apps/web/src/lib/editor/EditorHost.ts
++++ b/apps/web/src/lib/editor/EditorHost.ts
+@@ -73,7 +73,11 @@ export class EditorHost {
+   private disposed = false;
+   /** Identity of the asset the host currently initializes or mounted. */
+   private assetToken = 0;
++  private lossWatchToken = 0;
+   private readonly renderedListeners = new Set<() => void>();
++  private readonly statusListeners = new Set<() => void>();
++  subscribeStatus(listener: () => void): () => void { this.statusListeners.add(listener); return () => { this.statusListeners.delete(listener); }; }
++  private notifyStatus(): void { for (const listener of this.statusListeners) listener(); }
+   private retiredStats: Partial<RenderStats> = {};
+   subscribeRendered(listener: () => void): () => void { this.renderedListeners.add(listener); return () => { this.renderedListeners.delete(listener); }; }
+   getCanvasLabels(): CanvasLabel[] { return this.facade?.get_canvas_labels?.() ?? []; }
+@@ -178,6 +182,8 @@ export class EditorHost {
+       this.guard(() => created.facade.fit_image(), 'EDITOR_FIT_FAILED');
+     }
+     this.markDirty();
++    this.watchDeviceLoss(created.facade, assetToken, disposeToken);
++    this.notifyStatus();
+   }
+ 
+   dispatch(command: EditorCommand): EditorDelta | null {
+@@ -253,7 +259,7 @@ export class EditorHost {
+     this.guard((facade) => {
+       facade.set_predictions(sets);
+       return null;
+-    }, 'EDITOR_BRIDGE_FAILURE');
++    }, 'EDITOR_BRIDGE_FAILURE', true);
+   }
+ 
+   getCommittedSnapshot(delta: EditorDelta): AnnotationDocument | null {
+@@ -261,20 +267,20 @@ export class EditorHost {
+   }
+ 
+   getSnapshot(): AnnotationDocument | null {
+-    return this.guard((facade) => facade.get_snapshot(), 'EDITOR_BRIDGE_FAILURE');
++    return this.guard((facade) => facade.get_snapshot(), 'EDITOR_BRIDGE_FAILURE', true);
+   }
+ 
+   getGeneration(): number | null {
+-    return this.guard((facade) => facade.get_generation(), 'EDITOR_BRIDGE_FAILURE');
++    return this.guard((facade) => facade.get_generation(), 'EDITOR_BRIDGE_FAILURE', true);
+   }
+ 
+   getObjectHashes(): Record<Id, string> | null {
+-    return this.guard((facade) => facade.get_object_hashes(), 'EDITOR_BRIDGE_FAILURE');
++    return this.guard((facade) => facade.get_object_hashes(), 'EDITOR_BRIDGE_FAILURE', true);
+   }
+ 
+   /** The Rust-owned view (the additive C3 read-back from reports/T09). */
+   getViewport(): Viewport | null {
+-    return this.guard((facade) => facade.get_viewport(), 'EDITOR_BRIDGE_FAILURE');
++    return this.guard((facade) => facade.get_viewport(), 'EDITOR_BRIDGE_FAILURE', true);
+   }
+ 
+   /**
+@@ -332,6 +338,63 @@ export class EditorHost {
+   private stale(assetToken: number, disposeToken: number): boolean {
+     return this.disposed || disposeToken !== this.disposeToken || assetToken !== this.assetToken;
+   }
++  private currentFacade(facade: EditorFacade, assetToken: number, disposeToken: number): boolean {
++    return !this.stale(assetToken, disposeToken) && this.facade === facade;
++  }
++
++  private watchDeviceLoss(facade: EditorFacade, assetToken: number, disposeToken: number): void {
++    const watchToken = ++this.lossWatchToken;
++    void facade.device_lost().then((message) => {
++      if (watchToken !== this.lossWatchToken || !this.currentFacade(facade, assetToken, disposeToken) || this.statusValue === 'recovering') return;
++      this.enterDeviceLost(message);
++      return this.retryRenderer();
++    }).catch((reason: unknown) => {
++      if (watchToken !== this.lossWatchToken || !this.currentFacade(facade, assetToken, disposeToken)) return;
++      this.enterDeviceLost(toApiError(reason, 'GPU_DEVICE_LOST', this.nextRequestId).message);
++    });
++  }
++
++  private enterDeviceLost(message: string): void {
++    this.statusValue = 'lost';
++    this.errorValue = { code: 'GPU_DEVICE_LOST', message: `WebGPU device lost (${message}); CPU editor and unsaved work retained`, request_id: this.nextRequestId(), details: null };
++    if (this.frameHandle !== null) this.scheduler.cancel(this.frameHandle);
++    this.frameHandle = null;
++    this.framePending = false;
++    this.dirty = true;
++    // Keep the native gesture/preview intact. Browser capture alone is retired.
++    this.releaseCaptures();
++    this.notifyStatus();
++  }
++
++  /** Explicit retry after a failed rebuild; never creates a new CPU editor. */
++  async retryRenderer(): Promise<void> {
++    const facade = this.facade;
++    if (facade === null || this.disposed || this.statusValue !== 'lost') return;
++    const assetToken = this.assetToken;
++    const disposeToken = this.disposeToken;
++    this.statusValue = 'recovering';
++    this.notifyStatus();
++    try {
++      await facade.recover_renderer();
++    } catch (reason) {
++      if (!this.currentFacade(facade, assetToken, disposeToken)) return;
++      this.errorValue = toApiError(reason, 'GPU_RECOVERY_FAILED', this.nextRequestId);
++      this.statusValue = 'lost';
++      this.notifyStatus();
++      return;
++    }
++    if (!this.currentFacade(facade, assetToken, disposeToken)) return;
++    this.statusValue = 'ready';
++    this.errorValue = null;
++    // Resize may have happened while read-only. Do not reset an unchanged view:
++    // set_viewport cancels the native preview, which must survive device loss.
++    const view = facade.get_viewport();
++    const size = this.size;
++    if (size && (view.css_width !== size.width || view.css_height !== size.height || view.dpr !== size.dpr)) this.applyViewport();
++    this.watchDeviceLoss(facade, assetToken, disposeToken);
++    this.notifyStatus();
++    this.markDirty();
++  }
+ 
+   private releaseFacade(): void {
+     const facade = this.facade;
+@@ -348,13 +411,22 @@ export class EditorHost {
+     }
+   }
+ 
+-  private guard<T>(action: (facade: EditorFacade) => T, fallbackCode: string): T | null {
++  private guard<T>(action: (facade: EditorFacade) => T, fallbackCode: string, cpuRead = false): T | null {
+     const facade = this.facade;
+-    if (facade === null) return null;
++    if (facade === null || (!cpuRead && this.statusValue !== 'ready')) return null;
+     try {
+       return action(facade);
+     } catch (reason) {
+       this.errorValue = toApiError(reason, fallbackCode, this.nextRequestId);
++      if (fallbackCode === 'RENDER_FAILED') {
++        if (facade.get_device_state() === 'lost') {
++          this.enterDeviceLost(this.errorValue.message);
++          void this.retryRenderer();
++        } else {
++          this.statusValue = 'error';
++          this.notifyStatus();
++        }
++      }
+       return null;
+     }
+   }
+@@ -395,7 +467,7 @@ export class EditorHost {
+ 
+   private markDirty(): void {
+     this.dirty = true;
+-    if (this.framePending || this.paused || this.disposed) return;
++    if (this.framePending || this.paused || this.disposed || this.statusValue !== 'ready') return;
+     this.framePending = true;
+     this.frameHandle = this.scheduler.request(this.handleFrame);
+   }
+@@ -403,7 +475,7 @@ export class EditorHost {
+   private handleFrame = (timestampMs: number): void => {
+     this.framePending = false;
+     this.frameHandle = null;
+-    if (this.disposed || this.paused || !this.dirty) return;
++    if (this.disposed || this.paused || !this.dirty || this.statusValue !== 'ready') return;
+     this.dirty = false;
+     this.guard((facade) => {
+       facade.render(timestampMs);
+@@ -454,7 +526,7 @@ export class EditorHost {
+   private readonly handleWheel = (event: WheelEvent): void => {
+     event.preventDefault();
+     const canvas = this.canvas;
+-    if (canvas === null || this.disposed) return;
++    if (canvas === null || this.disposed || this.statusValue !== 'ready') return;
+     if (this.activePointerId !== null) this.cancelGesture();
+     const pixels =
+       event.deltaMode === 1
+@@ -489,7 +561,7 @@ export class EditorHost {
+ 
+   private handlePointer(event: PointerEvent, phase: PointerPhase): void {
+     const canvas = this.canvas;
+-    if (canvas === null || this.disposed) return;
++    if (canvas === null || this.disposed || this.statusValue !== 'ready') return;
+     if (phase === 'down' && event.button === 0) {
+       // Pointer capture pairs with every gesture: released on up/cancel and on
+       // every external cancel path (T12).
+diff --git a/apps/web/src/lib/editor/t09_lifecycle.test.ts b/apps/web/src/lib/editor/t09_lifecycle.test.ts
+index 0f8d11bd..71034677 100644
+--- a/apps/web/src/lib/editor/t09_lifecycle.test.ts
++++ b/apps/web/src/lib/editor/t09_lifecycle.test.ts
+@@ -116,6 +116,25 @@ class FakeEditorFacade implements EditorFacade {
+   viewport: Viewport = { scale: 1, tx: 0, ty: 0, css_width: 0, css_height: 0, dpr: 1 };
+   deltaFactory: (kind: string) => EditorDelta = () => makeDelta({ repaint: true });
+   throwOn: { dispatch?: unknown } = {};
++  deviceState: 'ready' | 'lost' | 'recovering' | 'disposed' = 'ready';
++  private loss = deferred<string>();
++  recovery = deferred<void>();
++  device_lost(): Promise<string> { return this.loss.promise; }
++  get_device_state(): 'ready' | 'lost' | 'recovering' | 'disposed' { return this.deviceState; }
++  loseDevice(): void { this.deviceState = 'lost'; this.loss.resolve('Destroyed: external GPUDevice.destroy'); }
++  async recover_renderer(): Promise<void> {
++    this.deviceState = 'recovering';
++    try {
++      await this.recovery.promise;
++      if (this.get_device_state() === 'disposed') return;
++      this.deviceState = 'ready';
++      this.loss = deferred<string>();
++      this.recovery = deferred<void>();
++    } catch (reason) {
++      if (this.get_device_state() !== 'disposed') this.deviceState = 'lost';
++      throw reason;
++    }
++  }
+ 
+   dispatch(command: EditorCommand): EditorDelta {
+     this.dispatchCalls.push(command);
+@@ -139,7 +158,14 @@ class FakeEditorFacade implements EditorFacade {
+   get_viewport(): Viewport { return this.viewport; }
+   set_predictions(sets: SuggestionSet[]): void { this.predictionCalls.push(sets); }
+   render(timestamp_ms: number): void { this.renderCalls.push(timestamp_ms); }
+-  dispose(): void { this.disposeCount += 1; }
++  dispose(): void { this.disposeCount += 1; this.deviceState = 'disposed'; }
++}
++
++function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
++  let resolve!: (value: T) => void;
++  let reject!: (reason: unknown) => void;
++  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
++  return { promise, resolve, reject };
+ }
+ 
+ interface FakeCreation {
+@@ -807,6 +833,101 @@ describe('T09 dirty-flag render scheduling', () => {
+   });
+ });
+ 
++describe('T30 renderer-only recovery lifecycle', () => {
++  it('keeps CPU reads available, gates edits while recovering, resumes one frame then stays idle', async () => {
++    const { host, factory, scheduler } = makeHost();
++    const canvas = document.createElement('canvas');
++    stubCanvasRect(canvas, { width: 640, height: 480 });
++    host.mount(canvas);
++    const load = host.loadAsset(makeRequest());
++    factory.creations[0].settle();
++    await load;
++    scheduler.flush();
++    const facade = factory.creations[0].facade;
++    host.setLocalFlags(['object_person_001'], { locked: true });
++    const flags = host.getLocalFlags();
++    await act(async () => { facade.loseDevice(); });
++    expect(host.status).toBe('recovering');
++    expect(host.getSnapshot()).toEqual(makeDocument());
++    expect(host.dispatch({ kind: 'undo' })).toBeNull();
++    fireEvent.pointerMove(canvas, { clientX: 10, clientY: 10, pointerId: 1 });
++    expect(facade.pointerCalls).toEqual([]);
++    expect(scheduler.flush()).toBe(0);
++    await act(async () => { facade.recovery.resolve(); });
++    expect(host.status).toBe('ready');
++    expect(host.error).toBeNull();
++    expect(host.getLocalFlags()).toBe(flags);
++    expect(scheduler.flush()).toBe(1);
++    for (let i = 0; i < 10_000; i += 1) expect(scheduler.flush()).toBe(0);
++    expect(host.dispatch({ kind: 'undo' })).not.toBeNull();
++  });
++
++  it('ignores pending rebuild completion after an asset switch and late old loss after disposal', async () => {
++    const { host, factory, scheduler } = makeHost();
++    const canvas = document.createElement('canvas');
++    stubCanvasRect(canvas, { width: 640, height: 480 });
++    host.mount(canvas);
++    const first = host.loadAsset(makeRequest());
++    factory.creations[0].settle();
++    await first;
++    const old = factory.creations[0].facade;
++    await act(async () => { old.loseDevice(); });
++    const next = host.loadAsset(makeRequest({ media: { ...makeMedia(), asset_revision_id: 'next' } }));
++    factory.creations[1].settle();
++    await next;
++    scheduler.flush();
++    await act(async () => { old.recovery.resolve(); });
++    expect(host.status).toBe('ready');
++    expect(host.error).toBeNull();
++    expect(scheduler.flush()).toBe(0);
++    expect(old.disposeCount).toBe(1);
++    host.dispose();
++    await act(async () => { factory.creations[1].facade.loseDevice(); });
++    expect(host.status).toBe('disposed');
++    expect(scheduler.flush()).toBe(0);
++  });
++
++  it('reports failed recovery without losing CPU access and explicit retry remains paused at zero size', async () => {
++    const { host, factory, scheduler } = makeHost();
++    const canvas = document.createElement('canvas');
++    stubCanvasRect(canvas, { width: 0, height: 0 });
++    host.mount(canvas);
++    const load = host.loadAsset(makeRequest());
++    factory.creations[0].settle();
++    await load;
++    const facade = factory.creations[0].facade;
++    await act(async () => { facade.loseDevice(); });
++    await act(async () => { facade.recovery.reject('adapter request denied'); });
++    expect(host.status).toBe('lost');
++    expect(host.error).toMatchObject({ code: 'GPU_RECOVERY_FAILED', message: 'adapter request denied' });
++    expect(host.getSnapshot()).toEqual(makeDocument());
++    facade.recovery = deferred<void>();
++    const retry = host.retryRenderer();
++    facade.recovery.resolve();
++    await retry;
++    expect(host.status).toBe('ready');
++    expect(scheduler.flush()).toBe(0);
++    expect(facade.renderCalls).toEqual([]);
++  });
++
++  it('projects recovery diagnostics and inert canvas without reinitializing the workbench host', async () => {
++    const factory = new FakeFacadeFactory();
++    const ready = vi.fn();
++    render(createElement(CanvasView, { request: makeRequest(), activeTool: 'select',
++      hostOptions: { facadeFactory: factory, scheduler: new FakeRenderScheduler() },
++      onDelta: () => {}, onHostReady: ready }));
++    await act(async () => { await Promise.resolve(); factory.creations[0].settle(); });
++    const canvas = screen.getByTestId('annotation-canvas');
++    await act(async () => { factory.creations[0].facade.loseDevice(); });
++    expect(screen.getByTestId('gpu-status').getAttribute('data-device-state')).toBe('recovering');
++    expect(canvas.inert).toBe(true);
++    await act(async () => { factory.creations[0].facade.recovery.resolve(); });
++    expect(screen.getByTestId('gpu-status').getAttribute('data-device-state')).toBe('ready');
++    expect(canvas.inert).toBe(false);
++    expect(ready).toHaveBeenCalledTimes(1);
++  });
++});
++
+ // ---------------------------------------------------------------------------
+ // Card entry case.
+ // ---------------------------------------------------------------------------
+diff --git a/apps/web/src/lib/editor/types.ts b/apps/web/src/lib/editor/types.ts
+index d03198f1..340e9e21 100644
+--- a/apps/web/src/lib/editor/types.ts
++++ b/apps/web/src/lib/editor/types.ts
+@@ -75,6 +75,11 @@ export interface EditorFacade {
+   get_viewport(): Viewport;
+   set_predictions(sets: SuggestionSet[]): void;
+   render(timestamp_ms: number): void;
++  /** Owned, one-shot real device-loss notification; never holds a WASM borrow. */
++  device_lost(): Promise<string>;
++  get_device_state(): 'ready' | 'lost' | 'recovering' | 'disposed';
++  /** Rebuild GPU resources only; retains the same CPU session and history. */
++  recover_renderer(): Promise<void>;
+   dispose(): void;
+   free?(): void;
+   get_render_stats?(): RenderStats;
+@@ -136,7 +141,7 @@ export interface RenderScheduler {
+   cancel(handle: number): void;
+ }
+ 
+-export type EditorHostStatus = 'idle' | 'loading' | 'ready' | 'error' | 'disposed';
++export type EditorHostStatus = 'idle' | 'loading' | 'ready' | 'lost' | 'recovering' | 'error' | 'disposed';
+ 
+ export interface EditorHostOptions {
+   facadeFactory: EditorFacadeFactory;
+diff --git a/crates/renderer-wgpu/Cargo.toml b/crates/renderer-wgpu/Cargo.toml
+index 893034c0..4a71a502 100644
+--- a/crates/renderer-wgpu/Cargo.toml
++++ b/crates/renderer-wgpu/Cargo.toml
+@@ -14,5 +14,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
+ wgpu = { version = "30.0.1", default-features = false, features = ["webgpu", "wgsl"] }
+ wasm-bindgen = "=0.2.128"
+ wasm-bindgen-futures = "=0.4.78"
++js-sys = "=0.3.105"
++futures-channel = "=0.3.34"
+ serde-wasm-bindgen = "=0.6.5"
+ web-sys = { version = "=0.3.105", features = ["HtmlCanvasElement", "Window"] }
+diff --git a/crates/renderer-wgpu/src/renderer.rs b/crates/renderer-wgpu/src/renderer.rs
+index 76aa53b5..c8062e6f 100644
+--- a/crates/renderer-wgpu/src/renderer.rs
++++ b/crates/renderer-wgpu/src/renderer.rs
+@@ -68,6 +68,7 @@ pub struct Renderer {
+     stats: crate::stats::RendererStats,
+     visible_ranges: Vec<std::ops::Range<u32>>,
+     lost: Arc<AtomicBool>,
++    loss_notification: js_sys::Promise,
+ }
+ 
+ #[cfg(not(target_arch = "wasm32"))]
+@@ -223,26 +224,17 @@ impl Renderer {
+             .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))
+     }
+     pub async fn recover(&mut self) -> Result<(), wasm_bindgen::JsValue> {
+-        let scene = self
+-            .scene
+-            .clone()
+-            .ok_or_else(|| wasm_bindgen::JsValue::from_str("no saved scene"))?;
+-        let replacement = Self::create(
+-            self.canvas.clone(),
+-            scene.image.width,
+-            scene.image.height,
+-            &scene.image.rgba,
+-        )
+-        .await
+-        .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
+-        *self = replacement;
+-        self.scene = Some(scene);
+-        self.upload_scene()?;
+-        self.render_saved()
+-            .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))
++        self.recover_with_fence(None).await
++    }
++    /// Owned notification: waiting in JS never borrows this WASM object.
++    pub fn device_lost(&self) -> js_sys::Promise {
++        self.loss_notification.clone()
++    }
++    pub fn is_device_lost(&self) -> bool {
++        self.lost.load(Ordering::Acquire)
+     }
+     pub fn device_state(&self) -> String {
+-        if self.lost.load(Ordering::Acquire) {
++        if self.is_device_lost() {
+             "lost"
+         } else {
+             "ready"
+@@ -281,6 +273,57 @@ impl Renderer {
+ 
+ #[cfg(target_arch = "wasm32")]
+ impl Renderer {
++    /// Capture the current CPU viewport even if its dirty frame never reached
++    /// the lost device. This does not upload, configure, or submit anything.
++    pub fn set_recovery_viewport(&mut self, viewport: Viewport) {
++        if let Some(scene) = self.scene.as_mut() {
++            scene.viewport = viewport;
++        }
++    }
++    pub async fn recover_with_fence(
++        &mut self,
++        disposed: Option<&std::cell::Cell<bool>>,
++    ) -> Result<(), JsValue> {
++        let scene = self
++            .scene
++            .as_ref()
++            .ok_or_else(|| JsValue::from_str("no saved scene"))?;
++        let mut replacement = Self::create_with_fence(
++            self.canvas.clone(),
++            scene.image.width,
++            scene.image.height,
++            &scene.image.rgba,
++            disposed,
++            scene.viewport.backing_size().is_none(),
++        )
++        .await
++        .map_err(|e| JsValue::from_str(&e.to_string()))?;
++        // Move the saved scene, including pixels, instead of cloning it. CPU
++        // editor state is not involved. A failed request leaves the old scene.
++        replacement.scene = self.scene.take();
++        let stats = self.stats;
++        self.dispose();
++        let released = self.stats;
++        replacement.stats.cpu_calls += stats.cpu_calls;
++        replacement.stats.cpu_elapsed_ns += stats.cpu_elapsed_ns;
++        replacement.stats.cpu_objects_examined += stats.cpu_objects_examined;
++        replacement.stats.gpu_buffer_upload_calls += stats.gpu_buffer_upload_calls;
++        replacement.stats.gpu_buffer_upload_bytes += stats.gpu_buffer_upload_bytes;
++        replacement.stats.gpu_texture_upload_calls += stats.gpu_texture_upload_calls;
++        replacement.stats.gpu_texture_upload_bytes += stats.gpu_texture_upload_bytes;
++        replacement.stats.bbox_upload_calls += stats.bbox_upload_calls;
++        replacement.stats.bbox_upload_bytes += stats.bbox_upload_bytes;
++        replacement.stats.uniform_upload_bytes += stats.uniform_upload_bytes;
++        replacement.stats.draw_calls += stats.draw_calls;
++        replacement.stats.gpu_submissions += stats.gpu_submissions;
++        replacement.stats.buffer_creations += released.buffer_creations;
++        replacement.stats.buffer_releases += released.buffer_releases;
++        replacement.stats.rejected_resources += stats.rejected_resources;
++        *self = replacement;
++        self.upload_scene()?;
++        // The host schedules one dirty frame after ready; no submission here.
++        Ok(())
++    }
+     pub fn stats(&self) -> crate::stats::RendererStats {
+         self.stats
+     }
+@@ -315,6 +358,16 @@ impl Renderer {
+         width: u32,
+         height: u32,
+         rgba: &[u8],
++    ) -> Result<Self, RendererError> {
++        Self::create_with_fence(canvas, width, height, rgba, None, false).await
++    }
++    async fn create_with_fence(
++        canvas: web_sys::HtmlCanvasElement,
++        width: u32,
++        height: u32,
++        rgba: &[u8],
++        disposed: Option<&std::cell::Cell<bool>>,
++        paused: bool,
+     ) -> Result<Self, RendererError> {
+         let expected_bytes = (width as usize)
+             .checked_mul(height as usize)
+@@ -339,6 +392,9 @@ impl Renderer {
+             })
+             .await
+             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
++        if disposed.is_some_and(std::cell::Cell::get) {
++            return Err(RendererError::DeviceLost);
++        }
+         if width > adapter.limits().max_texture_dimension_2d
+             || height > adapter.limits().max_texture_dimension_2d
+         {
+@@ -350,6 +406,10 @@ impl Renderer {
+             .request_device(&wgpu::DeviceDescriptor::default())
+             .await
+             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
++        if disposed.is_some_and(std::cell::Cell::get) {
++            device.destroy();
++            return Err(RendererError::DeviceLost);
++        }
+         let caps = surface.get_capabilities(&adapter);
+         // Browsers only expose *Unorm canvas formats, whose texels the
+         // compositor reads as sRGB-encoded (SurfaceColorSpace::Auto resolves
+@@ -373,10 +433,14 @@ impl Renderer {
+             browser_info.as_ref().map(|info| info.architecture()).unwrap_or_default(),
+             browser_info.as_ref().map(|info| info.device()).unwrap_or_default()
+         );
+-        let (css_w, css_h) = (
+-            canvas.client_width().max(0) as u32,
+-            canvas.client_height().max(0) as u32,
+-        );
++        let (css_w, css_h) = if paused {
++            (0, 0)
++        } else {
++            (
++                canvas.client_width().max(0) as u32,
++                canvas.client_height().max(0) as u32,
++            )
++        };
+         let (cw, ch) = (css_w.max(1), css_h.max(1));
+         let config = wgpu::SurfaceConfiguration {
+             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+@@ -546,8 +610,19 @@ impl Renderer {
+         });
+         let lost = Arc::new(AtomicBool::new(false));
+         let lost_signal = lost.clone();
+-        device.set_device_lost_callback(move |_reason, _message| {
++        let (sender, receiver) = futures_channel::oneshot::channel::<String>();
++        let sender = std::sync::Mutex::new(Some(sender));
++        let loss_notification = wasm_bindgen_futures::future_to_promise(async move {
++            let message = receiver
++                .await
++                .unwrap_or_else(|_| "device notification closed".into());
++            Ok(JsValue::from_str(&message))
++        });
++        device.set_device_lost_callback(move |reason, message| {
+             lost_signal.store(true, Ordering::Release);
++            if let Some(sender) = sender.lock().expect("loss notification mutex").take() {
++                let _ = sender.send(format!("{reason:?}: {message}"));
++            }
+         });
+         let mut this = Self {
+             canvas,
+@@ -575,6 +650,7 @@ impl Renderer {
+             instance_scratch: Vec::new(),
+             scene: None,
+             lost,
++            loss_notification,
+             diagnostics,
+             stats: crate::stats::RendererStats {
+                 logical_texture_bytes: expected_bytes as u64,
+diff --git a/crates/wasm-bridge/Cargo.toml b/crates/wasm-bridge/Cargo.toml
+index 3aa7f194..d6f05a3a 100644
+--- a/crates/wasm-bridge/Cargo.toml
++++ b/crates/wasm-bridge/Cargo.toml
+@@ -20,6 +20,7 @@ serde-wasm-bindgen = "=0.6.5"
+ uuid = { version = "=1.18.1", features = ["js"] }
+ wasm-bindgen = "=0.2.128"
+ wasm-bindgen-futures = "=0.4.78"
++js-sys = "=0.3.105"
+ web-sys = { version = "=0.3.105", features = ["HtmlCanvasElement"] }
+ 
+ [dev-dependencies]
+diff --git a/crates/wasm-bridge/src/facade.rs b/crates/wasm-bridge/src/facade.rs
+index 87865fce..70dcbd61 100644
+--- a/crates/wasm-bridge/src/facade.rs
++++ b/crates/wasm-bridge/src/facade.rs
+@@ -1246,7 +1246,7 @@ pub mod wasm {
+     }
+ 
+     fn to_js_error(error: ApiError) -> JsValue {
+-        serde_wasm_bindgen::to_value(&error).unwrap_or_else(|_| JsValue::from_str(&error.code))
++        to_js(&error).unwrap_or_else(|_| JsValue::from_str(&error.code))
+     }
+ 
+     fn from_js<T: serde::de::DeserializeOwned>(value: JsValue, code: &str) -> Result<T, ApiError> {
+@@ -1256,7 +1256,10 @@ pub mod wasm {
+     #[wasm_bindgen]
+     pub struct EditorFacade {
+         session: EditorSession,
+-        renderer: renderer_wgpu::Renderer,
++        renderer: std::rc::Rc<std::cell::RefCell<Option<renderer_wgpu::Renderer>>>,
++        disposed: std::rc::Rc<std::cell::Cell<bool>>,
++        last_renderer_stats: std::cell::Cell<renderer_wgpu::stats::RendererStats>,
++        adapter_diagnostics: String,
+         canvas: web_sys::HtmlCanvasElement,
+         serialized_input_objects: std::cell::Cell<u64>,
+     }
+@@ -1349,7 +1352,13 @@ pub mod wasm {
+ 
+         /// Read-only diagnostics from the device actually used by this facade.
+         pub fn get_render_stats(&self) -> Result<JsValue, JsValue> {
+-            to_js(&self.renderer.stats())
++            let renderer = self.renderer.borrow();
++            to_js(
++                &renderer
++                    .as_ref()
++                    .map(|r| r.stats())
++                    .unwrap_or_else(|| self.last_renderer_stats.get()),
++            )
+         }
+         pub fn get_validation_input_objects(&self) -> f64 {
+             self.session.editor.validation_input_objects() as f64
+@@ -1358,7 +1367,11 @@ pub mod wasm {
+             self.serialized_input_objects.get() as f64
+         }
+         pub fn get_adapter_diagnostics(&self) -> String {
+-            self.renderer.adapter_diagnostics()
++            self.renderer
++                .borrow()
++                .as_ref()
++                .map(|r| r.adapter_diagnostics())
++                .unwrap_or_else(|| self.adapter_diagnostics.clone())
+         }
+         pub fn get_canvas_labels(&self) -> Result<JsValue, JsValue> {
+             to_js(&self.session.canvas_labels())
+@@ -1394,16 +1407,80 @@ pub mod wasm {
+                 .map_err(to_js_error)?;
+             self.session.set_predictions(sets).map_err(to_js_error)
+         }
++        /// Returning an owned one-shot promise releases the WASM borrow before
++        /// JS awaits an idle device. It resolves for real Destroyed losses too.
++        pub fn device_lost(&self) -> Result<js_sys::Promise, JsValue> {
++            self.session.ensure_live().map_err(to_js_error)?;
++            self.renderer
++                .borrow()
++                .as_ref()
++                .map(|r| r.device_lost())
++                .ok_or_else(|| to_js_error(api_error("GPU_RECOVERING", "renderer is rebuilding")))
++        }
++
++        pub fn get_device_state(&self) -> String {
++            if self.disposed.get() {
++                "disposed".into()
++            } else {
++                self.renderer
++                    .borrow()
++                    .as_ref()
++                    .map(|r| r.device_state())
++                    .unwrap_or_else(|| "recovering".into())
++            }
++        }
++
++        /// Only the renderer moves into this future. No facade/session borrow
++        /// spans requestAdapter/requestDevice, so dispose and CPU reads remain
++        /// safe while recovery is pending.
++        pub fn recover_renderer(&mut self) -> Result<js_sys::Promise, JsValue> {
++            self.session.ensure_live().map_err(to_js_error)?;
++            let mut renderer = self.renderer.borrow_mut().take().ok_or_else(|| {
++                to_js_error(api_error("GPU_RECOVERING", "renderer is rebuilding"))
++            })?;
++            renderer.set_recovery_viewport(scene_viewport(self.session.get_viewport()));
++            self.last_renderer_stats.set(renderer.stats());
++            self.session.invalidate_frame();
++            let slot = self.renderer.clone();
++            let disposed = self.disposed.clone();
++            Ok(wasm_bindgen_futures::future_to_promise(async move {
++                let result = renderer.recover_with_fence(Some(&disposed)).await;
++                if disposed.get() {
++                    renderer.dispose();
++                    return Ok(JsValue::UNDEFINED);
++                }
++                *slot.borrow_mut() = Some(renderer);
++                result.map(|()| JsValue::UNDEFINED).map_err(|error| {
++                    to_js_error(api_error(
++                        "GPU_RECOVERY_FAILED",
++                        &error
++                            .as_string()
++                            .unwrap_or_else(|| "WebGPU renderer rebuild failed".into()),
++                    ))
++                })
++            }))
++        }
+ 
+         /// A clean session performs no renderer call. Dirty viewport and
+         /// projection updates share one native call and one GPU submission;
+         /// renderer instances never round-trip through JavaScript.
+         pub fn render(&mut self, timestamp_ms: f64) -> Result<(), JsValue> {
+             let _ = timestamp_ms;
++            let mut renderer = self.renderer.borrow_mut();
++            if self.disposed.get() || renderer.as_ref().is_none_or(|r| r.is_device_lost()) {
++                return Err(to_js_error(api_error(
++                    "GPU_DEVICE_LOST",
++                    "WebGPU device is not ready; CPU editor retained",
++                )));
++            }
+             let Some(frame) = self.session.prepare_frame() else {
+                 return Ok(());
+             };
+-            if let Err(error) = self.renderer.apply_frame(frame.viewport, frame.projection) {
++            if let Err(error) = renderer
++                .as_mut()
++                .expect("ready renderer")
++                .apply_frame(frame.viewport, frame.projection)
++            {
+                 self.session.invalidate_frame();
+                 return Err(error);
+             }
+@@ -1417,7 +1494,10 @@ pub mod wasm {
+                 return;
+             }
+             self.session.dispose();
+-            self.renderer.dispose();
++            self.disposed.set(true);
++            if let Some(renderer) = self.renderer.borrow_mut().as_mut() {
++                renderer.dispose();
++            }
+         }
+     }
+ 
+@@ -1466,9 +1546,14 @@ pub mod wasm {
+                 };
+                 to_js_error(api_error(code, &message))
+             })?;
++        let adapter_diagnostics = renderer.adapter_diagnostics();
++        let last_renderer_stats = std::cell::Cell::new(renderer.stats());
+         Ok(EditorFacade {
+             session,
+-            renderer,
++            renderer: std::rc::Rc::new(std::cell::RefCell::new(Some(renderer))),
++            disposed: std::rc::Rc::new(std::cell::Cell::new(false)),
++            last_renderer_stats,
++            adapter_diagnostics,
+             canvas,
+             serialized_input_objects: std::cell::Cell::new(0),
+         })
