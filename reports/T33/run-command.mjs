@@ -1,0 +1,13 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+const root = path.resolve(import.meta.dirname, '../..');
+const [label, ...argv] = process.argv.slice(2);
+const env = { ...process.env, RUSTUP_TOOLCHAIN: '1.96.0', RUSTC: 'D:/cache/cargo/toolchains/1.96.0-x86_64-pc-windows-msvc/bin/rustc.exe', CARGO_TARGET_DIR: path.join(root, 'target'), WEBLABEL_API_BINARY: path.join(root, 'target/debug/weblabel-api.exe') };
+env.WEBLABEL_CARGO_CWD = 'D:/cache/cargo/bin';
+env.WEBLABEL_T33_RELEASE = process.env.WEBLABEL_T33_RELEASE ?? path.join(root, 'target/完整 shared source 576903');
+const r = spawnSync(argv[0], argv.slice(1), { cwd: argv[0].endsWith('cargo.exe') ? 'D:/cache/cargo/bin' : root, env, encoding: 'utf8', shell: false, maxBuffer: 64 * 1024 * 1024 });
+const output = `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? String(r.error) : ''}`;
+fs.writeFileSync(path.join(import.meta.dirname, `${label}.log`), output);
+fs.writeFileSync(path.join(import.meta.dirname, `${label}.json`), JSON.stringify({ argv, exit_code: r.status, signal: r.signal }, null, 2));
+console.log(output); process.exitCode = r.status ?? 1;
