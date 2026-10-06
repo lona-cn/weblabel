@@ -36,6 +36,7 @@ export function ActivityPanel({ projectId, actorId, collector, surfaceRef }: Act
     window.addEventListener('pagehide', blur);
     surface?.addEventListener('pointerdown', interact, { passive: true });
     surface?.addEventListener('input', interact, { passive: true });
+    surface?.addEventListener('keydown', interact, { passive: true });
     const timer = setInterval(checkpoint, 15_000);
     return () => {
       clearInterval(timer);
@@ -45,6 +46,7 @@ export function ActivityPanel({ projectId, actorId, collector, surfaceRef }: Act
       window.removeEventListener('pagehide', blur);
       surface?.removeEventListener('pointerdown', interact);
       surface?.removeEventListener('input', interact);
+      surface?.removeEventListener('keydown', interact);
       safely(() => collector.setEnabled(false));
     };
   }, [collector, panel, surfaceRef]);
