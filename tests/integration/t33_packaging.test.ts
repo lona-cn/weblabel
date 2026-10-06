@@ -166,15 +166,15 @@ it('fails closed on immutable approval bindings and audit reasons before any sna
     db.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: 'unrelated-configuration-secret' }), 'review-collision');
     const backupDir = path.join(scratch, 'preserved approval'), restored = path.join(scratch, 'restored approval');
     success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
-    const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null });
-    expect(snapshot.status, JSON.stringify(snapshot.body)).toBe(201);
-    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
-    const copy = new DatabaseSync(path.join(restored, 'api.sqlite'), { readOnly: true });
+    const copy = new DatabaseSync(path.join(backupDir, 'api.sqlite'), { readOnly: true });
     try {
       expect(copy.prepare('SELECT * FROM review_submissions ORDER BY review_id').all()).toEqual(before.submissions);
       expect(copy.prepare('SELECT * FROM review_decisions ORDER BY review_id').all()).toEqual(before.decisions);
       expect(copy.prepare('SELECT * FROM annotation_revisions ORDER BY annotation_revision_id').all()).toEqual(before.revisions);
     } finally { copy.close(); }
+    const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null });
+    expect(snapshot.status, JSON.stringify(snapshot.body)).toBe(201);
+    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
     const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code);
     try {
       expect((await fresh.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
@@ -314,12 +314,20 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   sourceDb.prepare("INSERT INTO model_profiles VALUES(?, 'openai_api', 'synthetic-not-live', 'api_key', ?, 'needs_configuration', 'not_run', NULL, NULL, ?, ?, ?)").run('t33-profile', JSON.stringify({ image_input: true, tools: true, structured_output: true, bbox_output: false, attributes: true }), JSON.stringify({ api_key: 'T33-secret-config-value', endpoint: 'http://invalid.example' }), 'T33-secret-ref', new Date().toISOString());
   const originalPassword = sourceDb.prepare('SELECT password_hash FROM users WHERE user_id=?').get(admin.userId)!.password_hash as string;
   const originalSessions = sourceDb.prepare('SELECT session_id,csrf_hash FROM sessions').all().flatMap(row => [row.session_id as string, row.csrf_hash as string]);
+  const originalJournalMode = sourceDb.prepare('PRAGMA journal_mode').get()!.journal_mode;
   sourceDb.close();
   success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
   const bytes = fs.readFileSync(path.join(backupDir, 'api.sqlite'));
   for (const secret of [originalPassword, ...originalSessions, 'T33-secret-config-value', 'T33-secret-ref']) expect(bytes.includes(Buffer.from(secret))).toBe(false);
   expect((await admin.request('GET', '/api/session')).status).toBe(200);
+  const backupDb = new DatabaseSync(path.join(backupDir, 'api.sqlite'), { readOnly: true });
+  expect(backupDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()!.n).toBe(0);
+  expect(backupDb.prepare('SELECT created_by FROM annotation_revisions WHERE annotation_revision_id=?').get(revision.annotation_revision_id)!.created_by).toBe(admin.userId);
+  expect(backupDb.prepare('SELECT manifest_sha256 FROM dataset_versions').get()!.manifest_sha256).toBe(snapshot.body.manifest_sha256); backupDb.close();
+  expect(sha(path.join(backupDir, 'api.sqlite'))).toBe(JSON.parse(fs.readFileSync(path.join(backupDir, 'backup.json'), 'utf8')).files.find((entry: Value) => entry.path === 'api.sqlite').sha256);
+  for (const suffix of ['-wal', '-shm', '-journal']) expect(fs.existsSync(path.join(backupDir, `api.sqlite${suffix}`))).toBe(false);
   const collisionDb = new DatabaseSync(path.join(data, 'api.sqlite'));
+  expect(collisionDb.prepare('PRAGMA journal_mode').get()!.journal_mode).toBe(originalJournalMode);
   collisionDb.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: 't33-object' }), 't33-profile'); collisionDb.close();
   const collisionTarget = path.join(scratch, 'no-immutable-corruption');
   expect(cli('backup.mjs', ['--data-dir', data, '--backup-dir', collisionTarget]).stderr).toMatch(/credential_in_immutable_business_data/);
@@ -348,10 +356,6 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   fs.writeFileSync(path.join(forgedObject, 'backup.json'), JSON.stringify(objectManifest));
   expect(cli('restore.mjs', ['--backup-dir', forgedObject, '--data-dir', path.join(scratch, 'no-forged-object')]).stderr).toMatch(/backup_object_missing_or_corrupt/);
   success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
-  const backupDb = new DatabaseSync(path.join(restored, 'api.sqlite'), { readOnly: true });
-  expect(backupDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()!.n).toBe(0);
-  expect(backupDb.prepare('SELECT created_by FROM annotation_revisions WHERE annotation_revision_id=?').get(revision.annotation_revision_id)!.created_by).toBe(admin.userId);
-  expect(backupDb.prepare('SELECT manifest_sha256 FROM dataset_versions').get()!.manifest_sha256).toBe(snapshot.body.manifest_sha256); backupDb.close();
   const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code); expect(fresh.userId).not.toBe(admin.userId);
   const profiles = await fresh.request('GET', '/api/model-profiles');
   expect(profiles.status).toBe(200);

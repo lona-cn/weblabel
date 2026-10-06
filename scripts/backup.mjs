@@ -125,6 +125,9 @@ export async function createBackup(argv = process.argv.slice(2)) {
     validateDatabase(db);
     const originalSchema = schemaHash(db), applied = migrations(db);
     scrub(db); validateDatabase(db);
+    // Finalize only the copied DB as a portable single file. Keeping WAL mode
+    // makes even a normal read-only audit create sidecars rejected by restore.
+    if (db.prepare('PRAGMA journal_mode=DELETE').get().journal_mode !== 'delete') throw new Error('backup_journal_mode_invalid');
     if (schemaHash(db) !== originalSchema) throw new Error('schema_changed');
     for (const hash of objectHashes(db)) {
       const relative = objectName(hash);
@@ -134,7 +137,7 @@ export async function createBackup(argv = process.argv.slice(2)) {
       fs.copyFileSync(sourceObject, path.join(destination, relative));
     }
     db.close();
-    const manifest = { format: 'weblabel-backup', version: 1, created_at: new Date().toISOString(), schema_hash: originalSchema, migrations: applied, authentication: 'scrubbed-fresh-local-bootstrap-required', files: entries(destination).filter(item => !item.path.endsWith('-wal') && !item.path.endsWith('-shm')) };
+    const manifest = { format: 'weblabel-backup', version: 1, created_at: new Date().toISOString(), schema_hash: originalSchema, migrations: applied, authentication: 'scrubbed-fresh-local-bootstrap-required', files: entries(destination) };
     fs.writeFileSync(path.join(destination, 'backup.json'), JSON.stringify(manifest, null, 2));
     console.log(`backup_created: ${destination}`);
     return manifest;
