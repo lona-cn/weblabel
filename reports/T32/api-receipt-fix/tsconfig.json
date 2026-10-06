@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "typeRoots": ["./type-env/node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": [
+    "../../../apps/agent-host/src/providers/openai-api.ts",
+    "../../../apps/agent-host/src/providers/mimo-api.ts",
+    "../../../apps/agent-host/test/t20_http.test.ts"
+  ]
+}

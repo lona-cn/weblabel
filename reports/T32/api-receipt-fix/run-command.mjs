@@ -1,0 +1,12 @@
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+const [label, executable, ...args] = process.argv.slice(2);
+if (!label || !executable) throw new Error('label executable [args] required');
+const result = spawnSync(executable === 'node' ? process.execPath : executable, args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+const output = (result.stdout ?? '') + (result.stderr ?? '') + (result.error ? String(result.error) : '');
+const log_path = `reports/T32/api-receipt-fix/${label}.log`;
+writeFileSync(log_path, output);
+appendFileSync('reports/T32/api-receipt-fix/commands.jsonl', JSON.stringify({ argv: [executable, ...args], exit_code: result.status, signal: result.signal, log_path, log_sha256: createHash('sha256').update(readFileSync(log_path)).digest('hex'), node: process.version }) + '\n');
+process.stdout.write(output);
+process.exitCode = result.status ?? 1;
