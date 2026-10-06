@@ -113,7 +113,7 @@ window.__t12 = {
     const canvas = document.getElementById('t12-canvas');
     const store = new SelectionStore();
     const host = new EditorHost({ facadeFactory: factory, onDelta: (delta) => store.publish(delta) });
-    const tools = new ToolState({ setTool: (tool) => host.setTool(tool) });
+    const tools = new ToolState(host);
     state.host = host;
     state.store = store;
     state.tools = tools;
@@ -143,7 +143,7 @@ window.__t12 = {
     canvas.addEventListener('contextmenu', (event) => { state.contextmenuPrevented = event.defaultPrevented; });
     createRoot(document.getElementById('t12-ui')).render(
       createElement('div', null,
-        createElement(Keyboard, { host, tools, store }),
+        createElement(Keyboard, { host, tools, store, acceptsTarget: (target) => target === document.body || target === canvas || document.getElementById('t12-ui').contains(target) }),
         createElement(ToolSettings, { tools, host, store }),
         createElement(NumericGeometry, { store, host }),
         createElement(SelectionLink, { store }),
@@ -616,6 +616,14 @@ test('T12-D space-pan, scroll-zoom and contextmenu follow the precise interactio
     (window as unknown as T12Window).__t12.resetTrace();
   }, [PERSON, SECOND]);
   const savesBefore = server.requests.length;
+
+  // Native button Space activates its tool on keyup, not temporary pan.
+  await page.getByTestId('tool-box').focus();
+  await page.keyboard.down('Space');
+  await expect(page.getByTestId('tool-select')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.up('Space');
+  await expect(page.getByTestId('tool-box')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('tool-select').click();
 
   // Contextmenu: suppressed on the canvas, never selects, never edits.
   // (Runs before pan/zoom so the canvas transform is still the identity.)

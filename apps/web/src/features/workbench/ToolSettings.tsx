@@ -11,17 +11,20 @@ import type { SelectionStore } from './SelectionLink';
 
 /** The slice of the editor host the tool controls need. */
 export interface ToolStateHost {
-  setTool(tool: EditorTool): void;
+  setTool(tool: EditorTool): boolean;
 }
 
 /**
- * Tool state with a temporary space-pan override: `beginSpacePan` switches the
- * facade to the pan tool, `endSpacePan` restores the base tool. Every effective
- * change goes through the host so the Rust core can cancel in-flight gestures.
+ * Native-acknowledged tool projection with a temporary space-pan override.
+ * Rejected transitions leave the last effective/base tool intact. A rejected
+ * keyup/blur records only release intent for explicit ready reconciliation.
  */
 export class ToolState {
   private baseTool: EditorTool;
   private spacePanActive = false;
+  // A release rejected while editing is fenced remains user intent, not a
+  // fabricated native tool change. Only that release may reconcile on ready.
+  private spaceReleasePending = false;
   private readonly host: ToolStateHost;
   private readonly listeners = new Set<(tool: EditorTool) => void>();
 
@@ -41,25 +44,36 @@ export class ToolState {
   }
 
   set(tool: EditorTool): void {
-    const previous = this.current();
+    if (!this.spacePanActive && tool === this.baseTool) return;
+    if (!this.host.setTool(tool)) return;
     this.spacePanActive = false;
+    this.spaceReleasePending = false;
     this.baseTool = tool;
-    if (this.current() !== previous) this.host.setTool(this.current());
     this.notify();
   }
 
   beginSpacePan(): void {
-    if (this.spacePanActive) return;
+    if (this.spacePanActive) {
+      this.spaceReleasePending = false;
+      return;
+    }
+    if (this.baseTool === 'pan' || !this.host.setTool('pan')) return;
     this.spacePanActive = true;
-    if (this.baseTool !== 'pan') this.host.setTool('pan');
     this.notify();
   }
 
   endSpacePan(): void {
     if (!this.spacePanActive) return;
+    this.spaceReleasePending = true;
+    if (!this.host.setTool(this.baseTool)) return;
     this.spacePanActive = false;
-    this.host.setTool(this.baseTool);
+    this.spaceReleasePending = false;
     this.notify();
+  }
+
+  /** Reconcile only a recorded keyup/blur, never reset a retained native tool. */
+  reconcileSpaceRelease(): void {
+    if (this.spaceReleasePending) this.endSpacePan();
   }
 
   subscribe(listener: (tool: EditorTool) => void): () => void {
@@ -88,11 +102,11 @@ export interface ToolSettingsHost {
  */
 export const INTERACTION_POLICY = {
   contextmenu: '画布上的右键与 macOS ctrl+点击都只抑制系统菜单：不选择、不编辑、不开始手势',
-  spacePan: '按住空格临时切到平移工具并可拖动画布；松开恢复之前的工具；空格从不滚动页面',
+  spacePan: '编辑表面按住空格临时平移并抑制滚动；松开恢复原工具；原生控件保留空格激活；设备阻塞时保留原生确认状态，仅在就绪后协调已记录的松开意图',
   scrollZoom: '滚轮以光标为锚点连续缩放（指数系数），缩放会取消进行中的手势，绝不修改文档',
   accelerators: 'Ctrl 与 Meta 在所有平台都同时触发撤销/重做/复制，Windows 的 Ctrl 默认行为不变',
   toolKeys: '无修饰键的 V/ B/ H 切换选择/矩形/平移工具',
-  delete: 'Delete 与 Backspace 删除当前选择；文本输入与输入法组合期间一切编辑快捷键都不生效',
+  delete: '编辑表面 Delete 与 Backspace 删除原生当前选择；文本输入、输入法组合及工作区外控件不触发编辑快捷键',
 } as const;
 
 export function ToolSettings({

@@ -26,6 +26,9 @@ import { WorkbenchAi } from '../ai/WorkbenchAi';
 import { ExternalProcessingPolicy } from '../projects/ExternalProcessingPolicy';
 import { ActivityCollector } from './activity';
 import { ActivityPanel } from './ActivityPanel';
+import { Keyboard } from './Keyboard';
+import { SelectionStore } from './SelectionLink';
+import { ToolState } from './ToolSettings';
 
 type TaskLease = { asset_revision_id: string; task_id: string; fencing_token: number };
 type Props = { projectId?: string; onProjects?: () => void; onDatasets?: () => void };
@@ -49,12 +52,10 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error' | 'empty'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<string | null>(null);
-  const [tool, setTool] = useState<Tool>('select');
   const [host, setHost] = useState<EditorHost | null>(null);
   const subscribeHostStatus = useCallback((notify: () => void) => host?.subscribeStatus(notify) ?? (() => {}), [host]);
   const hostStatus = useSyncExternalStore(subscribeHostStatus, () => host?.status ?? 'idle', () => 'idle');
   const [objects, setObjects] = useState<AnnotationObject[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [localFlags, setLocalFlags] = useState<LocalObjectFlagMap>({});
   const [completionChoice, setCompletionChoice] = useState<'unprocessed' | 'in_progress' | 'complete' | 'confirmed_negative'>('unprocessed');
   const [negativeConfirmed, setNegativeConfirmed] = useState(false);
@@ -85,19 +86,50 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
         .catch((reason: unknown) => setError(reportError(reason)));
     }
   }, [queue]);
+  const activeLoaded = loaded?.media.asset_revision_id === selectedAssetId ? loaded : null;
+  const activeHost = activeLoaded && !activeLoaded.readOnlyPreview ? host : null;
+  const editableHost = activeHost && hostStatus === 'ready' ? activeHost : null;
+  // Ports retain their actual editor session. Read all fences again at event
+  // time: inert and a render-time ready projection cannot authorize mutation.
+  const currentSessionRef = useRef({ host, loaded, selectedAssetId });
+  currentSessionRef.current = { host, loaded, selectedAssetId };
+  const editorPort = useMemo(() => {
+    const getHost = () => {
+      const current = currentSessionRef.current;
+      return host && current.host === host && current.loaded === loaded
+        && loaded?.media.asset_revision_id === current.selectedAssetId
+        && !loaded.readOnlyPreview && host.status === 'ready'
+        && !submissionLockRef.current ? host : null;
+    };
+    return {
+      getHost,
+      setTool: (next: Tool) => getHost()?.setTool(next) ?? false,
+      dispatch: (command: Parameters<EditorHost['dispatch']>[0]) => getHost()?.dispatch(command) ?? null,
+      cancelGesture: () => { getHost()?.cancelGesture(); },
+    };
+  }, [host, loaded, selectedAssetId]);
+  const selectionStore = useMemo(() => new SelectionStore(), [editorPort]);
+  const subscribeSelection = useCallback((notify: () => void) => selectionStore.subscribeSelection(notify), [selectionStore]);
+  const selectedIds = useSyncExternalStore(subscribeSelection, () => selectionStore.getSelection(), () => selectionStore.getSelection());
+  const tools = useMemo(() => new ToolState(editorPort), [editorPort]);
+  const subscribeTools = useCallback((notify: () => void) => tools.subscribe(notify), [tools]);
+  const tool = useSyncExternalStore(subscribeTools, () => tools.current(), () => tools.current());
+  useEffect(() => { if (hostStatus === 'ready') tools.reconcileSpaceRelease(); }, [hostStatus, tools]);
+  const acceptsKeyboardTarget = useCallback((target: EventTarget | null) =>
+    target instanceof Node && !!editorSurfaceRef.current?.contains(target), []);
   const submitReviewTask = useCallback((task: ReviewTask, submit: (revisionId: string) => Promise<void>) =>
     submitCurrentReviewRevision({
       task,
       queue,
       readHead: () => api.annotation(task.asset_revision_id, task.ontology_version_id),
       submit,
-      lockEditor: (locked) => setReviewEditorLocked({
-        locked, state: submissionLockRef, host, surfaces: [editorSurfaceRef.current, importSurfaceRef.current],
-      }),
-    }), [host, queue]);
-  const activeLoaded = loaded?.media.asset_revision_id === selectedAssetId ? loaded : null;
-  const activeHost = activeLoaded && !activeLoaded.readOnlyPreview ? host : null;
-  const editableHost = activeHost && hostStatus === 'ready' ? activeHost : null;
+      lockEditor: (locked) => {
+        setReviewEditorLocked({
+          locked, state: submissionLockRef, host, surfaces: [editorSurfaceRef.current, importSurfaceRef.current],
+        });
+        if (!locked) tools.reconcileSpaceRelease();
+      },
+    }), [host, queue, tools]);
   const activeObjects = activeLoaded ? objects : [];
   const activeSelectedIds = activeLoaded ? selectedIds : [];
 
@@ -190,7 +222,6 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
       const document = queueRecord?.document ?? revision.document;
       setLoaded({ media, ontology, document, revisionId: queueRecord?.base_revision_id ?? revision.annotation_revision_id, initial_generation: queueRecord?.generation ?? 0, readOnlyPreview: false, frame });
       setObjects(document.objects);
-      setSelectedIds([]);
       setCompletionChoice(document.completion);
       setNegativeConfirmed(false);
       setLoadState('ready');
@@ -220,10 +251,9 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   };
 
   const applyDelta = useCallback((currentHost: EditorHost, delta: EditorDelta) => {
-    if (loaded?.readOnlyPreview || (submissionLockRef.current && delta.document_changed)) return;
-    if (!loaded || loaded.media.asset_revision_id !== selectedAssetId) return;
+    if (!loaded || currentHost !== editorPort.getHost()) return;
     if (delta.error) { setError(`${delta.error.code}: ${delta.error.message}`); return; }
-    setSelectedIds(current => current.length === delta.selected_object_ids.length && current.every((id, index) => id === delta.selected_object_ids[index]) ? current : delta.selected_object_ids);
+    selectionStore.publish(delta);
     setHistoryState(current => current.canUndo === delta.can_undo && current.canRedo === delta.can_redo ? current : { canUndo: delta.can_undo, canRedo: delta.can_redo });
     setLocalFlags(currentHost.getLocalFlags());
     const snapshot = currentHost.getCommittedSnapshot(delta);
@@ -236,35 +266,32 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
         generation: delta.generation, document: snapshot, suggestion_decisions: delta.suggestion_decisions });
       recordActivity(snapshot.objects.length > objects.length ? 'annotation' : 'correction');
     }
-  }, [loaded, queue, selectedAssetId, objects.length, recordActivity]);
-
-  function setActiveTool(next: Tool) {
-    if (editableHost?.setTool(next)) setTool(next);
-  }
+  }, [loaded, queue, editorPort, selectionStore, objects.length, recordActivity]);
 
   function selectObject(objectId: string) {
-    editableHost?.select([objectId]);
+    editorPort.getHost()?.select([objectId]);
   }
 
   function changeLocalFlags(ids: readonly string[], flags: { hidden?: boolean; locked?: boolean }) {
-    if (!editableHost || activeLoaded?.readOnlyPreview || submissionLockRef.current) return;
-    const delta = editableHost.setLocalFlags(ids, flags);
+    const currentHost = editorPort.getHost();
+    if (!currentHost) return;
+    const delta = currentHost.setLocalFlags(ids, flags);
     if (!delta) setError('Editor did not accept the transient flag update.');
     else if (delta.error) setError(`${delta.error.code}: ${delta.error.message}`);
   }
 
   function changeAttribute(key: string, value: Scalar) {
-    if (!editableHost) { setError('The editor is not ready for attribute editing.'); return; }
+    if (!editorPort.getHost()) { setError('The editor is not ready for attribute editing.'); return; }
     if (!activeSelectedIds.length) { setError('Select an object before editing attributes.'); return; }
-    const delta = editableHost.dispatch({ kind: 'set_attributes', object_ids: activeSelectedIds, values: { [key]: value } });
+    const delta = editorPort.dispatch({ kind: 'set_attributes', object_ids: [...activeSelectedIds], values: { [key]: value } });
     if (!delta) setError('Editor did not return the attribute update.');
     else if (delta.error) setError(`${delta.error.code}: ${delta.error.message}`);
   }
 
   function setCompletion(value: 'unprocessed' | 'in_progress' | 'complete' | 'confirmed_negative') {
-    if (editableHost?.status !== 'ready') return;
+    if (!editorPort.getHost()) return;
     if (value !== 'confirmed_negative') {
-      const delta = editableHost.dispatch({ kind: 'set_completion', completion: value });
+      const delta = editorPort.dispatch({ kind: 'set_completion', completion: value });
       if (!delta || delta.error) return;
     }
     setCompletionChoice(value);
@@ -272,8 +299,8 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   }
 
   function confirmNegative() {
-    if (!editableHost || activeObjects.length !== 0 || !negativeConfirmed) return;
-    editableHost.dispatch({ kind: 'set_completion', completion: 'confirmed_negative' });
+    if (!editorPort.getHost() || activeObjects.length !== 0 || !negativeConfirmed) return;
+    editorPort.dispatch({ kind: 'set_completion', completion: 'confirmed_negative' });
   }
 
   async function exportCurrent() {
@@ -310,7 +337,6 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
       ? { ...current, document: revision.document, revisionId: revision.annotation_revision_id, readOnlyPreview: true }
       : current);
     setObjects(revision.document.objects);
-    setSelectedIds([]);
     setCompletionChoice(revision.document.completion);
   }
 
@@ -322,7 +348,6 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
     setHistoryState({ canUndo: false, canRedo: false });
     setLoaded({ ...activeLoaded, document: record.document, revisionId: record.base_revision_id, initial_generation: record.generation, readOnlyPreview: false });
     setObjects(record.document.objects);
-    setSelectedIds([]);
     setCompletionChoice(record.document.completion);
     setRecovery(null);
   }
@@ -338,7 +363,8 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
     {projectId ? <ActivityPanel key={projectId + session.user_id} projectId={projectId} actorId={session.user_id} collector={activity} surfaceRef={activitySurfaceRef} /> : null}
     {error ? <p className="api-error" role="alert">{error}</p> : null}
     <section ref={importSurfaceRef} className="asset-import-bar" aria-label="项目媒体导入"><label htmlFor="media-import">导入图片</label><input ref={importRef} id="media-import" data-testid="media-import" type="file" accept="image/png,image/jpeg" multiple onChange={(event) => void importFiles(event.currentTarget.files)} />{job ? <span role="status">导入处理中…</span> : null}</section>
-    <div ref={editorSurfaceRef} className="workbench-grid">
+    <div ref={editorSurfaceRef} className="workbench-grid" tabIndex={-1}>
+      <Keyboard host={editorPort} tools={tools} store={selectionStore} acceptsTarget={acceptsKeyboardTarget} />
       <aside id="workbench-sidebar" className="sidebar-resize" aria-label="项目媒体、对象与属性侧栏，可调整宽度">
         <section id="media-strip" className="media-strip" data-testid="asset-grid" aria-label="项目媒体">
           <div className="media-strip-heading"><span className="eyebrow">媒体</span><span>{assets.length} 张</span>
@@ -355,10 +381,10 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
         {activeLoaded ? <AttributePanel object={activeObjects.find((item) => activeSelectedIds.includes(item.object_id)) ?? null} ontology={activeLoaded.ontology} onChange={changeAttribute} disabled={!editableHost} /> : null}
       </aside>
       <section className="canvas-column" aria-label="标注工作区">
-        <div id="canvas-toolbar-row" className="canvas-toolbar-row"><Toolbar active={tool} disabled={!activeLoaded || !editableHost} onChange={setActiveTool} /><div className="canvas-actions"><button type="button" aria-label="适配画布" disabled={!editableHost} onClick={() => editableHost?.fitImage()}>适配画布</button>
+        <div id="canvas-toolbar-row" className="canvas-toolbar-row"><Toolbar active={tool} disabled={!activeLoaded || !editableHost} onChange={(next) => tools.set(next)} /><div className="canvas-actions"><button type="button" aria-label="适配画布" disabled={!editableHost} onClick={() => editorPort.getHost()?.fitImage()}>适配画布</button>
           <ResizeControls targetId="canvas-toolbar-row" axis="height" decreaseName="减小画布工具栏高度" increaseName="增大画布工具栏高度" minimum={46} maximum={180} step={16} />
-          <button type="button" data-testid="undo" disabled={!editableHost || !historyState.canUndo} onClick={() => editableHost?.dispatch({ kind: 'undo' })}>撤销</button>
-          <button type="button" data-testid="redo" disabled={!editableHost || !historyState.canRedo} onClick={() => editableHost?.dispatch({ kind: 'redo' })}>重做</button>
+          <button type="button" data-testid="undo" disabled={!editableHost || !historyState.canUndo} onClick={() => editorPort.dispatch({ kind: 'undo' })}>撤销</button>
+          <button type="button" data-testid="redo" disabled={!editableHost || !historyState.canRedo} onClick={() => editorPort.dispatch({ kind: 'redo' })}>重做</button>
         </div></div>
         <div className="canvas-stage" data-testid="canvas-container">
           {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}:${activeLoaded.readOnlyPreview}`} request={activeLoaded} readOnly={activeLoaded.readOnlyPreview} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setLocalFlags(readyHost.getLocalFlags()); setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}

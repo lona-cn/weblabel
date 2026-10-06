@@ -263,8 +263,8 @@ test('T28 actual Workbench: transient flags, locked native delete recovery, pers
     await first.click();
     await page.getByTestId('object-lock-selected').click();
     const beforeLockedDelete = await mounted(page);
-    // Delete has no UI shortcut today. Dispatch only through this CanvasView's
-    // mounted instance: real WASM -> existing onDelta -> existing SaveQueue.
+    // Keep this direct-native error check distinct from the production keyboard
+    // regression: this CanvasView's real WASM -> onDelta -> SaveQueue.
     const lockedDelete = await mounted(page, 'nativeDelete', firstId);
     expect(lockedDelete.error?.code).toBe('OBJECT_LOCKED');
     if (lockedDelete.delta) {

@@ -22,7 +22,11 @@ export class SelectionStore {
 
   /** Consumes one editor delta; `document_changed` gates the save trigger. */
   publish(delta: EditorDelta): void {
-    this.selection = [...delta.selected_object_ids];
+    if (delta.error) return;
+    if (this.selection.length !== delta.selected_object_ids.length
+      || this.selection.some((id, index) => id !== delta.selected_object_ids[index])) {
+      this.selection = [...delta.selected_object_ids];
+    }
     this.generation = delta.generation;
     for (const listener of this.deltaListeners) listener(delta);
     for (const listener of this.selectionListeners) listener(this.selection);

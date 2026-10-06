@@ -13,7 +13,6 @@ import { type ToolState } from './ToolSettings';
 
 /** The slice of the editor host the keyboard needs. */
 export interface KeyboardHostPort {
-  setTool(tool: EditorTool): void;
   dispatch(command: EditorCommand): EditorDelta | null;
   cancelGesture(): void;
 }
@@ -46,10 +45,12 @@ export function Keyboard({
   host,
   tools,
   store,
+  acceptsTarget,
 }: {
   host: KeyboardHostPort;
   tools: ToolState;
   store: SelectionStore;
+  acceptsTarget: (target: EventTarget | null) => boolean;
 }) {
   const composing = useRef(false);
 
@@ -62,14 +63,15 @@ export function Keyboard({
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       // IME composition or text-field focus: the editor never sees the key.
-      if (composing.current || event.isComposing || isTextEntryTarget(event.target)) return;
+      if (composing.current || event.isComposing || isTextEntryTarget(event.target) || !acceptsTarget(event.target)) return;
       const accelerator = event.ctrlKey || event.metaKey;
       if (event.key === 'Escape') {
         host.cancelGesture();
         return;
       }
       if (event.code === 'Space') {
-        // Space never scrolls the workbench page; it holds a temporary pan.
+        // Native controls retain Space activation; only the editor surface pans.
+        if (event.target instanceof Element && event.target.closest('button, a[href], summary, input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="switch"], [role="slider"], [role="tab"]')) return;
         event.preventDefault();
         if (!event.repeat) tools.beginSpacePan();
         return;
@@ -131,7 +133,7 @@ export function Keyboard({
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [host, tools, store]);
+  }, [host, tools, store, acceptsTarget]);
 
   return null;
 }
