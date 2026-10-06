@@ -405,7 +405,7 @@ async function run(file, diagnostic) {
       diagnostic.authorization = 'explicit_run_authorization';
       diagnostic.model_runs_started = started;
       diagnostic.outbound_model_calls = external ? null : 0;
-      const row = { sample: sample.kind, source_sha256: sample.source_sha256, canonical_sha256: asset.canonical_sha256, input_fingerprint: preview.request.context.input_fingerprint, run_id: queued.run_id, actual_provider: null, full_model_id: null, auth_kind: null, runtime_version: null, response_id: null, receipt: null, receipts: [], terminal: null, human_visual_review: null, accept_save: null, undo_save: null };
+      const row = { sample: sample.kind, source_sha256: sample.source_sha256, canonical_sha256: asset.canonical_sha256, input_fingerprint: preview.request.context.input_fingerprint, run_id: queued.run_id, actual_provider: null, full_model_id: null, auth_kind: null, runtime_version: null, response_id: null, receipt: null, receipts: [], terminal: null, human_visual_review: null, accept_save: null, undo_save: null, execution_configuration_hash: preview.execution_configuration_hash };
       evidence.samples.push(row);
       await observeRun(request, queued.run_id, row);
       if (row.receipt) evidence.identity_receipt = 'observed_from_persisted_run_event';
@@ -481,7 +481,7 @@ async function run(file, diagnostic) {
         const cancelResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/ai/runs/${queued.run_id}/cancel`);
         await page.getByTestId('ai-cancel').click();
         const cancelledHttp = await cancelResponse;
-        const cancellation = { run_id: queued.run_id, cancel_http_status: cancelledHttp.status(), terminal: null, remote_billing: external ? 'may_have_cost_unknown' : 'local_only', receipts: [] };
+        const cancellation = { run_id: queued.run_id, cancel_http_status: cancelledHttp.status(), terminal: null, remote_billing: external ? 'may_have_cost_unknown' : 'local_only', receipts: [], execution_configuration_hash: preview.execution_configuration_hash };
         evidence.error_paths.cancel = cancellation;
         await observeRun(request, queued.run_id, cancellation);
         if (cancellation.terminal !== 'cancelled') fail('REAL_CANCEL_DID_NOT_CANCEL');
