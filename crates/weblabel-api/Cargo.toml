@@ -21,7 +21,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 axum = { version = "=0.8.6", features = ["multipart"] }
 argon2 = { version = "=0.5.3", features = ["std"] }
 rand = { version = "=0.8.5", features = ["getrandom"] }
-serde_json = "=1.0.147"
+serde_json = { version = "=1.0.147", features = ["float_roundtrip"] }
 sha2 = "=0.10.9"
 sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 thiserror = "=2.0.17"

@@ -8,6 +8,8 @@
 
 所有时间为 UTC RFC3339。所有 generation/revision_no/seq 为非负安全整数（≤2^53-1）。禁止 NaN/Infinity 和未知 geometry discriminant。服务端返回 ApiError，UI 根据 code 分支，不解析 message。
 
+Rust JSON入口与落盘读取使用正确舍入的f64解析（serde_json启用float_roundtrip）；合法分数坐标的最短可往返JSON不能在保存/读取后漂移一位。相同未编辑对象的wire数值与AI before_hash必须保持一致；禁止坐标取整、epsilon比较或重新钉死变化后的hash掩盖解析损失。
+
 ```ts
 export type Id = string;
 export type Scalar = string | number | boolean | null;

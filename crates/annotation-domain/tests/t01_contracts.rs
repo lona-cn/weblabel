@@ -281,6 +281,28 @@ fn object_hash_uses_fixed_canonical_projection_and_is_attribute_order_independen
         .insert("helmet_state".into(), Scalar::String("wearing".into()));
     assert_ne!(baseline, object_hash(&changed));
 }
+#[test]
+fn saved_fractional_coordinates_preserve_bits_and_ai_before_hash() {
+    let (mut document, ontology) = golden();
+    for y_max in [110.000_008_813_740_99_f64, 207.999_994_711_755_42_f64] {
+        document.objects[0].geometry = BBox::new(10.0, 20.0, 110.0, y_max);
+        validate_document(&document, &ontology).unwrap();
+        let before_hash = object_hash(&document.objects[0]);
+        let wire = serde_json::to_vec(&document).unwrap();
+        let saved: AnnotationDocument = serde_json::from_slice(&wire).unwrap();
+        assert_eq!(
+            saved.objects[0].geometry.y_max.to_bits(),
+            y_max.to_bits(),
+            "save JSON must not change canonical coordinate bits"
+        );
+        assert_eq!(
+            object_hash(&saved.objects[0]),
+            before_hash,
+            "unchanged saved objects must retain the AI before_hash"
+        );
+        validate_document(&saved, &ontology).unwrap();
+    }
+}
 
 #[test]
 fn wire_integers_are_limited_to_javascript_safe_range() {
