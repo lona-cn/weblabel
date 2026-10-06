@@ -32,6 +32,8 @@ export interface RuntimeReadRegion {
 
 export interface RuntimeContext {
   run_id: Id;
+  readonly allow_image?: boolean;
+  readonly approved_image_region?: BBox | null;
   read_region(grant_id: Id, region: BBox | null): Promise<RuntimeReadRegion>;
   get_document(): Promise<AnnotationDocument>;
   get_ontology(): Promise<OntologyVersion>;
@@ -83,6 +85,22 @@ function assertProfileShape(key: string, profile: ModelProfile): void {
 
 export class ProviderRegistry {
   readonly #adapters = new Map<string, RegistryEntry>();
+
+  async resolve(profile_id: string): Promise<{ adapter: ProviderAdapter; profile: ModelProfile }> {
+    let match: { adapter: ProviderAdapter; profile: ModelProfile } | undefined;
+    for (const [key, entry] of this.#adapters) {
+      for (const profile of await entry.adapter.probe()) {
+        assertProfileShape(key, profile);
+        if (entry.mock && (profile.provider_id !== 'mock' || profile.verification !== 'mock_only')) throw new RegistryError('mock_registration_misclaim');
+        if (profile.profile_id !== profile_id) continue;
+        if (match) throw new RegistryError('ambiguous_profile');
+        match = { adapter: entry.adapter, profile };
+      }
+    }
+    if (!match) throw new RegistryError('unknown_model');
+    if (match.profile.availability !== 'ready') throw new RegistryError(match.profile.availability);
+    return match;
+  }
 
   register(key: string, adapter: ProviderAdapter, options: { mock?: boolean } = {}): void {
     if (typeof key !== 'string' || key.length === 0) {

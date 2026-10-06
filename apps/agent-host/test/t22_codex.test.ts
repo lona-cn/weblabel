@@ -681,9 +681,9 @@ it('keeps the run cwd out of the user repository and fails closed on forbidden r
 it('injects only the minimal allowlisted environment and keeps the run token out of argv', () => {
   const config = permissionsConfig();
   const plan = buildLaunchPlan(config, { run_id: 'run_t22_001', runToken: RUN_TOKEN, apiBase: 'http://127.0.0.1:48100' });
-  expect(Object.keys(plan.env).sort()).toEqual(['PATH', 'PATHEXT', 'SystemRoot', 'WEBLABEL_API_BASE', 'WEBLABEL_RUN_TOKEN']);
   expect(plan.env.MY_SECRET_TOKEN_X).toBeUndefined();
-  expect(plan.env.WEBLABEL_RUN_TOKEN).toBe(RUN_TOKEN);
+  expect(plan.env.WEBLABEL_RUN_TOKEN).toBeUndefined();
+  expect(() => buildLaunchPlan({...config, envAllowlist: ['weblabel_run_token']}, {run_id: 'run_t22_001', runToken: RUN_TOKEN, apiBase: 'http://127.0.0.1:48100'})).toThrow(/env_denied/);
   expect(JSON.stringify([plan.command.argv, plan.mcpServers[0].argv])).not.toContain(RUN_TOKEN);
   expect(plan.mcpServers[0].env.WEBLABEL_RUN_TOKEN).toBe(RUN_TOKEN);
 
@@ -1073,7 +1073,7 @@ it('spawns a real child over stdio with minimal env, token in env only and an is
   };
   expect(resolve(capture.cwd)).toBe(resolveRunCwd(config, ctx.run_id));
   expect(capture.argv.join(' ')).not.toContain(RUN_TOKEN);
-  expect(capture.env_keys).toContain('WEBLABEL_RUN_TOKEN');
+  expect(capture.env_keys).not.toContain('WEBLABEL_RUN_TOKEN');
   expect(capture.env_keys).toContain('WEBLABEL_API_BASE');
   expect(capture.env_keys).not.toContain('MY_SECRET_TOKEN_X');
   // Windows itself injects a small mandatory baseline (SystemRoot/PATH/...)
@@ -1083,7 +1083,7 @@ it('spawns a real child over stdio with minimal env, token in env only and an is
     'HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT',
     'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR',
   ];
-  const allowedKeys = ['PATH', 'PATHEXT', 'SystemRoot', 'WEBLABEL_API_BASE', 'WEBLABEL_RUN_TOKEN'];
+  const allowedKeys = ['PATH', 'PATHEXT', 'SystemRoot', 'WEBLABEL_API_BASE'];
   expect(capture.env_keys.every((key) => allowedKeys.includes(key) || platformBaseline.includes(key))).toBe(true);
   expect(JSON.stringify(events)).not.toContain(RUN_TOKEN);
   rmSync(harness, { recursive: true, force: true });

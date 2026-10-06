@@ -22,6 +22,7 @@ import { ReviewPanel } from '../review/ReviewPanel';
 import type { ReviewTask } from '../review/api';
 import { setReviewEditorLocked, submitCurrentReviewRevision } from '../review/submission';
 import { WorkbenchAi } from '../ai/WorkbenchAi';
+import { ExternalProcessingPolicy } from '../projects/ExternalProcessingPolicy';
 
 type TaskLease = { asset_revision_id: string; task_id: string; fencing_token: number };
 type Props = { projectId?: string; onProjects?: () => void; onDatasets?: () => void };
@@ -306,6 +307,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
       <span className="session-user">{session.username}</span><button type="button" className="logout-button" onClick={() => void logout()}>退出</button>
     </header>
     <header ref={workspaceHeadingRef} tabIndex={-1} className="workspace-heading"><div><p className="eyebrow">{project?.name ?? '项目'} / {activeLoaded?.media.original_name ?? '选择媒体'}</p><input className="project-name-field" data-testid="project-name" aria-label="项目名称" value={project?.name ?? ''} readOnly /></div><span className="local-state">服务端版本 · canonical 像素坐标</span></header>
+    {projectId ? <ExternalProcessingPolicy key={projectId} projectId={projectId} canManage={project?.project_id === projectId && project.role === 'admin'} /> : null}
     {error ? <p className="api-error" role="alert">{error}</p> : null}
     <section ref={importSurfaceRef} className="asset-import-bar" aria-label="项目媒体导入"><label htmlFor="media-import">导入图片</label><input ref={importRef} id="media-import" data-testid="media-import" type="file" accept="image/png,image/jpeg" multiple onChange={(event) => void importFiles(event.currentTarget.files)} />{job ? <span role="status">导入处理中…</span> : null}</section>
     <div ref={editorSurfaceRef} className="workbench-grid">

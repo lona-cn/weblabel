@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::storage::Repository;
 use serde_json::Value;
-use sqlx::Row;
+use sqlx::{Row, SqliteConnection};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -57,6 +57,49 @@ impl JobQueue {
         operation_id: &str,
         payload: &Value,
     ) -> Result<EnqueuedJob, QueueError> {
+        let payload_json = Self::prepare_enqueue_payload(kind, operation_id, payload)?;
+        let mut tx = self.repository.begin_write().await?;
+        match Self::enqueue_prepared_on(
+            tx.connection(),
+            project_id,
+            kind,
+            operation_id,
+            payload_json,
+        )
+        .await
+        {
+            Ok(job) => {
+                if job.duplicate {
+                    tx.rollback().await?;
+                } else {
+                    tx.commit().await?;
+                }
+                Ok(job)
+            }
+            Err(error) => {
+                tx.rollback().await?;
+                Err(error)
+            }
+        }
+    }
+
+    /// Caller owns BEGIN/COMMIT/ROLLBACK; job and idempotency share that transaction.
+    pub async fn enqueue_on(
+        connection: &mut SqliteConnection,
+        project_id: Option<&str>,
+        kind: &str,
+        operation_id: &str,
+        payload: &Value,
+    ) -> Result<EnqueuedJob, QueueError> {
+        let payload_json = Self::prepare_enqueue_payload(kind, operation_id, payload)?;
+        Self::enqueue_prepared_on(connection, project_id, kind, operation_id, payload_json).await
+    }
+
+    fn prepare_enqueue_payload(
+        kind: &str,
+        operation_id: &str,
+        payload: &Value,
+    ) -> Result<String, QueueError> {
         if kind.is_empty()
             || kind.len() > 64
             || operation_id.is_empty()
@@ -69,38 +112,41 @@ impl JobQueue {
         if payload_json.len() > MAX_JOB_PAYLOAD_BYTES {
             return Err(QueueError::InvalidRequest);
         }
+        Ok(payload_json)
+    }
+
+    async fn enqueue_prepared_on(
+        connection: &mut SqliteConnection,
+        project_id: Option<&str>,
+        kind: &str,
+        operation_id: &str,
+        payload_json: String,
+    ) -> Result<EnqueuedJob, QueueError> {
         let scope_id = project_id.unwrap_or("");
         let request_hash = crate::media::canonical::sha256_hex(payload_json.as_bytes());
-        let mut tx = self.repository.begin_write().await?;
         if let Some(row) = sqlx::query("SELECT job_id, request_hash FROM job_idempotency WHERE scope_id=? AND operation_id=? AND kind=?")
-            .bind(scope_id).bind(operation_id).bind(kind).fetch_optional(tx.connection()).await?
+            .bind(scope_id).bind(operation_id).bind(kind).fetch_optional(&mut *connection).await?
         {
-            let existing_hash: String = row.try_get("request_hash")?;
-            if existing_hash != request_hash {
-                tx.rollback().await?;
-                return Err(QueueError::IdempotencyConflict);
-            }
+            let existing_hash: &str = row.try_get("request_hash")?;
+            if existing_hash != request_hash { return Err(QueueError::IdempotencyConflict); }
             let job_id: String = row.try_get("job_id")?;
-            tx.rollback().await?;
             return Ok(EnqueuedJob { job_id, duplicate: true });
         }
         let pending: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running')")
-                .fetch_one(tx.connection())
+                .fetch_one(&mut *connection)
                 .await?;
         if pending >= MAX_PENDING_JOBS {
-            tx.rollback().await?;
             return Err(QueueError::QueueFull);
         }
         let job_id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         sqlx::query("INSERT INTO jobs(job_id, project_id, kind, state, payload_json, result_json, created_at, updated_at) VALUES (?, ?, ?, 'queued', ?, NULL, ?, ?)")
             .bind(&job_id).bind(project_id).bind(kind).bind(payload_json).bind(&now).bind(&now)
-            .execute(tx.connection()).await?;
+            .execute(&mut *connection).await?;
         sqlx::query("INSERT INTO job_idempotency(scope_id, operation_id, kind, job_id, request_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(scope_id).bind(operation_id).bind(kind).bind(&job_id).bind(request_hash).bind(now)
-            .execute(tx.connection()).await?;
-        tx.commit().await?;
+            .execute(&mut *connection).await?;
         Ok(EnqueuedJob {
             job_id,
             duplicate: false,

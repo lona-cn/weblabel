@@ -93,7 +93,7 @@ const PERMITTED_METHODS: readonly string[] = [
   TURN_INTERRUPT_METHOD,
 ];
 /** Plugin/module-injection vectors can never be allowlisted into the child. */
-const DENIED_ENV_NAMES: Record<string, true> = { NODE_OPTIONS: true };
+const DENIED_ENV_NAMES: Record<string, true> = { NODE_OPTIONS: true, WEBLABEL_RUN_TOKEN: true };
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -163,7 +163,6 @@ export function buildLaunchPlan(
     const value = sourceKey === undefined ? undefined : source[sourceKey];
     if (typeof value === 'string') env[name] = value;
   }
-  env[RUN_TOKEN_ENV] = runToken;
   env[API_BASE_ENV] = options.apiBase;
 
   if (PERMITTED_METHODS.some((method) => FORBIDDEN_METHODS.includes(method))) {

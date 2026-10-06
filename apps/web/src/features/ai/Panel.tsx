@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ModelProfile } from '../../../../../packages/contracts/generated/ModelProfile';
 import type { RunContext } from '../../../../../packages/contracts/generated/RunContext';
 import type { RunIntent } from '../../../../../packages/contracts/generated/RunIntent';
@@ -39,14 +39,16 @@ export function Panel({ asset_revision_id, profiles, context, ontology, getDocum
   const [prompt, setPrompt] = useState('');
   const [confirmedPreviewKey, setConfirmedPreviewKey] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const contextKey = JSON.stringify(context);
-  const [reviewContext, setReviewContext] = useState(context);
+  const contextKey = JSON.stringify([context.project_id, context.asset_revision_id, context.ontology_version_id, context.selected_object_ids, context.object_hashes]);
+  const [preview, setPreview] = useState<ConsentPreview | null>(null);
+  const preparation = useRef(0);
   const [preparingScope, setPreparingScope] = useState(false);
   useEffect(() => {
-    setReviewContext(context);
+    preparation.current += 1;
+    setPreview(null);
     setPreviewOpen(false);
     setConfirmedPreviewKey(null);
-  }, [contextKey]);
+  }, [contextKey, generation, prompt, intent, JSON.stringify(profile), JSON.stringify(ontology), JSON.stringify(grants)]);
   const controller = useRun({
     asset_revision_id, profile, context, intent, prompt, grants, obtainConsent, dispatch,
     getDocument,
@@ -56,18 +58,18 @@ export function Panel({ asset_revision_id, profiles, context, ontology, getDocum
     csrfToken,
     api,
   });
-  const preview: ConsentPreview | null = profile ? { profile, context: reviewContext, intent, prompt, grants } : null;
   const previewKey = preview === null ? null : JSON.stringify(preview);
   const consentChecked = previewKey !== null && confirmedPreviewKey === previewKey;
 
   const startRun = async () => {
+    const epoch = ++preparation.current;
     setPreparingScope(true);
     setPreviewOpen(false);
     setConfirmedPreviewKey(null);
     try {
-      const refreshed = await controller.prepareContext();
-      if (refreshed) {
-        setReviewContext(refreshed);
+      const refreshed = await controller.preparePreview();
+      if (refreshed && epoch === preparation.current) {
+        setPreview(refreshed);
         setPreviewOpen(true);
       }
     } finally {
@@ -76,7 +78,8 @@ export function Panel({ asset_revision_id, profiles, context, ontology, getDocum
   };
   const authorizeAndRun = async () => {
     if (!consentChecked || !previewKey) return;
-    await controller.run(reviewContext);
+    if (!preview) return;
+    await controller.run(preview);
     setPreviewOpen(false);
     setConfirmedPreviewKey(null);
   };

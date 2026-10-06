@@ -258,6 +258,15 @@ impl Supervisor {
         }
     }
 
+    /// Identity for independent teardown while a blocking pipe read is active.
+    pub fn reclaim_root(&self, run_id: &str) -> Option<ReclaimRoot> {
+        self.runs.get(run_id).map(|entry| ReclaimRoot {
+            root_pid: entry.host.pid(),
+            spawned_at_ms: entry.host.started_at_ms,
+            exited_at_ms: None,
+        })
+    }
+
     pub fn start_run(&mut self, run_id: &str) -> Result<(), SpawnError> {
         if self.runs.contains_key(run_id) {
             return Err(SpawnError::SpawnFailed(format!(
@@ -322,6 +331,12 @@ impl Supervisor {
             .iter()
             .filter_map(|run_id| self.cancel_run(run_id).ok())
             .collect()
+    }
+}
+
+impl Drop for Supervisor {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 

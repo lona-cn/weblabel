@@ -3,6 +3,8 @@ import type { AnnotationDocument } from '../../../../../packages/contracts/gener
 import type { ModelProfile } from '../../../../../packages/contracts/generated/ModelProfile';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 import type { RunContext } from '../../../../../packages/contracts/generated/RunContext';
+import type { AiConsentRequest } from '../../../../../packages/contracts/generated/AiConsentRequest';
+import type { AiConsentResponse } from '../../../../../packages/contracts/generated/AiConsentResponse';
 import type { EditorHost } from '../../lib/editor/EditorHost';
 import type { SaveQueue } from '../../lib/persistence/save-queue';
 import { api, csrfToken, type ApiMedia } from '../../lib/t15/api';
@@ -68,11 +70,10 @@ export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId,
     };
   };
   const obtainConsent = async (preview: ConsentPreview): Promise<string> => {
-    const result = await api.request<{ consent_id: string }>('/api/ai/consents', {
+    const result = await api.request<AiConsentResponse>('/api/ai/consents', {
       method: 'POST', body: JSON.stringify({
-        profile_id: preview.profile.profile_id, input_fingerprint: preview.context.input_fingerprint,
-        approved_grants: preview.grants,
-      }),
+        preview_id: preview.preview_id,
+      } satisfies AiConsentRequest),
     });
     return result.consent_id;
   };
@@ -84,6 +85,6 @@ export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId,
       getDocument={() => host?.getSnapshot() ?? null} getGeneration={() => host?.getGeneration() ?? null}
       dispatch={(command) => host?.dispatch(command) ?? null} saveQueue={queue}
       refreshContext={refreshContext} obtainConsent={obtainConsent} csrfToken={csrfToken()}
-      grants={{ image: true, selected_objects: true, crop: null }} /> : <p role="status">加载编辑器后可审校当前图像。</p>}
+      grants={{ allow_image: true, allow_object_context: true, preview_crop: null }} /> : <p role="status">加载编辑器后可审校当前图像。</p>}
   </section>;
 }

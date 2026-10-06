@@ -412,10 +412,10 @@ export function createClaudeLocalAdapter(options: ClaudeLocalOptions): ProviderA
           requested_model: plan.model,
           permitted_tools: plan.toolPolicy.allowed_tools,
         });
-        const grants = imageGrantIds(ctx);
-        const source = await options.imageSource(input, runId);
-        if (source.grant_id !== grants[0]) {
-          throw new ProviderError('image_grant_missing', 'the image source grant is not the run approved grant');
+        if (!("allow_image" in ctx && ctx.allow_image === false)) {
+          const grants = imageGrantIds(ctx);
+          const source = await options.imageSource(input, runId);
+          if (source.grant_id !== grants[0]) throw new ProviderError("image_grant_missing", "image source is not the approved grant");
         }
         // No pixel byte is read or staged by this adapter: image bytes reach
         // the model only through the T21 MCP read_region surface, where the

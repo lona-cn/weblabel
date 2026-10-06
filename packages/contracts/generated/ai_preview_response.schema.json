@@ -1,0 +1,338 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AiPreviewResponse",
+  "type": "object",
+  "required": [
+    "expires_at",
+    "grants",
+    "input_fingerprint",
+    "preview_id",
+    "profile",
+    "request"
+  ],
+  "properties": {
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "grants": {
+      "$ref": "#/definitions/AiApprovedGrants"
+    },
+    "input_fingerprint": {
+      "type": "string"
+    },
+    "preview_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "profile": {
+      "$ref": "#/definitions/ModelProfile"
+    },
+    "request": {
+      "$ref": "#/definitions/StartRunRequest"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "AiApprovedGrants": {
+      "type": "object",
+      "required": [
+        "allow_image",
+        "allow_object_context",
+        "preview_crop"
+      ],
+      "properties": {
+        "allow_image": {
+          "type": "boolean"
+        },
+        "allow_object_context": {
+          "type": "boolean"
+        },
+        "preview_crop": {
+          "description": "Explicit null approves the full image; omission must never broaden scope.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BBox"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "AuthKind": {
+      "type": "string",
+      "enum": [
+        "official_user_login",
+        "api_key",
+        "local_weights",
+        "none"
+      ]
+    },
+    "Availability": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "needs_login",
+        "needs_configuration",
+        "unsupported",
+        "blocked"
+      ]
+    },
+    "BBox": {
+      "type": "object",
+      "required": [
+        "type",
+        "x_max",
+        "x_min",
+        "y_max",
+        "y_min"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/definitions/BBoxType"
+        },
+        "x_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "x_min": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_min": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false
+    },
+    "BBoxType": {
+      "type": "string",
+      "enum": [
+        "bbox_xyxy"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "ModelCapabilities": {
+      "type": "object",
+      "required": [
+        "attributes",
+        "bbox_output",
+        "image_input",
+        "structured_output",
+        "tools"
+      ],
+      "properties": {
+        "attributes": {
+          "type": "boolean"
+        },
+        "bbox_output": {
+          "type": "boolean"
+        },
+        "image_input": {
+          "type": "boolean"
+        },
+        "structured_output": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ModelProfile": {
+      "type": "object",
+      "required": [
+        "auth_kind",
+        "availability",
+        "capabilities",
+        "model_id",
+        "profile_id",
+        "provider_id",
+        "runtime_version",
+        "verification",
+        "verified_at"
+      ],
+      "properties": {
+        "auth_kind": {
+          "$ref": "#/definitions/AuthKind"
+        },
+        "availability": {
+          "$ref": "#/definitions/Availability"
+        },
+        "capabilities": {
+          "$ref": "#/definitions/ModelCapabilities"
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "provider_id": {
+          "$ref": "#/definitions/ProviderId"
+        },
+        "runtime_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verification": {
+          "$ref": "#/definitions/Verification"
+        },
+        "verified_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/UtcTimestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderId": {
+      "type": "string",
+      "enum": [
+        "codex_local",
+        "claude_local",
+        "openai_api",
+        "anthropic_api",
+        "mimo_api",
+        "detector_local",
+        "mock"
+      ]
+    },
+    "RunContext": {
+      "type": "object",
+      "required": [
+        "annotation_revision_id",
+        "asset_revision_id",
+        "canonical_sha256",
+        "draft_generation",
+        "input_fingerprint",
+        "object_hashes",
+        "ontology_version_id",
+        "project_id",
+        "selected_object_ids"
+      ],
+      "properties": {
+        "annotation_revision_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "asset_revision_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "canonical_sha256": {
+          "type": "string"
+        },
+        "draft_generation": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        },
+        "input_fingerprint": {
+          "type": "string"
+        },
+        "object_hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "ontology_version_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "project_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "selected_object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Id"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunIntent": {
+      "type": "string",
+      "enum": [
+        "detect",
+        "audit_attributes",
+        "find_issues"
+      ]
+    },
+    "StartRunRequest": {
+      "type": "object",
+      "required": [
+        "consent_id",
+        "context",
+        "intent",
+        "operation_id",
+        "profile_id",
+        "prompt"
+      ],
+      "properties": {
+        "consent_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context": {
+          "$ref": "#/definitions/RunContext"
+        },
+        "intent": {
+          "$ref": "#/definitions/RunIntent"
+        },
+        "operation_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "profile_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "UtcTimestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Verification": {
+      "type": "string",
+      "enum": [
+        "not_run",
+        "mock_only",
+        "live_passed",
+        "live_failed"
+      ]
+    }
+  }
+}

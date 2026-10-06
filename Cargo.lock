@@ -2293,6 +2293,7 @@ dependencies = [
  "axum",
  "chrono",
  "dataset-formats",
+ "editor-core",
  "image",
  "kamadak-exif",
  "rand",

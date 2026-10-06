@@ -351,4 +351,8 @@ Review：批准 r8，保存 r9 后 r8 保留 approved，r9=pending/unsubmitted�
 
 ## T25 服务端授权契约决定
 
-冻结预览、10分钟有效期、实际scope、服务端配置版本指纹与授权/job/run同事务，按[ADR 0002](adr/0002-server-owned-ai-authorization.md)实施；该决定不是实现或live支持已验收的声明。公共StartRunRequest保持原DTO，权威fingerprint由server preview返回；私有profile配置不回传浏览器。
+冻结预览、实际scope、服务端配置版本指纹与授权/job/run同事务，按[ADR 0002](adr/0002-server-owned-ai-authorization.md)实施。预览/consent的10分钟是新START窗口；成功START另持久化独立10分钟run capability deadline，旧NULL记录拒绝执行。公共StartRunRequest保持原DTO，权威fingerprint由server preview返回；私有profile配置不回传浏览器，只由服务端经Host私有输入传递。
+
+授权HTTP公共DTO由annotation-domain::ai_authorization定义并通过xtask生成TS/JSON Schema：AiApprovedGrants、AiPreviewRequest/Response、AiConsentRequest/Response、ExternalProcessingPolicy。AiApprovedGrants.preview_crop必填且可null：显式null允许完整图像，缺省不能静默扩大为全图；所有请求拒绝未知字段。POST /api/ai/previews返回服务端冻结请求，POST /api/ai/consents只接收{preview_id}，不得再提交客户端自签fingerprint/grants。GET/PUT项目external-processing-policy使用实际membership，只有项目admin可PUT，默认false且UI先保存确认才生效。
+
+工程Mock G2只证明标注命令/持久化链路，不证明真实模型、账号或G4质量。Codex生产保持UNSUPPORTED_RUNTIME，直至固定官方版本的内建工具排除与文件读取边界实证通过；launch-plan元数据与read-only sandbox本身不足以解除拒绝。

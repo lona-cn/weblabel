@@ -98,6 +98,84 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(address = %config.bind, "WebLabel API listening");
     let queue = weblabel_api::jobs::queue::JobQueue::new(state.repository.clone());
     let repository = state.repository.clone();
+    let production_runner = match env::var_os("WEBLABEL_HOST_EXECUTABLE") {
+        None => {
+            weblabel_api::jobs::model_jobs::ProductionRunner::unconfigured(state.run_tokens.clone())
+        }
+        Some(executable) => {
+            let executable = PathBuf::from(executable);
+            let cwd = PathBuf::from(env::var("WEBLABEL_HOST_CWD")?);
+            let config_path = PathBuf::from(env::var("WEBLABEL_HOST_CONFIG")?);
+            let script = PathBuf::from(env::var("WEBLABEL_HOST_SCRIPT")?);
+            if !config_path.is_absolute()
+                || !script.is_absolute()
+                || !config_path.is_file()
+                || !script.is_file()
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "private host config and script must be existing absolute files",
+                )
+                .into());
+            }
+            let mut allowed_env = vec![
+                "WEBLABEL_HOST_CONFIG".to_owned(),
+                "WEBLABEL_RUN_TOKEN".to_owned(),
+            ];
+            allowed_env
+                .extend(["SystemRoot", "SystemDrive", "TEMP", "TMP", "WINDIR"].map(str::to_owned));
+            allowed_env.extend(
+                env::var("WEBLABEL_HOST_ALLOWED_ENV")
+                    .unwrap_or_default()
+                    .split(',')
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_owned),
+            );
+            let source_env = allowed_env
+                .iter()
+                .filter_map(|key| env::var(key).ok().map(|value| (key.clone(), value)))
+                .collect();
+            let extra_env = [(
+                "WEBLABEL_HOST_CONFIG".to_owned(),
+                config_path.to_string_lossy().into_owned(),
+            )]
+            .into_iter()
+            .collect();
+            let host = weblabel_api::runtime::host::HostConfig {
+                trusted_executable_roots: vec![executable
+                    .parent()
+                    .ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "host executable requires trusted parent",
+                        )
+                    })?
+                    .to_path_buf()],
+                trusted_cwd_roots: vec![cwd.clone()],
+                executable,
+                argv: vec![script.to_string_lossy().into_owned()],
+                cwd,
+                allowed_env,
+                source_env,
+                extra_env,
+            };
+            weblabel_api::jobs::model_jobs::ProductionRunner::new(
+                host,
+                state.run_tokens.clone(),
+                Duration::from_secs(120),
+            )
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error.code))?
+        }
+    };
+    let model_runner = ServiceRunner {
+        production: production_runner,
+        mock: (!config.production).then(weblabel_api::jobs::model_jobs::MockRunner::standard),
+    };
+    // Debug integration fixtures explicitly own manual drains; release ignores this switch.
+    let manual_model_worker = cfg!(debug_assertions)
+        && env::var("WEBLABEL_TEST_MANUAL_MODEL_WORKER").as_deref() == Ok("1");
+    let model_queue = queue.clone();
+    let model_repository = repository.clone();
     let (shutdown_tx, _) = tokio::sync::watch::channel(false);
     let mut worker_shutdown = shutdown_tx.subscribe();
     let export_worker = tokio::spawn(async move {
@@ -122,6 +200,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    let mut model_shutdown = shutdown_tx.subscribe();
+    let model_worker = tokio::spawn(async move {
+        if manual_model_worker {
+            let _ = model_shutdown.changed().await;
+            return;
+        }
+        loop {
+            if *model_shutdown.borrow() {
+                break;
+            }
+            tokio::select! {
+                changed = model_shutdown.changed() => { if changed.is_err() || *model_shutdown.borrow() { break; } }
+                result = weblabel_api::jobs::model_jobs::process_model_next(&model_repository, &model_queue, "model-worker", Duration::from_secs(300), &model_runner) => {
+                    match result {
+                        Ok(Some(_)) => {}
+                        Ok(None) => tokio::time::sleep(Duration::from_millis(500)).await,
+                        Err(error) => { tracing::error!(%error, "model worker failed"); tokio::time::sleep(Duration::from_secs(2)).await; }
+                    }
+                }
+            }
+        }
+    });
     let serving = axum::serve(listener, router(state)).with_graceful_shutdown(async {
         let _ = tokio::signal::ctrl_c().await;
     });
@@ -129,6 +229,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = shutdown_tx.send(true);
     if let Err(error) = export_worker.await {
         tracing::error!(%error, "dataset export worker did not stop cleanly");
+    }
+    if let Err(error) = model_worker.await {
+        tracing::error!(%error, "model worker did not stop cleanly");
     }
     server_result?;
     Ok(())
@@ -139,4 +242,33 @@ fn unix_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+// Engineering mocks are an explicit development channel, never a real-provider fallback.
+struct ServiceRunner {
+    production: weblabel_api::jobs::model_jobs::ProductionRunner,
+    mock: Option<weblabel_api::jobs::model_jobs::MockRunner>,
+}
+impl weblabel_api::jobs::model_jobs::RunRunner for ServiceRunner {
+    fn execute<'a>(
+        &'a self,
+        driver: &'a weblabel_api::jobs::model_jobs::RunDriver,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        weblabel_api::jobs::model_jobs::RunOutcome,
+                        weblabel_api::jobs::model_jobs::RunnerError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
+        if driver.profile().provider_id == annotation_domain::ProviderId::Mock {
+            if let Some(mock) = &self.mock {
+                return mock.execute(driver);
+            }
+        }
+        self.production.execute(driver)
+    }
 }

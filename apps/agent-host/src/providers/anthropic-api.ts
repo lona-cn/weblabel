@@ -309,12 +309,12 @@ export function createAnthropicApiAdapter(config: AnthropicApiAdapterConfig): Pr
         const document = await ctx.get_document();
         const ontology = await ctx.get_ontology();
         const domain: CandidateDomainContext = { intent: input.intent, bbox_output: capabilities.bbox_output, document, ontology };
-        const grantIds = imageGrantIds(ctx);
+        const grantIds = "allow_image" in ctx && ctx.allow_image === false ? [] : imageGrantIds(ctx);
         const imageBudget: ImageBudget = { max_bytes: budgets.max_image_bytes, max_pixels: budgets.max_pixels, pixels_used: 0 };
 
         const messages: Record<string, unknown>[] = [];
         const firstContent: Record<string, unknown>[] = [{ type: 'text', text: input.prompt }];
-        for (const request of planImageInputs(input, document, budgets.max_crops)) {
+        for (const request of planImageInputs(input, document, budgets.max_crops, ctx)) {
           const image = prepareImage(await ctx.read_region(grantIds[0], request.region), request, imageBudget);
           imageBudget.pixels_used += image.pixel_count;
           firstContent.push(imageBlock(image));

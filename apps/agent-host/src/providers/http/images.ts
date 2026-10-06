@@ -23,6 +23,8 @@ import { ProviderError } from './errors';
  */
 export interface ImageGrantContext {
   readonly approved_grant_ids: readonly Id[];
+  readonly allow_image?: boolean;
+  readonly approved_image_region?: BBox | null;
 }
 
 const MAX_GRANT_ID_LENGTH = 128;
@@ -59,7 +61,9 @@ export interface ImageInputRequest {
   object_id: Id | null;
 }
 
-export function planImageInputs(input: StartRunRequest, document: AnnotationDocument, max_crops: number): ImageInputRequest[] {
+export function planImageInputs(input: StartRunRequest, document: AnnotationDocument, max_crops: number, scope?: { allow_image?: boolean; approved_image_region?: BBox | null }): ImageInputRequest[] {
+  if (scope?.allow_image === false) return [];
+  if (scope?.approved_image_region) return [{ kind: "crop", region: scope.approved_image_region, object_id: null }];
   const requests: ImageInputRequest[] = [{ kind: 'full', region: null, object_id: null }];
   let crops = 0;
   for (const object_id of input.context.selected_object_ids) {

@@ -52,6 +52,7 @@ struct Fixture {
     project_id: String,
     ontology_id: String,
     assets: Vec<AssetRef>,
+    authorizations: std::sync::Mutex<BTreeMap<String, Value>>,
 }
 
 impl Fixture {
@@ -93,8 +94,34 @@ impl Fixture {
     }
 
     async fn create_run(&self, operation_id: &str, prompt: &str) -> (StatusCode, Value) {
-        let body = self.start_run_body(operation_id, prompt, self.asset());
+        let body = self
+            .authorize(self.start_run_body(operation_id, prompt, self.asset()))
+            .await;
         self.request("POST", "/api/ai/runs", Some(body)).await
+    }
+
+    async fn authorize(&self, body: Value) -> Value {
+        let key = body.to_string();
+        if let Some(fixed) = self.authorizations.lock().unwrap().get(&key).cloned() {
+            return fixed;
+        }
+        let (status,preview)=self.request("POST","/api/ai/previews",Some(json!({"request":body,"grants":{"allow_image":true,"allow_object_context":true,"preview_crop":null}}))).await;
+        assert_eq!(status, StatusCode::CREATED, "{preview}");
+        let (status, consent) = self
+            .request(
+                "POST",
+                "/api/ai/consents",
+                Some(json!({"preview_id":preview["preview_id"]})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{consent}");
+        let mut body = preview["request"].clone();
+        body["consent_id"] = consent["consent_id"].clone();
+        self.authorizations
+            .lock()
+            .unwrap()
+            .insert(key, body.clone());
+        body
     }
 
     async fn db_scalar(&self, sql: &str, binds: &[&str]) -> i64 {
@@ -299,6 +326,11 @@ async fn fixture_with_assets(asset_count: usize) -> Fixture {
         .unwrap();
     let app = router(state.clone());
     let (cookie, csrf, user_id) = bootstrap_cookie(&app).await;
+    let profile = runs::mock_profile();
+    let mut tx = state.repository.begin_write().await.unwrap();
+    sqlx::query("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES(?,'mock',?,'none',?,'ready','mock_only',?,NULL,'{}',NULL,'2026-10-06T00:00:00Z')")
+        .bind(&*profile.profile_id).bind(&profile.model_id).bind(serde_json::to_string(&profile.capabilities).unwrap()).bind(&profile.runtime_version).execute(tx.connection()).await.unwrap();
+    tx.commit().await.unwrap();
 
     let (status, project) = send(
         &app,
@@ -315,6 +347,13 @@ async fn fixture_with_assets(asset_count: usize) -> Fixture {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{project}");
     let project_id = project["project_id"].as_str().unwrap().to_owned();
+    let mut tx = state.repository.begin_write().await.unwrap();
+    sqlx::query("UPDATE projects SET allow_external_processing=1 WHERE project_id=?")
+        .bind(&project_id)
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
     let (status, ontology) = send(
         &app,
         "POST",
@@ -385,6 +424,7 @@ async fn fixture_with_assets(asset_count: usize) -> Fixture {
         project_id,
         ontology_id,
         assets,
+        authorizations: std::sync::Mutex::new(BTreeMap::new()),
     }
 }
 
@@ -502,6 +542,11 @@ async fn start_run_pins_profile_snapshot_and_input_hash() {
         "prompt": "detect persons",
         "consent_id": null
     });
+    let body = fixture.authorize(body).await;
+    let fixed_fingerprint = body["context"]["input_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let (status, created) = fixture.request("POST", "/api/ai/runs", Some(body)).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{created}");
     assert_eq!(created["source"], "provider");
@@ -534,7 +579,7 @@ async fn start_run_pins_profile_snapshot_and_input_hash() {
         )
         .await
         .unwrap();
-    assert_eq!(fingerprint, "t17-fingerprint-pinned");
+    assert_eq!(fingerprint, fixed_fingerprint);
     let request_hash = fixture
         .db_text(
             "SELECT request_hash FROM model_runs WHERE run_id=?",
@@ -1014,6 +1059,7 @@ async fn restart_recovery_marks_running_runs_interrupted_and_never_resends() {
         project_id: _,
         ontology_id: _,
         assets: _,
+        authorizations: _,
     } = fixture;
     drop(app);
     drop(repository);
@@ -1148,7 +1194,7 @@ async fn single_asset_failure_keeps_successful_batch_items() {
         let mut body =
             fixture.start_run_body("t17-op-batch", &format!("batch item {index}"), asset);
         body["operation_id"] = json!("t17-op-batch");
-        requests.push(body);
+        requests.push(fixture.authorize(body).await);
     }
     let queue = JobQueue::new(fixture.repository.clone());
     let parsed: Vec<annotation_domain::StartRunRequest> = requests
@@ -1603,7 +1649,11 @@ async fn mock_sources_are_labeled_and_never_available_in_production() {
         fixture.start_run_body("t17-op-mock-stored", "stored mock row", fixture.asset());
     stored_body["profile_id"] = json!("profile-mock-stored");
     let (status, stored) = fixture
-        .request("POST", "/api/ai/runs", Some(stored_body))
+        .request(
+            "POST",
+            "/api/ai/runs",
+            Some(fixture.authorize(stored_body).await),
+        )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{stored}");
     assert_eq!(stored["source"], "mock");
@@ -1934,6 +1984,7 @@ async fn restart_recovery_concludes_runs_of_a_crashed_claimed_job() {
         project_id: _,
         ontology_id: _,
         assets: _,
+        authorizations: _,
     } = fixture;
     drop(app);
     drop(repository);
@@ -2049,7 +2100,11 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
         "consent_id": null
     });
     let (status, created) = fixture
-        .request("POST", "/api/ai/runs", Some(create_body))
+        .request(
+            "POST",
+            "/api/ai/runs",
+            Some(fixture.authorize(create_body).await),
+        )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{created}");
     let run_id = created["run_id"].as_str().unwrap().to_owned();
@@ -2106,7 +2161,33 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
         0
     );
 
-    // The same profile must not produce attribute changes either.
+    // Pin an existing object before authorizing this run, so an otherwise
+    // valid attribute proposal reaches the profile capability gate.
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let mut document: annotation_domain::AnnotationDocument = serde_json::from_str(
+        &sqlx::query_scalar::<_, String>(
+            "SELECT body_json FROM annotation_revisions WHERE annotation_revision_id=?",
+        )
+        .bind(&asset.annotation_revision_id)
+        .fetch_one(tx.connection())
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    let object:annotation_domain::AnnotationObject=serde_json::from_value(json!({"object_id":"cap-object-1","label_id":"label_person","geometry":{"type":"bbox_xyxy","x_min":0,"y_min":0,"x_max":1,"y_max":1},"attributes":{"helmet_state":"unknown"},"origin":{"type":"manual","prediction_id":null,"model_run_id":null,"import_batch_id":null}})).unwrap();
+    let pinned_hash = annotation_domain::object_hash(&object);
+    document.objects.push(object);
+    let serialized = annotation_domain::hash::serialize_document(&document).unwrap();
+    sqlx::query(
+        "UPDATE annotation_revisions SET body_json=?,content_hash=? WHERE annotation_revision_id=?",
+    )
+    .bind(serialized.json)
+    .bind(serialized.content_hash)
+    .bind(&asset.annotation_revision_id)
+    .execute(tx.connection())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
     let audit_body = json!({
         "operation_id": "t17-op-cap-audit",
         "profile_id": "profile-vlm-1",
@@ -2118,7 +2199,7 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
             "draft_generation": 0,
             "canonical_sha256": asset.canonical_sha256,
             "selected_object_ids": [],
-            "object_hashes": {},
+            "object_hashes": {"cap-object-1": pinned_hash},
             "input_fingerprint": "t17-cap-audit-fingerprint"
         },
         "intent": "audit_attributes",
@@ -2126,7 +2207,11 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
         "consent_id": null
     });
     let (status, created) = fixture
-        .request("POST", "/api/ai/runs", Some(audit_body))
+        .request(
+            "POST",
+            "/api/ai/runs",
+            Some(fixture.authorize(audit_body).await),
+        )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{created}");
     let audit_id = created["run_id"].as_str().unwrap().to_owned();
@@ -2139,7 +2224,7 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
                 "change_id": "cap-change-2",
                 "object_id": "cap-object-1",
                 "values": {"helmet_state": "wearing"},
-                "before_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                "before_hash": pinned_hash,
                 "reason": "a profile without attribute output must not edit attributes"
             }],
             "issues": [],

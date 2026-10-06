@@ -1,3 +1,4 @@
+mod external_processing;
 mod ontology;
 mod users;
 
@@ -13,8 +14,9 @@ use serde_json::{json, Value};
 use sqlx::Row;
 
 use crate::auth::{error, AuthState, Principal, Role};
+use crate::storage::Repository;
 
-pub fn router(state: AuthState) -> Router {
+pub fn router(state: AuthState, repository: Repository) -> Router {
     Router::new()
         .route(
             "/api/users",
@@ -34,7 +36,8 @@ pub fn router(state: AuthState) -> Router {
             state.clone(),
             crate::auth::csrf_and_origin,
         ))
-        .with_state(state)
+        .with_state(state.clone())
+        .merge(external_processing::router(state, repository))
 }
 
 async fn list_projects(
@@ -134,8 +137,28 @@ async fn add_member(
             "role is invalid",
         );
     };
-    match project_role(&state, &principal.user_id, &project_id).await {
-        Ok(Some(Role::Admin)) => {}
+    // Acquire SQLite's writer lock before reading the administrator's role.
+    // Authorization, target existence and the membership/cancellation writes
+    // must observe one serialized transaction, not a stale WAL read snapshot.
+    let mut tx = match state.pool.begin_with("BEGIN IMMEDIATE").await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "MEMBERSHIP_FAILED",
+                "Could not update membership",
+            )
+        }
+    };
+    let actor_role = sqlx::query_scalar::<_, String>(
+        "SELECT role FROM memberships WHERE user_id=? AND project_id=?",
+    )
+    .bind(&principal.user_id)
+    .bind(&project_id)
+    .fetch_optional(&mut *tx)
+    .await;
+    match actor_role {
+        Ok(Some(value)) if Role::parse(&value) == Some(Role::Admin) => {}
         Ok(Some(_)) => {
             return error(
                 StatusCode::FORBIDDEN,
@@ -158,9 +181,13 @@ async fn add_member(
             )
         }
     }
-    match user_exists(&state, user_id).await {
-        Ok(true) => {}
-        Ok(false) => return error(StatusCode::NOT_FOUND, "USER_NOT_FOUND", "User not found"),
+    match sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM users WHERE user_id=?)")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await
+    {
+        Ok(1) => {}
+        Ok(_) => return error(StatusCode::NOT_FOUND, "USER_NOT_FOUND", "User not found"),
         Err(_) => {
             return error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -169,10 +196,28 @@ async fn add_member(
             )
         }
     }
-    match sqlx::query("INSERT INTO memberships(project_id,user_id,role) VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role")
-        .bind(&project_id).bind(user_id).bind(role.as_str()).execute(&state.pool).await {
-        Ok(_) => (StatusCode::OK, Json(json!({"project_id": project_id, "user_id": user_id, "role": role.as_str()}))).into_response(),
-        Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "MEMBERSHIP_FAILED", "Could not update membership"),
+    let result = async {
+        sqlx::query("INSERT INTO memberships(project_id,user_id,role) VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role")
+            .bind(&project_id).bind(user_id).bind(role.as_str()).execute(&mut *tx).await?;
+        // A silent provider need not call another tool: cancel in the same
+        // transaction that removes its actor's permission to execute a run.
+        if !role.can_write() {
+            sqlx::query("UPDATE model_runs SET cancel_requested=1 WHERE project_id=? AND actor_id=? AND state IN ('queued','running')")
+                .bind(&project_id).bind(user_id).execute(&mut *tx).await?;
+        }
+        tx.commit().await
+    }.await;
+    match result {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({"project_id": project_id, "user_id": user_id, "role": role.as_str()})),
+        )
+            .into_response(),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "MEMBERSHIP_FAILED",
+            "Could not update membership",
+        ),
     }
 }
 
@@ -188,15 +233,6 @@ pub(crate) async fn project_role(
         .await?;
     Ok(row.and_then(|r| Role::parse(&r.get::<String, _>("role"))))
 }
-pub(crate) async fn user_exists(state: &AuthState, user_id: &str) -> Result<bool, sqlx::Error> {
-    let (exists,) =
-        sqlx::query_as::<_, (i64,)>("SELECT EXISTS(SELECT 1 FROM users WHERE user_id=?)")
-            .bind(user_id)
-            .fetch_one(&state.pool)
-            .await?;
-    Ok(exists == 1)
-}
-
 pub(crate) fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }

@@ -102,6 +102,7 @@ const MAX_TOOL_NAME_LENGTH = 128;
 /** Plugin/module-injection vectors can never be allowlisted into the child. */
 const DENIED_ENV_NAMES: Record<string, true> = {
   NODE_OPTIONS: true,
+  WEBLABEL_RUN_TOKEN: true,
   // Credential channels: this profile is the user's official subscription
   // login. Letting an API key or OAuth token into the child would silently
   // switch billing and could disguise an API call as a subscription run.
@@ -275,7 +276,6 @@ export function resolveRunCwd(config: ClaudePermissionsConfig, run_id: string): 
 
 function buildEnv(
   config: ClaudePermissionsConfig,
-  runToken: string,
   apiBase: string,
 ): Record<string, string> {
   const source = config.source_env ?? process.env;
@@ -291,7 +291,6 @@ function buildEnv(
     const value = sourceKey === undefined ? undefined : source[sourceKey];
     if (typeof value === 'string') env[name] = value;
   }
-  if (runToken.length > 0) env[RUN_TOKEN_ENV] = runToken;
   env[API_BASE_ENV] = apiBase;
   return env;
 }
@@ -341,7 +340,7 @@ export function buildClaudeLaunchPlan(
   assertCommandSpec(config.mcpCommand, 'mcp_command', runToken);
 
   const apiBase = config.apiBase ?? DEFAULT_API_BASE;
-  const env = buildEnv(config, runToken, apiBase);
+  const env = buildEnv(config, apiBase);
   const sessionId = config.sessionId ?? randomUUID();
   if (!SESSION_ID.test(sessionId)) {
     throw rejected('session_id_invalid', 'the run session id must be a UUID');
@@ -419,7 +418,7 @@ export function buildVersionProbePlan(
   return {
     command: { executable: config.command.executable, argv: [...config.command.argv, '--version'] },
     cwd,
-    env: buildEnv(config, '', config.apiBase ?? DEFAULT_API_BASE),
+    env: buildEnv(config, config.apiBase ?? DEFAULT_API_BASE),
     mcpServers: [],
     mcpConfigPath: null,
     toolPolicy: validateClaudeToolPolicy({ allowed_tools: PERMITTED_TOOLS }),

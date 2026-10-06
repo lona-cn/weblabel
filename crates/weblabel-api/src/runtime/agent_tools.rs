@@ -30,7 +30,7 @@ use annotation_domain::{
     RunContext,
 };
 
-use crate::ai::{predictions, runs};
+use crate::ai::{consent, predictions, runs};
 use crate::media::ingest;
 use crate::storage::Repository;
 
@@ -200,6 +200,10 @@ struct ReadRegionArgs {
 #[serde(deny_unknown_fields)]
 struct ProposeChangesArgs {
     changes: Vec<Change>,
+    #[serde(default)]
+    issues: Vec<QualityIssue>,
+    #[serde(default)]
+    score: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -222,9 +226,15 @@ struct RunFacts {
     labels: Vec<LabelDef>,
     guidelines_markdown: String,
     objects: BTreeMap<String, AnnotationObject>,
+    grants: annotation_domain::AiApprovedGrants,
+    ontology: OntologyVersion,
 }
 
-async fn load_facts(repository: &Repository, grant: &RunTokenGrant) -> Result<RunFacts, Response> {
+async fn load_facts(
+    repository: &Repository,
+    grant: &RunTokenGrant,
+    submission: bool,
+) -> Result<RunFacts, Response> {
     let mut tx = repository.begin_write().await.map_err(|_| {
         simple_error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -260,6 +270,14 @@ async fn load_facts(repository: &Repository, grant: &RunTokenGrant) -> Result<Ru
     ) {
         return Err(token_error(TokenError::Revoked));
     }
+    let authorization = if submission {
+        consent::authorize_submission(tx.connection(), &record).await
+    } else {
+        consent::authorize_run(tx.connection(), &record).await
+    };
+    let grants = authorization
+        .map_err(|failure| simple_error(failure.status, failure.code, &failure.message))?;
+
     let context = record.context().map_err(|_| {
         simple_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -353,7 +371,12 @@ async fn load_facts(repository: &Repository, grant: &RunTokenGrant) -> Result<Ru
 
     let mut objects = BTreeMap::new();
     for object in document.objects {
-        objects.insert((*object.object_id).to_owned(), object);
+        if grants.allow_object_context
+            && (context.selected_object_ids.is_empty()
+                || context.selected_object_ids.contains(&object.object_id))
+        {
+            objects.insert((*object.object_id).to_owned(), object);
+        }
     }
     Ok(RunFacts {
         record,
@@ -362,8 +385,11 @@ async fn load_facts(repository: &Repository, grant: &RunTokenGrant) -> Result<Ru
         width: u32::try_from(width).unwrap_or(1),
         height: u32::try_from(height).unwrap_or(1),
         original_to_canonical,
-        labels: ontology.labels,
-        guidelines_markdown: ontology.guidelines_markdown,
+        labels: ontology.labels.clone(),
+        guidelines_markdown: ontology.guidelines_markdown.clone(),
+        ontology,
+
+        grants,
         objects,
     })
 }
@@ -415,7 +441,13 @@ async fn invoke_tool(
         Ok(grant) => grant,
         Err(error) => return token_error(error),
     };
-    let facts = match load_facts(&state.repository, &grant).await {
+    let facts = match load_facts(
+        &state.repository,
+        &grant,
+        matches!(tool.as_str(), "propose_changes" | "report_issues"),
+    )
+    .await
+    {
         Ok(facts) => facts,
         Err(response) => return response,
     };
@@ -450,12 +482,26 @@ fn get_context(facts: &RunFacts, arguments: &Value) -> Response {
         .chars()
         .take(MAX_GUIDELINES_CHARS)
         .collect();
+    let mut visible_context = facts.context.clone();
+    if !facts.grants.allow_object_context {
+        visible_context.selected_object_ids.clear();
+        visible_context.object_hashes.clear();
+    } else if !visible_context.selected_object_ids.is_empty() {
+        visible_context
+            .object_hashes
+            .retain(|id, _| visible_context.selected_object_ids.contains(id));
+    }
     Json(json!({
         "run_id": facts.record.run_id,
         "project_id": facts.record.project_id,
         "intent": facts.record.intent,
+
         "prompt": facts.record.prompt,
-        "context": facts.context,
+        "context": visible_context,
+        "approved_grant_ids": if facts.grants.allow_image {vec![format!("image:{}",facts.record.run_id)]} else {vec![]},
+        "approved_image_region": facts.grants.preview_crop,
+        "allow_image": facts.grants.allow_image,
+        "allow_object_context": facts.grants.allow_object_context,
         "media": {
             "canonical_sha256": facts.context.canonical_sha256,
             "width": facts.width,
@@ -464,6 +510,9 @@ fn get_context(facts: &RunFacts, arguments: &Value) -> Response {
         },
         "ontology": {
             "ontology_version_id": facts.context.ontology_version_id,
+            "project_id": facts.ontology.project_id,
+            "version_no": facts.ontology.version_no,
+            "allow_out_of_bounds": facts.ontology.allow_out_of_bounds,
             "guidelines_markdown": guidelines,
             "guidelines_truncated": guidelines_truncated,
             "labels": facts.labels.iter().take(MAX_LABELS).collect::<Vec<_>>(),
@@ -478,6 +527,13 @@ fn get_context(facts: &RunFacts, arguments: &Value) -> Response {
 // ---------------------------------------------------------------------------
 
 fn list_objects(facts: &RunFacts, arguments: &Value) -> Response {
+    if !facts.grants.allow_object_context {
+        return simple_error(
+            StatusCode::FORBIDDEN,
+            "OBJECT_CONTEXT_NOT_APPROVED",
+            "Object context was not approved",
+        );
+    }
     // The advertised schema types limit as integer 1..100: an explicit null is
     // out of that domain even though an absent key falls back to 50.
     if arguments.get("limit") == Some(&Value::Null) {
@@ -542,6 +598,7 @@ fn list_objects(facts: &RunFacts, arguments: &Value) -> Response {
                 .cloned()
                 .unwrap_or_else(|| annotation_domain::object_hash(object));
             json!({
+                "object": object,
                 "object_id": object_id,
                 "label_id": object.label_id,
                 "bbox": object.geometry,
@@ -609,6 +666,34 @@ async fn read_region(
         Err(error) => return invalid_arguments(error),
     };
 
+    if !facts.grants.allow_image {
+        return simple_error(
+            StatusCode::FORBIDDEN,
+            "IMAGE_NOT_APPROVED",
+            "Image access was not approved",
+        );
+    }
+    if let Some(approved) = &facts.grants.preview_crop {
+        let Some(region) = &args.region else {
+            return simple_error(
+                StatusCode::FORBIDDEN,
+                "REGION_NOT_APPROVED",
+                "Full image access was not approved",
+            );
+        };
+        // Enforce actual encoded pixel footprint, not merely floating point input.
+        if region.x_min.floor() < approved.x_min
+            || region.y_min.floor() < approved.y_min
+            || region.x_max.ceil() > approved.x_max
+            || region.y_max.ceil() > approved.y_max
+        {
+            return simple_error(
+                StatusCode::FORBIDDEN,
+                "REGION_NOT_APPROVED",
+                "Requested pixels exceed the approved ROI",
+            );
+        }
+    }
     let canonical_png = match ingest::load_canonical_png(
         &state.repository,
         &facts.record.project_id,
@@ -726,21 +811,21 @@ async fn submit_candidates(
                 Ok(args) => args,
                 Err(error) => return invalid_arguments(error),
             };
-            if args.changes.is_empty() {
+            if args.changes.is_empty() && args.issues.is_empty() {
                 return simple_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "EMPTY_SUBMISSION",
                     "changes must contain at least one candidate",
                 );
             }
-            if args.changes.len() > MAX_CHANGES {
+            if args.changes.len() > MAX_CHANGES || args.issues.len() > MAX_ISSUES {
                 return simple_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "TOO_MANY_CHANGES",
                     "a suggestion set may contain at most 1000 changes",
                 );
             }
-            json!({ "changes": args.changes, "issues": [], "score": null })
+            json!({ "changes": args.changes, "issues": args.issues, "score": args.score })
         }
         CandidateKind::Issues => {
             let args: ReportIssuesArgs = match serde_json::from_value(arguments.clone()) {
@@ -783,6 +868,17 @@ async fn submit_candidates(
         Ok(tx) => tx,
         Err(_) => return storage_unavailable(),
     };
+    let live = match runs::load_record(tx.connection(), &facts.record.run_id).await {
+        Ok(Some(record)) => record,
+        _ => return storage_unavailable(),
+    };
+    let grants = match consent::authorize_submission(tx.connection(), &live).await {
+        Ok(grants) => grants,
+        Err(failure) => return simple_error(failure.status, failure.code, &failure.message),
+    };
+    if let Err(failure) = consent::validate_candidate_scope(&grants, &facts.context, &submit.raw) {
+        return simple_error(failure.status, failure.code, &failure.message);
+    }
     let outcome = match predictions::record_candidate(
         tx.connection(),
         &facts.record,

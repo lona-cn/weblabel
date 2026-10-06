@@ -61,6 +61,7 @@ const candidate = {
 };
 let requestContext;
 const api = {
+  preview: async (request, grants) => ({ preview_id: 'preview-t24', request: { ...request, context: { ...request.context, input_fingerprint: 'server-preview-fixture' } }, profile, grants, input_fingerprint: 'server-preview-fixture', expires_at: new Date(Date.now() + 600000).toISOString() }),
   start: async (request) => { requestContext = request.context; return { run_id: 'run-t24' }; },
   events: async () => [{ run_id: 'run-t24', seq: 1, type: 'succeeded', message: 'Fixture completed', data: null }],
   suggestions: async () => [{ ...candidate, context: requestContext }],
@@ -93,7 +94,7 @@ function EditorPanel() {
   return createElement(Panel, {
     asset_revision_id: asset, profiles: [profile], context, ontology, getDocument: () => host.getSnapshot(), getGeneration: () => host.getGeneration(), generation: state.generation,
     dispatch, saveQueue: queue, obtainConsent: async () => 'consent-t24', refreshContext: async (snapshot) => ({ ...context, annotation_revision_id: snapshot.annotation_revision_id, draft_generation: snapshot.generation }),
-    grants: { image: true, selected_objects: true, crop: null }, api, intent: 'detect',
+    grants: { allow_image: true, allow_object_context: true, preview_crop: null }, api, intent: 'detect',
   });
 }
 window.__t24 = {

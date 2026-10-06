@@ -22,6 +22,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const bootstrapReplays = new WeakMap<TestApp, () => Promise<number>>();
 const bootstrapClients = new WeakMap<TestApp, () => Promise<ApiClient>>();
 const bootstrapLogins = new WeakMap<TestApp, () => Promise<ApiClient>>();
+const databasePaths = new WeakMap<TestApp, string>();
 let builtDefaultApiBinary: string | null = null;
 
 async function freeLoopbackPort(): Promise<number> {
@@ -104,7 +105,7 @@ export function prepare_test_api(): string {
   return binary;
 }
 
-export async function start_test_app(cookieSecure: 'true' | 'false' = 'false'): Promise<TestApp> {
+export async function start_test_app(cookieSecure: 'true' | 'false' = 'false', modelWorker: 'manual' | 'background' = 'manual'): Promise<TestApp> {
   const binary = prepare_test_api();
   const root = await mkdtemp(resolve(tmpdir(), 'weblabel-t10-'));
   const port = await freeLoopbackPort();
@@ -117,6 +118,7 @@ export async function start_test_app(cookieSecure: 'true' | 'false' = 'false'): 
       WEBLABEL_DATABASE_URL: `sqlite:${resolve(root, 'api.sqlite')}`,
       WEBLABEL_OBJECT_ROOT: resolve(root, 'objects'),
       WEBLABEL_ENV: 'development',
+      WEBLABEL_TEST_MANUAL_MODEL_WORKER: modelWorker === 'manual' ? '1' : '0',
       WEBLABEL_COOKIE_SECURE: cookieSecure,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -270,7 +272,15 @@ export async function start_test_app(cookieSecure: 'true' | 'false' = 'false'): 
     });
     return response.status;
   });
+  databasePaths.set(app, resolve(root, 'api.sqlite'));
   return app;
+}
+
+/** Only the isolated synthetic database created by start_test_app; not a production API. */
+export function database_path_for_test(app: TestApp): string {
+  const path = databasePaths.get(app);
+  if (path === undefined) throw new Error('Unknown test app database');
+  return path;
 }
 
 export async function replay_bootstrap_code_for_test(app: TestApp): Promise<number> {

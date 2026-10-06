@@ -1,9 +1,10 @@
 use std::{error::Error, fs, path::Path};
 
 use annotation_domain::{
-    AnnotationDocument, AnnotationRevision, ApiError, EditorCommand, EditorDelta, MediaRevision,
-    ModelProfile, OntologyVersion, RunEvent, SaveRequest, SaveResponse, StartRunRequest,
-    SuggestionSet,
+    AiApprovedGrants, AiConsentRequest, AiConsentResponse, AiPreviewRequest, AiPreviewResponse,
+    AnnotationDocument, AnnotationRevision, ApiError, EditorCommand, EditorDelta,
+    ExternalProcessingPolicy, MediaRevision, ModelProfile, OntologyVersion, RunEvent, SaveRequest,
+    SaveResponse, StartRunRequest, SuggestionSet,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -37,6 +38,12 @@ pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     RunEvent::export_all_to(output)?;
     EditorCommand::export_all_to(output)?;
     EditorDelta::export_all_to(output)?;
+    AiApprovedGrants::export_all_to(output)?;
+    AiPreviewRequest::export_all_to(output)?;
+    AiPreviewResponse::export_all_to(output)?;
+    AiConsentRequest::export_all_to(output)?;
+    AiConsentResponse::export_all_to(output)?;
+    ExternalProcessingPolicy::export_all_to(output)?;
 
     write_schema::<AnnotationDocument>(output, "annotation_document.schema.json")?;
     write_schema::<OntologyVersion>(output, "ontology_version.schema.json")?;
@@ -51,6 +58,12 @@ pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     write_schema::<RunEvent>(output, "run_event.schema.json")?;
     write_schema::<EditorCommand>(output, "editor_command.schema.json")?;
     write_schema::<EditorDelta>(output, "editor_delta.schema.json")?;
+    write_schema::<AiApprovedGrants>(output, "ai_approved_grants.schema.json")?;
+    write_schema::<AiPreviewRequest>(output, "ai_preview_request.schema.json")?;
+    write_schema::<AiPreviewResponse>(output, "ai_preview_response.schema.json")?;
+    write_schema::<AiConsentRequest>(output, "ai_consent_request.schema.json")?;
+    write_schema::<AiConsentResponse>(output, "ai_consent_response.schema.json")?;
+    write_schema::<ExternalProcessingPolicy>(output, "external_processing_policy.schema.json")?;
     Ok(())
 }
 

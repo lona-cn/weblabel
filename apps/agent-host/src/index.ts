@@ -11,6 +11,7 @@ import { ProtocolError, NdjsonFramer, PROTOCOL_VERSION, RequestIdTracker, parseE
 import type { ProviderRegistry } from './registry';
 import { redactText, redactValue } from './security/redaction';
 import { SpawnPolicyError, spawnChild, superviseChild, type ChildSpec, type SpawnPolicy, type SpawnedChild, type SuperviseResult } from './security/spawn';
+import type { RunEvent } from "../../../packages/contracts/generated/RunEvent";
 
 export type RunStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timeout';
 
@@ -33,8 +34,9 @@ export interface HostSessionOptions {
   logs: HostSink;
   spawnPolicy: SpawnPolicy;
   /** Fixed launch recipe; the browser/parent can never supply it per run. */
-  childSpec: ChildSpec | ((run_id: string, payload: unknown) => ChildSpec);
+  childSpec?: ChildSpec | ((run_id: string, payload: unknown) => ChildSpec);
   runTimeoutMs?: number | null;
+  dispatch?: (payload: unknown, signal: AbortSignal) => AsyncIterable<RunEvent>;
 }
 
 interface ActiveRun {
@@ -71,8 +73,9 @@ export class HostSession {
   readonly #output: HostSink;
   readonly #logs: HostSink;
   readonly #spawnPolicy: SpawnPolicy;
-  readonly #childSpec: ChildSpec | ((run_id: string, payload: unknown) => ChildSpec);
+  readonly #childSpec: HostSessionOptions["childSpec"];
   readonly #runTimeoutMs: number | null;
+  readonly #dispatch: HostSessionOptions["dispatch"];
   readonly #requests = new RequestIdTracker();
   readonly #runs = new Map<string, RunState>();
   readonly #active = new Map<string, ActiveRun>();
@@ -87,6 +90,7 @@ export class HostSession {
     this.#spawnPolicy = options.spawnPolicy;
     this.#childSpec = options.childSpec;
     this.#runTimeoutMs = options.runTimeoutMs ?? null;
+    this.#dispatch = options.dispatch;
   }
 
   log(message: string): void {
@@ -217,9 +221,16 @@ export class HostSession {
     // attempts is fixed at 1: a possibly billed request is never resent automatically.
     const state: RunState = { run_id, request_id: envelope.id, status: 'running', attempts: 1, error_code: null };
     this.#runs.set(run_id, state);
+    if (this.#dispatch) {
+      const abort = new AbortController();
+      const done = this.#driveAdapter(state, abort, payload).finally(() => this.#active.delete(run_id));
+      this.#active.set(run_id, { abort, done });
+      return;
+    }
     const spec = typeof this.#childSpec === 'function' ? this.#childSpec(run_id, payload) : this.#childSpec;
     let child: SpawnedChild;
     try {
+      if (!spec) throw new SpawnPolicyError("needs_configuration", "no provider dispatch configured");
       child = spawnChild(spec, this.#spawnPolicy);
     } catch (error) {
       state.status = 'failed';
@@ -236,6 +247,29 @@ export class HostSession {
     const abort = new AbortController();
     const done = this.#driveRun(state, child, abort, request).finally(() => this.#active.delete(run_id));
     this.#active.set(run_id, { abort, done: done.catch((error: unknown) => this.log(`run ${run_id} driver error: ${String(error)}`)) });
+  }
+
+
+  async #driveAdapter(state: RunState, abort: AbortController, payload: unknown): Promise<void> {
+    const timer = this.#runTimeoutMs === null ? null : setTimeout(() => abort.abort('timeout'), this.#runTimeoutMs);
+    try {
+      for await (const event of this.#dispatch!(payload, abort.signal)) {
+        if (abort.signal.aborted) break;
+        if (event.run_id !== state.run_id) throw new ProtocolError('invalid_payload', 'adapter event run mismatch');
+        this.#writeEnvelope({ protocol_version: PROTOCOL_VERSION, id: state.run_id + ':' + event.seq, kind: 'event', method: 'run_event', payload: event });
+        if (event.type === 'succeeded') state.status = 'succeeded';
+        if (event.type === "failed") { state.status = "failed"; state.error_code = typeof event.data?.error_code === "string" ? event.data.error_code : "provider_reported_failure"; }
+        if (event.type === 'cancelled') state.status = 'cancelled';
+      }
+      if (abort.signal.aborted) { state.status = abort.signal.reason === 'timeout' ? 'timeout' : 'cancelled'; state.error_code = state.status === 'timeout' ? 'run_timeout' : null; }
+      if (state.status === 'running') { state.status = 'failed'; state.error_code = 'missing_terminal_response'; }
+    } catch (error) {
+      state.status = abort.signal.aborted ? (abort.signal.reason === 'timeout' ? 'timeout' : 'cancelled') : 'failed';
+      state.error_code = error instanceof Error && 'code' in error ? String(error.code) : 'adapter_error';
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+      this.#writeResponse(state.request_id, 'start_run', { ok: state.status === 'succeeded', run_id: state.run_id, status: state.status, ...(state.error_code ? { error: { code: state.error_code } } : {}) });
+    }
   }
 
   async #driveRun(state: RunState, child: SpawnedChild, abort: AbortController, request: unknown): Promise<void> {

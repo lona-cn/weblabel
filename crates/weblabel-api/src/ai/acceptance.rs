@@ -17,6 +17,21 @@ use annotation_domain::{
     AnnotationDocument, AnnotationObject, Change, DomainError, Id, ModelCapabilities, ModelProfile,
     OntologyVersion, OriginType, ProviderId, RunContext, RunIntent, SuggestionDecision,
 };
+use axum::{
+    body::{to_bytes, Body},
+    extract::{Path, State},
+    http::{Request, StatusCode},
+    response::{IntoResponse, Response},
+    Extension, Json,
+};
+use serde::Deserialize;
+use serde_json::json;
+
+use crate::{
+    ai::{failure_response, AiState},
+    auth::Principal,
+};
+
 use sqlx::{Row, SqliteConnection};
 
 use crate::annotations::Failure;
@@ -93,6 +108,7 @@ struct SetFacts {
     run_intent: RunIntent,
     provider_id: ProviderId,
     capabilities: ModelCapabilities,
+    state: String,
 }
 
 /// Final decision state per change of a set after this save's intents.
@@ -140,6 +156,15 @@ pub(crate) async fn prepare(
             states.insert(set_id.to_owned(), load_journal(connection, set_id).await?);
         }
         let facts = facts.get(set_id).expect("facts loaded above");
+        if intent.decision == SuggestionDecision::Accept
+            && matches!(facts.state.as_str(), "rejected" | "stale")
+        {
+            return Err(failure(
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                "SUGGESTION_SET_NOT_APPLICABLE",
+                "rejected or stale suggestion sets cannot be accepted",
+            ));
+        }
         match intent.decision {
             SuggestionDecision::Accept => {
                 // The same shared validation the editor core runs, pinned to
@@ -356,8 +381,10 @@ async fn load_set_facts(
 ) -> Result<SetFacts, Failure> {
     let row = sqlx::query(
         "SELECT s.prediction_id, s.asset_revision_id AS set_asset, s.changes_json, \
+                COALESCE(st.state,'pending') AS set_state, \
                 r.run_id, r.provider_id, r.intent, r.profile_snapshot_json, r.context_json \
          FROM suggestion_sets s JOIN model_runs r ON r.run_id = s.run_id \
+         LEFT JOIN suggestion_set_states st ON st.suggestion_set_id=s.suggestion_set_id \
          WHERE s.suggestion_set_id=? AND s.project_id=?",
     )
     .bind(set_id)
@@ -372,6 +399,7 @@ async fn load_set_facts(
             "suggestion set does not exist in this project",
         ));
     };
+    let state: String = row.try_get("set_state").map_err(|_| storage_failure())?;
     let set_asset: String = row.try_get("set_asset").map_err(|_| storage_failure())?;
     if set_asset != pins.asset_revision_id {
         return Err(failure(
@@ -458,6 +486,7 @@ async fn load_set_facts(
         run_intent,
         provider_id,
         capabilities: snapshot.capabilities,
+        state,
     })
 }
 
@@ -583,6 +612,168 @@ fn storage_failure() -> Failure {
         "SUGGESTION_DECISION_FAILED",
         "could not read suggestion decision state",
     )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecisionRequest {
+    decision: String,
+}
+
+/// A standalone accept is forbidden: only the annotation save transaction can
+/// append accept/revert journal entries. Reject is an idempotent state update.
+pub(super) async fn decision_route(
+    State(state): State<AiState>,
+    Extension(principal): Extension<Principal>,
+    Path(set_id): Path<String>,
+    request: Request<Body>,
+) -> Response {
+    let body = match to_bytes(request.into_body(), 4096).await {
+        Ok(body) => body,
+        Err(_) => {
+            return failure_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "DECISION_TOO_LARGE",
+                "Decision request is too large",
+            )
+        }
+    };
+    let body: DecisionRequest = match serde_json::from_slice(&body) {
+        Ok(body) => body,
+        Err(_) => {
+            return failure_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_DECISION",
+                "Request must contain a supported decision",
+            )
+        }
+    };
+    if body.decision == "accept" {
+        return failure_response(
+            StatusCode::CONFLICT,
+            "ACCEPT_REQUIRES_SAVE",
+            "Acceptance must be included in the annotation save transaction",
+        );
+    }
+    if body.decision != "reject" {
+        return failure_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_DECISION",
+            "decision must be reject or accept",
+        );
+    }
+    let mut tx = match state.repository.begin_write().await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return failure_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DECISION_FAILED",
+                "Could not start decision transaction",
+            )
+        }
+    };
+    let row = match sqlx::query(
+        "SELECT s.project_id, COALESCE(st.state,'pending') AS state FROM suggestion_sets s \
+         LEFT JOIN suggestion_set_states st ON st.suggestion_set_id=s.suggestion_set_id \
+         WHERE s.suggestion_set_id=?",
+    )
+    .bind(&set_id)
+    .fetch_optional(tx.connection())
+    .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return failure_response(
+                StatusCode::NOT_FOUND,
+                "SUGGESTION_NOT_FOUND",
+                "Suggestion set was not found",
+            )
+        }
+        Err(_) => {
+            return failure_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DECISION_FAILED",
+                "Could not read suggestion state",
+            )
+        }
+    };
+    let project_id: String = match row.try_get("project_id") {
+        Ok(value) => value,
+        Err(_) => {
+            return failure_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DECISION_FAILED",
+                "Could not read suggestion state",
+            )
+        }
+    };
+    let current: String = match row.try_get("state") {
+        Ok(value) => value,
+        Err(_) => {
+            return failure_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DECISION_FAILED",
+                "Could not read suggestion state",
+            )
+        }
+    };
+    let role: Option<String> =
+        match sqlx::query_scalar("SELECT role FROM memberships WHERE project_id=? AND user_id=?")
+            .bind(&project_id)
+            .bind(&principal.user_id)
+            .fetch_optional(tx.connection())
+            .await
+        {
+            Ok(role) => role,
+            Err(_) => {
+                return failure_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DECISION_FAILED",
+                    "Could not verify project membership",
+                )
+            }
+        };
+    if !matches!(role.as_deref(), Some("admin" | "annotator")) {
+        return failure_response(
+            StatusCode::NOT_FOUND,
+            "SUGGESTION_NOT_FOUND",
+            "Suggestion set was not found",
+        );
+    }
+    if current == "rejected" {
+        if tx.commit().await.is_err() {
+            return failure_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DECISION_FAILED",
+                "Could not confirm decision",
+            );
+        }
+        return (StatusCode::OK, Json(json!({"suggestion_set_id": set_id, "state": "rejected", "idempotent_replay": true}))).into_response();
+    }
+    if current == "accepted" {
+        return failure_response(
+            StatusCode::CONFLICT,
+            "ACCEPTED_SET_REQUIRES_REVERT",
+            "Accepted changes must be reverted in an annotation save before rejection",
+        );
+    }
+    let updated = sqlx::query(
+        "INSERT INTO suggestion_set_states(suggestion_set_id,state,updated_at) VALUES(?,'rejected',?) \
+         ON CONFLICT(suggestion_set_id) DO UPDATE SET state='rejected',updated_at=excluded.updated_at \
+         WHERE suggestion_set_states.state IN ('pending','partially_accepted')",
+    ).bind(&set_id).bind(crate::projects::now_rfc3339()).execute(tx.connection()).await;
+    if updated.is_err() || tx.commit().await.is_err() {
+        return failure_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DECISION_FAILED",
+            "Could not persist suggestion rejection",
+        );
+    }
+    (
+        StatusCode::OK,
+        Json(json!({"suggestion_set_id": set_id, "state": "rejected", "idempotent_replay": false})),
+    )
+        .into_response()
 }
 
 #[cfg(test)]

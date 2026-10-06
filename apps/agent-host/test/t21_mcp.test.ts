@@ -674,3 +674,86 @@ it('refuses to start without a run token in the child environment', async () => 
   expect(stderr).not.toContain('Bearer');
   rmSync(harness, { recursive: true, force: true });
 }, 30_000);
+
+it('bounds chunked multibyte tool responses by bytes and cancels before buffering the tail', async () => {
+  let cancelled = false;
+  let pulls = 0;
+  let signal: AbortSignal | null = null;
+  const server = createAgentToolsServer({apiBase:'http://127.0.0.1:48100', token:RUN_TOKEN, maxResponseBytes:8,
+    fetch: async (_url, init) => {
+      signal = init.signal as AbortSignal;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(new TextEncoder().encode('界界界'));
+          if (pulls === 20) controller.close();
+        },
+        cancel() { cancelled = true; },
+      }, {highWaterMark:0}));
+    }});
+  const client = new Client({name:'boundary-client', version:'0.0.0'});
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.connect(st)]);
+  try {
+    const result = await client.callTool({name:'get_context', arguments:{}});
+    expect(asRecord(result).isError).toBe(true);
+    expect(textOf(result)).toContain('TOOL_OUTPUT_TOO_LARGE');
+    expect(pulls).toBe(1);
+    expect(cancelled).toBe(true);
+    expect(signal!.aborted).toBe(true);
+  } finally { await client.close(); await server.close(); }
+});
+
+it('rejects an oversized chunked response through the actual stdio MCP caller and closes its HTTP stream', async () => {
+  const harness = mkdtempSync(join(tmpdir(), 't21-mcp-boundary-'));
+  const register = writeLoaderHarness(harness);
+  let sent = 0;
+  const chunk = Buffer.from('界'.repeat(256 * 1024));
+  let resolveClosed!: () => void;
+  const closed = new Promise<void>(resolve => { resolveClosed = resolve; });
+  const api = createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    const timer = setInterval(() => {
+      sent += chunk.byteLength;
+      response.write(chunk);
+      if (sent >= chunk.byteLength * 64) { clearInterval(timer); response.end(); }
+    }, 5);
+    response.on('close', () => { clearInterval(timer); resolveClosed(); });
+  });
+  await new Promise<void>(resolve => api.listen(0, '127.0.0.1', resolve));
+  const transport = new StdioClientTransport({command:process.execPath,
+    args:['--import', pathToFileURL(register).href, mainEntry],
+    env:childEnvironment({WEBLABEL_RUN_TOKEN:RUN_TOKEN, WEBLABEL_API_BASE:
+      'http://127.0.0.1:' + (api.address() as AddressInfo).port}),
+    stderr:'pipe', cwd:repoRoot});
+  const client = new Client({name:'boundary-stdio', version:'0.0.0'});
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({name:'get_context', arguments:{}});
+    expect(asRecord(result).isError).toBe(true);
+    expect(textOf(result)).toContain('TOOL_OUTPUT_TOO_LARGE');
+    await closed;
+    expect(sent).toBeLessThan(chunk.byteLength * 64);
+  } finally {
+    await client.close();
+    await new Promise<void>((resolve, reject) => api.close(error => error ? reject(error) : resolve()));
+    rmSync(harness, {recursive:true, force:true});
+  }
+}, 30_000);
+
+it('cancels a silent response body on timeout and returns a controlled MCP error', async () => {
+  let cancelled = false;
+  const server = createAgentToolsServer({apiBase:'http://127.0.0.1:48100',token:RUN_TOKEN,timeoutMs:25,
+    fetch:async () => new Response(new ReadableStream<Uint8Array>({
+      pull() { return new Promise<void>(() => {}); }, cancel() { cancelled = true; },
+    }))});
+  const client = new Client({name:'boundary-timeout',version:'0.0.0'});
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct),server.connect(st)]);
+  try {
+    const result = await client.callTool({name:'get_context',arguments:{}});
+    expect(asRecord(result).isError).toBe(true);
+    expect(textOf(result)).toContain('AGENT_TOOLS_UNREACHABLE');
+    expect(cancelled).toBe(true);
+  } finally { await client.close(); await server.close(); }
+});

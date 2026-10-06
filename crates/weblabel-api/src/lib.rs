@@ -97,7 +97,10 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .with_state(state.clone())
         .merge(auth::router(state.auth.clone()))
-        .merge(projects::router(state.auth.clone()))
+        .merge(projects::router(
+            state.auth.clone(),
+            state.repository.clone(),
+        ))
         .merge(ai::router(
             state.repository.clone(),
             state.auth.clone(),

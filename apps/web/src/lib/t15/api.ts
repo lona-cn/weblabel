@@ -1,6 +1,7 @@
 import type { AnnotationRevision } from '../../../../../packages/contracts/generated/AnnotationRevision';
 import type { MediaRevision } from '../../../../../packages/contracts/generated/MediaRevision';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
+import type { ExternalProcessingPolicy } from '../../../../../packages/contracts/generated/ExternalProcessingPolicy';
 
 export type Session = { user_id: string; username: string; platform_admin: boolean; project_roles: { project_id: string; role: string }[] };
 export type Project = { project_id: string; name: string; description: string; allow_self_review: boolean; role?: string };
@@ -47,6 +48,8 @@ export const api = {
   logout: () => request<void>('/api/session/logout', { method: 'POST' }),
   projects: () => request<{ items: Project[]; next_cursor: string | null }>('/api/projects'),
   createProject: (body: { name: string; description: string; allow_self_review: boolean }) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(body) }),
+  externalProcessingPolicy: (projectId: string) => request<ExternalProcessingPolicy>(`/api/projects/${encodeURIComponent(projectId)}/external-processing-policy`),
+  setExternalProcessingPolicy: (projectId: string, allow: boolean) => request<ExternalProcessingPolicy>(`/api/projects/${encodeURIComponent(projectId)}/external-processing-policy`, { method: 'PUT', body: JSON.stringify({ allow_external_processing: allow } satisfies ExternalProcessingPolicy) }),
   ontologies: (projectId: string) => request<{ items: OntologyVersion[]; next_cursor: string | null }>(`/api/projects/${encodeURIComponent(projectId)}/ontologies`),
   publishOntology: (projectId: string, body: Pick<OntologyVersion, 'labels' | 'guidelines_markdown'>) => request<OntologyVersion>(`/api/projects/${encodeURIComponent(projectId)}/ontologies`, { method: 'POST', body: JSON.stringify(body) }),
   assets: async (projectId: string) => {

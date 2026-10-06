@@ -17,11 +17,12 @@ export function Consent({ preview, confirmed, onChange, disabled = false }: {
         <dt>Annotation revision</dt><dd>{context.annotation_revision_id}</dd>
         <dt>Ontology version</dt><dd>{context.ontology_version_id}</dd>
         <dt>Intent</dt><dd>{intent}</dd>
-        <dt>Objects in scope</dt><dd>{context.selected_object_ids.length ? context.selected_object_ids.join(', ') : 'All objects in the pinned document'}</dd>
-        <dt>Image access</dt><dd>{grants.image ? 'Image authorized' : 'No image authorized'}</dd>
-        <dt>Selected-object access</dt><dd>{grants.selected_objects ? 'Selected objects authorized' : 'No object details authorized'}</dd>
-        <dt>Crop</dt><dd>{grants.crop ? `${grants.crop.x_min}, ${grants.crop.y_min} – ${grants.crop.x_max}, ${grants.crop.y_max}` : 'No crop authorized'}</dd>
-        <dt>Instruction (sent only after you run)</dt><dd><q>{prompt}</q></dd>
+        <dt>Objects in scope</dt><dd>{!grants.allow_object_context ? 'No object details' : context.selected_object_ids.length ? context.selected_object_ids.join(', ') : 'All objects in the pinned document'}</dd>
+        <dt>Image access</dt><dd>{grants.allow_image ? 'Image authorized' : 'No image authorized'}</dd>
+        <dt>Object-context access</dt><dd>{!grants.allow_object_context ? 'No object details authorized' : context.selected_object_ids.length ? 'Selected objects authorized' : 'All pinned objects authorized'}</dd>
+        <dt>Image region</dt><dd>{grants.preview_crop ? `${grants.preview_crop.x_min}, ${grants.preview_crop.y_min} – ${grants.preview_crop.x_max}, ${grants.preview_crop.y_max}` : grants.allow_image ? 'Full canonical image' : 'No pixels'}</dd>
+        <dt>Server preview expires</dt><dd>{preview.expires_at}</dd>
+        <dt>Instruction (provider receives only after authorization)</dt><dd><q>{prompt}</q></dd>
       </dl>
       <label>
         <input type="checkbox" checked={confirmed} disabled={disabled} onChange={(event) => onChange(event.currentTarget.checked)} />

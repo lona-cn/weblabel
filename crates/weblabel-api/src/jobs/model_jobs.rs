@@ -154,11 +154,45 @@ impl RunDriver {
     /// run is quarantined and never applied.
     pub async fn submit_candidates(&self, submit: SubmitCandidates) -> Result<(), ModelJobError> {
         let mut tx = self.repository.begin_write().await?;
+        let current = runs::load_record(tx.connection(), &self.record.run_id)
+            .await?
+            .ok_or(ModelJobError::InvalidPayload)?;
+        // Terminal output still enters the existing quarantine funnel, never authorization or apply.
+        let scoped_objects = if current.state.is_terminal() {
+            None
+        } else {
+            let grants = crate::ai::consent::authorize_run(tx.connection(), &current)
+                .await
+                .map_err(|error| ModelJobError::Rejected {
+                    code: error.code.to_owned(),
+                    message: error.message,
+                })?;
+            crate::ai::consent::validate_candidate_scope(&grants, &self.context, &submit.raw)
+                .map_err(|error| ModelJobError::Rejected {
+                    code: error.code.to_owned(),
+                    message: error.message,
+                })?;
+            if !grants.allow_object_context {
+                Some(BTreeMap::new())
+            } else if !self.context.selected_object_ids.is_empty() {
+                Some(
+                    self.objects
+                        .iter()
+                        .filter(|(_, object)| {
+                            self.context.selected_object_ids.contains(&object.object_id)
+                        })
+                        .map(|(key, object)| (key.clone(), object.clone()))
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        };
         let target = predictions::CandidateTarget {
             width: self.width,
             height: self.height,
             labels: &self.labels,
-            objects: &self.objects,
+            objects: scoped_objects.as_ref().unwrap_or(&self.objects),
         };
         let outcome = predictions::record_candidate(
             tx.connection(),
@@ -230,6 +264,25 @@ pub async fn process_next(
                 .await?;
         }
     }
+    Ok(Some(job_id))
+}
+
+/// Leases model jobs only; other production workers retain their queue kinds.
+pub async fn process_model_next(
+    repository: &Repository,
+    queue: &JobQueue,
+    worker_id: &str,
+    lease_for: Duration,
+    runner: &dyn RunRunner,
+) -> Result<Option<String>, ModelJobError> {
+    let Some(lease) = queue
+        .lease_next_kind(worker_id, lease_for, Some(MODEL_JOB_KIND))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let job_id = lease.job_id.clone();
+    execute_model_run(repository, queue, &lease, runner).await?;
     Ok(Some(job_id))
 }
 
@@ -450,6 +503,29 @@ async fn execute_run_item(
             code: Some("TERMINAL_LATE_OUTCOME"),
         });
     }
+    if current.cancel_requested {
+        runs::transition(current.state, RunState::Cancelled)?;
+        sqlx::query("UPDATE model_runs SET state='cancelled',finished_at=? WHERE run_id=? AND state IN ('queued','running')")
+            .bind(now_rfc3339()).bind(run_id).execute(tx.connection()).await?;
+        events::record(
+            tx.connection(),
+            run_id,
+            RecordEvent {
+                provider_event_id: None,
+                provider_seq: None,
+                event_type: events::RunEventType::Cancelled,
+                message: "run cancelled",
+                data: Some(json!({"code":"RUN_CANCELLED"})),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(ItemResult {
+            run_id: run_id.to_owned(),
+            state: "cancelled",
+            code: Some("RUN_CANCELLED"),
+        });
+    }
     let now = now_rfc3339();
     match outcome {
         Ok(RunOutcome::Completed) => {
@@ -665,6 +741,266 @@ async fn build_driver(
         labels: ontology.labels,
         objects,
     })
+}
+
+/// Production execution: a fixed, service-configured Node host, never a mock
+/// fallback. Credentials reach only the private child environment.
+pub struct ProductionRunner {
+    host: Option<crate::runtime::host::HostConfig>,
+    tokens: crate::runtime::run_tokens::RunTokenStore,
+    timeout: Duration,
+}
+
+impl ProductionRunner {
+    pub fn new(
+        host: crate::runtime::host::HostConfig,
+        tokens: crate::runtime::run_tokens::RunTokenStore,
+        timeout: Duration,
+    ) -> Result<Self, RunnerError> {
+        host.validate().map_err(|_| {
+            RunnerError::new("NEEDS_CONFIGURATION", "invalid fixed host configuration")
+        })?;
+        if timeout.is_zero()
+            || !host
+                .allowed_env
+                .iter()
+                .any(|key| key == "WEBLABEL_RUN_TOKEN")
+            || !host.extra_env.contains_key("WEBLABEL_HOST_CONFIG")
+        {
+            return Err(RunnerError::new(
+                "NEEDS_CONFIGURATION",
+                "private host config and token channel required",
+            ));
+        }
+        Ok(Self {
+            host: Some(host),
+            tokens,
+            timeout,
+        })
+    }
+
+    /// Missing server setup is a deterministic terminal failure, never a mock fallback.
+    pub fn unconfigured(tokens: crate::runtime::run_tokens::RunTokenStore) -> Self {
+        Self {
+            host: None,
+            tokens,
+            timeout: Duration::ZERO,
+        }
+    }
+}
+
+struct RuntimeLease {
+    root: Option<crate::runtime::supervisor::ReclaimRoot>,
+    tokens: crate::runtime::run_tokens::RunTokenStore,
+    run_id: String,
+}
+impl Drop for RuntimeLease {
+    fn drop(&mut self) {
+        self.tokens.revoke_run(&self.run_id);
+        if let Some(root) = self.root.take() {
+            // Dropping the worker future must still reclaim a blocked pipe reader.
+            std::thread::spawn(move || {
+                let _ = crate::runtime::supervisor::reclaim_process_tree(root);
+            });
+        }
+    }
+}
+
+impl RunRunner for ProductionRunner {
+    fn execute<'a>(
+        &'a self,
+        driver: &'a RunDriver,
+    ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, RunnerError>> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::runtime::supervisor::{reclaim_process_tree, Supervisor};
+            use crate::runtime::{EnvelopeKind, EnvelopeMethod, RuntimeEnvelope};
+            let configured_host = self.host.as_ref().ok_or_else(|| {
+                RunnerError::new(
+                    "NEEDS_CONFIGURATION",
+                    "production model host is not configured",
+                )
+            })?;
+            if driver.profile.provider_id == annotation_domain::ProviderId::Mock {
+                return Err(RunnerError::new(
+                    "MOCK_PROFILE_REFUSED",
+                    "production runner never executes engineering mocks",
+                ));
+            }
+            let mut tx = driver
+                .repository
+                .begin_write()
+                .await
+                .map_err(ModelJobError::from)?;
+            crate::ai::consent::authorize_run(tx.connection(), &driver.record)
+                .await
+                .map_err(|error| RunnerError::new(error.code, &error.message))?;
+            // Read the exact approved configuration in the authorization transaction.
+            // It travels only over the trusted parent/host pipe, never agent tools.
+            let configuration = sqlx::query("SELECT p.config_json,a.profile_configuration_hash FROM model_profiles p JOIN model_run_authorizations a ON a.run_id=? WHERE p.profile_id=?")
+                .bind(driver.run_id()).bind(&driver.record.profile_id).fetch_one(tx.connection()).await.map_err(ModelJobError::from)?;
+            let execution_profile_config: Value = serde_json::from_str(
+                &configuration
+                    .try_get::<String, _>("config_json")
+                    .map_err(ModelJobError::from)?,
+            )
+            .map_err(|_| {
+                RunnerError::new(
+                    "NEEDS_CONFIGURATION",
+                    "approved execution configuration is invalid",
+                )
+            })?;
+            let profile_configuration_hash: String = configuration
+                .try_get("profile_configuration_hash")
+                .map_err(ModelJobError::from)?;
+            let consent_id: Option<String> = sqlx::query_scalar("SELECT c.consent_id FROM consents c JOIN model_run_authorizations a ON a.preview_id=c.preview_id WHERE a.run_id=? AND c.actor_id=? AND c.input_fingerprint=? ORDER BY c.created_at DESC LIMIT 1")
+                .bind(driver.run_id()).bind(&driver.record.actor_id).bind(&driver.record.input_fingerprint).fetch_optional(tx.connection()).await.map_err(ModelJobError::from)?;
+            let expires: Option<String> = sqlx::query_scalar(
+                "SELECT capability_expires_at FROM model_run_authorizations WHERE run_id=?",
+            )
+            .bind(driver.run_id())
+            .fetch_optional(tx.connection())
+            .await
+            .map_err(ModelJobError::from)?
+            .flatten();
+            let expires = expires
+                .and_then(|raw| chrono::DateTime::parse_from_rfc3339(&raw).ok())
+                .ok_or_else(|| {
+                    RunnerError::new("RUN_CAPABILITY_EXPIRED", "missing capability deadline")
+                })?;
+            let remaining = (expires.with_timezone(&chrono::Utc) - chrono::Utc::now())
+                .to_std()
+                .map_err(|_| RunnerError::new("RUN_CAPABILITY_EXPIRED", "capability expired"))?;
+            let timeout = self.timeout.min(remaining);
+            let deadline_at = tokio::time::Instant::now() + timeout;
+            let token_expires = expires.timestamp_millis().min(
+                chrono::Utc::now()
+                    .timestamp_millis()
+                    .saturating_add(timeout.as_millis() as i64),
+            );
+            tx.commit().await.map_err(ModelJobError::from)?;
+            let token = self
+                .tokens
+                .issue_once_until(driver.run_id(), &driver.record.project_id, token_expires)
+                .ok_or_else(|| {
+                    RunnerError::new("RUN_TOKEN_ALREADY_ISSUED", "run is already executing")
+                })?;
+            let mut lease = RuntimeLease {
+                root: None,
+                tokens: self.tokens.clone(),
+                run_id: driver.run_id().to_owned(),
+            };
+            let mut host = configured_host.clone();
+            host.extra_env
+                .insert("WEBLABEL_RUN_TOKEN".to_owned(), token);
+            let run_id = driver.run_id().to_owned();
+            let mut supervisor = tokio::task::spawn_blocking(move || {
+                let mut supervisor = Supervisor::new(host, Some(timeout));
+                supervisor.start_run(&run_id)?;
+                Ok::<_, crate::runtime::host::SpawnError>(supervisor)
+            })
+            .await
+            .map_err(|_| RunnerError::new("HOST_SPAWN_FAILED", "host task failed"))?
+            .map_err(|_| RunnerError::new("HOST_SPAWN_FAILED", "fixed host could not start"))?;
+            lease.root = supervisor.reclaim_root(driver.run_id());
+            let request = json!({
+                "operation_id": driver.record.operation_id,
+                "profile_id": driver.record.profile_id,
+                "context": driver.context,
+                "intent": driver.record.intent,
+                "prompt": driver.record.prompt,
+                "consent_id": consent_id,
+            });
+            let run_id = driver.run_id().to_owned();
+            let payload = json!({"run_id": run_id, "request": request, "profile": driver.profile, "execution_profile_config": execution_profile_config, "profile_configuration_hash": profile_configuration_hash});
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+            let reader = tokio::task::spawn_blocking(move || {
+                let result = (|| {
+                    supervisor
+                        .send(
+                            &run_id,
+                            &RuntimeEnvelope::request("probe", EnvelopeMethod::Probe, json!({})),
+                        )
+                        .map_err(|_| "HOST_IO")?;
+                    let probe = supervisor
+                        .recv(&run_id)
+                        .map_err(|_| "HOST_PROTOCOL")?
+                        .ok_or("HOST_CLOSED")?;
+                    if probe.kind != EnvelopeKind::Response
+                        || probe.method != EnvelopeMethod::Probe
+                        || probe.id != "probe"
+                        || probe.payload["ok"] != true
+                    {
+                        return Err("HOST_PROTOCOL");
+                    }
+                    supervisor
+                        .send(
+                            &run_id,
+                            &RuntimeEnvelope::request("start", EnvelopeMethod::StartRun, payload),
+                        )
+                        .map_err(|_| "HOST_IO")?;
+                    for _ in 0..4097 {
+                        let envelope = supervisor
+                            .recv(&run_id)
+                            .map_err(|_| "HOST_PROTOCOL")?
+                            .ok_or("HOST_CLOSED")?;
+                        let terminal = envelope.kind == EnvelopeKind::Response;
+                        if sender.blocking_send(Ok(envelope)).is_err() {
+                            return Ok(());
+                        }
+                        if terminal {
+                            return Ok(());
+                        }
+                    }
+                    Err("HOST_OUTPUT_BUDGET")
+                })();
+                if let Err(code) = result {
+                    let _ = sender.blocking_send(Err(code));
+                }
+            });
+            let deadline = tokio::time::sleep_until(deadline_at);
+            tokio::pin!(deadline);
+            let result = async {
+                let mut last_seq: Option<u64> = None;
+                let mut cancellation_poll = tokio::time::interval(Duration::from_millis(100));
+                loop {
+                    tokio::select! {
+                        _ = &mut deadline => return Err(RunnerError::new("RUN_TIMEOUT", "run deadline exceeded; no retry")),
+                        _ = cancellation_poll.tick() => {
+                            let mut tx = driver.repository.begin_write().await.map_err(ModelJobError::from)?;
+                            let record = runs::load_record(tx.connection(), driver.run_id()).await.map_err(ModelJobError::from)?;
+                            tx.commit().await.map_err(ModelJobError::from)?;
+                            if record.is_none_or(|record| record.cancel_requested || record.state.is_terminal()) { return Err(RunnerError::new("RUN_CANCELLED", "run cancelled; no retry")); }
+                        },
+                        received = receiver.recv() => {
+                            let envelope = received.ok_or_else(|| RunnerError::new("HOST_CLOSED", "host closed without terminal response"))?
+                                .map_err(|code| RunnerError::new(code, "host transport failed; no retry"))?;
+                            if envelope.kind == EnvelopeKind::Event && envelope.method == EnvelopeMethod::RunEvent {
+                                let event: annotation_domain::RunEvent = serde_json::from_value(envelope.payload).map_err(|_| RunnerError::new("HOST_PROTOCOL", "invalid run event"))?;
+                                if &*event.run_id != driver.run_id() || last_seq.is_some_and(|seq| event.seq <= seq) { return Err(RunnerError::new("HOST_PROTOCOL", "event identity or sequence mismatch")); }
+                                last_seq = Some(event.seq);
+                                driver.emit(ProviderEvent { provider_event_id: envelope.id, provider_seq: Some(event.seq as i64), event_type: event.event_type, message: event.message, data: event.data.map(|data| serde_json::to_value(data).unwrap_or(Value::Null)) }).await?;
+                            } else if envelope.kind == EnvelopeKind::Response && envelope.method == EnvelopeMethod::StartRun && envelope.id == "start" && envelope.payload["run_id"] == driver.run_id() {
+                                return if envelope.payload["ok"] == true && envelope.payload["status"] == "succeeded" { Ok(RunOutcome::Completed) } else { Ok(RunOutcome::Failed { code: envelope.payload["error"]["code"].as_str().unwrap_or("PROVIDER_FAILED").to_owned(), message: "provider failed; no retry".to_owned() }) };
+                            } else { return Err(RunnerError::new("HOST_PROTOCOL", "unexpected host envelope")); }
+                        }
+                    }
+                }
+            }.await;
+            self.tokens.revoke_run(driver.run_id());
+            receiver.close();
+            drop(receiver);
+            if let Some(root) = lease.root.take() {
+                tokio::task::spawn_blocking(move || reclaim_process_tree(root))
+                    .await
+                    .map_err(|_| RunnerError::new("HOST_CLEANUP_FAILED", "cleanup task failed"))?
+                    .map_err(|_| {
+                        RunnerError::new("HOST_CLEANUP_FAILED", "process tree reclamation failed")
+                    })?;
+            }
+            let _ = reader.await;
+            result
+        })
+    }
 }
 
 /// One scripted step of the built-in mock source.

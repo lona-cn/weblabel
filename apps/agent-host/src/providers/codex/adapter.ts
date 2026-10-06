@@ -397,17 +397,16 @@ export function createCodexLocalAdapter(options: CodexLocalOptions): ProviderAda
           return;
         }
         const plan = await launchPlan(runId);
-        const grants = imageGrantIds(ctx);
-        const source = await options.imageSource(input, runId);
-        if (source.grant_id !== grants[0]) {
-          throw new ProviderError('image_grant_missing', 'the image source grant is not the run approved grant');
+        let imagePath: string | null = null;
+        if (!("allow_image" in ctx && ctx.allow_image === false)) {
+          const grants = imageGrantIds(ctx);
+          const source = await options.imageSource(input, runId);
+          if (source.grant_id !== grants[0]) throw new ProviderError("image_grant_missing", "image source is not the approved grant");
+          const region = await ctx.read_region(source.grant_id, source.region);
+          mkdirSync(plan.cwd, { recursive: true, mode: 0o700 });
+          imagePath = join(plan.cwd, "input-0.png");
+          writeFileSync(imagePath, region.bytes, { mode: 0o600 });
         }
-        const region = await ctx.read_region(source.grant_id, source.region);
-        mkdirSync(plan.cwd, { recursive: true, mode: 0o700 });
-        // Image bytes travel only as a private staged file referenced through
-        // the documented `localImage` form — never inline in argv or messages.
-        const imagePath = join(plan.cwd, 'input-0.png');
-        writeFileSync(imagePath, region.bytes, { mode: 0o600 });
 
         const document = await ctx.get_document();
         const ontology = await ctx.get_ontology();
@@ -542,7 +541,7 @@ export function createCodexLocalAdapter(options: CodexLocalOptions): ProviderAda
               sendRequest(TURN_START_METHOD, {
                 thread_id: result.thread_id,
                 prompt: input.prompt,
-                images: [{ type: 'localImage', path: imagePath }],
+                images: imagePath === null ? [] : [{ type: "localImage", path: imagePath }],
               });
             } else if (expectation?.method === TURN_START_METHOD) {
               if (!validRef(result.turn_id)) {

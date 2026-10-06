@@ -79,15 +79,39 @@ async function callAgentTools(
       signal: controller.signal,
     });
     const declared = Number(response.headers.get('content-length') ?? '0');
-    const maxBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+    const maxBytes = Math.min(options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES, DEFAULT_MAX_RESPONSE_BYTES);
     if (declared > maxBytes) {
+      controller.abort();
+      await response.body?.cancel().catch(() => {});
       return { ok: false, status: response.status, body: 'TOOL_OUTPUT_TOO_LARGE' };
     }
-    const body = await response.text();
-    if (body.length > maxBytes) {
-      return { ok: false, status: response.status, body: 'TOOL_OUTPUT_TOO_LARGE' };
+    if (!response.body) return { ok: response.ok, status: response.status, body: '' };
+    const reader = response.body.getReader();
+    const cancelRead = () => { void reader.cancel().catch(() => {}); };
+    controller.signal.addEventListener('abort', cancelRead, { once: true });
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    try {
+      while (true) {
+        if (controller.signal.aborted) throw new Error('Agent tools response timed out');
+        const { done, value } = await reader.read();
+        if (controller.signal.aborted) throw new Error('Agent tools response timed out');
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > maxBytes) {
+          controller.abort();
+          await reader.cancel().catch(() => {});
+          return { ok: false, status: response.status, body: 'TOOL_OUTPUT_TOO_LARGE' };
+        }
+        chunks.push(value);
+      }
+      const decoder = new TextDecoder();
+      const body = chunks.map(chunk => decoder.decode(chunk, { stream: true })).join('') + decoder.decode();
+      return { ok: response.ok, status: response.status, body };
+    } finally {
+      controller.signal.removeEventListener('abort', cancelRead);
+      reader.releaseLock();
     }
-    return { ok: response.ok, status: response.status, body };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, status: 0, body: JSON.stringify({ code: 'AGENT_TOOLS_UNREACHABLE', message }) };
@@ -176,6 +200,17 @@ export function createAgentToolsServer(options: AgentToolsServerOptions): Server
     }
     if (name === 'read_region') {
       return imageResult(answer);
+    }
+    if (name === 'get_context') {
+      // Trusted host-only profile data must never enter an external model tool.
+      try {
+        const facts = JSON.parse(answer.body);
+        delete facts.execution_profile_config;
+        delete facts.profile_configuration_hash;
+        return { content: [{ type: 'text', text: JSON.stringify(facts) }] };
+      } catch {
+        return { isError: true, content: [{ type: 'text', text: 'INVALID_RUNTIME_CONTEXT' }] };
+      }
     }
     return { content: [{ type: 'text', text: answer.body }] };
   });

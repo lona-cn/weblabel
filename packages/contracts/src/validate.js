@@ -15,6 +15,12 @@ const schemaFiles = {
   run_event: 'run_event.schema.json',
   editor_command: 'editor_command.schema.json',
   editor_delta: 'editor_delta.schema.json',
+  ai_approved_grants: 'ai_approved_grants.schema.json',
+  ai_preview_request: 'ai_preview_request.schema.json',
+  ai_preview_response: 'ai_preview_response.schema.json',
+  ai_consent_request: 'ai_consent_request.schema.json',
+  ai_consent_response: 'ai_consent_response.schema.json',
+  external_processing_policy: 'external_processing_policy.schema.json',
 };
 const ajv = new Ajv({ allErrors: true, strict: false });
 ajv.addFormat('uint8', { type: 'number', validate: (value) => Number.isInteger(value) && value >= 0 && value <= 255 });

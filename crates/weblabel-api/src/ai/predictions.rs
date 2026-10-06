@@ -118,6 +118,16 @@ pub async fn record_candidate(
         });
     }
     for issue in &envelope.issues {
+        if let Some(region) = &issue.region {
+            if let Err(error) =
+                annotation_domain::validate_bbox(region, target.width, target.height)
+            {
+                return Ok(CandidateOutcome::Rejected {
+                    code: "INVALID_GEOMETRY",
+                    message: error.message.to_owned(),
+                });
+            }
+        }
         if issue.message.chars().count() > 4096 || issue.code.chars().count() > 128 {
             return Ok(CandidateOutcome::Rejected {
                 code: "INVALID_CANDIDATE",

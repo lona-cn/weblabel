@@ -117,7 +117,9 @@ async function authorizedUploader(admin: ApiClient, app: TestApp, projectId: str
 
 async function uploadTypedImage(app: TestApp, projectId: string, credentials: { cookie: string; csrf: string }, image: Buffer, index: number, filename: string, mime: string): Promise<void> {
   const form = new FormData();
-  const bytes = new Uint8Array(image.buffer, image.byteOffset, image.byteLength);
+  const bytes = image.buffer instanceof ArrayBuffer
+    ? new Uint8Array(image.buffer, image.byteOffset, image.byteLength)
+    : Uint8Array.from(image);
   form.append('images', new Blob([bytes], { type: mime }), filename);
   const response = await fetch(new URL(`/api/projects/${projectId}/assets`, app.base_url), {
     method: 'POST',
@@ -211,7 +213,7 @@ export const test = base.extend<Fixtures>({
       const request = route.request();
       const incoming = new URL(request.url());
       const target = new URL(`${incoming.pathname}${incoming.search}`, seededProject.apiBaseUrl);
-      const headers = { ...request.headers(), origin: seededProject.apiBaseUrl };
+      const headers: Record<string, string> = { ...request.headers(), origin: seededProject.apiBaseUrl };
       delete headers.host;
       delete headers['content-length'];
       const postData = request.postDataBuffer();

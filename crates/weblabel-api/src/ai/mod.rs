@@ -49,11 +49,16 @@ pub fn router(
     };
     let mut app = Router::new()
         .route("/api/model-profiles", get(profiles::list))
+        .route("/api/ai/previews", post(consent::preview))
         .route("/api/ai/consents", post(consent::create))
         .route("/api/ai/runs", post(runs::create))
         .route("/api/ai/runs/{run_id}/cancel", post(runs::cancel_route))
         .route("/api/ai/runs/{run_id}/events", get(events::list))
         .route("/api/ai/runs/{run_id}/suggestions", get(suggestions::list))
+        .route(
+            "/api/ai/suggestions/{suggestion_set_id}/decision",
+            post(acceptance::decision_route),
+        )
         .route("/api/jobs/{job_id}", get(model_jobs::job_status));
     // Test builds only: drains the shared job queue through the real worker
     // path. Release builds do not compile this entry point.

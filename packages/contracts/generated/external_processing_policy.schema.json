@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExternalProcessingPolicy",
+  "type": "object",
+  "required": [
+    "allow_external_processing"
+  ],
+  "properties": {
+    "allow_external_processing": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

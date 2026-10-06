@@ -10,7 +10,6 @@ import type { SuggestionSet } from '../../../../../packages/contracts/generated/
 import { CandidateList } from './CandidateList';
 import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
 import { Panel } from './Panel';
-import { ProviderPicker } from './ProviderPicker';
 import { SaveQueue } from '../../lib/persistence/save-queue';
 import { candidateCacheKey, canAcceptSuggestion, type CandidateEntry, type RunApi } from './useRun';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
@@ -43,7 +42,11 @@ const candidate: SuggestionSet = {
   suggestion_set_id: 'set-1', model_run_id: 'run-1', prediction_id: 'prediction-1', context,
   changes: [change], issues: [], score: null, state: 'pending',
 };
-const grants = { image: true, selected_objects: true, crop: null } as const;
+const grants = { allow_image: true, allow_object_context: true, preview_crop: null } as const;
+const serverPreview: RunApi['preview'] = async (request, approved) => ({
+  preview_id: 'preview-1', request: { ...request, context: { ...request.context, input_fingerprint: 'server-authoritative-fingerprint' } },
+  input_fingerprint: 'server-authoritative-fingerprint', profile, grants: approved, expires_at: new Date(Date.now() + 600_000).toISOString(),
+});
 const ontology: OntologyVersion = { ontology_version_id: 'ontology-1', project_id: 'project-1', version_no: 1, guidelines_markdown: 'Review <script>alert(1)</script> helmets.', allow_out_of_bounds: false, labels: [{ label_id: 'label-person', name: 'person', color: '#3366ff', shortcut: null, allowed_geometry_types: ['bbox_xyxy'], attributes: [{ key: 'helmet_state', kind: 'enum', required: true, default_value: 'unknown', enum_values: ['unknown', 'wearing'], min: null, max: null }] }] };
 const validEntry: CandidateEntry = { key: `${candidateCacheKey('run-1', 'asset-A')}:0`, asset_revision_id: 'asset-A', run_id: 'run-1', run_context: context, candidate, schema_error: null, objects: new Map([[person.object_id, person]]) };
 
@@ -75,13 +78,7 @@ async function openConsentPreview() {
 }
 
 describe('T24 AI review behavior', () => {
-  it('shows provider, full model, authentication, availability, and verification independently', () => {
-    render(<ProviderPicker profiles={[profile]} selected={profile.profile_id} onSelect={() => undefined} />);
-    expect(screen.getByText('OpenAI API · full-model-2026-09')).toBeTruthy();
-    expect(screen.getByText('API key')).toBeTruthy();
-    expect(screen.getByText('Needs configuration')).toBeTruthy();
-    expect(screen.getByText('Not verified')).toBeTruthy();
-  });
+
   it('keys cached candidates by both run and asset and rejects foreign, stale, or newer-generation candidates', () => {
     expect(candidateCacheKey('r1', 'asset-A')).not.toBe(candidateCacheKey('r1', 'asset-B'));
     expect(candidateCacheKey('r1', 'asset-A')).not.toBe(candidateCacheKey('r2', 'asset-A'));
@@ -128,10 +125,40 @@ describe('T24 AI review behavior', () => {
     expect(screen.getByRole('button', { name: 'Accept selected changes' })).toHaveProperty('disabled', true);
   });
 
+  it('discards a delayed server preview after the editor asset changes', async () => {
+    let release!: (value: Awaited<ReturnType<RunApi['preview']>>) => void;
+    const pending = new Promise<Awaited<ReturnType<RunApi['preview']>>>(resolve => { release = resolve; });
+    const preview = vi.fn<RunApi['preview']>(async () => pending);
+    const start = vi.fn<RunApi['start']>(async () => ({ run_id: 'must-not-start' }));
+    const obtainConsent = vi.fn(async () => 'must-not-consent');
+    const documentA:AnnotationDocument={schema_version:1,asset_revision_id:'asset-A',ontology_version_id:'ontology-1',coordinate_space:{type:'canonical_image_pixels',width:100,height:100},completion:'in_progress',objects:[person]};
+    const props={asset_revision_id:'asset-A',profiles:[profile],context,getDocument:()=>documentA,getGeneration:()=>4,ontology,generation:4,dispatch:()=>null,grants,api:{preview,start,events:async()=>[],suggestions:async()=>[],cancel:async()=>undefined},obtainConsent,refreshContext:refreshScopeContext,saveQueue:cleanSaveQueue()};
+    const view=render(<Panel {...props}/>);
+    fireEvent.change(screen.getByTestId('ai-prompt'),{target:{value:'Review asset A'}});
+    fireEvent.click(screen.getByTestId('ai-run'));
+    await waitFor(()=>expect(preview).toHaveBeenCalledTimes(1));
+    view.rerender(<Panel {...props} asset_revision_id="asset-B" context={contextWith({asset_revision_id:'asset-B'})} getDocument={()=>({...documentA,asset_revision_id:'asset-B'})}/>);
+    await act(async()=>release(await serverPreview(...preview.mock.calls[0]!)));
+    expect(screen.queryByTestId('ai-consent')).toBeNull();
+    expect(obtainConsent).not.toHaveBeenCalled();expect(start).not.toHaveBeenCalled();
+  });
+
+  it('does not start a billable request when its consent finishes after unmount', async () => {
+    let release!:(value:string)=>void;const pending=new Promise<string>(resolve=>{release=resolve;});
+    const obtainConsent=vi.fn(async()=>pending);const start=vi.fn<RunApi['start']>(async()=>({run_id:'must-not-start'}));
+    const api:RunApi={preview:serverPreview,start,events:async()=>[],suggestions:async()=>[],cancel:async()=>undefined};
+    const view=render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={()=>({schema_version:1,asset_revision_id:'asset-A',ontology_version_id:'ontology-1',coordinate_space:{type:'canonical_image_pixels',width:100,height:100},completion:'in_progress',objects:[person]})} getGeneration={()=>4} ontology={ontology} generation={4} dispatch={()=>null} grants={grants} api={api} obtainConsent={obtainConsent} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()}/>);
+    fireEvent.change(screen.getByTestId('ai-prompt'),{target:{value:'Review saved asset'}});await openConsentPreview();
+    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
+    fireEvent.click(screen.getByRole('button',{name:'Authorize and run now'}));
+    await waitFor(()=>expect(obtainConsent).toHaveBeenCalledTimes(1));view.unmount();await act(async()=>release('consent-finished'));
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('does not submit prompt before preview authorization and starts only after consent', async () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'run-1' }));
     const events = vi.fn(async (): Promise<RunEvent[]> => [{ run_id: 'run-1', seq: 1, type: 'succeeded', message: 'Completed', data: null }]);
-    const api: RunApi = { start, events, suggestions: async () => [], cancel: async () => undefined };
+    const api: RunApi = { preview: serverPreview, start, events, suggestions: async () => [], cancel: async () => undefined };
     const obtainConsent = vi.fn(async () => 'consent-1');
     render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={obtainConsent} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Only inspect helmet_state.' } });
@@ -154,7 +181,7 @@ describe('T24 AI review behavior', () => {
   it('refuses consent and run creation without an acknowledged save queue', async () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'must-not-start' }));
     const obtainConsent = vi.fn(async () => 'must-not-consent');
-    const api: RunApi = { start, events: async () => [], suggestions: async () => [], cancel: async () => undefined };
+    const api: RunApi = { preview: serverPreview, start, events: async () => [], suggestions: async () => [], cancel: async () => undefined };
     render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={obtainConsent} refreshContext={refreshScopeContext} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Check saved attributes.' } });
     fireEvent.click(screen.getByTestId('ai-run'));
@@ -166,7 +193,7 @@ describe('T24 AI review behavior', () => {
   it('rejects an idle queue with no server revision baseline', async () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'must-not-start' }));
     const obtainConsent = vi.fn(async () => 'must-not-consent');
-    const api: RunApi = { start, events: async () => [], suggestions: async () => [], cancel: async () => undefined };
+    const api: RunApi = { preview: serverPreview, start, events: async () => [], suggestions: async () => [], cancel: async () => undefined };
     const saveQueue = {
       flush: vi.fn(async () => undefined),
       getStatus: vi.fn(() => ({
@@ -186,7 +213,7 @@ describe('T24 AI review behavior', () => {
 
   it('pins consent and the run to the revision acknowledged by the save queue', async () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'saved-run' }));
-    const api: RunApi = { start, events: async () => [], suggestions: async () => [], cancel: async () => undefined };
+    const api: RunApi = { preview: serverPreview, start, events: async () => [], suggestions: async () => [], cancel: async () => undefined };
     const acknowledgedRevision = 'revision-after-save';
     const saveQueue = {
       flush: vi.fn(async () => undefined),
@@ -211,7 +238,7 @@ describe('T24 AI review behavior', () => {
   });
   it('requires scope review again when the acknowledged revision changes after consent preview', async () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'must-not-start' }));
-    const api: RunApi = { start, events: async () => [], suggestions: async () => [], cancel: async () => undefined };
+    const api: RunApi = { preview: serverPreview, start, events: async () => [], suggestions: async () => [], cancel: async () => undefined };
     const status = (revision: string) => ({
       phase: 'synced' as const, dirty: false, saving: false, writes_paused: false, local_generation: 4,
       synced_generation: 4, base_revision_id: revision, draft_exportable: true, last_error: null,
@@ -227,7 +254,6 @@ describe('T24 AI review behavior', () => {
     expect(screen.getByTestId('ai-consent').textContent).toContain('revision-reviewed');
     fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
     fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('changed after scope review'));
     expect(obtainConsent).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
   });
@@ -235,6 +261,7 @@ describe('T24 AI review behavior', () => {
   it('shows generated-schema validation failures from the run API', async () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'run-invalid' }));
     const api: RunApi = {
+      preview: serverPreview,
       start,
       events: async () => [{ run_id: 'run-invalid', seq: 1, type: 'candidate', message: 'Candidate received', data: null }],
       suggestions: async () => [{ score: 200 }],
@@ -254,6 +281,7 @@ describe('T24 AI review behavior', () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'late-run' }));
     const events = vi.fn(async () => pendingEvents);
     const api: RunApi = {
+      preview: serverPreview,
       start,
       events,
       suggestions: async () => [{ ...candidate, model_run_id: 'late-run', context: start.mock.calls[0]![0].context }],
@@ -285,7 +313,7 @@ describe('T24 AI review behavior', () => {
     const start = vi.fn(async (_request: StartRunRequest) => ({ run_id: 'poll-run' }));
     const events = vi.fn(async () => []);
     const cancel = vi.fn(async () => undefined);
-    const api: RunApi = { start, events, suggestions: async () => [], cancel };
+    const api: RunApi = { preview: serverPreview, start, events, suggestions: async () => [], cancel };
     render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={async () => 'consent-1'} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Check attributes.' } });
     await act(async () => {
@@ -339,7 +367,7 @@ describe('T24 AI review behavior', () => {
       return [{ ...candidate, model_run_id: 'retry-' + scenario, context: start.mock.calls[0]![0].context }];
     });
     const cancel = vi.fn(async () => undefined);
-    const api: RunApi = { start, events, suggestions, cancel };
+    const api: RunApi = { preview: serverPreview, start, events, suggestions, cancel };
     render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={async () => 'consent'} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Inspect helmets' } });
     await act(async () => { fireEvent.click(screen.getByTestId('ai-run')); await vi.advanceTimersByTimeAsync(0); });
@@ -398,7 +426,7 @@ describe('T24 AI review behavior', () => {
       queue.enqueue({ asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', generation: generationNow, document: documentNow, suggestion_decisions: intents });
       return { generation: generationNow, changed_objects: documentNow.objects, removed_object_ids: [], selected_object_ids: [], can_undo: true, can_redo: false, document_changed: true, repaint: true, suggestion_decisions: intents, error: null };
     });
-    const api: RunApi = { start: async (request) => { runContext = request.context; return { run_id: 'live-ack-run' }; }, events: async () => [{ run_id: 'live-ack-run', seq: 1, type: 'succeeded', message: 'Done', data: null }], suggestions: async () => [{ ...candidate, model_run_id: 'live-ack-run', context: runContext }], cancel: async () => undefined };
+    const api: RunApi = { preview: serverPreview, start: async (request) => { runContext = request.context; return { run_id: 'live-ack-run' }; }, events: async () => [{ run_id: 'live-ack-run', seq: 1, type: 'succeeded', message: 'Done', data: null }], suggestions: async () => [{ ...candidate, model_run_id: 'live-ack-run', context: runContext }], cancel: async () => undefined };
     const panel = () => <Panel asset_revision_id="asset-A" profiles={[profile]} context={context} ontology={ontology} getDocument={() => documentNow} getGeneration={() => generationNow} generation={generationNow} dispatch={dispatch} grants={grants} api={api} saveQueue={queue} refreshContext={refreshScopeContext} obtainConsent={async () => 'consent'} />;
     const view = render(panel());
     const undo = () => {

@@ -19,8 +19,6 @@ use rand::RngCore;
 
 /// Bytes of entropy in every issued token.
 pub const TOKEN_BYTES: usize = 32;
-/// Default lifetime of a run token; runs are bounded by far shorter budgets.
-pub const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(900);
 
 /// Maximum `read_region` crop calls per token.
 pub const MAX_CROP_CALLS: u32 = 32;
@@ -133,21 +131,38 @@ impl RunTokenStore {
         token
     }
 
-    /// Issues a token for a run that has none yet, so run start is idempotent
-    /// across request replays and crash retries. Returns None when a live token
-    /// already exists (budgets are per token, so runs get exactly one).
-    pub fn issue_once(&self, run_id: &str, project_id: &str, ttl: Duration) -> Option<String> {
-        {
-            let tokens = self.tokens.lock().expect("run token store poisoned");
-            let now = now_ms();
-            if tokens
-                .values()
-                .any(|entry| entry.run_id == run_id && !entry.revoked && entry.expires_at_ms > now)
-            {
-                return None;
-            }
+    /// Issues once with the authoritative persisted capability expiry, never renewing it.
+    pub fn issue_once_until(
+        &self,
+        run_id: &str,
+        project_id: &str,
+        expires_at_ms: i64,
+    ) -> Option<String> {
+        if run_id.is_empty() || project_id.is_empty() || expires_at_ms <= now_ms() {
+            return None;
         }
-        Some(self.issue(run_id, project_id, ttl))
+        let mut tokens = self.tokens.lock().expect("run token store poisoned");
+        let now = now_ms();
+        if tokens
+            .values()
+            .any(|entry| entry.run_id == run_id && !entry.revoked && entry.expires_at_ms > now)
+        {
+            return None;
+        }
+        let token = random_token();
+        tokens.insert(
+            token.clone(),
+            TokenEntry {
+                run_id: run_id.to_owned(),
+                project_id: project_id.to_owned(),
+                expires_at_ms,
+                revoked: false,
+                crop_calls: 0,
+                full_image_calls: 0,
+                crop_pixels: 0,
+            },
+        );
+        Some(token)
     }
 
     /// Live (unexpired, unrevoked) tokens bound to a run. Observability for the

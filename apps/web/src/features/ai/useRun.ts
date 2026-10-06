@@ -10,17 +10,19 @@ import type { RunEvent } from '../../../../../packages/contracts/generated/RunEv
 import type { StartRunRequest } from '../../../../../packages/contracts/generated/StartRunRequest';
 import type { SuggestionSet } from '../../../../../packages/contracts/generated/SuggestionSet';
 import type { SaveQueue } from '../../lib/persistence/save-queue';
-import { freezeAfterFlush, inputFingerprint } from './runCoordinator';
+import { freezeAfterFlush } from './runCoordinator';
+import type { AiApprovedGrants } from '../../../../../packages/contracts/generated/AiApprovedGrants';
+import type { AiPreviewRequest } from '../../../../../packages/contracts/generated/AiPreviewRequest';
+import type { AiPreviewResponse } from '../../../../../packages/contracts/generated/AiPreviewResponse';
 
-export interface ConsentPreview {
-  profile: ModelProfile;
+export interface ConsentPreview extends AiPreviewResponse {
   context: RunContext;
   intent: StartRunRequest['intent'];
   prompt: string;
-  grants: { image: boolean; selected_objects: boolean; crop: null | { x_min: number; y_min: number; x_max: number; y_max: number } };
 }
 
 export interface RunApi {
+  preview(request: StartRunRequest, grants: AiApprovedGrants, signal: AbortSignal): Promise<AiPreviewResponse>;
   start(request: StartRunRequest, signal: AbortSignal): Promise<{ run_id: string }>;
   events(runId: string, after: number, signal: AbortSignal): Promise<unknown[]>;
   suggestions(runId: string, signal: AbortSignal): Promise<unknown[]>;
@@ -33,7 +35,7 @@ export interface RunControllerOptions {
   context: RunContext;
   intent: StartRunRequest['intent'];
   prompt: string;
-  grants: ConsentPreview['grants'];
+  grants: AiApprovedGrants;
   obtainConsent?: (preview: ConsentPreview) => Promise<string>;
   dispatch: (command: EditorCommand) => EditorDelta | null;
   getDocument: () => AnnotationDocument | null;
@@ -54,7 +56,6 @@ export interface CandidateEntry {
   readonly objects: ReadonlyMap<string, AnnotationObject>;
 }
 
-let operationSequence = 0;
 const runCache = new Map<string, CandidateEntry[]>();
 
 export function candidateCacheKey(runId: string, assetId: string): string {
@@ -95,6 +96,7 @@ function defaultApi(csrfToken: string | null): RunApi {
     return body as T;
   };
   return {
+    preview: (body, grants, signal) => request<AiPreviewResponse>('/api/ai/previews', { method: 'POST', body: JSON.stringify({ request: body, grants } satisfies AiPreviewRequest) }, signal),
     start: (body, signal) => request('/api/ai/runs', { method: 'POST', body: JSON.stringify(body) }, signal),
     events: async (runId, after, signal) => {
       const body = await request<{ items: unknown[] }>(`/api/ai/runs/${encodeURIComponent(runId)}/events?after=${after}`, { method: 'GET' }, signal);
@@ -149,6 +151,8 @@ export function useRun(options: RunControllerOptions) {
   const runObjects = useRef(new Map<string, ReadonlyMap<string, AnnotationObject>>());
   const lastSequences = useRef(new Map<string, number>());
   const finishedRuns = useRef(new Set<string>());
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const optionsRef = useRef(options);
   optionsRef.current = options;
   useEffect(() => { setSavedNotice(null); }, [options.asset_revision_id]);
@@ -175,7 +179,32 @@ export function useRun(options: RunControllerOptions) {
       return null;
     }
   }, []);
-  const prepareContext = useCallback(async () => (await prepareSnapshot())?.context ?? null, [prepareSnapshot]);
+  const preparedObjects = useRef(new Map<string, ReadonlyMap<string, AnnotationObject>>());
+  const inFlight = useRef(false);
+  const scopeIdentity = (value: RunControllerOptions) => JSON.stringify([value.asset_revision_id, value.context.project_id, value.context.ontology_version_id, value.context.selected_object_ids, value.context.object_hashes, value.getGeneration(), value.profile, value.intent, value.prompt, value.grants]);
+  const preparePreview = useCallback(async (): Promise<ConsentPreview | null> => {
+    const initial = optionsRef.current;
+    const identity = scopeIdentity(initial);
+    if (!initial.profile || !initial.prompt.trim()) return null;
+    setError(null);
+    try {
+      const frozen = await prepareSnapshot();
+      if (!mounted.current || !frozen || identity !== scopeIdentity(optionsRef.current)) return null;
+      const request: StartRunRequest = {
+        operation_id: globalThis.crypto.randomUUID(), profile_id: initial.profile.profile_id,
+        context: frozen.context, intent: initial.intent, prompt: initial.prompt, consent_id: null,
+      };
+      const fixed = await api.preview(request, initial.grants, new AbortController().signal);
+      if (!mounted.current || identity !== scopeIdentity(optionsRef.current)) return null;
+      if (!fixed.preview_id || !contextMatches(fixed.request.context, frozen.context, false)) throw new Error('PREVIEW_RESPONSE_INVALID: preview does not match the acknowledged scope');
+      preparedObjects.current.clear();
+      preparedObjects.current.set(fixed.preview_id, new Map(frozen.document.objects.map(object => [object.object_id, structuredClone(object)])));
+      return { ...fixed, context: fixed.request.context, intent: fixed.request.intent, prompt: fixed.request.prompt };
+    } catch (cause) {
+      if (identity === scopeIdentity(optionsRef.current)) setError(cause instanceof Error ? cause.message : 'Could not prepare AI scope.');
+      return null;
+    }
+  }, [api, prepareSnapshot]);
 
 
   useEffect(() => {
@@ -184,64 +213,46 @@ export function useRun(options: RunControllerOptions) {
     return () => document.removeEventListener('visibilitychange', update);
   }, []);
 
-  const run = useCallback(async (reviewedContext: RunContext = optionsRef.current.context) => {
+  const run = useCallback(async (preview: ConsentPreview) => {
+    if (inFlight.current) return;
     setError(null);
     setSavedNotice(null);
     const initial = optionsRef.current;
-    const profile = initial.profile;
-    const obtainConsent = initial.obtainConsent;
-    const prompt = initial.prompt;
-    if (!profile) { setError('Select a model profile before running.'); return; }
-    if (!obtainConsent) { setError('Consent service is unavailable; no run was started.'); return; }
-    if (!prompt.trim()) { setError('Enter an instruction before running.'); return; }
-    if (reviewedContext.asset_revision_id !== initial.asset_revision_id) { setError('Run context does not match the active asset.'); return; }
+    const identity = scopeIdentity(initial);
+    if (!initial.obtainConsent || !initial.profile) { setError('Consent service is unavailable; no run was started.'); return; }
     if (!initial.api && !initial.csrfToken) { setError('CSRF token is unavailable; no AI request was sent.'); return; }
+    inFlight.current = true;
     setBusy(true);
     const controller = new AbortController();
     try {
       const prepared = await prepareSnapshot();
       if (!prepared) return;
-      if (!contextMatches(reviewedContext, prepared.context)) {
-        throw new Error('The saved revision or editor draft changed after scope review. Review the refreshed scope and confirm consent again.');
+      if (!mounted.current || identity !== scopeIdentity(optionsRef.current) || !contextMatches(preview.context, prepared.context, false) ||
+          initial.profile.profile_id !== preview.profile.profile_id || initial.prompt !== preview.prompt || initial.intent !== preview.intent ||
+          JSON.stringify(initial.grants) !== JSON.stringify(preview.grants) || Date.parse(preview.expires_at) <= Date.now()) {
+        throw new Error('The saved scope changed after review. Prepare a new server preview and confirm consent again.');
       }
-      const current = optionsRef.current;
-      const frozenContext = {
-        ...prepared.context,
-        input_fingerprint: await inputFingerprint({
-          profile,
-          context: prepared.context,
-          intent: current.intent,
-          prompt,
-          grants: current.grants,
-        }),
-      };
-      const objectSnapshot = new Map<string, AnnotationObject>(prepared.document.objects.map((object): [string, AnnotationObject] => [
-        object.object_id,
-        { ...object, geometry: { ...object.geometry }, attributes: { ...object.attributes }, origin: { ...object.origin } },
-      ]));
-      const consent_id = await current.obtainConsent!({ profile, context: frozenContext, intent: current.intent, prompt, grants: current.grants });
-      const request: StartRunRequest = {
-        operation_id: globalThis.crypto?.randomUUID?.() ?? `run-${Date.now()}-${++operationSequence}`,
-        profile_id: profile.profile_id,
-        context: frozenContext,
-        intent: current.intent,
-        prompt,
-        consent_id,
-      };
-      const result = await api.start(request, controller.signal);
+      const objectSnapshot = preparedObjects.current.get(preview.preview_id);
+      if (!objectSnapshot) throw new Error('The reviewed editor snapshot is unavailable.');
+      const consent_id = await initial.obtainConsent(preview);
+      if (!mounted.current || identity !== scopeIdentity(optionsRef.current)) throw new Error('Active editor changed during consent; no run was started.');
+      const result = await api.start({ ...preview.request, consent_id }, controller.signal);
       if (!result.run_id) throw new Error('RUN_RESPONSE_INVALID: server returned no run id');
-      runContexts.current.set(result.run_id, frozenContext);
+      runContexts.current.set(result.run_id, preview.context);
       runObjects.current.set(result.run_id, objectSnapshot);
+      preparedObjects.current.delete(preview.preview_id);
       setRunId(result.run_id);
-      setRunIds((currentRuns) => currentRuns.includes(result.run_id) ? currentRuns : [...currentRuns, result.run_id]);
-      setCandidateEntries((currentEntries) => {
+      setRunIds(currentRuns => currentRuns.includes(result.run_id) ? currentRuns : [...currentRuns, result.run_id]);
+      setCandidateEntries(currentEntries => {
         const cached = runCache.get(candidateCacheKey(result.run_id, initial.asset_revision_id)) ?? [];
-        return [...currentEntries.filter((entry) => entry.run_id !== result.run_id || entry.asset_revision_id !== initial.asset_revision_id), ...cached];
+        return [...currentEntries.filter(entry => entry.run_id !== result.run_id || entry.asset_revision_id !== initial.asset_revision_id), ...cached];
       });
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not start AI run.');
     } finally {
-      if (!controller.signal.aborted) setBusy(false);
+      preparedObjects.current.delete(preview.preview_id);
+      inFlight.current = false;
+      if (mounted.current && !controller.signal.aborted) setBusy(false);
     }
   }, [api, prepareSnapshot]);
 
@@ -379,5 +390,5 @@ export function useRun(options: RunControllerOptions) {
     }
   }, [busy, options]);
 
-  return { run, prepareContext, cancel, runId, events, candidates: candidateEntries, error, busy, savedMessage, acceptSelected };
+  return { run, preparePreview, cancel, runId, events, candidates: candidateEntries, error, busy, savedMessage, acceptSelected };
 }

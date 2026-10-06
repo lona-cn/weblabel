@@ -938,7 +938,7 @@
         "consent"
       ],
       "files": [
-        "crates/weblabel-api/src/ai/{consent,orchestrator,acceptance}.rs",
+        "crates/weblabel-api/src/ai/{consent,runs,predictions,acceptance}.rs",
         "apps/web/src/features/ai/runCoordinator.ts",
         "tests/integration/t25_ai.test.ts",
         "tests/e2e/t25_ai.spec.ts",

@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::{
     ai::{events, AiState},
     auth::{Principal, Role},
-    jobs::{model_jobs, queue::JobQueue},
+    jobs::queue::JobQueue,
     media::canonical::sha256_hex,
     projects::now_rfc3339,
     storage::Repository,
@@ -337,6 +337,7 @@ struct ValidatedRequest {
     context_json: String,
     request_hash: String,
     run_id: String,
+    authorization: super::consent::RunAuthorization,
 }
 
 /// Creates one or more runs as a single idempotent operation. All requests must
@@ -344,7 +345,7 @@ struct ValidatedRequest {
 /// second billing run.
 pub async fn create_batch(
     repository: &Repository,
-    queue: &JobQueue,
+    _queue: &JobQueue,
     actor_id: &str,
     operation_id: &str,
     requests: Vec<StartRunRequest>,
@@ -365,6 +366,87 @@ pub async fn create_batch(
         )
     })?;
 
+    let mut tx = repository.begin_write().await.map_err(|_| {
+        storage_failure(
+            "RUN_CREATE_FAILED",
+            "Could not start the model run transaction",
+        )
+    })?;
+    // A successful START is a durable receipt, not a fresh capability request.
+    // Compare against the pinned profile used by that START before revalidating
+    // mutable inputs or the preview window. Visibility still applies today.
+    if let Some(existing) = find_idempotency_on(tx.connection(), actor_id, operation_id)
+        .await
+        .map_err(|_| {
+            storage_failure("RUN_CREATE_FAILED", "Could not read the idempotency record")
+        })?
+    {
+        #[derive(Deserialize)]
+        struct StoredStartReceipt {
+            runs: Vec<RunSummary>,
+        }
+        let StoredStartReceipt { runs: summaries } = serde_json::from_str(&existing.response_json)
+            .map_err(|_| {
+                storage_failure(
+                    "IDEMPOTENCY_RECORD_CORRUPT",
+                    "Stored idempotency response is invalid",
+                )
+            })?;
+        let conflict = || {
+            RunFailure::new(
+                StatusCode::CONFLICT,
+                "IDEMPOTENCY_KEY_REUSE",
+                "operation_id was reused with a different run request",
+            )
+        };
+        if summaries.len() != requests.len() {
+            return Err(conflict());
+        }
+        let mut combined = String::with_capacity(summaries.len() * 64);
+        for (summary, request) in summaries.iter().zip(&requests) {
+            let record = load_record(tx.connection(), &summary.run_id)
+                .await
+                .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not look up model run"))?
+                .ok_or_else(|| {
+                    storage_failure("IDEMPOTENCY_RECORD_CORRUPT", "Stored model run is missing")
+                })?;
+            if record.actor_id != actor_id || record.operation_id != operation_id {
+                return Err(storage_failure(
+                    "IDEMPOTENCY_RECORD_CORRUPT",
+                    "Stored model run identity is invalid",
+                ));
+            }
+            if member_role(tx.connection(), &record.project_id, actor_id)
+                .await
+                .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not authorize model run"))?
+                .is_none()
+            {
+                return Err(RunFailure::new(
+                    StatusCode::NOT_FOUND,
+                    "RUN_NOT_FOUND",
+                    "Model run not found",
+                ));
+            }
+            let snapshot: ModelProfile = serde_json::from_str(&record.profile_snapshot_json)
+                .map_err(|_| {
+                    storage_failure("IDEMPOTENCY_RECORD_CORRUPT", "Stored profile is invalid")
+                })?;
+            combined.push_str(&hash_request(&snapshot, request).map_err(|_| {
+                RunFailure::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_RUN_REQUEST",
+                    "run request cannot be serialized",
+                )
+            })?);
+        }
+        if existing.request_hash != sha256_hex(combined.as_bytes()) {
+            return Err(conflict());
+        }
+        return Ok(CreateOutcome {
+            runs: summaries,
+            idempotent_replay: true,
+        });
+    }
     let mut project_id: Option<String> = None;
     let mut validated = Vec::with_capacity(requests.len());
     let mut profile_cache: BTreeMap<String, ModelProfile> = BTreeMap::new();
@@ -422,7 +504,7 @@ pub async fn create_batch(
             snapshot.clone()
         } else {
             let snapshot =
-                resolve_profile(repository, &*request.profile_id, allow_mock_runs).await?;
+                resolve_profile_on(tx.connection(), &*request.profile_id, allow_mock_runs).await?;
             profile_cache.insert(request.profile_id.to_string(), snapshot.clone());
             snapshot
         };
@@ -432,7 +514,7 @@ pub async fn create_batch(
             "provider"
         };
 
-        validate_context(repository, actor_id, &request).await?;
+        validate_context_on(tx.connection(), actor_id, &request).await?;
         let context_json = serde_json::to_string(&request.context).map_err(|_| {
             RunFailure::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -452,7 +534,10 @@ pub async fn create_batch(
             format!("weblabel.ai_run:{actor_id}:{operation_id}:{request_hash}:{index}").as_bytes(),
         )
         .to_string();
+        let authorization =
+            super::consent::authorize_request(tx.connection(), actor_id, &request).await?;
         validated.push(ValidatedRequest {
+            authorization,
             request,
             snapshot,
             source,
@@ -471,50 +556,29 @@ pub async fn create_batch(
         sha256_hex(combined.as_bytes())
     };
 
-    // Fast replay path before touching the queue.
-    if let Some(existing) = find_idempotency(repository, actor_id, operation_id).await? {
-        return replay_or_conflict(existing, batch_hash);
-    }
-
-    let run_ids: Vec<String> = validated.iter().map(|item| item.run_id.clone()).collect();
-    let enqueued = model_jobs::enqueue_run_job(queue, &project_id, operation_id, &run_ids)
-        .await
-        .map_err(|failure| match failure {
-            crate::jobs::queue::QueueError::IdempotencyConflict => RunFailure::new(
-                StatusCode::CONFLICT,
-                "IDEMPOTENCY_KEY_REUSE",
-                "operation_id was reused with a different run request",
-            ),
-            crate::jobs::queue::QueueError::QueueFull => RunFailure::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "RUN_QUEUE_FULL",
-                "the model job queue is full",
-            ),
-            _ => storage_failure("RUN_CREATE_FAILED", "Could not enqueue the model run job"),
-        })?;
-
+    let run_ids: Vec<&str> = validated.iter().map(|item| item.run_id.as_str()).collect();
+    let enqueued = JobQueue::enqueue_on(
+        tx.connection(),
+        Some(&project_id),
+        "model_run",
+        operation_id,
+        &json!({"run_ids": run_ids}),
+    )
+    .await
+    .map_err(|error| match error {
+        crate::jobs::queue::QueueError::QueueFull => RunFailure::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "RUN_QUEUE_FULL",
+            "The model job queue is full",
+        ),
+        crate::jobs::queue::QueueError::IdempotencyConflict => RunFailure::new(
+            StatusCode::CONFLICT,
+            "IDEMPOTENCY_KEY_REUSE",
+            "operation_id was reused with a different request",
+        ),
+        _ => storage_failure("RUN_CREATE_FAILED", "Could not enqueue the model run job"),
+    })?;
     let mut summaries = Vec::with_capacity(validated.len());
-    let mut tx = match repository.begin_write().await {
-        Ok(tx) => tx,
-        Err(_) => {
-            return Err(storage_failure(
-                "RUN_CREATE_FAILED",
-                "Could not start the model run transaction",
-            ))
-        }
-    };
-    let existing = find_idempotency_on(tx.connection(), actor_id, operation_id)
-        .await
-        .map_err(|_| {
-            storage_failure(
-                "RUN_CREATE_FAILED",
-                "Could not store the idempotency record",
-            )
-        })?;
-    if let Some(existing) = existing {
-        tx.commit().await.ok();
-        return replay_or_conflict(existing, batch_hash);
-    }
     let created_at = now_rfc3339();
     for item in &validated {
         let snapshot_json = serde_json::to_string(&item.snapshot)
@@ -549,6 +613,8 @@ pub async fn create_batch(
         .execute(tx.connection())
         .await
         .map_err(|_| storage_failure("RUN_CREATE_FAILED", "Could not persist the model run"))?;
+        super::consent::record_authorization(tx.connection(), &item.run_id, &item.authorization)
+            .await?;
         events::record(
             tx.connection(),
             &item.run_id,
@@ -623,24 +689,6 @@ struct ExistingOperation {
     response_json: String,
 }
 
-async fn find_idempotency(
-    repository: &Repository,
-    actor_id: &str,
-    operation_id: &str,
-) -> Result<Option<ExistingOperation>, RunFailure> {
-    let mut tx = repository
-        .begin_write()
-        .await
-        .map_err(|_| storage_failure("RUN_CREATE_FAILED", "Could not check run idempotency"))?;
-    let existing = find_idempotency_on(tx.connection(), actor_id, operation_id)
-        .await
-        .map_err(|_| storage_failure("RUN_CREATE_FAILED", "Could not check run idempotency"))?;
-    tx.commit()
-        .await
-        .map_err(|_| storage_failure("RUN_CREATE_FAILED", "Could not finish idempotency check"))?;
-    Ok(existing)
-}
-
 async fn find_idempotency_on(
     connection: &mut SqliteConnection,
     actor_id: &str,
@@ -661,46 +709,6 @@ async fn find_idempotency_on(
         })
     })
     .transpose()
-}
-
-fn replay_or_conflict(
-    existing: ExistingOperation,
-    batch_hash: String,
-) -> Result<CreateOutcome, RunFailure> {
-    if existing.request_hash != batch_hash {
-        return Err(RunFailure::new(
-            StatusCode::CONFLICT,
-            "IDEMPOTENCY_KEY_REUSE",
-            "operation_id was reused with a different run request",
-        ));
-    }
-    let stored: Value = serde_json::from_str(&existing.response_json).map_err(|_| {
-        storage_failure(
-            "IDEMPOTENCY_RECORD_CORRUPT",
-            "Stored idempotency response is invalid",
-        )
-    })?;
-    let runs = stored["runs"]
-        .as_array()
-        .ok_or_else(|| {
-            storage_failure(
-                "IDEMPOTENCY_RECORD_CORRUPT",
-                "Stored idempotency response is invalid",
-            )
-        })?
-        .iter()
-        .map(|value| serde_json::from_value(value.clone()))
-        .collect::<Result<Vec<RunSummary>, _>>()
-        .map_err(|_| {
-            storage_failure(
-                "IDEMPOTENCY_RECORD_CORRUPT",
-                "Stored idempotency response is invalid",
-            )
-        })?;
-    Ok(CreateOutcome {
-        runs,
-        idempotent_replay: true,
-    })
 }
 
 fn hash_request(
@@ -764,8 +772,8 @@ pub fn mock_profile() -> ModelProfile {
     }
 }
 
-async fn resolve_profile(
-    repository: &Repository,
+pub(crate) async fn resolve_profile_on(
+    connection: &mut SqliteConnection,
     profile_id: &str,
     allow_mock_runs: bool,
 ) -> Result<ModelProfile, RunFailure> {
@@ -787,21 +795,15 @@ async fn resolve_profile(
             "Model profile not found",
         )
     })?;
-    let mut tx = repository
-        .begin_write()
-        .await
-        .map_err(|_| storage_failure("PROFILE_LOOKUP_FAILED", "Could not look up model profile"))?;
+
     let row = sqlx::query(
         "SELECT provider_id, model_id, auth_kind, capabilities_json, availability, verification, \
                 runtime_version, verified_at FROM model_profiles WHERE profile_id=?",
     )
     .bind(profile_id)
-    .fetch_optional(tx.connection())
+    .fetch_optional(&mut *connection)
     .await
     .map_err(|_| storage_failure("PROFILE_LOOKUP_FAILED", "Could not look up model profile"))?;
-    tx.commit()
-        .await
-        .map_err(|_| storage_failure("PROFILE_LOOKUP_FAILED", "Could not look up model profile"))?;
     let Some(row) = row else {
         return Err(RunFailure::new(
             StatusCode::NOT_FOUND,
@@ -901,15 +903,11 @@ fn parse_verification(value: &str) -> Option<annotation_domain::Verification> {
     }
 }
 
-async fn validate_context(
-    repository: &Repository,
+pub(crate) async fn validate_context_on(
+    connection: &mut SqliteConnection,
     actor_id: &str,
     request: &StartRunRequest,
 ) -> Result<(), RunFailure> {
-    let mut tx = repository
-        .begin_write()
-        .await
-        .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not validate run context"))?;
     let context = &request.context;
     let row = sqlx::query(
         "SELECT r.project_id, r.canonical_sha256, m.canonical_width, m.canonical_height, u.role \
@@ -920,7 +918,7 @@ async fn validate_context(
     )
     .bind(&*context.asset_revision_id)
     .bind(actor_id)
-    .fetch_optional(tx.connection())
+    .fetch_optional(&mut *connection)
     .await
     .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not validate run context"))?;
     let Some(row) = row else {
@@ -968,7 +966,7 @@ async fn validate_context(
     .bind(&project_id)
     .bind(&*context.asset_revision_id)
     .bind(&*context.ontology_version_id)
-    .fetch_optional(tx.connection())
+    .fetch_optional(&mut *connection)
     .await
     .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not validate run context"))?;
     let Some(annotation_row) = annotation_row else {
@@ -1014,9 +1012,6 @@ async fn validate_context(
             ));
         }
     }
-    tx.commit()
-        .await
-        .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not validate run context"))?;
     Ok(())
 }
 
@@ -1244,16 +1239,6 @@ pub(super) async fn create(
     {
         Ok(outcome) => {
             let summary = &outcome.runs[0];
-            // Exactly one run-scoped bearer token per run, minted at run start
-            // and never returned here (C5: tokens travel only via the private
-            // child-env channel). Replays and crash retries do not mint again.
-            if !outcome.idempotent_replay {
-                state.run_tokens.issue_once(
-                    &summary.run_id,
-                    &summary.project_id,
-                    crate::runtime::run_tokens::DEFAULT_TOKEN_TTL,
-                );
-            }
             (
                 StatusCode::ACCEPTED,
                 Json(json!({
