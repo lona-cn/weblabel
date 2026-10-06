@@ -139,6 +139,11 @@ export interface EditorDelta {
   suggestion_decisions: SuggestionDecisionIntent[];
   error: ApiError | null;
 }
+export interface CommitReadback extends Omit<AnnotationDocument, 'objects'> {
+  generation: number;
+  object_count: number;
+  changed_positions: number[]; // 与changed_ids一一对应的原生canonical对象顺序slot
+}
 export interface EditorFacade {
   dispatch(command: EditorCommand): EditorDelta;
   pointer(input: PointerInput): EditorDelta;
@@ -149,7 +154,8 @@ export interface EditorFacade {
   fit_image(): void;
   set_selection(ids: Id[]): EditorDelta;
   set_local_flags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
-  get_snapshot(): AnnotationDocument;
+  get_snapshot(): AnnotationDocument; // 真实full-native读/救援，不替换成JS编辑器
+  get_commit_readback(expected_generation: number, changed_ids: Id[]): CommitReadback;
   get_generation(): number;
   get_object_hashes(): Record<Id, string>;
   set_predictions(sets: SuggestionSet[]): void;
@@ -176,7 +182,8 @@ T31原生selected controls：未锁定、未隐藏的选中对象在四角及四
 
 T31普通direct/gesture提交先在单一working clone上执行并校验，generation/no-op/error检查通过后move旧文档为history.before并只克隆已安装文档为history.after；undo/redo按既有snapshot history还原且保持128条/64MiB预算。WASM只同步序列化不可变当前文档借用，native owned snapshot及全部JS wire保持不变；ApplySuggestions另有既有事务working clone，不将两克隆归因外推到所有命令。
 
-T31持久化producer：每次逻辑提交与恢复仍执行JSON防御拷贝，enqueue内立即冻结并调用本地存储，不推迟或合并durability。模块私有WeakSet仅认证自身已递归冻结全部JSON子节点且成功冻结根的对象；仅认证节点跳过重复遍历，外部Object.isFrozen浅根继续深冻结。prepared request、pending与有序decision journal保持不可变，同operation重试payload、旧ACK不能清新dirty、quota/CAS/flush语义不变。producer计数不是完整消费者CPU或真实硬件性能通过证据。
+T31持久化producer：EditorHost在asset load/renderer恢复从真实get_snapshot一次初始化只读完整document mirror；每次逻辑document/decision提交只消费C3原生changed_objects/removals及required内部get_commit_readback的exact-generation header/object_count/changed slots。原生拒绝stale/非法generation/不存在object，JS不计算可编辑几何或猜completion/ontology/中间对象undo-restoration顺序。每个已消费delta对应自己的不可变document版本，same-generation值相等suggestion decision仍返回完整版本并追加有序journal；getSnapshot继续真实full-native救援读取。未改public C1/C3 wire或生成DTO。
+SaveQueue仅adopt模块私有WeakSet已认证的完整深冻JSON document，复用未变对象；未认证/外部Object.isFrozen浅根仍JSON-safe防御copy后递归冻结。认证只在全部JSON子节点与根成功冻结后写入；prepared/pending/request和decision journal保持不可变，恢复外部数据仍防御copy。每次enqueue立即写完整DraftRecord到实际IDB，不defer/coalesce/delta store；本地ACK与既有request-success/transaction-complete语义未改。same-operation重试payload、旧ACK不能清新dirty、quota/CAS/lease/flush/冲突语义不变。共享/冻结/CPU sampled诊断不等于原8000样本8ms/33ms硬件门禁通过。
 
 T30设备恢复扩展：三项方法是每个facade实现的required能力。device_lost返回当前真实GPUDevice对应的owned one-shot Promise，在原生device lost callback收到Destroyed/Unknown时resolve诊断字符串；JS idle等待不持有WASM borrow，不靠RAF/poll/submit检测。get_device_state只读返回实际renderer状态。recover_renderer只重建GPU资源，不create_editor、不刷新应用、不以snapshot新建会话；同一Rust editor、generation、history、selection、local flags、preview、predictions及既有SaveQueue保留。Host发布lost/recovering期间阻止编辑，CPU只读访问和保存队列继续可用；成功后重订阅新device的loss，dirty一次，零尺寸仍暂停提交；失败为GPU_RECOVERY_FAILED并保留CPU会话，允许显式retry，绝不重新调用AI。异步重建与通知都必须以asset epoch、facade identity、disposed fence隔离切图/卸载；旧请求完成不得配置新画布或访问已free的facade。
 

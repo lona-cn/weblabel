@@ -486,14 +486,18 @@ impl EditorSession {
     ) -> Result<CommitReadback<'_>, ApiError> {
         self.ensure_live()?;
         if expected_generation != self.editor.generation() {
-            return Err(api_error("STALE_GENERATION", "commit readback generation is stale"));
+            return Err(api_error(
+                "STALE_GENERATION",
+                "commit readback generation is stale",
+            ));
         }
         let document = self.editor.document();
         let changed_positions = changed_ids
             .iter()
             .map(|id| {
-                self.projection.indices.get(id).copied()
-                    .ok_or_else(|| api_error("OBJECT_NOT_FOUND", "commit readback object is absent"))
+                self.projection.indices.get(id).copied().ok_or_else(|| {
+                    api_error("OBJECT_NOT_FOUND", "commit readback object is absent")
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(CommitReadback {
@@ -709,21 +713,59 @@ mod tests {
         last.object_id = Id::from("last");
         document.objects.extend([middle, last]);
         let mut session = EditorSession::from_snapshot(document, ontology, 7).unwrap();
-        let removed = session.dispatch(EditorCommand::Delete { object_ids: vec![Id::from("middle")] });
+        let removed = session.dispatch(EditorCommand::Delete {
+            object_ids: vec![Id::from("middle")],
+        });
         assert!(removed.error.is_none());
-        assert_eq!(session.get_commit_readback(7, &[]).err().unwrap().code, "STALE_GENERATION");
-        assert_eq!(session.get_commit_readback(8, &[Id::from("last")]).unwrap().changed_positions, vec![1]);
-        assert_eq!(session.get_commit_readback(8, &[Id::from("middle")]).err().unwrap().code, "OBJECT_NOT_FOUND");
+        assert_eq!(
+            session.get_commit_readback(7, &[]).err().unwrap().code,
+            "STALE_GENERATION"
+        );
+        assert_eq!(
+            session
+                .get_commit_readback(8, &[Id::from("last")])
+                .unwrap()
+                .changed_positions,
+            vec![1]
+        );
+        assert_eq!(
+            session
+                .get_commit_readback(8, &[Id::from("middle")])
+                .err()
+                .unwrap()
+                .code,
+            "OBJECT_NOT_FOUND"
+        );
         let restored = session.dispatch(EditorCommand::Undo);
         assert!(restored.error.is_none());
-        let readback = session.get_commit_readback(restored.generation, &[Id::from("middle"), Id::from("last")]).unwrap();
+        let readback = session
+            .get_commit_readback(restored.generation, &[Id::from("middle"), Id::from("last")])
+            .unwrap();
         assert_eq!(readback.changed_positions, vec![1, 2]);
         assert_eq!(readback.object_count, 3);
-        assert_eq!(readback.completion, &annotation_domain::Completion::Complete);
-        let incomplete = session.dispatch(EditorCommand::SetCompletion { completion: annotation_domain::Completion::InProgress });
+        assert_eq!(
+            readback.completion,
+            &annotation_domain::Completion::Complete
+        );
+        let incomplete = session.dispatch(EditorCommand::SetCompletion {
+            completion: annotation_domain::Completion::InProgress,
+        });
         assert!(incomplete.error.is_none());
-        assert_eq!(session.get_commit_readback(restored.generation, &[]).err().unwrap().code, "STALE_GENERATION");
-        assert_eq!(session.get_commit_readback(incomplete.generation, &[]).unwrap().completion, &annotation_domain::Completion::InProgress);
+        assert_eq!(
+            session
+                .get_commit_readback(restored.generation, &[])
+                .err()
+                .unwrap()
+                .code,
+            "STALE_GENERATION"
+        );
+        assert_eq!(
+            session
+                .get_commit_readback(incomplete.generation, &[])
+                .unwrap()
+                .completion,
+            &annotation_domain::Completion::InProgress
+        );
     }
 
     // Count actual native heap allocations on this test's thread, not internal
@@ -1483,10 +1525,15 @@ pub mod wasm {
             // The C3 safe-integer generation crosses JS as Number, not BigInt.
             // Compare before casting so NaN, fractions and out-of-range reads fail.
             if expected_generation != self.session.get_generation() as f64 {
-                return Err(to_js_error(api_error("STALE_GENERATION", "commit readback generation is stale")));
+                return Err(to_js_error(api_error(
+                    "STALE_GENERATION",
+                    "commit readback generation is stale",
+                )));
             }
             let ids: Vec<Id> = changed_ids.into_iter().map(Id::from).collect();
-            let readback = self.session.get_commit_readback(expected_generation as u64, &ids)
+            let readback = self
+                .session
+                .get_commit_readback(expected_generation as u64, &ids)
                 .map_err(to_js_error)?;
             to_js(&readback)
         }

@@ -422,7 +422,6 @@ describe('T31 persistence producer immutability boundaries', () => {
     const fixture = makeQueue();
     const original = freezeDeep(makeDocument());
     enqueue(fixture, { generation: 8, document: original, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
-    expect(fixture.queue.toRecord('asset_a')!.document).toBe(original);
     void fixture.queue.flush('asset_a');
     const prepared = fixture.transport.saves[0].request;
     fixture.transport.failNetwork(0);
@@ -431,8 +430,6 @@ describe('T31 persistence producer immutability boundaries', () => {
     const future = freezeDeep({ ...original, completion: 'complete' as const });
     enqueue(fixture, { generation: 9, document: future, suggestion_decisions: [REVERT] });
     expect(fixture.transport.saves[1].request).toEqual(prepared);
-    expect(prepared.document).toBe(original);
-    expect(fixture.queue.toRecord('asset_a')!.document).toBe(future);
     fixture.transport.ackSave(1, 'r8');
     await microtasks();
     fixture.clock.advance(SAVE_DEBOUNCE_MS);
