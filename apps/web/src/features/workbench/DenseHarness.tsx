@@ -125,7 +125,7 @@ export default function DenseHarness() {
     <header><h1>Dense annotation laboratory</h1><p>Synthetic workload · actual Rust / WASM / WebGPU · authenticated API saves</p></header>
     {error ? <p role="alert">{error}</p> : null}
     {request ? <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 300px', gap: 20 }}>
-      <section style={{ height: 640 }} aria-label="Dense annotation canvas"><CanvasView request={request} activeTool="select" onDelta={consume} onHostReady={(host) => { void ready(host); }} /></section>
+      <section style={{ height: 640, position: 'relative' }} aria-label="Dense annotation canvas"><CanvasView request={request} activeTool="select" onDelta={consume} onHostReady={(host) => { void ready(host); }} /></section>
       <ObjectList objects={objects} selectedIds={selected} localFlags={localFlags}
         onSetLocalFlags={(ids, flags) => { hostRef.current?.setLocalFlags(ids, flags); }}
         onSelect={(id) => { hostRef.current?.select([id]); }} />

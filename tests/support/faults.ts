@@ -7,7 +7,7 @@ import { backup, DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Page, Route } from '@playwright/test';
-import { database_path_for_test } from './app';
+import { database_path_for_test, prepare_test_api } from './app';
 import type { ApiClient, TestApp } from './app';
 import type { AnnotationDocument } from '../../packages/contracts/generated/AnnotationDocument';
 import type { AnnotationRevision } from '../../packages/contracts/generated/AnnotationRevision';
@@ -147,6 +147,7 @@ export interface PersistentApi {
 }
 /** Copy a consistent native SQLite backup and actual immutable store, then own restart/crash of that isolated service. */
 export async function persistentCopy(app:TestApp, directory:string):Promise<PersistentApi> {
+  const binary = prepare_test_api();
   await mkdir(directory,{recursive:true});
   const source=database_path_for_test(app), database=path.join(directory,'api.sqlite');
   const db=new DatabaseSync(source);try{await backup(db,database);}finally{db.close();}
@@ -161,7 +162,6 @@ export async function persistentCopy(app:TestApp, directory:string):Promise<Pers
       const listener=createServer();const listening=Promise.withResolvers<void>();listener.listen(0,'127.0.0.1',listening.resolve);await listening.promise;
       const address=listener.address();if(!address||typeof address==='string')throw new Error('No API port');
       const closed=Promise.withResolvers<void>();listener.close(()=>closed.resolve());await closed.promise;base=`http://127.0.0.1:${address.port}`;
-      const binary=process.env.WEBLABEL_API_BINARY;if(!binary)throw new Error('Explicit fresh API binary required for crash scenario');
       const configured=typeof extra==='function'?await extra(base):extra;
       child=spawn(binary,[],{cwd:process.cwd(),env:{...process.env,...configured,WEBLABEL_BIND:`127.0.0.1:${address.port}`,WEBLABEL_DATABASE_URL:`sqlite:${database}`,WEBLABEL_OBJECT_ROOT:path.join(directory,'objects'),WEBLABEL_ENV:'development',WEBLABEL_COOKIE_SECURE:'false',WEBLABEL_TEST_MANUAL_MODEL_WORKER:'0'},stdio:['ignore','pipe','pipe']});
       let output='';child.stdout?.on('data',chunk=>{output+=String(chunk);});child.stderr?.on('data',chunk=>{output+=String(chunk);});

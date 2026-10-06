@@ -272,6 +272,8 @@ function buildWasmBundle(): void {
 }
 
 async function bootPage(page: Page): Promise<void> {
+  await page.route('**/t09-tokens.css', (route) =>
+    route.fulfill({ path: path.join(repoRoot, 'apps/web/src/styles/tokens.css'), contentType: 'text/css; charset=utf-8' }));
   await page.route('**/t09-harness.js', (route) =>
     route.fulfill({ path: harnessOut, contentType: 'text/javascript; charset=utf-8' }));
   await page.route('**/wasm/wasm_bridge.js', (route) =>
@@ -285,8 +287,8 @@ async function bootPage(page: Page): Promise<void> {
   });
   await page.goto(`${origin}/`);
   await page.setContent(
-    '<canvas id="t09-canvas" style="width:640px;height:480px;display:block"></canvas>'
-    + '<div id="t09-react"></div><script type="module" src="/t09-harness.js"></script>',
+    '<link rel="stylesheet" href="/t09-tokens.css"><canvas id="t09-canvas" style="width:640px;height:480px;display:block"></canvas>'
+    + '<div id="t09-react" style="position:relative;width:640px;height:480px"></div><script type="module" src="/t09-harness.js"></script>',
   );
   try {
     await page.waitForFunction(() => Boolean((window as unknown as { __t09?: unknown }).__t09?.bootHarness), undefined, { timeout: 15_000 });
