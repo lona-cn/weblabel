@@ -1,0 +1,9 @@
+diff --git a/docs/contracts.md b/docs/contracts.md
+--- a/docs/contracts.md
++++ b/docs/contracts.md
+@@ -174,3 +174,5 @@
+ 
+ T30设备恢复扩展：三项方法是每个facade实现的required能力。device_lost返回当前真实GPUDevice对应的owned one-shot Promise，在原生device lost callback收到Destroyed/Unknown时resolve诊断字符串；JS idle等待不持有WASM borrow，不靠RAF/poll/submit检测。get_device_state只读返回实际renderer状态。recover_renderer只重建GPU资源，不create_editor、不刷新应用、不以snapshot新建会话；同一Rust editor、generation、history、selection、local flags、preview、predictions及既有SaveQueue保留。Host发布lost/recovering期间阻止编辑，CPU只读访问和保存队列继续可用；成功后重订阅新device的loss，dirty一次，零尺寸仍暂停提交；失败为GPU_RECOVERY_FAILED并保留CPU会话，允许显式retry，绝不重新调用AI。异步重建与通知都必须以asset epoch、facade identity、disposed fence隔离切图/卸载；旧请求完成不得配置新画布或访问已free的facade。
++
++T30资源寿命补充：requestAdapter/requestDevice pending时，旧renderer/scene仍属于可同步dispose的共享owner；请求future只携轻量元数据和新请求句柄，不持旧GPU/scene/RGBA或facade/session borrow。dispose必须在请求gate释放前销毁旧buffers/texture/device并释放scene和GPU引用；晚返回的新device必须destroy，不得配置旧canvas。GPU请求完成后才同步借saved scene上传并move，不克隆整图或CPU文档。Canvas CSS视口脱离backing width/height的intrinsic反馈；状态长文/alert/retry为overlay，不改变canonical视口，真实resize与0x0暂停仍照常处理。release renderer不导出simulate_device_loss；测试仅在浏览器外部捕获实际requestDevice结果并destroy，正常dispose/recover保持公开。
+ 

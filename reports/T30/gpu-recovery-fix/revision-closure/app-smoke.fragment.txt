@@ -1,0 +1,45 @@
+declare global {interface Window {__closureGate:{entered:Promise<void>;release():void}}}
+test('closure workbench gates tools and completion during held recovery then native box and real resize remain correct',async({adminPage:page,seededProject},info)=>{
+ const asset=seededProject.assets.find(item=>item.width===320)!;await openAsset(page,asset);
+ await page.route(`**/api/assets/${asset.asset_revision_id}/annotation`,async route=>{if(route.request().method()==='PUT')await route.abort('failed');else await route.fallback();});
+ await createBox(page);await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','save_failed');
+ const before=await cpuSnapshot(page),surfaceBefore=await canvasObservation(page);
+ await page.evaluate(()=>{
+  type Device={destroy():void};type Adapter={requestDevice(...args:unknown[]):Promise<Device>};type GPU={requestAdapter(...args:unknown[]):Promise<Adapter|null>};
+  const gpuNavigator=navigator as unknown as {gpu:GPU},gpu=gpuNavigator.gpu,request=gpu.requestAdapter.bind(gpu);
+  let release!:()=>void,enter!:()=>void,hold=true;const entered=new Promise<void>(resolve=>{enter=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+  window.__closureGate={entered,release};
+  gpu.requestAdapter=async(...args)=>{const adapter=await request(...args);if(!adapter)return null;if(hold){hold=false;enter();await gate;}return adapter;};
+ });
+ await page.evaluate(()=>window.__t30Faults.destroyDevice());await page.evaluate(()=>window.__closureGate.entered);
+ await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state','recovering');
+ for(const tool of ['box','select','pan'])await expect(page.getByTestId(`tool-${tool}`)).toBeDisabled();
+ await expect(page.getByTestId('completion-state')).toBeDisabled();await expect(page.getByTestId('undo')).toBeDisabled();
+ // Native disabled click plus a synthetic DOM change reach the UI handlers, never native command bypass.
+ await page.getByTestId('tool-select').evaluate(element=>{if(!(element instanceof HTMLButtonElement))throw new Error('Button missing');element.click();});
+ await page.getByTestId('completion-state').evaluate(element=>{if(!(element instanceof HTMLSelectElement))throw new Error('Select missing');element.value='complete';element.dispatchEvent(new Event('change',{bubbles:true}));});
+ expect(await cpuSnapshot(page)).toEqual(before);await expect(page.getByTestId('tool-box')).toHaveAttribute('aria-pressed','true');
+ expect(await viewport(page)).toEqual(surfaceBefore.viewport);
+ await page.evaluate(()=>window.__closureGate.release());await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state','ready');
+ expect(await cpuSnapshot(page)).toEqual(before);await expect(page.getByTestId('undo')).toBeEnabled();
+ await page.getByTestId('undo').click();expect(await cpuSnapshot(page)).toEqual({...before,objects:[]});
+ // Switching select -> box through the toolbar proves Rust, not only aria-pressed, receives the tool.
+ await page.getByTestId('tool-select').click();await page.getByTestId('tool-box').click();
+ await createBox(page,100,60,180,140);const drawn=await cpuSnapshot(page);expect(drawn.objects).toHaveLength(1);expect(drawn.objects[0].geometry.x_max).toBeGreaterThan(drawn.objects[0].geometry.x_min);
+ await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','save_failed');
+ const beforeAlert=await canvasObservation(page);
+ await page.evaluate(()=>{
+  type Adapter=object;type GPU={requestAdapter(...args:unknown[]):Promise<Adapter|null>};
+  const gpuNavigator=navigator as unknown as {gpu:GPU},gpu=gpuNavigator.gpu,request=gpu.requestAdapter.bind(gpu);let reject=true;
+  gpu.requestAdapter=async(...args)=>{const adapter=await request(...args);if(reject){reject=false;throw new Error('Long actual request failure diagnostic '.repeat(100));}return adapter;};
+ });
+ await page.evaluate(()=>window.__t30Faults.destroyDevice());await expect(page.getByTestId('gpu-retry')).toBeVisible();
+ const longAlert=await canvasObservation(page);expect(longAlert.alerts.join('')).toContain('GPU_RECOVERY_FAILED');
+ expect(longAlert.viewport).toEqual(beforeAlert.viewport);expect(longAlert.css).toEqual(beforeAlert.css);expect(longAlert.backing).toEqual(beforeAlert.backing);
+ expect(await cpuSnapshot(page)).toEqual(drawn);await page.getByTestId('gpu-retry').click();await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state','ready');
+ await info.attach('long-alert-viewport-invariance',{body:JSON.stringify({beforeAlert,longAlert}),contentType:'application/json'});
+ const readySurface=await canvasObservation(page);await page.setViewportSize({width:1280,height:900});
+ await expect.poll(()=>viewport(page)).not.toEqual(readySurface.viewport);
+ const resized=await canvasObservation(page);expect(resized.viewport.css_width).toBe(resized.css.width);expect(resized.backing.width).toBe(Math.round(resized.css.width*resized.window.dpr));expect(resized.backing.height).toBe(Math.round(resized.css.height*resized.window.dpr));
+ await info.attach('workbench-held-tools-and-real-resize',{body:JSON.stringify({before,drawn,surfaceBefore,readySurface,resized}),contentType:'application/json'});
+});

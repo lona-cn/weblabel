@@ -1,0 +1,408 @@
+diff --git a/apps/web/src/features/workbench/CanvasView.tsx b/apps/web/src/features/workbench/CanvasView.tsx
+index 8aa4443c..4322de94 100644
+--- a/apps/web/src/features/workbench/CanvasView.tsx
++++ b/apps/web/src/features/workbench/CanvasView.tsx
+@@ -98,13 +98,15 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
+     <div className="gpu-diagnostics" data-testid="gpu-status" data-actual-backend={deviceState === 'ready' ? 'webgpu' : 'none'} data-adapter-kind={adapter} data-device-state={deviceState} role="status" aria-live="polite">
+       {deviceState === 'ready' ? `WebGPU · ${adapter} adapter · 就绪` : deviceState === 'unsupported' ? 'WebGPU 不支持；仅可查看对象' : deviceState === 'recovering' ? 'WebGPU 设备丢失；正在重建渲染器，未保存内容和撤销历史已保留…' : deviceState === 'lost' ? 'WebGPU 不可用；仅可查看，CPU 文档和未保存内容已保留' : '正在初始化真实 WebGPU…'}
+     </div>
+-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
++    <div className="canvas-surface">
+       <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
+       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+         {labels.map((label) => <span key={label.object_id} data-testid="canvas-label" data-object-id={label.object_id} data-selected={label.selected} style={{ position: 'absolute', transform: 'translate('+label.x_css+'px, '+label.y_css+'px)', fontSize: 11, color: label.selected ? '#fff' : '#f1d68a', background: '#17212be6', padding: '1px 3px' }}>{label.object_id}</span>)}
+       </div>
+     </div>
+-    {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
+-    {deviceState === 'lost' && hostRef.current?.status === 'lost' ? <button type="button" data-testid="gpu-retry" onClick={() => { void hostRef.current?.retryRenderer(); }}>重试 WebGPU 渲染器</button> : null}
++    {error || deviceState === 'lost' ? <div className="canvas-state error">
++      {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
++      {deviceState === 'lost' && hostRef.current?.status === 'lost' ? <button type="button" data-testid="gpu-retry" onClick={() => { void hostRef.current?.retryRenderer(); }}>重试 WebGPU 渲染器</button> : null}
++    </div> : null}
+   </>;
+ }
+diff --git a/apps/web/src/styles/tokens.css b/apps/web/src/styles/tokens.css
+index ea980297..45e3f6bd 100644
+--- a/apps/web/src/styles/tokens.css
++++ b/apps/web/src/styles/tokens.css
+@@ -142,6 +142,9 @@ button:disabled { cursor: not-allowed; }
+ .media-thumb span, .media-thumb small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .media-thumb small { color: var(--color-muted); font-size: 9px; }
+ .canvas-stage { overflow: hidden; }
++/* The renderer's backing dimensions must never feed flex intrinsic sizing.
++   Fill the stage independently of diagnostics/alerts and canvas width/height. */
++.canvas-surface { position: absolute; inset: 0; min-width: 0; min-height: 0; }
+ .canvas-stage > canvas { position: relative; z-index: 0; flex: 1 1 auto; min-width: 0; min-height: 0; }
+ .gpu-diagnostics { position: absolute; z-index: 2; top: 8px; left: 8px; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 4px; background: rgb(255 255 255 / 92%); color: var(--color-ink); font-size: 10px; }
+ .completion-panel, .export-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin-top: 8px; border: 1px solid var(--color-border); border-radius: 7px; background: #fff; }
+diff --git a/crates/renderer-wgpu/src/renderer.rs b/crates/renderer-wgpu/src/renderer.rs
+index c8062e6f..101f2a64 100644
+--- a/crates/renderer-wgpu/src/renderer.rs
++++ b/crates/renderer-wgpu/src/renderer.rs
+@@ -1,4 +1,6 @@
+ #[cfg(target_arch = "wasm32")]
++use std::future::Future;
++#[cfg(target_arch = "wasm32")]
+ use std::sync::{
+     atomic::{AtomicBool, Ordering},
+     Arc,
+@@ -36,6 +38,17 @@ impl std::fmt::Display for RendererError {
+ }
+ impl std::error::Error for RendererError {}
+ 
++/// Only a new request's handles cross await; saved pixels and old GPU resources
++/// remain in the renderer's synchronously disposable owner.
++#[cfg(target_arch = "wasm32")]
++pub struct RequestedGpu {
++    canvas: web_sys::HtmlCanvasElement,
++    surface: wgpu::Surface<'static>,
++    adapter: wgpu::Adapter,
++    device: wgpu::Device,
++    queue: wgpu::Queue,
++}
++
+ /// Browser-backed renderer. No alternate canvas renderer is provided.
+ #[cfg(target_arch = "wasm32")]
+ #[wasm_bindgen::prelude::wasm_bindgen]
+@@ -224,7 +237,10 @@ impl Renderer {
+             .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))
+     }
+     pub async fn recover(&mut self) -> Result<(), wasm_bindgen::JsValue> {
+-        self.recover_with_fence(None).await
++        self.recover_with_fence(None).await?;
++        // Standalone callers have no EditorHost dirty-frame scheduler.
++        self.render_saved()
++            .map_err(|e| JsValue::from_str(&e.to_string()))
+     }
+     /// Owned notification: waiting in JS never borrows this WASM object.
+     pub fn device_lost(&self) -> js_sys::Promise {
+@@ -244,14 +260,6 @@ impl Renderer {
+     pub fn adapter_diagnostics(&self) -> String {
+         self.diagnostics.clone()
+     }
+-    /// Simulate the only device-loss vector a page can force: destroying the
+-    /// GPUDevice (loss reason Destroyed). Browsers cannot force a `Failed`
+-    /// loss; see reports/T05 for what was and was not exercised. The saved
+-    /// scene survives so `recover` rebuilds from it like an unexpected loss.
+-    pub fn simulate_device_loss(&mut self) {
+-        self.device.destroy();
+-        self.lost.store(true, Ordering::Release);
+-    }
+     pub fn dispose(&mut self) {
+         if self.stats.live_buffers == 0 {
+             return;
+@@ -280,26 +288,43 @@ impl Renderer {
+             scene.viewport = viewport;
+         }
+     }
++    pub fn request_recovery(
++        &self,
++        disposed: Option<std::rc::Rc<std::cell::Cell<bool>>>,
++    ) -> Result<impl Future<Output = Result<RequestedGpu, RendererError>> + 'static, JsValue> {
++        let scene = self
++            .scene
++            .as_ref()
++            .ok_or_else(|| JsValue::from_str("no saved scene"))?;
++        let canvas = self.canvas.clone();
++        let width = scene.image.width;
++        let height = scene.image.height;
++        Ok(Self::request_with_fence(canvas, width, height, disposed))
++    }
+     pub async fn recover_with_fence(
+         &mut self,
+-        disposed: Option<&std::cell::Cell<bool>>,
++        disposed: Option<std::rc::Rc<std::cell::Cell<bool>>>,
+     ) -> Result<(), JsValue> {
++        let requested = self
++            .request_recovery(disposed)?
++            .await
++            .map_err(|e| JsValue::from_str(&e.to_string()))?;
++        self.finish_recovery(requested)
++    }
++    pub fn finish_recovery(&mut self, requested: RequestedGpu) -> Result<(), JsValue> {
+         let scene = self
+             .scene
+             .as_ref()
+             .ok_or_else(|| JsValue::from_str("no saved scene"))?;
+-        let mut replacement = Self::create_with_fence(
+-            self.canvas.clone(),
++        let mut replacement = Self::finish_create(
++            requested,
+             scene.image.width,
+             scene.image.height,
+             &scene.image.rgba,
+-            disposed,
+             scene.viewport.backing_size().is_none(),
+         )
+-        .await
+         .map_err(|e| JsValue::from_str(&e.to_string()))?;
+-        // Move the saved scene, including pixels, instead of cloning it. CPU
+-        // editor state is not involved. A failed request leaves the old scene.
++        // Move pixels only after the GPU requests finish, with no intervening await.
+         replacement.scene = self.scene.take();
+         let stats = self.stats;
+         self.dispose();
+@@ -359,28 +384,20 @@ impl Renderer {
+         height: u32,
+         rgba: &[u8],
+     ) -> Result<Self, RendererError> {
+-        Self::create_with_fence(canvas, width, height, rgba, None, false).await
++        let requested = Self::request_with_fence(canvas, width, height, None).await?;
++        Self::finish_create(requested, width, height, rgba, false)
+     }
+-    async fn create_with_fence(
++    async fn request_with_fence(
+         canvas: web_sys::HtmlCanvasElement,
+         width: u32,
+         height: u32,
+-        rgba: &[u8],
+-        disposed: Option<&std::cell::Cell<bool>>,
+-        paused: bool,
+-    ) -> Result<Self, RendererError> {
+-        let expected_bytes = (width as usize)
+-            .checked_mul(height as usize)
+-            .and_then(|n| n.checked_mul(4))
+-            .ok_or(RendererError::InvalidScene)?;
+-        if width > 4096 || height > 4096 || expected_bytes > 64 * 1024 * 1024 {
++        disposed: Option<std::rc::Rc<std::cell::Cell<bool>>>,
++    ) -> Result<RequestedGpu, RendererError> {
++        if width > 4096 || height > 4096 {
+             return Err(RendererError::Unsupported(
+                 "canonical resource budget exceeded".into(),
+             ));
+         }
+-        if expected_bytes != rgba.len() {
+-            return Err(RendererError::InvalidScene);
+-        }
+         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+         let surface = instance
+             .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+@@ -392,7 +409,7 @@ impl Renderer {
+             })
+             .await
+             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
+-        if disposed.is_some_and(std::cell::Cell::get) {
++        if disposed.as_ref().is_some_and(|fence| fence.get()) {
+             return Err(RendererError::DeviceLost);
+         }
+         if width > adapter.limits().max_texture_dimension_2d
+@@ -406,10 +423,40 @@ impl Renderer {
+             .request_device(&wgpu::DeviceDescriptor::default())
+             .await
+             .map_err(|e| RendererError::Unsupported(e.to_string()))?;
+-        if disposed.is_some_and(std::cell::Cell::get) {
++        if disposed.as_ref().is_some_and(|fence| fence.get()) {
+             device.destroy();
+             return Err(RendererError::DeviceLost);
+         }
++        Ok(RequestedGpu {
++            canvas,
++            surface,
++            adapter,
++            device,
++            queue,
++        })
++    }
++    fn finish_create(
++        requested: RequestedGpu,
++        width: u32,
++        height: u32,
++        rgba: &[u8],
++        paused: bool,
++    ) -> Result<Self, RendererError> {
++        let expected_bytes = (width as usize)
++            .checked_mul(height as usize)
++            .and_then(|n| n.checked_mul(4))
++            .ok_or(RendererError::InvalidScene)?;
++        if expected_bytes != rgba.len() {
++            requested.device.destroy();
++            return Err(RendererError::InvalidScene);
++        }
++        let RequestedGpu {
++            canvas,
++            surface,
++            adapter,
++            device,
++            queue,
++        } = requested;
+         let caps = surface.get_capabilities(&adapter);
+         // Browsers only expose *Unorm canvas formats, whose texels the
+         // compositor reads as sRGB-encoded (SurfaceColorSpace::Auto resolves
+diff --git a/crates/wasm-bridge/src/facade.rs b/crates/wasm-bridge/src/facade.rs
+index 70dcbd61..b8aec3fc 100644
+--- a/crates/wasm-bridge/src/facade.rs
++++ b/crates/wasm-bridge/src/facade.rs
+@@ -1258,6 +1258,7 @@ pub mod wasm {
+         session: EditorSession,
+         renderer: std::rc::Rc<std::cell::RefCell<Option<renderer_wgpu::Renderer>>>,
+         disposed: std::rc::Rc<std::cell::Cell<bool>>,
++        recovering: std::rc::Rc<std::cell::Cell<bool>>,
+         last_renderer_stats: std::cell::Cell<renderer_wgpu::stats::RendererStats>,
+         adapter_diagnostics: String,
+         canvas: web_sys::HtmlCanvasElement,
+@@ -1422,6 +1423,9 @@ pub mod wasm {
+             if self.disposed.get() {
+                 "disposed".into()
+             } else {
++                if self.recovering.get() {
++                    return "recovering".into();
++                }
+                 self.renderer
+                     .borrow()
+                     .as_ref()
+@@ -1430,26 +1434,43 @@ pub mod wasm {
+             }
+         }
+ 
+-        /// Only the renderer moves into this future. No facade/session borrow
+-        /// spans requestAdapter/requestDevice, so dispose and CPU reads remain
+-        /// safe while recovery is pending.
++        /// The shared slot keeps the old scene/resources synchronously disposable.
++        /// Only request metadata/new GPU handles cross await, never a WASM borrow.
+         pub fn recover_renderer(&mut self) -> Result<js_sys::Promise, JsValue> {
+             self.session.ensure_live().map_err(to_js_error)?;
+-            let mut renderer = self.renderer.borrow_mut().take().ok_or_else(|| {
+-                to_js_error(api_error("GPU_RECOVERING", "renderer is rebuilding"))
+-            })?;
+-            renderer.set_recovery_viewport(scene_viewport(self.session.get_viewport()));
+-            self.last_renderer_stats.set(renderer.stats());
++            if self.recovering.get() {
++                return Err(to_js_error(api_error(
++                    "GPU_RECOVERING",
++                    "renderer is rebuilding",
++                )));
++            }
++            let request = {
++                let mut slot = self.renderer.borrow_mut();
++                let renderer = slot.as_mut().ok_or_else(|| {
++                    to_js_error(api_error("GPU_DEVICE_LOST", "renderer disposed"))
++                })?;
++                renderer.set_recovery_viewport(scene_viewport(self.session.get_viewport()));
++                renderer.request_recovery(Some(self.disposed.clone()))?
++            };
++            self.recovering.set(true);
+             self.session.invalidate_frame();
+             let slot = self.renderer.clone();
+             let disposed = self.disposed.clone();
++            let recovering = self.recovering.clone();
+             Ok(wasm_bindgen_futures::future_to_promise(async move {
+-                let result = renderer.recover_with_fence(Some(&disposed)).await;
++                let requested = request.await;
++                recovering.set(false);
+                 if disposed.get() {
+-                    renderer.dispose();
+                     return Ok(JsValue::UNDEFINED);
+                 }
+-                *slot.borrow_mut() = Some(renderer);
++                let result = requested
++                    .map_err(|error| JsValue::from_str(&error.to_string()))
++                    .and_then(|requested| {
++                        slot.borrow_mut()
++                            .as_mut()
++                            .ok_or_else(|| JsValue::from_str("renderer disposed"))?
++                            .finish_recovery(requested)
++                    });
+                 result.map(|()| JsValue::UNDEFINED).map_err(|error| {
+                     to_js_error(api_error(
+                         "GPU_RECOVERY_FAILED",
+@@ -1467,7 +1488,10 @@ pub mod wasm {
+         pub fn render(&mut self, timestamp_ms: f64) -> Result<(), JsValue> {
+             let _ = timestamp_ms;
+             let mut renderer = self.renderer.borrow_mut();
+-            if self.disposed.get() || renderer.as_ref().is_none_or(|r| r.is_device_lost()) {
++            if self.disposed.get()
++                || self.recovering.get()
++                || renderer.as_ref().is_none_or(|r| r.is_device_lost())
++            {
+                 return Err(to_js_error(api_error(
+                     "GPU_DEVICE_LOST",
+                     "WebGPU device is not ready; CPU editor retained",
+@@ -1495,8 +1519,9 @@ pub mod wasm {
+             }
+             self.session.dispose();
+             self.disposed.set(true);
+-            if let Some(renderer) = self.renderer.borrow_mut().as_mut() {
++            if let Some(mut renderer) = self.renderer.borrow_mut().take() {
+                 renderer.dispose();
++                self.last_renderer_stats.set(renderer.stats());
+             }
+         }
+     }
+@@ -1552,6 +1577,7 @@ pub mod wasm {
+             session,
+             renderer: std::rc::Rc::new(std::cell::RefCell::new(Some(renderer))),
+             disposed: std::rc::Rc::new(std::cell::Cell::new(false)),
++            recovering: std::rc::Rc::new(std::cell::Cell::new(false)),
+             last_renderer_stats,
+             adapter_diagnostics,
+             canvas,
+diff --git a/tests/render/t05.spec.ts b/tests/render/t05.spec.ts
+index 3acc99d9..c3bcb791 100644
+--- a/tests/render/t05.spec.ts
++++ b/tests/render/t05.spec.ts
+@@ -8,7 +8,7 @@ type RendererHandle = {
+   resize(width: number, height: number, dpr: number): void;
+   render(): void;
+   recover(): Promise<void>;
+-  simulate_device_loss(): void;
++  device_lost(): Promise<string>;
+   device_state(): string;
+   adapter_diagnostics(): string;
+   dispose(): void;
+@@ -29,6 +29,9 @@ declare global {
+   interface Window {
+     __t05?: RendererHandle;
+   }
++  interface Window {
++    __t05Device?: { destroy(): void; lost: Promise<{ reason: string }> };
++  }
+ }
+ 
+ test('T05 Rust renderer submits the asymmetric scene to a real WebGPU canvas', async ({ page }) => {
+@@ -322,7 +325,26 @@ test('zoom keeps the bbox stroke and handle at fixed screen width at the C8 view
+   await page.evaluate(() => window.__t05?.dispose());
+ });
+ 
+-test('simulated device loss keeps the scene and recover() restores rendering', async ({ page }) => {
++test('actual external device loss keeps the scene and recover() restores rendering', async ({ page }) => {
++  await page.addInitScript(() => {
++    type Device = NonNullable<Window['__t05Device']>;
++    type Adapter = { requestDevice(...args: unknown[]): Promise<Device> };
++    // DOM typings omit WebGPU; this named boundary describes actual browser handles.
++    const gpuNavigator = navigator as unknown as { gpu: { requestAdapter(...args: unknown[]): Promise<Adapter | null> } };
++    const gpu = gpuNavigator.gpu;
++    const requestAdapter = gpu.requestAdapter.bind(gpu);
++    gpu.requestAdapter = async (...args) => {
++      const adapter = await requestAdapter(...args);
++      if (!adapter) return null;
++      const requestDevice = adapter.requestDevice.bind(adapter);
++      adapter.requestDevice = async (...deviceArgs) => {
++        const device = await requestDevice(...deviceArgs);
++        window.__t05Device = device;
++        return device;
++      };
++      return adapter;
++    };
++  });
+   const boot = await bootGoldenScene(page, GOLDEN_PROJECTION, { scale: 2, tx: 13, ty: -7 });
+   expect(boot.state).toBe('ready');
+   console.info(`T05_RUST_RENDERER_LOSS ${boot.adapter}`);
+@@ -334,10 +356,16 @@ test('simulated device loss keeps the scene and recover() restores rendering', a
+     handleRun: scene.runLength(129, 233, scene.handle),
+   });
+   const before = await captureScene(page, 'reports/T05/loss-before.png');
+-  const loss = await page.evaluate(() => {
++  const loss = await page.evaluate(async () => {
+     const renderer = window.__t05;
+     if (!renderer) return { state: 'missing', renderError: 'renderer missing' };
+-    renderer.simulate_device_loss();
++    const device = window.__t05Device;
++    if (!device) throw new Error('Actual requestDevice result missing');
++    const notification = renderer.device_lost();
++    device.destroy();
++    const info = await device.lost;
++    if (info.reason !== 'destroyed') throw new Error(`Unexpected real device loss: ${info.reason}`);
++    await notification;
+     const state = renderer.device_state();
+     let renderError = '';
+     try {
