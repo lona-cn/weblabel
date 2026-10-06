@@ -14,7 +14,7 @@ pnpm build
 pnpm start:local
 ```
 
-根命令由 T33 integration patch 注册；直接入口分别是 `node scripts/build.mjs` 和 `node scripts/start-local.mjs`。首次空库从本地终端的一次性启动码设置新密码；默认网页 `http://127.0.0.1:48100`。服务只监听 loopback，媒体、revision 和导出仍须身份/项目权限。Ctrl+C 清理受管进程树，保留 SQLite 已提交事务。
+根 `build` 和 `start:local` 分别执行 `scripts/build.mjs` 与 `scripts/start-local.mjs`，`backup`/`restore` 也已注册真实CLI入口。首次空库从本地终端的一次性启动码设置新密码；默认网页 `http://127.0.0.1:48100`。服务只监听loopback，媒体、revision和导出仍须身份/项目权限。Ctrl+C清理受管进程树，保留SQLite已提交事务。
 
 - [从零构建、登录、人工编辑](docs/getting-started.md)
 - [只读 doctor 与本地运维](docs/operations.md)
@@ -28,7 +28,8 @@ pnpm start:local
 | 保存/审核/快照/权限 | T27/T29 已集成报告 | 不可变版本与鉴权导出工程验收，不是公网部署 |
 | 崩溃/设备恢复 | [T30 result](reports/T30/result.json)：注册 integration 7 + 真实硬件 browser 9；受影响 T09 5 | 实际源码与浏览器交互证据；不是模型调用或 T31 所有性能阈值 |
 | 真实模型诊断 | [T32 result](reports/T32/result.json)：注册 exit 2，工程 consumer 35 passed，五渠道 blocked，外发 0 | 实际 loopback API/Host/worker 工程 proof，不是官方账户/型号支持 |
-| 本地发行/备份恢复 | [T33 result](reports/T33/result.json)：注册 6 passed、独立实际 CLI 数据恢复 smoke；发行 manifest 记录实际 source commit/hash | API/Web/WASM/Host 实际产品；原审核身份与精确 revision/media/snapshot hash 保留；主 Agent 仍须集成根入口与最终 shutdown 源码 |
+| 本地发行/备份恢复 | [T33 Main closure](reports/T33/main-final-closure.json)：Root全产品构建、注册16/16、真实PowerShell首次bootstrap与浏览器密码登录；实际active Host物理Ctrl+C及新目录数据恢复 | manifest源码与最终解释型CLI源码分别记录；已闭合受管子孙退出、portable DB及已配置密钥在业务TEXT/JSON碰撞时拒绝备份；不是签名安装包/live证明 |
+| 自愿工时/试点分析 | [T34 Main closure](reports/T34/main-final-closure.json)：API7/7、受影响Web75/75、真实Workbench显式PUT200、20张完整GT合成图JSON/CSV | 默认关闭/无后台外传；费用未知=null；实际人工试点0，ROI/结论null，30%仅目标 |
 | 最终发布 | 主 Agent T35 | 仍需 G4 独立真实条件，不能由 pnpm build/doctor 替代 |
 
 ### 五个必需 live 渠道

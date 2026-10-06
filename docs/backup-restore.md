@@ -16,13 +16,13 @@ node scripts/backup.mjs --data-dir "data" --backup-dir "backups/2026-10-06 中�
 - DB 引用的不可变媒体与导出对象（不是临时文件、孤儿对象或凭证目录）。
 - `backup.json`：格式/版本、UTC 时间、实际 schema_migrations 已应用版本、完整业务 schema hash、认证处置、每个对象/数据库的 SHA256 和字节数。当前 API 使用自有迁移版本表，不存在 SQLx checksum 表；不伪造该字段。
 
-每个输出目录独占创建。失败会删除本次命令自己创建的未完成备份（可能还含原始认证页）；不会删除源业务数据或已有备份。备份 DB 用 secure_delete、VACUUM 和 WAL checkpoint 移除被删除认证数据的旧页。备份仍包含业务图像、规范、提示词、历史审计等敏感业务信息，**没有加密或数字签名**，必须自行设置目录 ACL、加密磁盘和保管策略。Hash 能发现损坏，不证明备份作者可信。
+每个输出目录独占创建。失败会删除本次命令自己创建的未完成备份（可能还含原始认证页）；不会删除源业务数据或已有备份。副本用secure_delete、VACUUM和WAL checkpoint移除被删除认证数据的旧页，然后**仅对副本切换DELETE journal mode**，关闭数据库后再计算最终单文件manifest hash。源DB/WAL与源journal mode不变；正常只读SQLite审计备份后不产生WAL/SHM，仍可验证原manifest并恢复。备份包含敏感业务图像、规范、提示词和审计，**没有加密或数字签名**，必须自行设置目录ACL、加密磁盘和保管策略。Hash发现损坏，不证明作者可信。
 
 ## 不搬运认证
 
 保留用户 ID、用户名与审核/创建身份引用，保留标注历史、媒体、快照和审核关系；不把过去审计归给新用户。
 
-移除 session/CSRF、全部旧 password_hash、model profile 私有 `config_json` 和 `secret_ref`，清空外发 preview/consent/run authorization。已知 provider 配置凭证在可变诊断 JSON/日志中再次出现时脱敏；若与不可变标注、规范、导入、预测、event、导出、审核提交/决定/问题的历史 JSON 或审计 reason/message，或 model run 的固定业务 context/prompt 冲突，以 `credential_in_immutable_business_data` 拒绝并删除本次不完整输出，不改写批准绑定、业务 hash 或原审计身份；源数据不变。模型配置快照属于可脱敏凭证配置，不据此改写固定业务输入。官方 CLI 的 home、OAuth/API key 文件、环境、私有 Host 配置从未枚举或复制。未知秘密不是自动识别承诺，分享前应自行审查。
+移除session/CSRF、全部旧password_hash、model profile私有config_json/secret_ref，清空外发preview/consent/run authorization。对其余持久业务TEXT默认检查已知配置凭证，包含项目名称/描述、用户名/身份、任务/活动历史、业务ID/hash、审核issue code、媒体原始文件名及未分类字段；JSON检查原文和解码后的键/值，包括Unicode与引号转义。冲突时以 `credential_in_immutable_business_data` 拒绝并删除本次不完整输出，不改写业务字节、空白/转义、批准绑定或审计身份，源DB/WAL不变。只对明确的 `jobs.progress_json` 可变诊断值和既有 `model_runs.profile_snapshot_json` 凭证配置保留脱敏；键冲突或无法安全消除的原始编码仍拒绝。不用清理运行/租约状态掩盖原业务碰撞。官方CLI home/OAuth/API key文件、环境和私有Host配置从未枚举或复制；不声称自动发现未知秘密，也不扫描业务图像二进制。
 
 排队/运行中的作业变为 interrupted，模型调用不会恢复后自动继续；活跃任务 holder/expiry 清空，历史 fencing token 和审计身份保留。模型 profile 重新进入 needs_configuration/not_run。备份不包含浏览器尚未同步的 IndexedDB 草稿；先 flush 保存，或单独导出本地草稿救援包。
 
@@ -43,7 +43,7 @@ node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data
 
 恢复写入 `restore.json` 完成标记，启动器验证其格式/认证处置，并检查已有用户的密码均为空、session 为零，才设置一次性恢复认证模式。API 再在兑换事务内复核，显式 flag 也不能重置有正常密码的数据库。
 
-在普通登录页输入终端的一次性启动码，并选择新密码即可。服务新建 **`restore-admin-<新 UUID>`** 管理员，授予全部已恢复项目 admin membership，返回新 session/CSRF；旧用户 ID 留作审计，但旧密码失效。记录界面显示/接口返回的实际用户名以供以后密码登录。恢复不是复制旧管理员身份，业务仍可由新授权本地身份访问。若备份为空用户，新库沿用正常 `local-admin` bootstrap。
+登录页目前仅有用户名/密码。按[首次登录的本机PowerShell API流程](getting-started.md#首次登录与人工标注)兑换终端一次性启动码并选择新密码，再用返回的实际用户名正常浏览器登录，获得其自己的session/CSRF。服务创建 `restore-admin-<新UUID>` 管理员并授予全部已恢复项目admin membership；旧用户ID留作审计但旧密码失效，不把旧审计身份替换成新管理员。空用户备份的新库沿用正常 `local-admin` bootstrap。
 
 ## 恢复演练
 

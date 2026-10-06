@@ -41,9 +41,9 @@ for (let index = 0; index < csv.length; index++) {
   if (char === '"') {
     if (quoted && csv[index + 1] === '"') { field += '"'; index++; }
     else quoted = !quoted;
-  } else if (!quoted && (char === ',' || char === '\n')) {
+  } else if (!quoted && (char === ',' || char === '\n' || (char === '\r' && csv[index + 1] === '\n'))) {
     row.push(field); field = '';
-    if (char === '\n') { rows.push(row); row = []; }
+    if (char !== ',') { rows.push(row); row = []; if (char === '\r') index++; }
   } else field += char;
 }
 assert.equal(quoted, false); assert.equal(rows.length, 4);

@@ -95,7 +95,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(value) if value == "1" => true,
         Ok(value) if value == "0" => false,
         Err(env::VarError::NotPresent) => false,
-        _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "WEBLABEL_RESTORE_AUTH must be exactly 0 or 1").into()),
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "WEBLABEL_RESTORE_AUTH must be exactly 0 or 1",
+            )
+            .into())
+        }
     };
     let restore_bootstrap = restore_auth_requested && state.auth.enable_restore_bootstrap().await?;
     if user_count == 0 || restore_bootstrap {
@@ -216,7 +222,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
         loop {
-            if *media_shutdown.borrow() { break; }
+            if *media_shutdown.borrow() {
+                break;
+            }
             tokio::select! {
                 changed = media_shutdown.changed() => { if changed.is_err() || *media_shutdown.borrow() { break; } }
                 result = weblabel_api::jobs::model_jobs::process_media_import_next(&media_repository, &media_queue, "media-import-worker") => {

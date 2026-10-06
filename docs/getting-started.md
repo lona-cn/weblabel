@@ -19,7 +19,7 @@ pnpm build
 pnpm start:local
 ```
 
-根命令由 T33 integration patch 注册；等价的直接入口是：
+根命令已注册真实入口；等价的直接入口是：
 
 ```powershell
 node scripts/build.mjs
@@ -50,13 +50,30 @@ node scripts/build.mjs --cargo-cwd "D:/cache/cargo/bin" --build-dir "target/新�
 ## 首次登录与人工标注
 
 1. 打开终端显示的 `WEBLABEL_LOCAL_URL`，默认 `http://127.0.0.1:48100`。不使用公网地址。
-2. 空数据库第一次启动会在本地终端显示一次性 `WEBLABEL_BOOTSTRAP_CODE`。在登录页输入此码并设置 **12–1024 字节**密码；代码有效 10 分钟，仅能成功兑换一次，不放 URL 或日志。
-3. 普通新库用户名是 `local-admin`。记录你设置的密码；本版本没有公网注册、密码找回或 SSO。
-4. 新建项目并发布类别/属性规范；导入静态 PNG/JPEG，等待后台媒体作业完成。
-5. 打开资产工作台。WebGPU 必须显示真正 ready 才可编辑。框选工具画框、选择/修改类别和属性；一次拖动一个 undo。等待远端保存确认，不把“已保存本地”当远端 ACK。
-6. 审核绑定已保存不可变 revision。冻结数据集指定 train/val/test，快照导出不跟随最新 head。YOLO/COCO 属性信息损失需要明确确认；原生包用于无损交付。
+2. 空数据库第一次启动会在本地终端显示一次性 `WEBLABEL_BOOTSTRAP_CODE`，有效10分钟、仅能兑换一次。登录页目前只有用户名/密码，没有启动码输入控件；在**另一个本机 PowerShell 终端**调用真实初始化API，设置12–1024字节的新密码，不把码放URL或日志：
 
-恢复的数据库会保留历史用户/审核身份，但不会继承旧登录。使用相同启动码/新密码界面创建新管理员；其 **`restore-admin-<新 UUID>`** 用户名由服务返回并显示，记录实际返回的名字以便下次密码登录，不假设固定 `restore-admin`。
+```powershell
+$base = "http://127.0.0.1:48100" # 改为终端实际 WEBLABEL_LOCAL_URL
+$launchCode = Read-Host "一次性启动码" -AsSecureString
+$newPassword = Read-Host "新本地密码（至少12字节）" -AsSecureString
+try {
+  $payload = @{
+    launch_code = [System.Net.NetworkCredential]::new("", $launchCode).Password
+    password = [System.Net.NetworkCredential]::new("", $newPassword).Password
+  } | ConvertTo-Json -Compress
+  $result = Invoke-RestMethod -Method Post -Uri "$base/api/session/bootstrap" -Headers @{Origin=$base} -ContentType "application/json; charset=utf-8" -Body $payload
+  "本地管理员用户名：" + $result.username
+} finally {
+  Remove-Variable launchCode,newPassword,payload,result -ErrorAction SilentlyContinue
+}
+```
+
+3. 回到浏览器，用返回的用户名和刚设置的密码正常登录，获取浏览器自己的session/CSRF。普通新库用户名为 `local-admin`；本版本没有公网注册、密码找回或SSO。不要把API初始化发出的session手工搬到浏览器。
+4. 新建项目并发布类别/属性规范；导入静态PNG/JPEG，等待后台媒体作业完成。
+5. 打开资产工作台。WebGPU必须显示真实ready才可编辑。框选工具画框、选择/修改类别和属性；一次拖动一个undo。等待远端保存确认，不把“已保存本地”当远端ACK。
+6. 审核绑定已保存不可变revision。冻结数据集指定train/val/test，快照导出不跟随最新head。YOLO/COCO属性信息损失需要明确确认；原生包用于无损交付。
+
+恢复数据库保留历史用户/审核身份，但不继承旧登录。使用同一个终端API初始化流程创建新管理员；返回的 `restore-admin-<新UUID>` 是实际用户名，记录后再在普通登录页用新密码登录，不假设固定 `restore-admin`。
 
 按 **Ctrl+C** 停止。启动器仅监听 loopback，管理 API 及其 Host 子进程树。Windows 使用受管根 PID 的 `taskkill /T /F`，SQLite WAL 崩溃一致性保证不会因强制退出产生半个事务；它不是“每个 AI 调用都已优雅结束”的保证。
 
