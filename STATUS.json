@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
-  "last_updated_at": "2026-10-06T15:11:12.881Z",
+  "application_commit": "ed590c618b30ae1b76dcc6b58e0b81e79d034cf8",
+  "last_updated_at": "2026-10-06T17:05:08.065Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -357,42 +357,117 @@
       "status": "done",
       "base_commit": "732a2b48feaa8dcc0af8de1a88b47b5835e60dc3",
       "integrated_commit": "efc611f61be0b0b8c6c5f1fd52b6ac6eb9adcfa0",
-      "evidence": ["reports/T29/result.json", "reports/T29/tests.log", "reports/T29/review.md", "reports/T29/main-final-execution.json", "reports/T29/main-pinned-final-registered.log", "reports/T29/main-production-scan.json", "reports/T29/independent-final-evidence-closure.json"],
+      "evidence": [
+        "reports/T29/result.json",
+        "reports/T29/tests.log",
+        "reports/T29/review.md",
+        "reports/T29/main-final-execution.json",
+        "reports/T29/main-pinned-final-registered.log",
+        "reports/T29/main-production-scan.json",
+        "reports/T29/independent-final-evidence-closure.json"
+      ],
       "blockers": []
     },
     "T30": {
       "status": "done",
       "base_commit": "4ae638360874e7e4c2ac1b9cca6ab54737e91f2a",
       "integrated_commit": "ac722ee21724aa6e0f877f4168e8837f7fcfd0c7",
-      "evidence": ["reports/T30/result.json", "reports/T30/main-final-registered-fresh-binary.log", "reports/T30/main-t09-closed-browser.log", "reports/T30/main-recovery-surface-ledger.json", "reports/T30/main-parent-actual-recovery.json", "reports/T30/independent-final-layout-source-review.json", "reports/T32/independent-final-bounded-security-review.json"],
+      "evidence": [
+        "reports/T30/result.json",
+        "reports/T30/main-final-registered-fresh-binary.log",
+        "reports/T30/main-t09-closed-browser.log",
+        "reports/T30/main-recovery-surface-ledger.json",
+        "reports/T30/main-parent-actual-recovery.json",
+        "reports/T30/independent-final-layout-source-review.json",
+        "reports/T32/independent-final-bounded-security-review.json"
+      ],
       "blockers": []
     },
     "T31": {
       "status": "running",
       "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": "028b6f5c6a26cb08a6758c06f602da449043e6bd",
-      "evidence": ["reports/T31/result.json", "reports/T31/runs/2026-10-06T13-33-09.159Z/result.json", "reports/T31/runs/2026-10-06T13-33-09.159Z/source.json", "reports/T31/main-full-hardware-combined-producers.log", "reports/T31/pixels/2026-10-06T13-04-15.533Z/command.json", "reports/T31/main-independent-core-and-activity-review.json", "reports/T31/main-independent-producer-and-release-review.json", "reports/T31/main-independent-cpu-attribution.json", "reports/T31/cpu-attribution/attribution.json"],
-      "blockers": ["真实RTX5060Ti/Ultra5250KPlus/Chromium153正式8000样本：2k committed-edit CPU P9522.013ms>原8ms，2k其他CPU及全部doubleRAF P95<33ms。64原生controls矩阵/100资产寿命/idle/deviceLoss通过不替代CPU门禁。仅此CPU链路仍在修复，未改harness/场景/1000次数/计时/阈值；独立100commit归因不是正式通过证据。"]
+      "integrated_commit": "ed590c618b30ae1b76dcc6b58e0b81e79d034cf8",
+      "evidence": [
+        "reports/T31/result.json",
+        "reports/T31/runs/2026-10-06T16-36-24.410Z/result.json",
+        "reports/T31/runs/2026-10-06T16-36-24.410Z/source.json",
+        "reports/T31/runs/2026-10-06T13-33-09.159Z/result.json",
+        "reports/T31/runs/2026-10-06T13-33-09.159Z/source.json",
+        "reports/T31/main-full-hardware-combined-producers.log",
+        "reports/T31/pixels/2026-10-06T13-04-15.533Z/command.json",
+        "reports/T31/main-independent-core-and-activity-review.json",
+        "reports/T31/main-independent-producer-and-release-review.json",
+        "reports/T31/main-independent-cpu-attribution.json",
+        "reports/T31/cpu-attribution/attribution.json",
+        "reports/T31/main-immutable-producer-integration-closure.json",
+        "reports/T31/main-independent-immutable-producer-findings-closed.json",
+        "reports/T31/main-formal-attempt-executor-timeout.json",
+        "reports/T31/main-current-mirror-remaining-cpu-baseline.json",
+        "reports/T31/main-owned-row-optimization-smoke.json",
+        "reports/T31/main-independent-shared-object-row-review.json",
+        "reports/T31/main-current-row-production-ui-smoke.json",
+        "reports/T31/main-independent-current-row-production-ui-review.json",
+        "reports/T33/main-owned-mirror-full-native.log",
+        "reports/T33/main-owned-mirror-web-consumers-final.log",
+        "reports/T33/main-owned-row-release-build.log"
+      ],
+      "blockers": [
+        "ed590c61的原完整8000正式验收已完成：2passed/1failed/0skip/flaky，2k committedCPU P958.569ms>8，其余2kCPU/全部doubleRAF及64原生controls/100asset/idle/deviceLoss通过。8/33/计时/场景/次数不变，旧c2 22.013与eff部分8.922真实失败均保留；Main227Native/102Web、sharedrow59+22/types0及freshprod native flags/Undo/Redo/gen3 fullIDB=rev4与独立复审通过，但不抵消P95失败。已在ed基线验证两个不同inode的私有checkout，并行最小Native cutover：Core空transient免全集/借用ID与通用ordered-ID delta无Hash分配；Projection仅actualselection/topology变化重同步。完整validation/history/C3/GPU/fullIDB保持，仍待Main集成/独立审查/真实WASM行为与原正式硬件验收，不预测pass、不宣告T31done/G4pass。"
+      ]
     },
     "T32": {
       "status": "blocked",
       "base_commit": "66166686147199be75f4a392c3314c24dc36ec3c",
       "integrated_commit": "2cf8e45425527635935a1f66d062b4b0b3119a5e",
-      "evidence": ["reports/T32/result.json", "reports/T32/main-final-registered-closure.log", "reports/T32/main-final-hash-evidence-consumers-after-apply.log", "reports/T32/main-execution-ledger.json", "reports/T32/independent-final-bounded-security-review.json"],
-      "blockers": ["G4五渠道真实运行未授权/未满足：官方账号与完整型号/运行时边界、付费和generated-image预算授权、公开锁定权重及真实forward/human review；35项工程闭环和真实诊断不能替代live"]
+      "evidence": [
+        "reports/T32/result.json",
+        "reports/T32/main-final-registered-closure.log",
+        "reports/T32/main-final-hash-evidence-consumers-after-apply.log",
+        "reports/T32/main-execution-ledger.json",
+        "reports/T32/independent-final-bounded-security-review.json"
+      ],
+      "blockers": [
+        "G4五渠道真实运行未授权/未满足：官方账号与完整型号/运行时边界、付费和generated-image预算授权、公开锁定权重及真实forward/human review；35项工程闭环和真实诊断不能替代live"
+      ]
     },
     "T33": {
       "status": "done",
       "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
       "integrated_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
-      "evidence": ["reports/T33/result.json", "reports/T33/main-final-closure.json", "reports/T33/main-registered-t33-business-final.log", "reports/T33/main-current-combined-release-build.log", "reports/T33/main-project-scalar-red.json", "reports/T33/main-project-scalar-green.json", "reports/T33/main-terminal-public-bootstrap-green.log", "reports/T33/main-terminal-bootstrap-password-login.json", "reports/T33/main-independent-final-surface-evidence-review.json", "reports/T33/main-current-native-cpu-contracts-single-job.log", "reports/T33/main-current-native-strict-clippy.log", "reports/T33/main-current-native-release-strict-clippy.log"],
+      "evidence": [
+        "reports/T33/result.json",
+        "reports/T33/main-final-closure.json",
+        "reports/T33/main-registered-t33-business-final.log",
+        "reports/T33/main-current-combined-release-build.log",
+        "reports/T33/main-project-scalar-red.json",
+        "reports/T33/main-project-scalar-green.json",
+        "reports/T33/main-terminal-public-bootstrap-green.log",
+        "reports/T33/main-terminal-bootstrap-password-login.json",
+        "reports/T33/main-independent-final-surface-evidence-review.json",
+        "reports/T33/main-current-native-cpu-contracts-single-job.log",
+        "reports/T33/main-current-native-strict-clippy.log",
+        "reports/T33/main-current-native-release-strict-clippy.log"
+      ],
       "blockers": []
     },
     "T34": {
       "status": "done",
       "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
       "integrated_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
-      "evidence": ["reports/T34/result.json", "reports/T34/main-final-closure.json", "reports/T33/main-registered-t34-combined.log", "reports/T33/main-web-combined-final.log", "reports/T34/main-current-release-ui-smoke.json", "reports/T34/main-current-release-workbench.png", "reports/T34/keyboard-closure/result.json", "reports/T34/main-zero.json", "reports/T34/main-demo.json", "reports/T34/main-demo.csv", "reports/T33/main-pilot-public-pixel-inventory-green.log", "reports/T33/main-independent-final-surface-evidence-review.json"],
+      "evidence": [
+        "reports/T34/result.json",
+        "reports/T34/main-final-closure.json",
+        "reports/T33/main-registered-t34-combined.log",
+        "reports/T33/main-web-combined-final.log",
+        "reports/T34/main-current-release-ui-smoke.json",
+        "reports/T34/main-current-release-workbench.png",
+        "reports/T34/keyboard-closure/result.json",
+        "reports/T34/main-zero.json",
+        "reports/T34/main-demo.json",
+        "reports/T34/main-demo.csv",
+        "reports/T33/main-pilot-public-pixel-inventory-green.log",
+        "reports/T33/main-independent-final-surface-evidence-review.json"
+      ],
       "blockers": []
     },
     "T35": {
