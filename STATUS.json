@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "c569fef4f88526aa49297255941b69d16e0cedd5",
-  "last_updated_at": "2026-10-06T06:49:01.246Z",
+  "application_commit": "5ca36cf8a7cb69b74a0499565a24b4306feed439",
+  "last_updated_at": "2026-10-06T08:08:06.571Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -338,23 +338,26 @@
       "blockers": []
     },
     "T28": {
-      "status": "running",
-      "base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
-      "integrated_commit": null,
+      "status": "done",
+      "base_commit": "6c0b67d6b1e2218ab0fdf03b0612b0ac18c7b6f2",
+      "integrated_commit": "5ca36cf8a7cb69b74a0499565a24b4306feed439",
       "evidence": [
         "reports/T28/result.json",
         "reports/T28/tests.log",
-        "reports/T28/review.md"
+        "reports/T28/review.md",
+        "reports/T28/main-final-registered-complete.log",
+        "reports/T28/main-final-nonempty-flag-consumer.log",
+        "reports/T28/independent-final-integration-closure.json",
+        "reports/T28/main-final-metrics.json",
+        "reports/T28/main-release-browser-refusal.json"
       ],
-      "blockers": [
-        "Isolated dense renderer/bridge/performance implementation active; final actual ObjectList hide/lock local flag path and Root assembly/review remain before done. Historical integration.patch is not the current recipe."
-      ]
+      "blockers": []
     },
     "T29": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "732a2b48feaa8dcc0af8de1a88b47b5835e60dc3",
       "integrated_commit": null,
-      "evidence": [],
+      "evidence": ["reports/T29/main-cookie-recovery-green.log", "reports/T29/main-host-probe-wire.log"],
       "blockers": []
     },
     "T30": {
