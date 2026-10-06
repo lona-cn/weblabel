@@ -101,6 +101,7 @@ function scrub(db) {
           const value = JSON.stringify(redact(original));
           if (containsSecret(value) || containsSecret(parseJson(value))) throw new Error('credential_in_immutable_business_data: cannot scrub persisted JSON');
           if (value !== JSON.stringify(original)) update.run(value, row.backup_rowid);
+          else if (containsSecret(row.value)) throw new Error('credential_in_immutable_business_data: cannot scrub raw JSON encoding');
         }
       }
     }

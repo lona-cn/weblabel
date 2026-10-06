@@ -398,7 +398,7 @@ it('refuses credential collisions in immutable review, prediction, event and exp
     try { expect(tables.map(table => copy.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before); } finally { copy.close(); }
   } finally { db.close(); await stop(running.child); }
 }, 60000);
-it('fails closed on decoded mutable progress JSON keys but scrubs diagnostic values consumed by the real job API without changing source bytes', async () => {
+it('fails closed on decoded keys and raw-only credential encodings in mutable progress JSON but scrubs diagnostic values consumed by the real job API without changing source bytes', async () => {
   const data = path.join(scratch, 'mutable progress JSON'), running = await launch(data), admin = await authenticated(running.base, running.code);
   const project = await admin.request('POST', '/api/projects', { name: 'progress diagnostics', description: 'ordinary', allow_self_review: false }); expect(project.status).toBe(201);
   const db = new DatabaseSync(path.join(data, 'api.sqlite')), now = new Date().toISOString();
@@ -420,6 +420,17 @@ it('fails closed on decoded mutable progress JSON keys but scrubs diagnostic val
     expect(fs.existsSync(refused)).toBe(false);
     expect(db.prepare("SELECT * FROM jobs WHERE job_id='progress-fixture'").get()).toEqual(original);
     expect(sourceFiles.map(file => sha(path.join(data, file)))).toEqual(hashes);
+    // The known key may be the literal six-character JSON escape, not its
+    // decoded Unicode character. Canonical JSON equality must not hide raw bytes.
+    const rawSecret = '\\u96ea';
+    db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='progress-profile'").run(JSON.stringify({ api_key: rawSecret }));
+    const rawRefused = path.join(scratch, 'mutable raw encoding refused');
+    const rawResult = cli('backup.mjs', ['--data-dir', data, '--backup-dir', rawRefused]);
+    expect(rawResult.status, rawResult.stdout + rawResult.stderr).toBe(1);
+    expect(rawResult.stderr).toContain('credential_in_immutable_business_data');
+    expect(rawResult.stdout + rawResult.stderr).not.toContain(rawSecret);
+    expect(fs.existsSync(rawRefused)).toBe(false);
+    expect(db.prepare("SELECT * FROM jobs WHERE job_id='progress-fixture'").get()).toEqual(original);
     db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='progress-profile'").run(JSON.stringify({ api_key: valueSecret }));
     const backupDir = path.join(scratch, 'mutable value backup'), restored = path.join(scratch, 'mutable value restored');
     success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
