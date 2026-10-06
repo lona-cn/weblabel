@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
 import type { LocalObjectFlagMap } from '../../lib/editor/types';
@@ -16,7 +16,46 @@ type Props = {
   status?: 'ready' | 'loading' | 'error' | 'empty' | 'unsupported';
 };
 
+type RowProps = {
+  objectId: string;
+  labelId: string;
+  index: number;
+  total: number;
+  start: number;
+  size: number;
+  selected: boolean;
+  hidden: boolean;
+  locked: boolean;
+  onSelect: Props['onSelect'];
+};
+
+const ObjectRow = memo(function ObjectRow({ objectId, labelId, index, total, start, size, selected, hidden, locked, onSelect }: RowProps) {
+  return (
+    <div
+      id={`object-option-${objectId}`}
+      role="option"
+      aria-setsize={total}
+      aria-posinset={index + 1}
+      aria-selected={selected}
+      aria-label={`对象 ${objectId}${hidden ? '，已隐藏' : ''}${locked ? '，已锁定' : ''}`}
+      data-hidden={hidden}
+      data-locked={locked}
+      data-testid={`object-item-${objectId}`}
+      className={`object-row${selected ? ' selected' : ''}`}
+      style={{ position: 'absolute', top: start, height: size }}
+      onClick={() => onSelect(objectId)}
+    >
+      <span className="object-dot" aria-hidden="true" />
+      <span className="object-name">{objectId}</span>
+      <span className="object-label">{labelId}</span>
+    </div>
+  );
+});
+
 export function ObjectList({ objects, selectedIds, onSelect, localFlags = EMPTY_LOCAL_FLAGS, onSetLocalFlags, flagsEditable = true, status = objects.length ? 'ready' : 'empty' }: Props) {
+  const selectRef = useRef(onSelect);
+  useLayoutEffect(() => { selectRef.current = onSelect; }, [onSelect]);
+  const selectRow = useCallback((id: string) => selectRef.current(id), []);
   const allHidden = selectedIds.length > 0 && selectedIds.every(id => localFlags[id]?.hidden);
   const someHidden = selectedIds.some(id => localFlags[id]?.hidden);
   const allLocked = selectedIds.length > 0 && selectedIds.every(id => localFlags[id]?.locked);
@@ -92,28 +131,12 @@ export function ObjectList({ objects, selectedIds, onSelect, localFlags = EMPTY_
           <div className="virtual-spacer" style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
             {virtualRows.map((virtualRow) => {
               const object = objects[virtualRow.index];
-              const selected = selectedIds.includes(object.object_id);
-              return (
-                <div
-                  key={object.object_id}
-                  id={`object-option-${object.object_id}`}
-                  role="option"
-                  aria-setsize={objects.length}
-                  aria-posinset={virtualRow.index + 1}
-                  aria-selected={selected}
-                  aria-label={`对象 ${object.object_id}${localFlags[object.object_id]?.hidden ? '，已隐藏' : ''}${localFlags[object.object_id]?.locked ? '，已锁定' : ''}`}
-                  data-hidden={localFlags[object.object_id]?.hidden ?? false}
-                  data-locked={localFlags[object.object_id]?.locked ?? false}
-                  data-testid={`object-item-${object.object_id}`}
-                  className={`object-row${selected ? ' selected' : ''}`}
-                  style={{ position: 'absolute', top: virtualRow.start, height: virtualRow.size }}
-                  onClick={() => onSelect(object.object_id)}
-                >
-                  <span className="object-dot" aria-hidden="true" />
-                  <span className="object-name">{object.object_id}</span>
-                  <span className="object-label">{object.label_id}</span>
-                </div>
-              );
+              return <ObjectRow key={object.object_id} objectId={object.object_id} labelId={object.label_id}
+                index={virtualRow.index} total={objects.length} start={virtualRow.start} size={virtualRow.size}
+                selected={selectedIds.includes(object.object_id)}
+                hidden={localFlags[object.object_id]?.hidden ?? false}
+                locked={localFlags[object.object_id]?.locked ?? false}
+                onSelect={selectRow} />;
             })}
           </div>
         ) : null}

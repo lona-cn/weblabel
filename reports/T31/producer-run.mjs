@@ -20,7 +20,7 @@ await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
 const port = reserve.address().port;
 await new Promise(resolve => reserve.close(resolve));
 const origin = `http://127.0.0.1:${port}`;
-const env = { ...process.env, WEBLABEL_T31_ORIGIN: origin, WEBLABEL_API_BINARY: path.join(root, 'target/t31-mirror/debug/weblabel-api.exe'), TEMP: runtime, TMP: runtime, TMPDIR: runtime };
+const env = { ...process.env, WEBLABEL_T31_ORIGIN: origin, WEBLABEL_API_BINARY: process.env.WEBLABEL_API_BINARY ?? path.join(root, 'target/t31/debug/weblabel-api.exe'), TEMP: runtime, TMP: runtime, TMPDIR: runtime };
 const pnpm = path.join(process.env.APPDATA, 'npm/node_modules/pnpm/bin/pnpm.cjs');
 const viteArgv = [process.execPath, pnpm, '--filter', '@weblabel/web', 'exec', 'vite', '--config', path.join(root, 'reports/T31/vite.config.ts'), '--host', '127.0.0.1', '--port', String(port), '--strictPort', '--mode', 'test'];
 const logfd = fs.openSync(path.join(report, 'vite.log'), 'w');
@@ -29,9 +29,9 @@ fs.closeSync(logfd);
 const closed = new Promise(resolve => vite.once('close', resolve));
 let exit = 1;
 try {
-  const files = ['crates/wasm-bridge/src/facade.rs', 'crates/wasm-bridge/src/lib.rs', 'apps/web/src/lib/editor/EditorHost.ts', 'apps/web/src/lib/editor/types.ts', 'apps/web/src/lib/persistence/draft-store.ts', 'apps/web/src/lib/persistence/save-queue.ts', 'apps/web/src/features/workbench/DenseHarness.tsx', 'apps/web/src/features/workbench/Workbench.tsx'];
+  const files = ['crates/wasm-bridge/src/facade.rs', 'crates/wasm-bridge/src/lib.rs', 'apps/web/src/lib/editor/EditorHost.ts', 'apps/web/src/lib/editor/types.ts', 'apps/web/src/lib/persistence/draft-store.ts', 'apps/web/src/lib/persistence/save-queue.ts', 'apps/web/src/features/workbench/DenseHarness.tsx', 'apps/web/src/features/workbench/Workbench.tsx', 'apps/web/src/features/workbench/ObjectList.tsx'];
   const source = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash('sha256').update(await readFile(path.join(root, file))).digest('hex')])));
-  await writeFile(path.join(report, 'source.json'), JSON.stringify({ base_commit: 'c2e873389e0f1d07ddfb33b75646b926306321c4', files: source }, null, 2));
+  await writeFile(path.join(report, 'source.json'), JSON.stringify({ base_commit: 'c2e873389e0f1d07ddfb33b75646b926306321c4', source_commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), files: source }, null, 2));
   const deadline = Date.now() + 30_000;
   for (;;) {
     try { if ((await fetch(origin)).ok) break; } catch {}

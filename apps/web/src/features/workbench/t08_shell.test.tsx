@@ -1,6 +1,7 @@
 import * as matchers from '@testing-library/jest-dom/matchers';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
@@ -94,6 +95,25 @@ describe('T08 workbench shell', () => {
     objectList.focus();
     await user.keyboard('{ArrowDown}');
     expect(onSelect).toHaveBeenCalledWith(objects[0].object_id);
+  });
+
+  it('applies the current selection mode when an unchanged row is clicked', async () => {
+    const user = userEvent.setup();
+    const objects = [makeObject(1), makeObject(2)];
+    function SelectionModes() {
+      const [selectAll, setSelectAll] = useState(false);
+      const [selectedIds, setSelectedIds] = useState<string[]>([]);
+      return <>
+        <button type="button" onClick={() => setSelectAll(true)}>Select whole group</button>
+        <ObjectList objects={objects} selectedIds={selectedIds}
+          onSelect={(id) => setSelectedIds(selectAll ? objects.map((object) => object.object_id) : [id])} />
+      </>;
+    }
+    render(<SelectionModes />);
+    await user.click(screen.getByRole('button', { name: 'Select whole group' }));
+    await user.click(screen.getByRole('option', { name: '对象 fixture-object-1' }));
+    expect(screen.getByRole('option', { name: '对象 fixture-object-1' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: '对象 fixture-object-2' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('keeps layout resizing keyboard-operable', async () => {
