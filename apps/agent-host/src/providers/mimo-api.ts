@@ -38,7 +38,7 @@ import {
   type ProviderErrorCode,
 } from './http/errors';
 import { ImageBudget, imageGrantIds, planImageInputs, prepareImage, type PreparedImageInput } from './http/images';
-import { costDisplay, mergeUsage, normalizeUsage, type NormalizedUsage, type TokenPricing } from './http/usage';
+import { costDisplay, normalizeUsage, totalObservedUsage, updateObservedUsage, type NormalizedUsage, type TokenPricing } from './http/usage';
 
 export interface MiMoApiAdapterConfig {
   profile_id: string;
@@ -155,59 +155,70 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
-async function consumeMiMoStream(
-  frames: AsyncIterable<SseFrame>,
+async function* consumeMiMoStream(
+  frames: AsyncGenerator<SseFrame>,
   budget: ToolLoopBudget,
-  observeChunk: (chunk: MiMoStreamEvent) => void,
-): Promise<MiMoStreamResult> {
+  checkpoint: () => RunEvent,
+  observeChunk: (chunk: MiMoStreamEvent) => RunEvent | null,
+): AsyncGenerator<RunEvent, MiMoStreamResult> {
   const calls = new Map<number, MiMoToolCall>();
   const order: MiMoToolCall[] = [];
   let text = '';
   let terminal = false;
-  for await (const frame of frames) {
-    budget.chargeBytes(byteLength(frame.data));
-    if (frame.data === '[DONE]') {
-      terminal = true;
-      continue;
-    }
-    const payload: unknown = decodeJson(frame.data);
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-      throw new ProviderError('invalid_json', 'stream frame is not a JSON object');
-    }
-    const chunk = payload as MiMoStreamEvent; // every field read below is type-checked
-    // Preserve upstream evidence even if a later chunk/transport/tool fails.
-    // Chunk metadata never participates in internal tool identity or authority.
-    observeChunk(chunk);
-    if (!Array.isArray(chunk.choices) || chunk.choices.length === 0) continue;
-    const choice = chunk.choices[0];
-    if (typeof choice !== 'object' || choice === null) continue;
-    const { delta, finish_reason } = choice as { delta?: unknown; finish_reason?: unknown };
-    if (typeof delta === 'object' && delta !== null) {
-      const { content, tool_calls } = delta as { content?: unknown; tool_calls?: unknown };
-      if (typeof content === 'string') text += content;
-      if (Array.isArray(tool_calls)) {
-        for (const entry of tool_calls) {
-          if (typeof entry !== 'object' || entry === null) continue;
-          const { index, id, function: fn } = entry as { index?: unknown; id?: unknown; function?: unknown };
-          if (typeof index !== 'number') continue;
-          let call = calls.get(index);
-          if (call === undefined) {
-            call = { id: typeof id === 'string' ? id : `call_${index}`, name: '', arguments: '' };
-            calls.set(index, call);
-            order.push(call);
-          }
-          if (typeof id === 'string') call.id = id;
-          if (typeof fn === 'object' && fn !== null) {
-            const { name, arguments: args } = fn as { name?: unknown; arguments?: unknown };
-            if (typeof name === 'string') call.name = name;
-            if (typeof args === 'string') call.arguments += args;
+  // Initiate the HTTP attempt before checkpointing, with one pending read.
+  const first = frames.next();
+  void first.catch(() => {});
+  try {
+    yield checkpoint();
+    for (let next = await first; !next.done; next = await frames.next()) {
+      const frame = next.value;
+      budget.chargeBytes(byteLength(frame.data));
+      if (frame.data === '[DONE]') {
+        terminal = true;
+        continue;
+      }
+      const payload: unknown = decodeJson(frame.data);
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        throw new ProviderError('invalid_json', 'stream frame is not a JSON object');
+      }
+      const chunk = payload as MiMoStreamEvent; // every field read below is type-checked
+      // Preserve upstream evidence even if a later chunk/transport/tool fails.
+      // Chunk metadata never participates in internal tool identity or authority.
+      const observation = observeChunk(chunk);
+      if (observation !== null) yield observation;
+      if (!Array.isArray(chunk.choices) || chunk.choices.length === 0) continue;
+      const choice = chunk.choices[0];
+      if (typeof choice !== 'object' || choice === null) continue;
+      const { delta, finish_reason } = choice as { delta?: unknown; finish_reason?: unknown };
+      if (typeof delta === 'object' && delta !== null) {
+        const { content, tool_calls } = delta as { content?: unknown; tool_calls?: unknown };
+        if (typeof content === 'string') text += content;
+        if (Array.isArray(tool_calls)) {
+          for (const entry of tool_calls) {
+            if (typeof entry !== 'object' || entry === null) continue;
+            const { index, id, function: fn } = entry as { index?: unknown; id?: unknown; function?: unknown };
+            if (typeof index !== 'number') continue;
+            let call = calls.get(index);
+            if (call === undefined) {
+              call = { id: typeof id === 'string' ? id : `call_${index}`, name: '', arguments: '' };
+              calls.set(index, call);
+              order.push(call);
+            }
+            if (typeof id === 'string') call.id = id;
+            if (typeof fn === 'object' && fn !== null) {
+              const { name, arguments: args } = fn as { name?: unknown; arguments?: unknown };
+              if (typeof name === 'string') call.name = name;
+              if (typeof args === 'string') call.arguments += args;
+            }
           }
         }
       }
+      if (typeof finish_reason === 'string' && finish_reason !== 'tool_calls' && finish_reason !== 'stop') {
+        throw new ProviderError('provider_reported_failure', `provider finished with ${finish_reason}`);
+      }
     }
-    if (typeof finish_reason === 'string' && finish_reason !== 'tool_calls' && finish_reason !== 'stop') {
-      throw new ProviderError('provider_reported_failure', `provider finished with ${finish_reason}`);
-    }
+  } finally {
+    await frames.return(undefined);
   }
   if (!terminal) throw new ProviderError('interrupted_stream', 'stream ended before [DONE]');
   return { toolCalls: order, text };
@@ -312,6 +323,16 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
       // unknown stays unknown, never 0.
       const turnUsages: NormalizedUsage[] = [];
       const receipts: MiMoReceipt[] = [];
+      const checkpoint = (): RunEvent => {
+        const usage = totalObservedUsage(turnUsages, pricing);
+        const event = emit('progress', 'provider observation checkpoint', {
+          receipts, receipt: receipts.at(-1) ?? null, usage, cost_display: costDisplay(usage),
+        });
+        if (Buffer.byteLength(JSON.stringify(event.data), 'utf8') > 16 * 1024) {
+          event.data = { dropped: 'event_data_too_large' };
+        }
+        return event;
+      };
       try {
         const secret = resolveSecretRef(config.credential.secret_ref, config.secret_env ?? process.env);
         knownSecrets = [secret];
@@ -355,10 +376,16 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
             },
             signal,
           );
-          const parsed = await consumeMiMoStream(frames, budget, chunk => {
-            if (typeof chunk.id === 'string' && chunk.id.length > 0) receipt.response_id = chunk.id;
-            if (typeof chunk.model === 'string' && chunk.model.length > 0) receipt.actual_model_id = chunk.model;
-            if (chunk.usage !== undefined && chunk.usage !== null) turnUsages[usageIndex] = normalizeUsage(chunk.usage, pricing);
+          const parsed = yield* consumeMiMoStream(frames, budget, checkpoint, chunk => {
+            let changed = false;
+            if (typeof chunk.id === 'string' && chunk.id.length > 0 && chunk.id !== receipt.response_id) {
+              receipt.response_id = chunk.id; changed = true;
+            }
+            if (typeof chunk.model === 'string' && chunk.model.length > 0 && chunk.model !== receipt.actual_model_id) {
+              receipt.actual_model_id = chunk.model; changed = true;
+            }
+            changed = updateObservedUsage(turnUsages, usageIndex, chunk.usage, pricing) || changed;
+            return changed ? checkpoint() : null;
           });
           // Completed turns with missing usage remain unknown, while a later
           // failure retains earlier observed usage rather than inventing zero.
@@ -430,17 +457,13 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
           if (proposed) break;
         }
 
-        const usage =
-          turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
-          normalizeUsage(null, pricing);
+        const usage = totalObservedUsage(turnUsages, pricing);
         yield emit('succeeded', 'run succeeded', { usage, cost_display: costDisplay(usage), turns: budget.turns,
           receipts, receipt: receipts.at(-1) ?? null });
       } catch (error) {
         const code: ProviderErrorCode = error instanceof ProviderError ? error.code : 'adapter_error';
         const message = error instanceof Error ? error.message : 'unexpected adapter failure';
-        const usage =
-          turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
-          normalizeUsage(null, pricing);
+        const usage = totalObservedUsage(turnUsages, pricing);
         if (signal?.aborted === true) {
           yield emit('cancelled', 'run cancelled', { usage, cost_display: costDisplay(usage),
             receipts, receipt: receipts.at(-1) ?? null });

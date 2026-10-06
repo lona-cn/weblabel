@@ -60,3 +60,25 @@ export function mergeUsage(a: NormalizedUsage, b: NormalizedUsage, pricing: Toke
 export function costDisplay(usage: NormalizedUsage): 'known' | 'unknown' {
   return usage.cost_usd === null ? 'unknown' : 'known';
 }
+
+/** Only valid, changed counters update a turn's observed usage. Invalid/null
+ * metadata cannot erase earlier evidence; a completed unknown turn is handled
+ * separately by the adapter, as before. */
+export function updateObservedUsage(turns: NormalizedUsage[], index: number, raw: unknown, pricing: TokenPricing | null): boolean {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return false;
+  const record = raw as Record<string, unknown>;
+  const nextInput = tokenCount(record, ['input_tokens', 'prompt_tokens']);
+  const nextOutput = tokenCount(record, ['output_tokens', 'completion_tokens']);
+  if (nextInput === null && nextOutput === null) return false;
+  const previous = turns[index];
+  const input_tokens = nextInput ?? previous?.input_tokens ?? null;
+  const output_tokens = nextOutput ?? previous?.output_tokens ?? null;
+  if (previous?.input_tokens === input_tokens && previous?.output_tokens === output_tokens) return false;
+  turns[index] = { input_tokens, output_tokens, cost_usd: computeCost(input_tokens, output_tokens, pricing) };
+  return true;
+}
+
+export function totalObservedUsage(turns: NormalizedUsage[], pricing: TokenPricing | null): NormalizedUsage {
+  return turns.reduce<NormalizedUsage | null>((total, turn) => total === null ? turn : mergeUsage(total, turn, pricing), null)
+    ?? normalizeUsage(null, pricing);
+}

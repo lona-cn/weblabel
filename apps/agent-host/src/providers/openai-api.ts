@@ -11,6 +11,8 @@ import type { ModelCapabilities } from '../../../../packages/contracts/generated
 import type { ModelProfile } from '../../../../packages/contracts/generated/ModelProfile';
 import type { RunEvent } from '../../../../packages/contracts/generated/RunEvent';
 import type { StartRunRequest } from '../../../../packages/contracts/generated/StartRunRequest';
+import suggestionSchema from '../../../../packages/contracts/generated/suggestion_set.schema.json';
+import type { AttributeDef } from '../../../../packages/contracts/generated/AttributeDef';
 import type { ProviderAdapter, RuntimeContext } from '../registry';
 import { redactText, redactValue } from '../security/redaction';
 import {
@@ -33,7 +35,7 @@ import {
   type ProviderErrorCode,
 } from './http/errors';
 import { ImageBudget, imageGrantIds, planImageInputs, prepareImage, type PreparedImageInput } from './http/images';
-import { costDisplay, mergeUsage, normalizeUsage, type NormalizedUsage, type TokenPricing } from './http/usage';
+import { costDisplay, normalizeUsage, totalObservedUsage, updateObservedUsage, type NormalizedUsage, type TokenPricing } from './http/usage';
 
 export interface OpenAiApiAdapterConfig {
   profile_id: string;
@@ -59,62 +61,103 @@ export interface OpenAiApiAdapterConfig {
 const SYSTEM_TEXT = 'You are a WebLabel annotation assistant. Use the provided tools to inspect regions and propose changes.';
 const READ_REGION_DESC =
   'Read an authorized image region as a PNG crop. region=null reads the full image. The crop is attached to the next message; this call returns transform metadata only.';
-const PROPOSE_DESC = 'Submit proposed annotation changes and quality issues. The server validates every field strictly before anything is stored.';
+const PROPOSE_DESC = 'Submit proposed annotation changes and quality issues. Use null for omitted issues, optional create attributes or unchanged partial-edit attributes. The server validates every field strictly before anything is stored.';
 const REPORT_DESC = 'Report suspected quality issues without proposing annotation changes.';
 
-const READ_REGION_SCHEMA = {
-  type: 'object',
-  properties: {
-    region: {
-      anyOf: [
-        { type: 'null' },
-        {
-          type: 'object',
-          properties: {
-            type: { const: 'bbox_xyxy' },
-            x_min: { type: 'number' },
-            y_min: { type: 'number' },
-            x_max: { type: 'number' },
-            y_max: { type: 'number' },
-          },
-          required: ['type', 'x_min', 'y_min', 'x_max', 'y_max'],
-          additionalProperties: false,
-        },
-      ],
-    },
-  },
-  required: ['region'],
-  additionalProperties: false,
-};
-const PROPOSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    changes: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['kind', 'change_id', 'reason'],
-        properties: { kind: { type: 'string' } },
-      },
-    },
-    issues: { type: 'array', items: { type: 'object' } },
-    score: { type: ['number', 'null'] },
-  },
-  required: ['changes'],
-  additionalProperties: false,
-};
-const REPORT_SCHEMA = {
-  type: 'object',
-  properties: { issues: { type: 'array', items: { type: 'object' } } },
-  required: ['issues'],
-  additionalProperties: false,
-};
+type JsonSchema = Record<string, unknown>;
+const DEFINITIONS = suggestionSchema.definitions as Record<string, JsonSchema>;
 
-const TOOLS: Record<string, unknown>[] = [
-  { type: 'function', name: 'read_region', description: READ_REGION_DESC, parameters: READ_REGION_SCHEMA, strict: true },
-  { type: 'function', name: 'propose_changes', description: PROPOSE_DESC, parameters: PROPOSE_SCHEMA, strict: true },
-  { type: 'function', name: 'report_issues', description: REPORT_DESC, parameters: REPORT_SCHEMA, strict: true },
-];
+/** Project the generated domain contract into OpenAI's strict subset. Attribute
+ * maps are closed over the actual ontology, not replaced with open objects.
+ * The original schema/domain validators remain authoritative on tool output. */
+function strictSchema(schema: JsonSchema): JsonSchema {
+  if (typeof schema.$ref === 'string') {
+    const name = schema.$ref.split('/').at(-1)!;
+    if (name === 'AttributeMap') throw new ProviderError('adapter_error', 'attribute schema requires ontology');
+    return strictSchema(DEFINITIONS[name]);
+  }
+  const result: JsonSchema = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === 'format' || key === 'propertyNames') continue;
+    if (key === 'oneOf' || key === 'anyOf') result.anyOf = (value as JsonSchema[]).map(strictSchema);
+    else if (key === 'items') result.items = strictSchema(value as JsonSchema);
+    else if (key === 'properties') result.properties = Object.fromEntries(
+      Object.entries(value as Record<string, JsonSchema>).map(([name, child]) => [name, strictSchema(child)]),
+    );
+    else result[key] = value;
+  }
+  if (result.type === 'object') {
+    result.additionalProperties = false;
+    result.required = Object.keys(result.properties as JsonSchema);
+  }
+  return result;
+}
+
+function attributeSchema(defs: AttributeDef[], partial: boolean): JsonSchema {
+  const properties = Object.fromEntries(defs.map(def => {
+    const scalar: JsonSchema = def.kind === 'enum' ? { type: 'string', enum: def.enum_values }
+      : { type: def.kind === 'text' ? 'string' : def.kind };
+    // Strict schemas require every property. Null explicitly denotes an
+    // omitted optional attribute or a field not changed by a partial edit.
+    return [def.key, partial || !def.required ? { anyOf: [scalar, { type: 'null' }] } : scalar];
+  }));
+  return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false };
+}
+
+function toolsForDomain(domain: CandidateDomainContext): JsonSchema[] {
+  const attributes = (partial: boolean): JsonSchema => domain.ontology.labels.length === 0
+    ? attributeSchema([], partial)
+    : { anyOf: domain.ontology.labels.map(label => attributeSchema(label.attributes, partial)) };
+  const object = DEFINITIONS.AnnotationObject;
+  const annotation = strictSchema({ ...object, properties: {
+    ...(object.properties as JsonSchema), attributes: attributes(false),
+  } });
+  const changes = (DEFINITIONS.Change.oneOf as JsonSchema[]).map(change => {
+    const properties = change.properties as JsonSchema;
+    return strictSchema({ ...change, properties: {
+      ...properties,
+      ...('object' in properties ? { object: annotation } : {}),
+      ...('values' in properties ? { values: attributes(true) } : {}),
+    } });
+  });
+  const bbox = strictSchema(DEFINITIONS.BBox);
+  const issues = { type: 'array', items: strictSchema(DEFINITIONS.QualityIssue) };
+  return [
+    { type: 'function', name: 'read_region', description: READ_REGION_DESC, strict: true, parameters: {
+      type: 'object', properties: { region: { anyOf: [bbox, { type: 'null' }] } },
+      required: ['region'], additionalProperties: false,
+    } },
+    { type: 'function', name: 'propose_changes', description: PROPOSE_DESC, strict: true, parameters: {
+      type: 'object', properties: { changes: { type: 'array', items: { anyOf: changes } },
+        issues: { anyOf: [issues, { type: 'null' }] }, score: { type: ['number', 'null'] } },
+      required: ['changes', 'issues', 'score'], additionalProperties: false,
+    } },
+    { type: 'function', name: 'report_issues', description: REPORT_DESC, strict: true, parameters: {
+      type: 'object', properties: { issues }, required: ['issues'], additionalProperties: false,
+    } },
+  ];
+}
+
+/** Decode only the strict wire's explicit omission markers; unknown keys and
+ * invalid required fields still reach the existing domain validator unchanged. */
+function domainToolArguments(name: string, raw: string, domain: CandidateDomainContext): unknown {
+  if (name !== 'propose_changes') return raw;
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return raw; }
+  if (!value || typeof value !== 'object' || !('changes' in value) || !Array.isArray(value.changes)) return value;
+  if ('issues' in value && value.issues === null) value.issues = [];
+  for (const change of value.changes) {
+    if (!change || typeof change !== 'object') continue;
+    const created = change.kind === 'create' && change.object && typeof change.object === 'object';
+    const labelId = created ? change.object.label_id
+      : domain.document.objects.find(object => object.object_id === change.object_id)?.label_id;
+    const defs = domain.ontology.labels.find(label => label.label_id === labelId)?.attributes ?? [];
+    const values = created ? change.object.attributes : change.kind === 'set_attributes' ? change.values : null;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) continue;
+    for (const def of defs) if ((!created || !def.required) && values[def.key] === null) delete values[def.key];
+  }
+  return value;
+}
 
 interface ResponsesToolCall {
   item_id: string;
@@ -153,59 +196,71 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
-async function consumeResponsesStream(
-  frames: AsyncIterable<SseFrame>,
+async function* consumeResponsesStream(
+  frames: AsyncGenerator<SseFrame>,
   budget: ToolLoopBudget,
-  observeResponse: (response: { id?: unknown; model?: unknown; usage?: unknown }) => void,
-): Promise<ResponsesStreamResult> {
+  checkpoint: () => RunEvent,
+  observeResponse: (response: { id?: unknown; model?: unknown; usage?: unknown }) => RunEvent | null,
+): AsyncGenerator<RunEvent, ResponsesStreamResult> {
   const calls = new Map<string, ResponsesToolCall>();
   const order: ResponsesToolCall[] = [];
   let text = '';
   let terminal = false;
   let failure: string | null = null;
-  for await (const frame of frames) {
-    budget.chargeBytes(byteLength(frame.data));
-    const payload: unknown = decodeJson(frame.data);
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-      throw new ProviderError('invalid_json', 'stream frame is not a JSON object');
-    }
-    const event = payload as ResponsesStreamEvent; // every field read below is type-checked
-    const type = typeof event.type === 'string' ? event.type : frame.event;
-    if (
-      (type === 'response.created' || type === 'response.in_progress' || type === 'response.completed' ||
-        type === 'response.failed' || type === 'response.incomplete') &&
-      typeof event.response === 'object' && event.response !== null && !Array.isArray(event.response)
-    ) {
-      // Observe before parsing tools or raising stream/terminal failures. Metadata
-      // is evidence only, never a tool ID, schema, permission or model selection.
-      observeResponse(event.response as { id?: unknown; model?: unknown; usage?: unknown });
-    }
-    if (type === 'response.output_item.added' && typeof event.item === 'object' && event.item !== null) {
-      const item = event.item as { type?: unknown; id?: unknown; call_id?: unknown; name?: unknown; arguments?: unknown };
-      if (item.type === 'function_call') {
-        const item_id = typeof item.id === 'string' ? item.id : String(item.call_id ?? '');
-        const call: ResponsesToolCall = {
-          item_id,
-          call_id: typeof item.call_id === 'string' ? item.call_id : item_id,
-          name: typeof item.name === 'string' ? item.name : '',
-          arguments: typeof item.arguments === 'string' ? item.arguments : '',
-        };
-        calls.set(item_id, call);
-        order.push(call);
+  // Start the actual HTTP attempt before publishing its null-identity receipt.
+  // One pending read only; no detached frame pump, token RPC, or event queue.
+  const first = frames.next();
+  void first.catch(() => {}); // consumer cancellation can close during the yield
+  try {
+    yield checkpoint();
+    for (let next = await first; !next.done; next = await frames.next()) {
+      const frame = next.value;
+      budget.chargeBytes(byteLength(frame.data));
+      const payload: unknown = decodeJson(frame.data);
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        throw new ProviderError('invalid_json', 'stream frame is not a JSON object');
       }
-    } else if (type === 'response.function_call_arguments.delta' && typeof event.delta === 'string') {
-      const call = calls.get(String(event.item_id ?? ''));
-      if (call !== undefined) call.arguments += event.delta;
-    } else if (type === 'response.function_call_arguments.done' && typeof event.arguments === 'string') {
-      const call = calls.get(String(event.item_id ?? ''));
-      if (call !== undefined) call.arguments = event.arguments;
-    } else if (type === 'response.output_text.delta' && typeof event.delta === 'string') {
-      text += event.delta;
-    } else if (type === 'response.completed') {
-      terminal = true;
-    } else if (type === 'response.failed' || type === 'response.incomplete') {
-      failure = type;
+      const event = payload as ResponsesStreamEvent; // every field read below is type-checked
+      const type = typeof event.type === 'string' ? event.type : frame.event;
+      if (
+        (type === 'response.created' || type === 'response.in_progress' || type === 'response.completed' ||
+          type === 'response.failed' || type === 'response.incomplete') &&
+        typeof event.response === 'object' && event.response !== null && !Array.isArray(event.response)
+      ) {
+        // Observe before parsing tools or raising stream/terminal failures. Metadata
+        // is evidence only, never a tool ID, schema, permission or model selection.
+        const observation = observeResponse(event.response as { id?: unknown; model?: unknown; usage?: unknown });
+        if (observation !== null) yield observation;
+      }
+      if (type === 'response.output_item.added' && typeof event.item === 'object' && event.item !== null) {
+        const item = event.item as { type?: unknown; id?: unknown; call_id?: unknown; name?: unknown; arguments?: unknown };
+        if (item.type === 'function_call') {
+          const item_id = typeof item.id === 'string' ? item.id : String(item.call_id ?? '');
+          const call: ResponsesToolCall = {
+            item_id,
+            call_id: typeof item.call_id === 'string' ? item.call_id : item_id,
+            name: typeof item.name === 'string' ? item.name : '',
+            arguments: typeof item.arguments === 'string' ? item.arguments : '',
+          };
+          calls.set(item_id, call);
+          order.push(call);
+        }
+      } else if (type === 'response.function_call_arguments.delta' && typeof event.delta === 'string') {
+        const call = calls.get(String(event.item_id ?? ''));
+        if (call !== undefined) call.arguments += event.delta;
+      } else if (type === 'response.function_call_arguments.done' && typeof event.arguments === 'string') {
+        const call = calls.get(String(event.item_id ?? ''));
+        if (call !== undefined) call.arguments = event.arguments;
+      } else if (type === 'response.output_text.delta' && typeof event.delta === 'string') {
+        text += event.delta;
+      } else if (type === 'response.completed') {
+        terminal = true;
+      } else if (type === 'response.failed' || type === 'response.incomplete') {
+        failure = type;
+      }
     }
+  } finally {
+    await frames.return(undefined);
   }
   if (failure !== null) throw new ProviderError('provider_reported_failure', `provider reported ${failure}`);
   if (!terminal) throw new ProviderError('interrupted_stream', 'stream ended before response.completed');
@@ -239,14 +294,14 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
     max_stream_bytes: config.max_stream_bytes,
   });
 
-  function buildRequestBody(items: Record<string, unknown>[]): Record<string, unknown> {
+  function buildRequestBody(items: Record<string, unknown>[], tools: JsonSchema[]): Record<string, unknown> {
     return {
       model: config.model_id,
       stream: true,
       max_output_tokens: budgets.max_output_tokens,
       instructions: SYSTEM_TEXT,
       input: items,
-      tools: TOOLS,
+      tools,
       tool_choice: 'auto',
     };
   }
@@ -308,6 +363,18 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
       // unknown stays unknown, never 0.
       const turnUsages: NormalizedUsage[] = [];
       const receipts: ResponsesReceipt[] = [];
+      const checkpoint = (): RunEvent => {
+        const usage = totalObservedUsage(turnUsages, pricing);
+        const event = emit('progress', 'provider observation checkpoint', {
+          receipts, receipt: receipts.at(-1) ?? null, usage, cost_display: costDisplay(usage),
+        });
+        // Same existing service cap: oversized untrusted IDs are a diagnostic,
+        // not a reason to enlarge the evidence budget or invent identity.
+        if (Buffer.byteLength(JSON.stringify(event.data), 'utf8') > 16 * 1024) {
+          event.data = { dropped: 'event_data_too_large' };
+        }
+        return event;
+      };
       try {
         const secret = resolveSecretRef(config.credential.secret_ref, config.secret_env ?? process.env);
         knownSecrets = [secret];
@@ -315,6 +382,7 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
         const document = await ctx.get_document();
         const ontology = await ctx.get_ontology();
         const domain: CandidateDomainContext = { intent: input.intent, bbox_output: capabilities.bbox_output, document, ontology };
+        const tools = toolsForDomain(domain);
         const grantIds = "allow_image" in ctx && ctx.allow_image === false ? [] : imageGrantIds(ctx);
         const imageBudget: ImageBudget = { max_bytes: budgets.max_image_bytes, max_pixels: budgets.max_pixels, pixels_used: 0 };
 
@@ -344,14 +412,20 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
             '/responses',
             {
               headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
-              body: JSON.stringify(buildRequestBody(items)),
+              body: JSON.stringify(buildRequestBody(items, tools)),
             },
             signal,
           );
-          const parsed = await consumeResponsesStream(frames, budget, response => {
-            if (typeof response.id === 'string' && response.id.length > 0) receipt.response_id = response.id;
-            if (typeof response.model === 'string' && response.model.length > 0) receipt.actual_model_id = response.model;
-            if (response.usage !== undefined && response.usage !== null) turnUsages[usageIndex] = normalizeUsage(response.usage, pricing);
+          const parsed = yield* consumeResponsesStream(frames, budget, checkpoint, response => {
+            let changed = false;
+            if (typeof response.id === 'string' && response.id.length > 0 && response.id !== receipt.response_id) {
+              receipt.response_id = response.id; changed = true;
+            }
+            if (typeof response.model === 'string' && response.model.length > 0 && response.model !== receipt.actual_model_id) {
+              receipt.actual_model_id = response.model; changed = true;
+            }
+            changed = updateObservedUsage(turnUsages, usageIndex, response.usage, pricing) || changed;
+            return changed ? checkpoint() : null;
           });
           // An entirely completed turn without usage makes totals unknown; an
           // HTTP/stream failure cannot erase usage already observed in this run.
@@ -361,7 +435,7 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
           for (const call of parsed.toolCalls) {
             items.push({ type: 'function_call', call_id: call.call_id, name: call.name, arguments: call.arguments });
             yield emit('tool_call', `tool ${call.name}`, { name: call.name, call_id: call.call_id });
-            const args = parseToolCallArguments(call.name, call.arguments, domain);
+            const args = parseToolCallArguments(call.name, domainToolArguments(call.name, call.arguments, domain), domain);
             if (args.tool === 'read_region') {
               const image = prepareImage(
                 await ctx.read_region(grantIds[0], args.region),
@@ -419,17 +493,13 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
           if (proposed) break;
         }
 
-        const usage =
-          turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
-          normalizeUsage(null, pricing);
+        const usage = totalObservedUsage(turnUsages, pricing);
         yield emit('succeeded', 'run succeeded', { usage, cost_display: costDisplay(usage), turns: budget.turns,
           receipts, receipt: receipts.at(-1) ?? null });
       } catch (error) {
         const code: ProviderErrorCode = error instanceof ProviderError ? error.code : 'adapter_error';
         const message = error instanceof Error ? error.message : 'unexpected adapter failure';
-        const usage =
-          turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
-          normalizeUsage(null, pricing);
+        const usage = totalObservedUsage(turnUsages, pricing);
         if (signal?.aborted === true) {
           yield emit('cancelled', 'run cancelled', { usage, cost_display: costDisplay(usage),
             receipts, receipt: receipts.at(-1) ?? null });

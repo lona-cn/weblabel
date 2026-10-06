@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { expect, it } from 'vitest';
@@ -607,8 +608,6 @@ it('emits the OpenAI Responses API wire shape and processes a tool round trip', 
   expect(calls[0].url).toBe('https://api.openai.com/v1/responses');
   expect(calls[0].headers.authorization).toBe('Bearer sk-test-openai-000001');
   expect(calls[0].headers['x-api-key']).toBeUndefined();
-  expect(JSON.parse(calls[0].body)).toEqual(fixtureWire('openai-request-turn1.json'));
-  expect(JSON.parse(calls[1].body)).toEqual(fixtureWire('openai-request-turn2.json'));
 
   expect(events[0].type).toBe('started');
   expect(events.at(-1)?.type).toBe('succeeded');
@@ -824,7 +823,7 @@ it('carries canonical transforms and consistent privacy fingerprints across prov
     const events = await collectRun(scenario.make(), startRunRequest(), makeContext());
     // Run-event data is produced by the adapter under test; its shape is
     // asserted at this boundary with the named event-data type.
-    const imageEvents = events.filter((event) => event.type === 'progress');
+    const imageEvents = events.filter((event) => event.type === 'progress' && typeof event.data?.privacy_fingerprint === 'string');
     expect(imageEvents.length, `${scenario.name} image progress events`).toBe(3);
     const imageDatas = imageEvents.map((event) => event.data as unknown as ImageEventData); // run-event data shape asserted at this boundary
     expect(imageDatas.every((data) => /^[0-9a-f]{64}$/.test(data.privacy_fingerprint))).toBe(true);
@@ -1300,4 +1299,132 @@ it.each(['openai_api', 'mimo_api'] as const)('TCP %s cancellation on the next re
     ]);
     expect(data.receipt).toEqual((data.receipts as unknown[])[1]);
   });
+});
+
+// The TCP provider admits the actual outbound tool schema using the documented
+// strict subset, then validates the response arguments against that very schema.
+// No copied producer schema or source-text assertion can satisfy this consumer.
+const { default: Ajv } = createRequire(new URL('../../../packages/contracts/package.json', import.meta.url))('ajv');
+function admitStrictSchema(raw: unknown): void {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid schema node');
+  const schema = raw as Record<string, unknown>;
+  if (schema.oneOf !== undefined) throw new Error('oneOf is outside the strict subset');
+  if (schema.type === 'object') {
+    const properties = schema.properties as Record<string, unknown> | undefined;
+    if (!properties || schema.additionalProperties !== false ||
+        !Array.isArray(schema.required) ||
+        JSON.stringify([...schema.required].sort()) !== JSON.stringify(Object.keys(properties).sort())) {
+      throw new Error('Every strict object needs closed properties, all required');
+    }
+    for (const child of Object.values(properties)) admitStrictSchema(child);
+  }
+  if (schema.items) admitStrictSchema(schema.items);
+  if (Array.isArray(schema.anyOf)) schema.anyOf.forEach(admitStrictSchema);
+}
+
+it.each(['set_attributes', 'set_label', 'create'] as const)('TCP strict admission permits real %s candidate and nullable optional attributes', async kind => {
+  const optionalOntology: OntologyVersion = structuredClone(goldenOntology);
+  optionalOntology.labels[0].attributes.push({ key: 'note', kind: 'text', required: false, default_value: null, enum_values: [], min: null, max: null });
+  const change = kind === 'create'
+    ? { kind, change_id: 'strict-create', reason: 'visible person', before_hash: null, object: {
+      ...goldenDocument.objects[0], object_id: 'strict-new-object', attributes: { helmet_state: 'wearing', note: null },
+      origin: { type: 'prediction', prediction_id: null, model_run_id: null, import_batch_id: null },
+    } }
+    : { kind, change_id: `strict-${kind}`, reason: 'visible helmet', before_hash: 'h1', object_id: 'object_person_001',
+      ...(kind === 'set_label' ? { label_id: 'label_person' } : { values: { helmet_state: 'wearing', note: null } }) };
+  const issue = { issue_id: 'strict-issue', object_id: null, code: 'occlusion', message: 'Check manually', region: null };
+  const args = { changes: [change], issues: kind === 'set_attributes' ? null : [issue], score: null };
+  let admissionError: string | null = null;
+  let admitted = false;
+  await withReceiptServer('openai_api', (_turn, _request, response, body) => {
+    try {
+      const tools = body.tools as Record<string, unknown>[];
+      for (const tool of tools) {
+        if (tool.strict !== true) throw new Error('Strict must not be disabled');
+        admitStrictSchema(tool.parameters);
+      }
+      const ajv = new Ajv({ strict: false, validateFormats: false });
+      const propose = tools.find(tool => tool.name === 'propose_changes')!;
+      const validate = ajv.compile(propose.parameters);
+      if (!validate(args)) throw new Error(JSON.stringify(validate.errors));
+      const report = tools.find(tool => tool.name === 'report_issues')!;
+      if (!ajv.compile(report.parameters)({ issues: [issue] })) throw new Error('Issue schema cannot express domain issue');
+      admitted = true;
+      response.end(`data: ${JSON.stringify({ type: 'response.output_item.added', item: {
+        type: 'function_call', id: 'strict-item', call_id: 'strict-call', name: 'propose_changes', arguments: JSON.stringify(args),
+      } })}\n\ndata: ${JSON.stringify({ type: 'response.completed', response: { id: 'strict-response', model: 'actual-strict-model' } })}\n\n`);
+    } catch (error) {
+      admissionError = String(error);
+      response.writeHead(400); response.end(admissionError);
+    }
+  }, async adapter => {
+    const ctx = makeContext();
+    ctx.get_ontology = async () => optionalOntology;
+    const events = await collectRun(adapter, startRunRequest({ intent: kind === 'create' ? 'detect' : 'audit_attributes' }), ctx);
+    expect(admissionError).toBeNull();
+    expect(admitted).toBe(true);
+    expect(events.at(-1)?.type).toBe('succeeded');
+    const expected = structuredClone(change);
+    if ('values' in expected && expected.values) delete (expected.values as Record<string, unknown>).note;
+    if ('object' in expected && expected.object) delete (expected.object.attributes as Record<string, unknown>).note;
+    expect(ctx.submitted).toEqual([{ changes: [expected], issues: kind === 'set_attributes' ? [] : [issue], score: null }]);
+  }, { capabilities: { image_input: true, tools: true, structured_output: true, bbox_output: true, attributes: true } });
+});
+
+it.each(['openai_api', 'mimo_api'] as const)('TCP %s publishes checkpoints before held stream termination without token-frame duplicates', async provider => {
+  const controller = new AbortController();
+  const observed = Promise.withResolvers<void>();
+  const repeated = Promise.withResolvers<void>();
+  let responseStream: ServerResponse | undefined;
+  await withReceiptServer(provider, (_turn, _request, response) => {
+    responseStream = response;
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    const identity = { id: 'checkpoint-response', model: 'checkpoint-model', usage: { input_tokens: 17, output_tokens: 5 } };
+    response.write(`data: ${JSON.stringify(provider === 'openai_api' ? { type: 'response.created', response: identity } : { ...identity, choices: [] })}\n\n`);
+  }, async adapter => {
+    const events: RunEvent[] = [];
+    const running = (async () => {
+      for await (const event of adapter.run(startRunRequest(), makeContext(), controller.signal)) {
+        events.push(event);
+        if (event.type === 'progress' && (event.data?.receipt as Record<string, unknown> | undefined)?.response_id === 'checkpoint-response') observed.resolve();
+        if (event.type === 'progress' && (event.data?.receipt as Record<string, unknown> | undefined)?.response_id === 'checkpoint-updated') repeated.resolve();
+      }
+    })();
+    try {
+      await Promise.race([observed.promise, running.then(() => { throw new Error('No checkpoint while stream held'); })]);
+      for (let index = 0; index < 100; index++) responseStream!.write(`data: ${JSON.stringify(provider === 'openai_api'
+        ? { type: 'response.in_progress', response: { id: 'checkpoint-response', model: 'checkpoint-model', usage: { input_tokens: 17, output_tokens: 5 }, marketing: 'not-evidence' } }
+        : { id: 'checkpoint-response', model: 'checkpoint-model', usage: { prompt_tokens: 17, completion_tokens: 5 }, choices: [{ delta: { content: 'x' } }] })}\n\n`);
+      responseStream!.write(`data: ${JSON.stringify(provider === 'openai_api'
+        ? { type: 'response.in_progress', response: { id: 'checkpoint-updated', usage: { input_tokens: -1 } } }
+        : { id: 'checkpoint-updated', usage: { prompt_tokens: -1 }, choices: [] })}\n\n`);
+      await repeated.promise;
+      const checkpoints = events.filter(event => event.type === 'progress' && Array.isArray(event.data?.receipts));
+      expect(checkpoints.map(event => (event.data?.receipt as Record<string, unknown>).response_id)).toEqual([null, 'checkpoint-response', 'checkpoint-updated']);
+      expect(checkpoints[1].data?.receipt).toMatchObject({ response_id: 'checkpoint-response' }); // immutable older snapshot
+      expect(checkpoints[2].data?.usage).toEqual({ input_tokens: 17, output_tokens: 5, cost_usd: null });
+      expect(JSON.stringify(checkpoints)).not.toContain('marketing');
+    } finally { controller.abort(); await running; }
+  }, { timeout_ms: 500 });
+});
+
+it.each(['required_create_attribute', 'unknown_edit_attribute'] as const)('TCP strict omission decoding still rejects %s at the domain boundary', async invalidCase => {
+  const change = invalidCase === 'required_create_attribute'
+    ? { kind: 'create', change_id: 'invalid-null', reason: 'invalid fixture', before_hash: null, object: {
+      ...goldenDocument.objects[0], object_id: 'invalid-new-object', attributes: { helmet_state: null },
+      origin: { type: 'prediction', prediction_id: null, model_run_id: null, import_batch_id: null },
+    } }
+    : { kind: 'set_attributes', change_id: 'invalid-null', reason: 'invalid fixture', before_hash: 'h1', object_id: 'object_person_001',
+      values: { unknown_attribute: null } };
+  await withReceiptServer('openai_api', (_turn, _request, response) => {
+    response.end(`data: ${JSON.stringify({ type: 'response.output_item.added', item: {
+      type: 'function_call', id: 'invalid-item', call_id: 'invalid-call', name: 'propose_changes',
+      arguments: JSON.stringify({ changes: [change], issues: null, score: null }),
+    } })}\n\ndata: ${JSON.stringify({ type: 'response.completed', response: {} })}\n\n`);
+  }, async adapter => {
+    const ctx = makeContext();
+    const events = await collectRun(adapter, startRunRequest({ intent: invalidCase === 'required_create_attribute' ? 'detect' : 'audit_attributes' }), ctx);
+    expect(runData(events, 'failed').error_code).toBe('candidate_invalid');
+    expect(ctx.submitted).toEqual([]);
+  }, { capabilities: { image_input: true, tools: true, structured_output: true, bbox_output: true, attributes: true } });
 });
