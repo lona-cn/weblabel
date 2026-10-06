@@ -49,3 +49,20 @@ it('does not issue a Publish request for zero samples and stops collection on un
   expect(collector.totals().task).toBe(1000);
   expect(collector.isEnabled()).toBe(false);
 });
+
+it('preserves a corrupted journal and keeps editing usable until explicit clearing', async () => {
+  let raw: string | null = '{private-corrupt-journal';
+  const storage = { getItem: () => raw, setItem: (_key: string, value: string) => { raw = value; }, removeItem: () => { raw = null; } };
+  const collector = new ActivityCollector('project', 'actor', () => 0, storage);
+  render(<main><textarea aria-label="Annotation note" /><ActivityPanel projectId="project" actorId="actor" collector={collector} /></main>);
+  expect(screen.getByTestId('activity-opt-in')).toBeDisabled();
+  expect(screen.getByTestId('activity-publish')).toBeDisabled();
+  expect(screen.getByRole('alert')).toBeInTheDocument();
+  await userEvent.type(screen.getByRole('textbox', { name: 'Annotation note' }), 'still editable');
+  expect(screen.getByRole('textbox', { name: 'Annotation note' })).toHaveValue('still editable');
+  expect(raw).toBe('{private-corrupt-journal');
+  expect(collector.recoveryJournal).toBe(raw);
+  await userEvent.click(screen.getByTestId('activity-clear'));
+  expect(raw).toBeNull(); expect(screen.getByTestId('activity-opt-in')).toBeEnabled();
+  expect(screen.getByTestId('activity-opt-in')).not.toBeChecked();
+});

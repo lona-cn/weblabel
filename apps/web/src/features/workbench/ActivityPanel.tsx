@@ -49,6 +49,7 @@ export function ActivityPanel({ projectId, actorId, collector, surfaceRef }: Act
   async function publish() {
     setPublishing(true); setError(null); setMessage(null);
     try {
+      if (collector.problem) throw new Error(collector.problem);
       collector.commit();
       const sessions = collector.snapshot();
       if (!sessions.some((session) => session.intervals.length)) { setMessage('无数据，未发送请求。'); return; }
@@ -74,16 +75,21 @@ export function ActivityPanel({ projectId, actorId, collector, surfaceRef }: Act
   return <section ref={setPanel} className="panel" aria-label="自愿本地工时统计" data-testid="activity-panel">
     <h2>本地工时 · 自愿记录</h2>
     <p>默认关闭。只记录本项目的区间分类与时长，不记录输入内容或按键。不自动上传；失焦及空闲超过60秒不计人工工时。模型费用未知。</p>
-    <label><input type="checkbox" data-testid="activity-opt-in" checked={enabled} onChange={(event) => run(() => collector.setEnabled(event.currentTarget.checked))} /> 开启本项目工时统计</label>
+    <label><input type="checkbox" data-testid="activity-opt-in" checked={enabled} disabled={collector.problem !== null} onChange={(event) => run(() => collector.setEnabled(event.currentTarget.checked))} /> 开启本项目工时统计</label>
     <label>当前工时分类 <select data-testid="activity-kind" value={collector.getKind()} disabled={!enabled} onChange={(event) => run(() => collector.interact(event.currentTarget.value as ActivityKind))}>
       {Object.entries(LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
     </select></label>
     <dl data-testid="activity-totals">{Object.entries(LABELS).map(([kind, label]) => <div key={kind}><dt>{label}</dt><dd data-testid={`activity-duration-${kind}`}>{(totals[kind as ActivityKind] / 1000).toFixed(3)} 秒</dd></div>)}</dl>
     <p data-testid="activity-human-total">人工合计：{((totals.task + totals.annotation + totals.correction + totals.review + totals.switch) / 1000).toFixed(3)} 秒。仅描述统计，不是ROI或节省结论；30%仅试点目标。</p>
-    <button type="button" data-testid="activity-download" onClick={download}>下载本地区间 JSON</button>
-    <button type="button" data-testid="activity-publish" disabled={publishing} onClick={() => void publish()}>{publishing ? '保存中…' : '明确保存到本机项目'}</button>
+    <button type="button" data-testid="activity-download" disabled={collector.problem !== null} onClick={download}>下载本地区间 JSON</button>
+    {collector.recoveryJournal && collector.problem ? <button type="button" data-testid="activity-rescue-journal" onClick={() => run(() => {
+      const url = URL.createObjectURL(new Blob([collector.recoveryJournal!], { type: 'application/json' }));
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'activity-journal-recovery.json'; anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    })}>下载原始本地记录后再清除</button> : null}
+    <button type="button" data-testid="activity-publish" disabled={publishing || collector.problem !== null} onClick={() => void publish()}>{publishing ? '保存中…' : '明确保存到本机项目'}</button>
     <button type="button" data-testid="activity-clear" disabled={publishing} onClick={() => run(() => { collector.clear(); setMessage('本地记录已清除；已明确保存的服务端记录不受影响。'); })}>清除本地记录并关闭</button>
     {message ? <p role="status">{message}</p> : null}
-    {error ? <p role="alert">{error}</p> : null}
+    {error || collector.problem ? <p role="alert">{error ?? collector.problem}。主标注工作台不受影响；请先救援记录或修复浏览器存储。</p> : null}
   </section>;
 }

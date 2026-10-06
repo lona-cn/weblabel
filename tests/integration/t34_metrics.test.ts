@@ -93,6 +93,8 @@ it('persists real actor-owned project checkpoints with immutable prefixes, CAS, 
       [{ seq: 0, kind: 'task', duration_ms: 100 }, { seq: 0, kind: 'review', duration_ms: 100 }],
       [{ seq: 0, kind: 'task', duration_ms: 86_400_001 }],
     ]) expect((await viewer.request('PUT', `${base}/invalid`, { expected_version: 0, intervals })).status).toBe(422);
+    const concurrent = await Promise.all([300, 400].map((duration_ms) => viewer.request<ActivitySession>('PUT', `${base}/session-a`, { expected_version: 2, intervals: [...appended.intervals, { seq: 2, kind: 'review', duration_ms }] })));
+    expect(concurrent.map((result) => result.status).sort()).toEqual([200, 409]);
     expect((await viewer.request('GET', `${base}?limit=101`)).status).toBe(422);
   } finally { await app.stop(); }
 }, 30_000);
@@ -113,6 +115,7 @@ it('counts every missing GT object including objects AI never proposed and prese
   expect(metrics.missed_objects).toBe(2); expect(metrics.ai_never_proposed_gt).toBe(1);
   expect(report.records[0].missed_object_ids).toEqual(['proposed-but-missed', 'never-proposed-and-missed']);
   expect(metrics.fees_usd).toBeNull(); expect(metrics.wrong_objects).toBeNull(); expect(metrics.return_rate).toBeNull();
+  expect(analyzePilot({ schema_version: 1, samples: [sample, { ...sample, sample_id: 'image-2', fees_usd: 5 }] }).arms.this_tool_same_AI.fees_usd).toBeNull();
   expect(report.roi).toBeNull(); expect(report.conclusion).toBeNull();
   expect(() => analyzePilot({ schema_version: 1, samples: [sample, { ...sample, arm: 'current_tool_same_AI', ai_configuration: 'different-config' }] })).toThrow();
   expect(() => analyzePilot({ schema_version: 1, samples: [{ ...sample, final_ground_truth_object_ids: ['not-in-gt'] }] })).toThrow();
@@ -138,5 +141,10 @@ it('handles idle threshold boundaries, refocus, a new cleared session and corrup
   now = 90_001; collector.setKind('switch'); now = 90_002; collector.commit();
   expect(collector.totals().task).toBe(60_001); expect(collector.totals().switch).toBe(1);
   const session = collector.currentSession; collector.clear(); expect(collector.currentSession).not.toBe(session);
-  expect(() => new ActivityCollector('project', 'actor', () => now, { getItem: () => '{corrupt', setItem: () => {}, removeItem: () => {} })).toThrow();
+  const corrupt = new ActivityCollector('project', 'actor', () => now, { getItem: () => '{corrupt', setItem: () => { throw new Error('must not overwrite'); }, removeItem: () => {} });
+  expect(corrupt.isEnabled()).toBe(false); expect(corrupt.problem).not.toBeNull(); expect(corrupt.recoveryJournal).toBe('{corrupt');
+  expect(() => corrupt.setEnabled(true)).toThrow(); corrupt.commit(); expect(corrupt.snapshot()).toEqual([]);
+  corrupt.clear(); expect(corrupt.problem).toBeNull();
+  const denied = new ActivityCollector('project', 'actor', () => now, () => { throw new Error('storage denied'); });
+  expect(denied.problem).not.toBeNull(); expect(denied.isEnabled()).toBe(false);
 });

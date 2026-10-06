@@ -61,7 +61,7 @@ export function analyzePilot(input) {
 }
 
 export function reportCsv(report) {
-  const fields = ['arm', 'status', 'evidence_kind', 'samples', 'sample_units', 'image_count', 'object_count', 'task_count', 'seeds', 'auditors', 'quality_methods', 'human_total_ms', ...KINDS.map((kind) => `${kind}_ms`), 'missed_objects', 'ai_never_proposed_gt', 'wrong_objects', 'wrong_labels', 'wrong_attributes', 'returned_tasks', 'reviewed_tasks', 'return_rate', 'fees_usd', 'goal_human_time_reduction', 'roi'];
+  const fields = ['arm', 'status', 'evidence_kind', 'samples', 'sample_units', 'image_count', 'object_count', 'task_count', 'seeds', 'auditors', 'quality_methods', 'ai_configurations', 'human_total_ms', ...KINDS.map((kind) => `${kind}_ms`), 'missed_objects', 'ai_never_proposed_gt', 'wrong_objects', 'wrong_labels', 'wrong_attributes', 'returned_tasks', 'reviewed_tasks', 'return_rate', 'fees_usd', 'goal_human_time_reduction', 'roi'];
   const cell = (value) => {
     let text = value === null ? 'null' : Array.isArray(value) ? JSON.stringify(value) : String(value);
     if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;

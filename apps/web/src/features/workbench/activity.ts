@@ -23,9 +23,15 @@ export class ActivityCollector {
   private listeners = new Set<() => void>();
   private revision = 0;
   readonly storageKey: string;
-  constructor(readonly projectId: string, readonly actorId: string, private readonly clock: () => number = () => performance.now(), private readonly storage?: ActivityStorage) {
+  problem: string | null = null;
+  recoveryJournal: string | null = null;
+  private storage?: ActivityStorage;
+  constructor(readonly projectId: string, readonly actorId: string, private readonly clock: () => number = () => performance.now(), private readonly storageSource?: ActivityStorage | (() => ActivityStorage)) {
     this.storageKey = `weblabel:activity:v1:${encodeURIComponent(projectId)}:${encodeURIComponent(actorId)}`;
-    const saved = storage?.getItem(this.storageKey);
+    try {
+      this.storage = typeof storageSource === 'function' ? storageSource() : storageSource;
+      const saved = this.storage?.getItem(this.storageKey);
+      this.recoveryJournal = saved ?? null;
     if (saved) {
       const parsed: unknown = JSON.parse(saved);
       if (!parsed || typeof parsed !== 'object' || !('schema_version' in parsed) || parsed.schema_version !== 1 || !('sessions' in parsed) || !Array.isArray(parsed.sessions)) throw new Error('Invalid local activity journal');
@@ -44,6 +50,9 @@ export class ActivityCollector {
         return { session_id: value.session_id, version: value.version as number, intervals };
       });
     }
+    } catch (reason) {
+      this.problem = `Local activity unavailable: ${reason instanceof Error ? reason.message : String(reason)}`;
+    }
   }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getRevision = (): number => this.revision;
@@ -57,6 +66,7 @@ export class ActivityCollector {
   }
   private notify(): void { this.revision++; for (const listener of this.listeners) listener(); }
   setEnabled(enabled: boolean): void {
+    if (enabled && this.problem) throw new Error(this.problem);
     this.commit(); this.enabled = enabled; this.anchor = this.lastInput = this.now(); this.notify();
   }
   setFocused(focused: boolean): void {
@@ -102,10 +112,14 @@ export class ActivityCollector {
     this.notify();
   }
   clear(): void {
+    const storage = typeof this.storageSource === 'function' ? this.storageSource() : this.storageSource;
+    storage?.removeItem(this.storageKey);
+    this.storage = storage;
     this.enabled = false;
     this.sessions = [];
     this.currentSession = crypto.randomUUID();
-    this.storage?.removeItem(this.storageKey);
+    this.problem = null;
+    this.recoveryJournal = null;
     this.anchor = this.lastInput = this.now();
     this.notify();
   }
