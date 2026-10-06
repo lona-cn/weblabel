@@ -1,0 +1,17 @@
+import { spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const report = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(report, '../../..');
+const [label, tool, ...args] = process.argv.slice(2);
+const bin = 'D:/cache/cargo/toolchains/1.96.0-x86_64-pc-windows-msvc/bin';
+const command = tool === 'cargo' ? `${bin}/cargo.exe` : tool === 'rustc' ? `${bin}/rustc.exe` : tool;
+const argv = tool === 'cargo' ? [args[0], '--manifest-path', path.join(root, 'Cargo.toml'), ...args.slice(1)] : args;
+const env = { ...process.env, RUSTC: `${bin}/rustc.exe`, CARGO_TARGET_DIR: path.join(root, 'target/t31-core-producer'), RUSTUP_TOOLCHAIN: '1.96.0-x86_64-pc-windows-msvc' };
+const result = spawnSync(command, argv, { cwd: 'D:/', env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+const output = `${result.stdout ?? ''}${result.stderr ?? ''}${result.error ? String(result.error) : ''}`;
+writeFileSync(path.join(report, `${label}.log`), output);
+writeFileSync(path.join(report, `${label}.command.json`), JSON.stringify({ command, argv, cwd: 'D:/', RUSTC: env.RUSTC, CARGO_TARGET_DIR: env.CARGO_TARGET_DIR, exit_code: result.status }, null, 2) + '\n');
+process.stdout.write(output);
+process.exitCode = result.status ?? 1;
