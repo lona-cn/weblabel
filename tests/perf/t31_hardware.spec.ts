@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -7,14 +8,15 @@ import type { MediaRevision } from '../../packages/contracts/generated/MediaRevi
 import type { T28Stats } from '../../apps/web/src/features/workbench/perf';
 import { gate, hardwareKind } from '../../scripts/verify-gpu.mjs';
 
-interface Observation { devices: GPUDevice[]; device_creations: number; adapters: Record<string, unknown>[]; raf_cpu_ms: number; losses: { reason: string; message: string }[]; submissions: number; zero_size_submissions: number; errors: string[] }
+interface NativeResourceCounts { buffers: { live: number; created: number; released: number }; textures: { live: number; created: number; released: number } }
+interface Observation { devices: GPUDevice[]; device_creations: number; resources: NativeResourceCounts; adapters: Record<string, unknown>[]; raf_cpu_ms: number; losses: { reason: string; message: string }[]; submissions: number; zero_size_submissions: number; errors: string[] }
 declare global { interface Window { __t31: Observation; __t31TaskDuration(): Promise<number> } }
 const run = process.env.WEBLABEL_T31_RUN_DIR!;
 const origin = process.env.WEBLABEL_T31_ORIGIN!;
 
 async function instrument(page: Page) {
   await page.addInitScript(() => {
-    const observation: Observation = { devices: [], device_creations: 0, adapters: [], raf_cpu_ms: 0, losses: [], submissions: 0, zero_size_submissions: 0, errors: [] };
+    const observation: Observation = { devices: [], device_creations: 0, resources: { buffers: { live: 0, created: 0, released: 0 }, textures: { live: 0, created: 0, released: 0 } }, adapters: [], raf_cpu_ms: 0, losses: [], submissions: 0, zero_size_submissions: 0, errors: [] };
     window.__t31 = observation;
     const raf = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = callback => raf(timestamp => { const start = performance.now(); try { callback(timestamp); } finally { observation.raf_cpu_ms += performance.now() - start; } });
@@ -30,8 +32,29 @@ async function instrument(page: Page) {
         const device = await requestDevice(...deviceArgs);
         observation.devices.push(device);
         observation.device_creations++;
+        const ownedReleases = new Set<() => void>();
+        function track<T extends { destroy(): void }>(resource: T, kind: keyof NativeResourceCounts): T {
+          const counts = observation.resources[kind];
+          counts.created++; counts.live++;
+          const destroy = resource.destroy.bind(resource);
+          let released = false;
+          const release = () => {
+            if (released) return;
+            released = true; counts.live--; counts.released++;
+            ownedReleases.delete(release);
+          };
+          ownedReleases.add(release);
+          resource.destroy = () => { destroy(); release(); };
+          return resource;
+        }
+        const createBuffer = device.createBuffer.bind(device);
+        device.createBuffer = (...args) => track(createBuffer(...args), 'buffers');
+        const createTexture = device.createTexture.bind(device);
+        device.createTexture = (...args) => track(createTexture(...args), 'textures');
         device.lost.then(info => {
           observation.losses.push({ reason: info.reason, message: info.message });
+          // Device loss/destruction invalidates its outstanding native resources.
+          for (const release of ownedReleases) release();
           observation.devices.splice(observation.devices.indexOf(device), 1);
         });
         // Observe the actual native queue; never fake a device, adapter or submission.
@@ -71,6 +94,12 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
   const evidence: Record<string, unknown> = { count, seed: 17, canonical_dimensions: [2048, 2048], warmup_per_scenario: 40, sample_count_per_scenario: 1000, scenarios: {} };
   const save = () => writeFile(path.join(run, `samples-${count}.json`), JSON.stringify(evidence, null, 2));
   try {
+    const loadedWasm: string[] = [];
+    await page.route('**/wasm/wasm_bridge_bg.wasm', async route => {
+      const response = await route.fetch();
+      loadedWasm.push(createHash('sha256').update(await response.body()).digest('hex'));
+      await route.fulfill({ response });
+    });
     const png = await sharp({ create: { width: 2048, height: 2048, channels: 4, background: { r: 28, g: 37, b: 49, alpha: 1 } } }).png().toBuffer();
     for (const name of ['a', 'b']) expect((await seededProject.api.upload(`/api/projects/${seededProject.project_id}/assets`, png, `t31-${name}.png`, crypto.randomUUID(), 'image/png')).status).toBe(202);
     expect((await seededProject.api.request('POST', '/internal/test/jobs/drain', {})).status).toBe(200);
@@ -88,6 +117,8 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
     expect(hardwareKind(adapter.at(-1))).toBe('hardware');
     await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-adapter-kind', 'hardware');
     const environment = JSON.parse(await readFile(path.join(run, 'environment.json'), 'utf8'));
+    evidence.loaded_wasm_sha256 = loadedWasm;
+    expect(loadedWasm).toEqual([environment.wasm.sha256]);
     const target = await page.getByTestId('annotation-canvas').evaluate((canvas: HTMLCanvasElement) => ({ css: { width: canvas.getBoundingClientRect().width, height: canvas.getBoundingClientRect().height }, backing: { width: canvas.width, height: canvas.height }, viewport: { width: innerWidth, height: innerHeight }, dpr: devicePixelRatio, browser_user_agent: navigator.userAgent }));
     Object.assign(environment, { browser: { version: page.context().browser()!.version(), user_agent: target.browser_user_agent }, gpu: adapter, dpr: target.dpr, target_canvas: target });
     await writeFile(path.join(run, 'environment.json'), JSON.stringify(environment, null, 2));
@@ -128,6 +159,7 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
           const sequence = index + 40;
           const taskBefore = await window.__t31TaskDuration();
           const previous = hooks.stats();
+          const nativeBefore = window.__t31.submissions;
           const rafCpu = window.__t31.raf_cpu_ms;
           const started = performance.now();
           let settled: Promise<void> | undefined;
@@ -141,16 +173,19 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
           const elapsed = performance.now() - started;
           const taskAfter = await window.__t31TaskDuration();
           const after = hooks.stats();
-          if (index >= 0) rows.push({ sequence: index, cpu_ms: Math.max(taskAfter - taskBefore, synchronous + window.__t31.raf_cpu_ms - rafCpu), task_cpu_ms: taskAfter - taskBefore, synchronous_cpu_ms: synchronous, raf_cpu_ms: window.__t31.raf_cpu_ms - rafCpu, bridge_cpu_ms: after.bridge_elapsed_ms - previous.bridge_elapsed_ms, double_raf_ms: elapsed, submissions: after.gpu_submissions - previous.gpu_submissions, bbox_upload_bytes: after.bbox_upload_bytes - previous.bbox_upload_bytes, wasm_binary_bytes: after.js_wasm_binary_bytes - previous.js_wasm_binary_bytes });
+          if (index >= 0) rows.push({ sequence: index, cpu_ms: Math.max(taskAfter - taskBefore, synchronous + window.__t31.raf_cpu_ms - rafCpu), task_cpu_ms: taskAfter - taskBefore, synchronous_cpu_ms: synchronous, raf_cpu_ms: window.__t31.raf_cpu_ms - rafCpu, bridge_cpu_ms: after.bridge_elapsed_ms - previous.bridge_elapsed_ms, double_raf_ms: elapsed, submissions: after.gpu_submissions - previous.gpu_submissions, native_submissions: window.__t31.submissions - nativeBefore, bbox_upload_bytes: after.bbox_upload_bytes - previous.bbox_upload_bytes, wasm_binary_bytes: after.js_wasm_binary_bytes - previous.js_wasm_binary_bytes });
         }
         return rows;
       }, { scenario, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
       (evidence.scenarios as Record<string, unknown>)[scenario] = rows;
       await save(); // Preserve every sample before any threshold/invariant assertion.
       expect(rows).toHaveLength(1000);
-      expect(rows.every(row => row.submissions === 1 && row.wasm_binary_bytes === 0)).toBe(true);
+      expect(rows.every(row => row.submissions === 1 && row.native_submissions === 1 && row.wasm_binary_bytes === 0)).toBe(true);
       if (scenario === 'pan' || scenario === 'zoom') expect(rows.every(row => row.bbox_upload_bytes === 0)).toBe(true);
     }
+    const performanceResult = gate(count, evidence.scenarios);
+    evidence.performance = performanceResult; await save();
+    expect.soft(performanceResult.failures, 'Unchanged target; refer threshold failures to T28, preserve all raw samples').toEqual([]);
     await page.evaluate(() => window.__wl_test!.flush());
     expect((await page.evaluate(() => window.__wl_test!.snapshot())).objects).toEqual(original.objects);
     const idleBefore = await page.evaluate(() => ({ stats: window.__wl_test!.stats(), native_submissions: window.__t31.submissions }));
@@ -162,11 +197,15 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
     const otherIndex = [media, ...assets.filter(asset => asset !== media)].findIndex(asset => asset.original_name === 't31-b.png');
     // Alternate the two actual 2048 images; resources measured after every switch.
     const resources: T28Stats[] = [];
+    const nativeResources: { resources: NativeResourceCounts; live_devices: number; created_devices: number }[] = [];
     for (let index = 0; index < 100; index++) {
       await page.evaluate(index => window.__wl_test!.changeAsset(index), index % 2 ? 0 : otherIndex);
       resources.push(await page.evaluate(() => window.__wl_test!.stats()));
+      nativeResources.push(await page.evaluate(() => ({ resources: structuredClone(window.__t31.resources), live_devices: window.__t31.devices.length, created_devices: window.__t31.device_creations })));
     }
     evidence.resources = resources; await save();
+    evidence.native_resources = nativeResources; await save();
+    expect(nativeResources.every(row => row.live_devices === 1 && row.resources.buffers.live === nativeResources[0].resources.buffers.live && row.resources.textures.live === nativeResources[0].resources.textures.live)).toBe(true);
     expect(resources.every(row => row.live_textures === resources[0].live_textures && row.live_buffers === resources[0].live_buffers && row.logical_texture_bytes === resources[0].logical_texture_bytes && row.live_decoded_bitmaps === 0)).toBe(true);
     await cdp.send('HeapProfiler.collectGarbage');
     evidence.heap_after = (await cdp.send('Performance.getMetrics')).metrics.filter(metric => metric.name.startsWith('JSHeap'));
@@ -233,9 +272,17 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
     evidence.loss = await page.evaluate(() => ({ losses: window.__t31.losses, errors: window.__t31.errors, native_submissions: window.__t31.submissions, zero_size_submissions: window.__t31.zero_size_submissions }));
     expect(await page.evaluate(() => window.__t31.errors)).toEqual([]);
     await page.screenshot({ path: info.outputPath('recovered-hardware.png'), fullPage: true });
-    const result = gate(count, evidence.scenarios);
-    evidence.performance = result; await save();
-    expect(result.failures, 'Unchanged target; refer threshold failures to T28, preserve all raw samples').toEqual([]);
+    const entries: { live_devices: number; resources: NativeResourceCounts; stats: T28Stats }[] = [];
+    for (let index = 0; index < 5; index++) {
+      await page.goto(`${origin}/?project_id=${seededProject.project_id}`);
+      await expect(page.getByTestId('asset-grid')).toBeVisible();
+      await page.goto(`${origin}/test-harness/dense?count=${count}&seed=17&project_id=${seededProject.project_id}&asset_revision_id=${media.asset_revision_id}`);
+      await page.waitForFunction(() => window.__wl_test?.ready === true);
+      await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state', 'ready');
+      entries.push(await page.evaluate(() => ({ live_devices: window.__t31.devices.length, resources: structuredClone(window.__t31.resources), stats: window.__wl_test!.stats() })));
+    }
+    evidence.repeated_workbench_entries = entries; await save();
+    expect(entries.every(row => row.live_devices === 1 && row.resources.buffers.live === entries[0].resources.buffers.live && row.resources.textures.live === entries[0].resources.textures.live && row.stats.live_decoded_bitmaps === 0)).toBe(true);
   } finally { await save(); }
 });
 

@@ -1,0 +1,18 @@
+diff --git a/scripts/verify.mjs b/scripts/verify.mjs
+--- a/scripts/verify.mjs
++++ b/scripts/verify.mjs
+@@ -18,5 +18,2 @@ const commands = {
+-  // Real WebGPU visual gate (T05): rebuild the probe from the current renderer
+-  // sources, then run the screenshot pixel/device-loss checks. The REQUIRE_*_
+-  // flags force a real, non-software adapter and a ready device — a software
+-  // GPU or a missing adapter must never pass this gate.
+-  gpu: [['pnpm', 'wasm:probe-build'], ['pnpm', 'exec', 'playwright', 'test', 'tests/render/t05.spec.ts', '--project=t05-render']],
++  // T31 builds current release WASM and requires the complete target hardware gate.
++  gpu: [['node', 'scripts/verify-gpu.mjs']],
+@@ -42,5 +39,1 @@ const blockers = {
+-    const env =
+-      gate === 'gpu'
+-        ? { ...process.env, REQUIRE_WGPU_DEVICE: '1', REQUIRE_HARDWARE_GPU: '1' }
+-        : process.env;
+-    const result = spawnSync(resolved[0], resolved.slice(1), { stdio: 'inherit', shell: false, windowsHide: true, env });
++    const result = spawnSync(resolved[0], resolved.slice(1), { stdio: 'inherit', shell: false, windowsHide: true, env: process.env });

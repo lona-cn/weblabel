@@ -1,5 +1,5 @@
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdir, writeFile, appendFile, readFile, stat } from 'node:fs/promises';
+import { mkdir, writeFile, appendFile, readFile, stat, rm } from 'node:fs/promises';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,8 +29,10 @@ async function main() {
   const report = path.join(root, 'reports/T31');
   const run = path.join(report, 'runs', new Date().toISOString().replaceAll(':', '-'));
   await mkdir(run, { recursive: true });
+  const runtime = path.join(run, 'runtime');
+  await mkdir(runtime);
   const commands = [];
-  const env = { ...process.env, WEBLABEL_T31_RUN_DIR: run };
+  const env = { ...process.env, WEBLABEL_T31_RUN_DIR: run, TEMP: runtime, TMP: runtime, TMPDIR: runtime };
   const target = path.join(root, 'target/t31');
   const win = process.platform === 'win32';
   const neutral = win ? 'D:/cache/cargo/bin' : root;
@@ -123,6 +125,7 @@ async function main() {
     if (hardwareCommand) hardwareCommand.tests = tests;
     const samples = {};
     for (const count of [2000, 10000]) { try { samples[count] = JSON.parse(await readFile(path.join(run, `samples-${count}.json`), 'utf8')); } catch { /* Never fabricate missing samples. */ } }
+    await rm(runtime, { recursive: true, force: true });
     const baseline = JSON.parse(await readFile(path.join(root, 'reports/T28/main-final-metrics.json'), 'utf8'));
     await writeFile(path.join(run, 'baseline-debug-T28.json'), JSON.stringify(baseline, null, 2));
     const result = { task_id: 'T31', status, base_commit: source?.commit ?? 'unknown', run_dir: path.relative(root, run).replaceAll('\\', '/'), commands, tests, blocker, thresholds: { boxes: 2000, cpu_p95_ms: 8, pointer_double_raf_proxy_p95_ms: 33 }, baseline_debug: { path: 'reports/T28/main-final-metrics.json', committed_edit_p95_ms: { 2000: 28.3, 10000: 110.8 }, certified_hardware_gate: false }, known_limits: ['double-rAF scheduling proxy, not physical photon latency', 'CPU = conservative max of CDP main-thread TaskDuration and synchronous+rAF; includes measurement instrumentation', 'Logical texture bytes are application estimates, not physical VRAM', 'GPU timestamps not measured: renderer does not expose timestamp query results'] };
