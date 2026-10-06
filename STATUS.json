@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "ed590c618b30ae1b76dcc6b58e0b81e79d034cf8",
-  "last_updated_at": "2026-10-06T17:05:08.065Z",
+  "application_commit": "34066af62bf6f03b9a30cae18922e774354ab68e",
+  "last_updated_at": "2026-10-06T17:47:14.558Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -386,7 +386,7 @@
     "T31": {
       "status": "running",
       "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": "ed590c618b30ae1b76dcc6b58e0b81e79d034cf8",
+      "integrated_commit": "34066af62bf6f03b9a30cae18922e774354ab68e",
       "evidence": [
         "reports/T31/result.json",
         "reports/T31/runs/2026-10-06T16-36-24.410Z/result.json",
@@ -409,10 +409,17 @@
         "reports/T31/main-independent-current-row-production-ui-review.json",
         "reports/T33/main-owned-mirror-full-native.log",
         "reports/T33/main-owned-mirror-web-consumers-final.log",
-        "reports/T33/main-owned-row-release-build.log"
+        "reports/T33/main-owned-row-release-build.log",
+        "reports/T31/main-native-cuts-integration-proof.json",
+        "reports/T31/main-independent-native-cuts-review.json",
+        "reports/T31/producer/dense-observation.json",
+        "reports/T31/main-native-cuts-production-partial.json",
+        "reports/T33/main-owned-native-cuts-product-build.log",
+        "reports/T31/main-independent-native-cuts-evidence-review.json",
+        "reports/T31/production-delete-investigation/result.json"
       ],
       "blockers": [
-        "ed590c61的原完整8000正式验收已完成：2passed/1failed/0skip/flaky，2k committedCPU P958.569ms>8，其余2kCPU/全部doubleRAF及64原生controls/100asset/idle/deviceLoss通过。8/33/计时/场景/次数不变，旧c2 22.013与eff部分8.922真实失败均保留；Main227Native/102Web、sharedrow59+22/types0及freshprod native flags/Undo/Redo/gen3 fullIDB=rev4与独立复审通过，但不抵消P95失败。已在ed基线验证两个不同inode的私有checkout，并行最小Native cutover：Core空transient免全集/借用ID与通用ordered-ID delta无Hash分配；Projection仅actualselection/topology变化重同步。完整validation/history/C3/GPU/fullIDB保持，仍待Main集成/独立审查/真实WASM行为与原正式硬件验收，不预测pass、不宣告T31done/G4pass。"
+        "原ed完整8000正式验收2passed/1failed/0skip/flaky，2k committedCPU P958.569ms>8；旧c2 22.013与eff部分8.922真实失败全部保留，8/33/计时/场景/次数不变。34066af6已集成Core borrowed-ID/prune/通用ordered-ID delta与Projection selection/topology缓存；Main119/119受影响Native测试、fresh release WASM/API、2/2真实NVIDIA生产者/fullIDB场景及独立完整source复审通过。fresh34066生产包普通UI双框/选择/移动/临时flags/UndoMove/RedoMove和gen5 fullIDB=APIrev5通过；额外Delete快捷键真实20s超时、仍2对象/rev5且无浏览器错误，已确认生产未挂载现有Keyboard，隔离writer按native fence/单一保存路径修复中。39文件独立证据审查无真实性阻断，但仍明确Delete RED与旧P95 FAIL。未重复失败操作或宣告通过；仍待当前source完整生产快捷键与原8000硬件验收，T31running/T32blocked/T35notready/G4不升级。"
       ]
     },
     "T32": {
