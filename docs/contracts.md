@@ -174,6 +174,8 @@ T28前端只在成功的document_changed/suggestion decision逻辑提交读取co
 
 T30设备恢复扩展：三项方法是每个facade实现的required能力。device_lost返回当前真实GPUDevice对应的owned one-shot Promise，在原生device lost callback收到Destroyed/Unknown时resolve诊断字符串；JS idle等待不持有WASM borrow，不靠RAF/poll/submit检测。get_device_state只读返回实际renderer状态。recover_renderer只重建GPU资源，不create_editor、不刷新应用、不以snapshot新建会话；同一Rust editor、generation、history、selection、local flags、preview、predictions及既有SaveQueue保留。Host发布lost/recovering期间阻止编辑，CPU只读访问和保存队列继续可用；成功后重订阅新device的loss，dirty一次，零尺寸仍暂停提交；失败为GPU_RECOVERY_FAILED并保留CPU会话，允许显式retry，绝不重新调用AI。异步重建与通知都必须以asset epoch、facade identity、disposed fence隔离切图/卸载；旧请求完成不得配置新画布或访问已free的facade。
 
+T30资源寿命：pending的requestAdapter/requestDevice只持轻量请求元数据；旧renderer/scene保留在可同步dispose的共享owner。dispose在等待门释放前销毁旧buffer/texture/device并释放scene引用；晚返回的新device销毁且不配置旧canvas。请求完成后才同步借saved scene上传并move，不克隆整图/CPU文档，不跨await持facade/session borrow。release不导出simulate_device_loss；测试从浏览器外部捕获真实GPUDevice并destroy。Canvas CSS尺寸不受backing intrinsic尺寸反馈；状态/alert/retry用overlay，Dense与独立React消费者提供positioned stage。父控件订阅Host状态且仅ready可编辑；工具/完成状态在Native成功后更新React投影，不因恢复重复set_tool或清空preview。
+
 Rust 函数边界：`geometry::image_to_css([f64;2], Viewport)->[f64;2]`、`css_to_image`、`validate_bbox(&BBox,w:u32,h:u32)->Result<(),DomainError>`；`editor_core::Editor::new(document,ontology)->Result<Editor,DomainError>`；`Editor::dispatch(EditorCommand)->Result<EditorDelta,DomainError>`；`Editor::snapshot()->AnnotationDocument`。渲染模块依赖只读 render scene，不反向修改 Editor。
 
 WASM public facade 按 C3 命名；内部 JsValue/serde_wasm_bindgen 包装留在 wasm-bridge。`dispose` 释放监听、rAF、图像和 GPU 引用；重复调用无副作用。create_editor 异步完成时需匹配当前 asset token，旧图片初始化结果不得挂到新图片 Canvas。
@@ -243,6 +245,10 @@ HTTP server runtime 版本未正式暴露：`runtime_version=null,runtime_versio
 
 先观测 receipt/usage 再解析工具或处理终态；失败、超时、取消保留之前已观测证据。成功但未报告 usage 的 turn 使总量保持 unknown；未返回任何 usage 的 HTTP 失败不能清除之前已观测量。所有 receipt（含 receipts 数组及最新项）仍经过同一递归 exact-known-credential public redactor，不改内部工具 ID。C4 RunEvent.data 已是通用 unknown JSON，Rust model_jobs→ai/events→events API 原样脱敏持久化，无 DTO/migration。
 
+T32观测checkpoint：OpenAI/MiMo在实际attempt或已识别身份/有效usage改变时，使用现有progress事件持久化同形receipts/receipt/usage/cost_display；不逐token发事件，不扩大16KiB/4096事件上限。服务端cancel立即撤销run token并停止Host，不等待其终态data；取消前checkpoint为已观测证据，取消后不接受候选。脱敏仅保留精确input_tokens/output_tokens键的null或JS安全非负整数，其他token键与畸形值继续脱敏。
+
+T32授权配置指纹：AiPreviewResponse必含execution_configuration_hash。API与WASM复用annotation-domain对Rust serde_json::Value规范序列化的SHA256，JS不得parse/stringify重建浮点/大整数/键序。只读host_execution_configuration_hash接收原始Host JSON与provider/profile，唯一选择实际执行配置；missing/ambiguous拒绝。显式live授权在consent/start前比较此hash与实际API preview，配置和预算亦被已有input_fingerprint绑定；仅检查公开文件不等于正在执行的Host/数据库配置。
+
 现有 16 KiB event data cap 不扩大。默认 8 turn 常规完整 ID 记录仍可持久化；恶意超长 model/id 或配置过大 turn 上限可能触发现有 event_data_too_large，届时 live consumer 必须诊断缺证据/blocked，不能把 requested identity 当成功或扩大预算。账户权限、付费、图像能力、视觉结果仍由显式 opt-in live 验证，工程 loopback receipt 不升级 G4。
 
 `object_hash` 由 annotation-domain 的共享 Rust 规范化函数产生：按固定字段顺序包含 label、bbox 和排序后的 attributes；排除显示 flags 和 audit 时间。WASM 和服务端使用同函数，JS 不自行拼 JSON 算哈希。T01 用同一 golden fixture 交叉验证。request_hash 与 input_fingerprint 同样明确定义、包含全部相关输入和 provider profile 版本。
@@ -279,6 +285,8 @@ Unknown 在契约入口立即按 JSON Schema 验证，不能以 `any` 流遍业�
 三个API适配器只在本run私有内存保存已解析credential；所有公开RunEvent的message、嵌套data值及键按该确切值脱敏，包括未校验工具名、合法工具call_id及上游错误正文。供应商协议内部保留原始call_id；错误分类、已观察usage和未知null用量不被脱敏改写。
 
 MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装本项目 server 配置，不读取项目里任意第三方 MCP 配置。它通过 loopback `/internal/agent-tools/{tool}` 与 API 通信，使用专门生成的短期 run-scoped Bearer，不能使用管理员 session。该路由同样检查允许Host和已提供的Origin；私有非浏览器客户端可省略Origin，浏览器cookie不替代Bearer，也不触发浏览器CSRF规则。token只在子进程环境/私有通道传递，不在argv、工具参数或输出里传递；到期/取消后立即失效。
+
+检测器locked file先解析真实target并限定在显式配置的resolved weights root，再stat/hash/read；大小和SHA256使用同一打开FD，processor/model loader各自前重新校验。operator显式配置的公开外部模型根仍可供独立worker使用；verify-live文件检查授权限repository内，不能把仓库默认weights的hash称为外部worker实际权重证明。路径复核拒绝已观察的verify/load间escape，不承诺第三方loader打开前的OS级原子TOCTOU消除；默认diagnostic不hash大文件、不启动Python探针、不登录/调用模型。
 
 允许工具及参数：
 
