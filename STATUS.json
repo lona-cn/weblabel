@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plan_version": "1.0.0",
   "application_commit": "2cf8e45425527635935a1f66d062b4b0b3119a5e",
-  "last_updated_at": "2026-10-06T11:28:13.146Z",
+  "last_updated_at": "2026-10-06T11:33:57.849Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -368,8 +368,8 @@
       "blockers": []
     },
     "T31": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
@@ -382,15 +382,15 @@
       "blockers": ["G4五渠道真实运行未授权/未满足：官方账号与完整型号/运行时边界、付费和generated-image预算授权、公开锁定权重及真实forward/human review；35项工程闭环和真实诊断不能替代live"]
     },
     "T33": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
     },
     "T34": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
