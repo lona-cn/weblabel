@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { createWriteStream, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 const [label, ...argv] = process.argv.slice(2);
+const standard = argv[0] === '--standard-toolchain';
+if (standard) argv.shift();
 const root = process.cwd();
 if (argv[0] === 'cargo' && ['build', 'run', 'check', 'metadata'].includes(argv[1])) {
   const delimiter = argv.indexOf('--');
@@ -13,8 +15,12 @@ const stream = createWriteStream(logPath);
 const startedAt = new Date().toISOString();
 const env = { ...process.env, CARGO_HOME: 'D:/cache/cargo/bin', RUSTUP_HOME: 'D:/cache/cargo', RUSTC: 'D:/cache/cargo/toolchains/1.96.0-x86_64-pc-windows-msvc/bin/rustc.exe', CARGO_BUILD_BUILD_DIR: resolve(root, 'target'), CARGO_TARGET_DIR: resolve(root, 'target') };
 if (argv[0] === 'pnpm') env.WEBLABEL_API_BINARY = resolve(root, 'target/debug/weblabel-api.exe');
+if (standard) {
+  delete env.RUSTC;
+  delete env.RUSTUP_TOOLCHAIN;
+}
 const cwd = argv[0] === 'cargo' ? 'D:/cache/cargo/bin' : root;
-stream.write(`COMMAND ${JSON.stringify(argv)}\nSTART ${startedAt}\nCWD ${cwd}\nENV ${JSON.stringify({ CARGO_HOME: env.CARGO_HOME, RUSTUP_HOME: env.RUSTUP_HOME, RUSTC: env.RUSTC, CARGO_BUILD_BUILD_DIR: env.CARGO_BUILD_BUILD_DIR, CARGO_TARGET_DIR: env.CARGO_TARGET_DIR, WEBLABEL_API_BINARY: env.WEBLABEL_API_BINARY ?? null })}\n`);
+stream.write(`COMMAND ${JSON.stringify(argv)}\nSTART ${startedAt}\nCWD ${cwd}\nENV ${JSON.stringify({ CARGO_HOME: env.CARGO_HOME, RUSTUP_HOME: env.RUSTUP_HOME, RUSTC: env.RUSTC ?? null, RUSTUP_TOOLCHAIN: env.RUSTUP_TOOLCHAIN ?? null, CARGO_BUILD_BUILD_DIR: env.CARGO_BUILD_BUILD_DIR, CARGO_TARGET_DIR: env.CARGO_TARGET_DIR, WEBLABEL_API_BINARY: env.WEBLABEL_API_BINARY ?? null })}\n`);
 const child = spawn(command[0], command.slice(1), { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
 let output = '';
 for (const channel of ['stdout', 'stderr']) child[channel].on('data', bytes => { output += bytes; stream.write(bytes); process[channel].write(bytes); });
