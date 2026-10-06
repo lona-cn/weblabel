@@ -1,15 +1,30 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { root, pins, options, mainGuard } from './build.mjs';
 import { resolveArgv } from './task.mjs';
+import { validateRelease } from './start-local.mjs';
 
-const probes = [['node', ['--version']], ['pnpm', ['--version']], ['rustc', ['--version']], ['cargo', ['--version']], ['wasm-pack', ['--version']], ['wasm-bindgen', ['--version']]];
-let missingTool = false;
-for (const [name, args] of probes) {
-  const [command, ...resolvedArgs] = resolveArgv([name, ...args]);
-  const result = spawnSync(command, resolvedArgs, { encoding: 'utf8', shell: false, windowsHide: true });
-  const value = result.status === 0 ? (result.stdout ?? '').trim() : 'unavailable';
-  console.log(`${name}: ${value}`);
-  if (result.status !== 0) missingTool = true;
+export function diagnose(argv = process.argv.slice(2)) {
+  const args = options(argv, ['--build-dir', '--cargo-cwd']);
+  const cwd = path.resolve(args['--cargo-cwd'] ?? root);
+  const result = { format: 'weblabel-doctor', version: 1, readonly: true, tools: [], release: { status: 'missing' }, configuration: {}, capabilities: { webgpu: 'browser-device-probe-required', models: 'live-not-run', manual_editor: 'requires-release-and-real-WebGPU; no-Python-or-official-CLI-required' } };
+  for (const [name, expected] of [['node', `v${pins.node}`], ['pnpm', pins.pnpm], ['rustc', `rustc ${pins.rust} `], ['cargo', `cargo ${pins.rust} `], ['wasm-pack', `wasm-pack ${pins.wasm_pack}`], ['wasm-bindgen', `wasm-bindgen ${pins.wasm_bindgen}`]]) {
+    let actual = 'unavailable', status = 'missing';
+    try {
+      const [command, ...commandArgs] = resolveArgv([name === 'node' ? process.execPath : name, '--version']);
+      const r = spawnSync(command, commandArgs, { cwd, env: { ...process.env, RUSTUP_TOOLCHAIN: pins.rust }, shell: false, windowsHide: true, timeout: 15000, encoding: 'utf8' });
+      if (r.status === 0) { actual = r.stdout.trim(); status = (name === 'rustc' || name === 'cargo' ? actual.startsWith(expected) : actual === expected) ? 'pinned' : 'version_mismatch'; }
+    } catch {}
+    result.tools.push({ name, expected: expected.trim(), actual, status });
+  }
+  const build = path.resolve(args['--build-dir'] ?? path.join(root, 'target/local-release'));
+  if (fs.existsSync(path.join(build, 'release.json'))) {
+    try { validateRelease(build); result.release.status = 'hashes_valid'; } catch (error) { result.release.status = 'invalid'; result.release.code = error.message.split(':')[0]; }
+  }
+  for (const key of ['WEBLABEL_HOST_CONFIG', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'MIMO_API_KEY', 'WEBLABEL_DETECTOR_WEIGHTS_ROOT']) result.configuration[key] = process.env[key] ? 'environment-present-not-validated' : 'not-configured';
+  console.log(JSON.stringify(result, null, 2));
+  if (result.tools.some(tool => tool.status !== 'pinned') || result.release.status !== 'hashes_valid') process.exitCode = 1;
+  return result;
 }
-if (missingTool) process.exitCode = 1;
-console.log('WebGPU: requires browser runtime probe; not inferred by this Node diagnostic.');
-console.log('Model providers: credentials are not inspected or printed.');
+mainGuard(import.meta.url, () => diagnose());

@@ -1,0 +1,35 @@
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -17,3 +17,5 @@
+-    "start:local": "node scripts/dev.mjs --start-local",
+-    "build": "node scripts/verify.mjs build",
++    "start:local": "node scripts/start-local.mjs",
++    "build": "node scripts/build.mjs",
++    "backup": "node scripts/backup.mjs",
++    "restore": "node scripts/restore.mjs",
+     "doctor": "node scripts/doctor.mjs",
+diff --git a/scripts/dev.mjs b/scripts/dev.mjs
+--- a/scripts/dev.mjs
++++ b/scripts/dev.mjs
+@@ -76,8 +76,0 @@
+-  if (process.argv.includes('--start-local')) {
+-    const binary = path.join(root, 'target', 'release', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
+-    if (!fs.existsSync(binary)) {
+-      console.error('Built local API is missing; run the production build first.');
+-      return 1;
+-    }
+-    return runProcessGroup([[binary]], root);
+-  }
+diff --git a/scripts/verify.mjs b/scripts/verify.mjs
+--- a/scripts/verify.mjs
++++ b/scripts/verify.mjs
+@@ -17,1 +17,0 @@
+-  build: [['cargo', 'build', '--workspace', '--locked'], ['cargo', 'build', '-p', 'renderer-wgpu', '--target', 'wasm32-unknown-unknown', '--locked'], ['cargo', 'build', '-p', 'wasm-bridge', '--target', 'wasm32-unknown-unknown', '--locked']],
+@@ -25,1 +24,0 @@
+-const postBuildBlocker = 'BLOCKED: Web, Node Host, generated-contract checks, and product release composition are implemented by downstream tasks; no app build is claimed.';
+@@ -61,4 +59,0 @@
+-  if (gate === 'build' && process.exitCode === undefined) {
+-    console.error(postBuildBlocker);
+-    process.exitCode = 1;
+-  }
