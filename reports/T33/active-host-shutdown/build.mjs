@@ -1,0 +1,18 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { root } from '../../../scripts/build.mjs';
+const report = path.join(root, 'reports/T33/active-host-shutdown');
+const privateRoot = path.join(report, 'private');
+fs.mkdirSync(privateRoot, { recursive: true });
+const cwd = 'D:/cache/cargo/bin';
+const env = { ...process.env, RUSTUP_TOOLCHAIN: '1.96.0' };
+const compiler = spawnSync('rustup', ['which', 'rustc'], { cwd, env, encoding: 'utf8', shell: false });
+if (compiler.status !== 0) throw new Error(compiler.stderr);
+env.RUSTC = compiler.stdout.trim();
+const argv = [process.execPath, path.join(root, 'scripts/build.mjs'), '--cargo-cwd', cwd, '--target-dir', path.join(root, 'target'), '--build-dir', path.join(privateRoot, 'release')];
+const result = spawnSync(argv[0], argv.slice(1), { cwd: root, env, shell: false, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+fs.writeFileSync(path.join(report, 'build.log'), (result.stdout ?? '') + (result.stderr ?? ''));
+fs.writeFileSync(path.join(report, 'build-command.json'), JSON.stringify({ argv, cwd: root, cargo_cwd: cwd, RUSTUP_TOOLCHAIN: env.RUSTUP_TOOLCHAIN, RUSTC: env.RUSTC, exit_code: result.status, signal: result.signal, error: result.error?.message ?? null, tests: 'not applicable: release build' }, null, 2) + '\n');
+console.log(JSON.stringify({ exit_code: result.status, RUSTC: env.RUSTC, release: argv.at(-1) }));
+process.exitCode = result.status ?? 1;

@@ -1,0 +1,16 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { root } from '../../../scripts/build.mjs';
+import { resolveArgv } from '../../../scripts/task.mjs';
+const report = path.join(root, 'reports/T33/active-host-shutdown');
+const [name, ...argv] = process.argv.slice(2);
+if (!/^[a-z0-9-]+$/.test(name ?? '') || !argv.length) throw new Error('name and argv required');
+const [exe, ...args] = resolveArgv(argv);
+const env = { ...process.env, WEBLABEL_T33_RELEASE: path.join(report, 'private/release'), WEBLABEL_API_BINARY: path.join(report, 'private/release/api/weblabel-api.exe'), WEBLABEL_CARGO_CWD: 'D:/cache/cargo/bin' };
+const result = spawnSync(exe, args, { cwd: root, env, encoding: 'utf8', shell: false, maxBuffer: 64 * 1024 * 1024 });
+const output = (result.stdout ?? '') + (result.stderr ?? '');
+fs.writeFileSync(path.join(report, `${name}.log`), output);
+fs.writeFileSync(path.join(report, `${name}-command.json`), JSON.stringify({ argv, resolved_argv: [exe, ...args], cwd: root, exit_code: result.status, signal: result.signal, error: result.error?.message ?? null }, null, 2) + '\n');
+console.log(output); console.log(JSON.stringify({ argv, exit_code: result.status, signal: result.signal }));
+process.exitCode = result.status ?? 1;
