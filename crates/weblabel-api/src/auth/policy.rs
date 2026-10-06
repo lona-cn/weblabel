@@ -163,7 +163,7 @@ pub(crate) fn now() -> i64 {
         .as_secs() as i64
 }
 
-pub(crate) fn check_request(
+pub(crate) fn check_host_and_origin(
     state: &AuthState,
     request: &Request<Body>,
 ) -> Result<(), axum::response::Response> {
@@ -201,7 +201,21 @@ pub(crate) fn check_request(
                 "Origin is not allowed",
             ));
         }
-    } else if !matches!(request.method().as_str(), "GET" | "HEAD" | "OPTIONS")
+    }
+    Ok(())
+}
+
+pub(crate) fn check_request(
+    state: &AuthState,
+    request: &Request<Body>,
+) -> Result<(), axum::response::Response> {
+    check_host_and_origin(state, request)?;
+    if request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_none()
+        && !matches!(request.method().as_str(), "GET" | "HEAD" | "OPTIONS")
         && request
             .headers()
             .get(header::COOKIE)

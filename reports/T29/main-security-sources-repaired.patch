@@ -1,0 +1,375 @@
+diff --git a/apps/agent-host/src/providers/anthropic-api.ts b/apps/agent-host/src/providers/anthropic-api.ts
+index eed6abb3..73f0691e 100644
+--- a/apps/agent-host/src/providers/anthropic-api.ts
++++ b/apps/agent-host/src/providers/anthropic-api.ts
+@@ -13,7 +13,7 @@ import type { ModelProfile } from '../../../../packages/contracts/generated/Mode
+ import type { RunEvent } from '../../../../packages/contracts/generated/RunEvent';
+ import type { StartRunRequest } from '../../../../packages/contracts/generated/StartRunRequest';
+ import type { ProviderAdapter, RuntimeContext } from '../registry';
+-import { redactText } from '../security/redaction';
++import { redactText, redactValue } from '../security/redaction';
+ import {
+   BoundedHttpClient,
+   DEFAULT_TOOL_BUDGETS,
+@@ -292,12 +292,13 @@ export function createAnthropicApiAdapter(config: AnthropicApiAdapterConfig): Pr
+     async *run(input: StartRunRequest, ctx: RuntimeContext, signal: AbortSignal): AsyncIterable<RunEvent> {
+       const run_id = ctx.run_id;
+       let seq = 0;
++      let knownSecrets: readonly string[] = [];
+       const emit = (type: RunEvent['type'], message: string, data: Record<string, unknown> | null): RunEvent => ({
+         run_id,
+         seq: seq++,
+         type,
+-        message,
+-        data,
++        message: redactText(message, knownSecrets),
++        data: data === null ? null : redactValue(data, undefined, knownSecrets) as Record<string, unknown>,
+       });
+       yield emit('started', 'run started', null);
+       // Hoisted so a failure still reports the usage observed before it (C4):
+@@ -305,6 +306,7 @@ export function createAnthropicApiAdapter(config: AnthropicApiAdapterConfig): Pr
+       const turnUsages: NormalizedUsage[] = [];
+       try {
+         const secret = resolveSecretRef(config.credential.secret_ref, config.secret_env ?? process.env);
++        knownSecrets = [secret];
+         const budget = new ToolLoopBudget(budgets);
+         const document = await ctx.get_document();
+         const ontology = await ctx.get_ontology();
+@@ -426,7 +428,7 @@ export function createAnthropicApiAdapter(config: AnthropicApiAdapterConfig): Pr
+           return;
+         }
+         const code: ProviderErrorCode = error instanceof ProviderError ? error.code : 'adapter_error';
+-        const message = error instanceof Error ? redactText(error.message) : 'unexpected adapter failure';
++        const message = error instanceof Error ? error.message : 'unexpected adapter failure';
+         const usage =
+           turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
+           normalizeUsage(null, pricing);
+diff --git a/apps/agent-host/src/providers/mimo-api.ts b/apps/agent-host/src/providers/mimo-api.ts
+index 60ab3213..cac3ac7b 100644
+--- a/apps/agent-host/src/providers/mimo-api.ts
++++ b/apps/agent-host/src/providers/mimo-api.ts
+@@ -16,7 +16,7 @@ import type { ModelProfile } from '../../../../packages/contracts/generated/Mode
+ import type { RunEvent } from '../../../../packages/contracts/generated/RunEvent';
+ import type { StartRunRequest } from '../../../../packages/contracts/generated/StartRunRequest';
+ import type { ProviderAdapter, RuntimeContext } from '../registry';
+-import { redactText } from '../security/redaction';
++import { redactText, redactValue } from '../security/redaction';
+ import {
+   BoundedHttpClient,
+   DEFAULT_TOOL_BUDGETS,
+@@ -281,12 +281,13 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
+     async *run(input: StartRunRequest, ctx: RuntimeContext, signal: AbortSignal): AsyncIterable<RunEvent> {
+       const run_id = ctx.run_id;
+       let seq = 0;
++      let knownSecrets: readonly string[] = [];
+       const emit = (type: RunEvent['type'], message: string, data: Record<string, unknown> | null): RunEvent => ({
+         run_id,
+         seq: seq++,
+         type,
+-        message,
+-        data,
++        message: redactText(message, knownSecrets),
++        data: data === null ? null : redactValue(data, undefined, knownSecrets) as Record<string, unknown>,
+       });
+       yield emit('started', 'run started', null);
+       // Hoisted so a failure still reports the usage observed before it (C4):
+@@ -294,6 +295,7 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
+       const turnUsages: NormalizedUsage[] = [];
+       try {
+         const secret = resolveSecretRef(config.credential.secret_ref, config.secret_env ?? process.env);
++        knownSecrets = [secret];
+         if (secret.startsWith('tp-') && (config.api_base === undefined || config.api_base === OFFICIAL_API_BASES.mimo_api)) {
+           throw new ProviderError('base_not_approved', 'Token Plan credentials require the exact console-provided base URL');
+         }
+@@ -403,7 +405,7 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
+           return;
+         }
+         const code: ProviderErrorCode = error instanceof ProviderError ? error.code : 'adapter_error';
+-        const message = error instanceof Error ? redactText(error.message) : 'unexpected adapter failure';
++        const message = error instanceof Error ? error.message : 'unexpected adapter failure';
+         const usage =
+           turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
+           normalizeUsage(null, pricing);
+diff --git a/apps/agent-host/src/providers/openai-api.ts b/apps/agent-host/src/providers/openai-api.ts
+index eb0caa3a..f277c695 100644
+--- a/apps/agent-host/src/providers/openai-api.ts
++++ b/apps/agent-host/src/providers/openai-api.ts
+@@ -12,7 +12,7 @@ import type { ModelProfile } from '../../../../packages/contracts/generated/Mode
+ import type { RunEvent } from '../../../../packages/contracts/generated/RunEvent';
+ import type { StartRunRequest } from '../../../../packages/contracts/generated/StartRunRequest';
+ import type { ProviderAdapter, RuntimeContext } from '../registry';
+-import { redactText } from '../security/redaction';
++import { redactText, redactValue } from '../security/redaction';
+ import {
+   BoundedHttpClient,
+   DEFAULT_TOOL_BUDGETS,
+@@ -275,12 +275,13 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
+     async *run(input: StartRunRequest, ctx: RuntimeContext, signal: AbortSignal): AsyncIterable<RunEvent> {
+       const run_id = ctx.run_id;
+       let seq = 0;
++      let knownSecrets: readonly string[] = [];
+       const emit = (type: RunEvent['type'], message: string, data: Record<string, unknown> | null): RunEvent => ({
+         run_id,
+         seq: seq++,
+         type,
+-        message,
+-        data,
++        message: redactText(message, knownSecrets),
++        data: data === null ? null : redactValue(data, undefined, knownSecrets) as Record<string, unknown>,
+       });
+       yield emit('started', 'run started', null);
+       // Hoisted so a failure still reports the usage observed before it (C4):
+@@ -288,6 +289,7 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
+       const turnUsages: NormalizedUsage[] = [];
+       try {
+         const secret = resolveSecretRef(config.credential.secret_ref, config.secret_env ?? process.env);
++        knownSecrets = [secret];
+         const budget = new ToolLoopBudget(budgets);
+         const document = await ctx.get_document();
+         const ontology = await ctx.get_ontology();
+@@ -390,7 +392,7 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
+           return;
+         }
+         const code: ProviderErrorCode = error instanceof ProviderError ? error.code : 'adapter_error';
+-        const message = error instanceof Error ? redactText(error.message) : 'unexpected adapter failure';
++        const message = error instanceof Error ? error.message : 'unexpected adapter failure';
+         const usage =
+           turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
+           normalizeUsage(null, pricing);
+diff --git a/apps/agent-host/src/security/redaction.ts b/apps/agent-host/src/security/redaction.ts
+index b7b4bb66..9d2db59b 100644
+--- a/apps/agent-host/src/security/redaction.ts
++++ b/apps/agent-host/src/security/redaction.ts
+@@ -19,7 +19,11 @@ const SENSITIVE_KEY = /(^|[._-])(secret|token|password|passwd|pwd|apikey|authori
+ const REFERENCE_KEY = /(_ref|_alias)$/i;
+ const IMAGE_KEY = /(image|bytes|blob|data)/i;
+ 
+-export function redactText(text: string): string {
++export function redactText(text: string, knownSecrets: readonly string[] = []): string {
++  // Exact resolved values may have no recognizable key prefix or label.
++  for (const secret of knownSecrets) {
++    if (secret.length > 0) text = text.replaceAll(secret, REDACTED);
++  }
+   return text
+     .replace(DATA_URL, IMAGE_REDACTED)
+     .replace(SENSITIVE_HEADER, (match, header: string) => `${header}: ${REDACTED}`)
+@@ -30,8 +34,8 @@ export function redactText(text: string): string {
+     .replace(BASE64_BLOB, IMAGE_REDACTED);
+ }
+ 
+-export function redactValue(value: unknown, keyHint?: string): unknown {
+-  if (typeof value === 'string') return redactText(value);
++export function redactValue(value: unknown, keyHint?: string, knownSecrets: readonly string[] = []): unknown {
++  if (typeof value === 'string') return redactText(value, knownSecrets);
+   if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+   if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return IMAGE_REDACTED;
+   if (Array.isArray(value)) {
+@@ -41,14 +45,15 @@ export function redactValue(value: unknown, keyHint?: string): unknown {
+       value.length > 32 &&
+       value.every((item) => typeof item === 'number' && Number.isInteger(item) && item >= 0 && item <= 255);
+     if (isImageBytes) return IMAGE_REDACTED;
+-    return value.map((item) => redactValue(item, keyHint));
++    return value.map((item) => redactValue(item, keyHint, knownSecrets));
+   }
+   if (typeof value === 'object') {
+     const redacted: Record<string, unknown> = {};
+     for (const [key, item] of Object.entries(value)) {
+-      if (REFERENCE_KEY.test(key)) redacted[key] = redactValue(item, key);
+-      else if (SENSITIVE_KEY.test(key)) redacted[key] = REDACTED;
+-      else redacted[key] = redactValue(item, key);
++      const safeKey = redactText(key, knownSecrets);
++      if (REFERENCE_KEY.test(key)) redacted[safeKey] = redactValue(item, key, knownSecrets);
++      else if (SENSITIVE_KEY.test(key)) redacted[safeKey] = REDACTED;
++      else redacted[safeKey] = redactValue(item, key, knownSecrets);
+     }
+     return redacted;
+   }
+diff --git a/crates/weblabel-api/src/auth/mod.rs b/crates/weblabel-api/src/auth/mod.rs
+index 70fc53b7..5e374a0a 100644
+--- a/crates/weblabel-api/src/auth/mod.rs
++++ b/crates/weblabel-api/src/auth/mod.rs
+@@ -56,6 +56,19 @@ pub(crate) async fn authenticate(
+     }
+ }
+ 
++/// Host/Origin gate for bearer-only agent tools. No session cookie can grant
++/// tool permissions; the tool handler still performs the run-token checks.
++pub(crate) async fn host_and_origin(
++    State(state): State<AuthState>,
++    request: Request<Body>,
++    next: Next,
++) -> Response {
++    if let Err(response) = policy::check_host_and_origin(&state, &request) {
++        return response;
++    }
++    next.run(request).await
++}
++
+ pub(crate) async fn csrf_and_origin(
+     State(state): State<AuthState>,
+     request: Request<Body>,
+@@ -67,6 +80,21 @@ pub(crate) async fn csrf_and_origin(
+     let method = request.method().as_str();
+     if !matches!(method, "GET" | "HEAD" | "OPTIONS") {
+         if let Some(token) = cookie_value(request.headers(), "weblabel_session") {
++            // Replacing an expired credential is not an authenticated mutation.
++            // Active sessions still require CSRF; Host/Origin were checked above.
++            if request.uri().path() == "/api/session/login" {
++                match session::principal(&state, &token).await {
++                    Ok(None) => return next.run(request).await,
++                    Ok(Some(_)) => {}
++                    Err(_) => {
++                        return error(
++                            StatusCode::INTERNAL_SERVER_ERROR,
++                            "AUTHENTICATION_FAILED",
++                            "Authentication failed",
++                        )
++                    }
++                }
++            }
+             let Some(csrf) = request
+                 .headers()
+                 .get("x-csrf-token")
+diff --git a/crates/weblabel-api/src/auth/policy.rs b/crates/weblabel-api/src/auth/policy.rs
+index 626b452e..e2704383 100644
+--- a/crates/weblabel-api/src/auth/policy.rs
++++ b/crates/weblabel-api/src/auth/policy.rs
+@@ -163,7 +163,7 @@ pub(crate) fn now() -> i64 {
+         .as_secs() as i64
+ }
+ 
+-pub(crate) fn check_request(
++pub(crate) fn check_host_and_origin(
+     state: &AuthState,
+     request: &Request<Body>,
+ ) -> Result<(), axum::response::Response> {
+@@ -201,7 +201,21 @@ pub(crate) fn check_request(
+                 "Origin is not allowed",
+             ));
+         }
+-    } else if !matches!(request.method().as_str(), "GET" | "HEAD" | "OPTIONS")
++    }
++    Ok(())
++}
++
++pub(crate) fn check_request(
++    state: &AuthState,
++    request: &Request<Body>,
++) -> Result<(), axum::response::Response> {
++    check_host_and_origin(state, request)?;
++    if request
++        .headers()
++        .get(header::ORIGIN)
++        .and_then(|value| value.to_str().ok())
++        .is_none()
++        && !matches!(request.method().as_str(), "GET" | "HEAD" | "OPTIONS")
+         && request
+             .headers()
+             .get(header::COOKIE)
+diff --git a/crates/weblabel-api/src/auth/session.rs b/crates/weblabel-api/src/auth/session.rs
+index 56544c35..8c04f0c9 100644
+--- a/crates/weblabel-api/src/auth/session.rs
++++ b/crates/weblabel-api/src/auth/session.rs
+@@ -280,11 +280,20 @@ async fn current_session(
+                 ),
+             }
+         }
+-        Ok(None) => error(
+-            StatusCode::UNAUTHORIZED,
+-            "UNAUTHENTICATED",
+-            "Authentication required",
+-        ),
++        Ok(None) => {
++            let mut response = error(
++                StatusCode::UNAUTHORIZED,
++                "UNAUTHENTICATED",
++                "Authentication required",
++            );
++            response.headers_mut().insert(
++                header::SET_COOKIE,
++                cookie("", &state, 0)
++                    .parse()
++                    .expect("session expiry cookie is a valid header"),
++            );
++            response
++        }
+         Err(_) => error(
+             StatusCode::INTERNAL_SERVER_ERROR,
+             "AUTHENTICATION_FAILED",
+diff --git a/crates/weblabel-api/src/lib.rs b/crates/weblabel-api/src/lib.rs
+index 43dfc55d..9f941c85 100644
+--- a/crates/weblabel-api/src/lib.rs
++++ b/crates/weblabel-api/src/lib.rs
+@@ -119,10 +119,14 @@ pub fn router(state: AppState) -> Router {
+             state.repository.clone(),
+             state.auth.clone(),
+         ))
+-        .merge(media::routes::router(state.repository.clone(), state.auth))
++        .merge(media::routes::router(
++            state.repository.clone(),
++            state.auth.clone(),
++        ))
+         .merge(crate::runtime::agent_tools::router(
+             state.repository.clone(),
+             state.run_tokens.clone(),
++            state.auth,
+         ))
+         .fallback(not_found)
+         .layer(middleware::from_fn(request_id))
+diff --git a/crates/weblabel-api/src/runtime/agent_tools.rs b/crates/weblabel-api/src/runtime/agent_tools.rs
+index b0f31711..362f52b1 100644
+--- a/crates/weblabel-api/src/runtime/agent_tools.rs
++++ b/crates/weblabel-api/src/runtime/agent_tools.rs
+@@ -16,6 +16,7 @@ use axum::{
+     body::Bytes,
+     extract::{DefaultBodyLimit, Path, State},
+     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
++    middleware,
+     response::{IntoResponse, Response},
+     routing::post,
+     Json, Router,
+@@ -86,9 +87,17 @@ struct AgentToolsState {
+ 
+ /// Mounts the internal agent tools route. No session middleware is attached:
+ /// only run-scoped bearer tokens are accepted.
+-pub fn router(repository: Repository, tokens: RunTokenStore) -> Router {
++pub fn router(
++    repository: Repository,
++    tokens: RunTokenStore,
++    auth: crate::auth::AuthState,
++) -> Router {
+     Router::new()
+         .route("/internal/agent-tools/{tool}", post(invoke_tool))
++        .route_layer(middleware::from_fn_with_state(
++            auth,
++            crate::auth::host_and_origin,
++        ))
+         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
+         .with_state(AgentToolsState { repository, tokens })
+ }
+diff --git a/crates/weblabel-api/tests/t25_runtime.rs b/crates/weblabel-api/tests/t25_runtime.rs
+index 230acbcb..d6abf0dd 100644
+--- a/crates/weblabel-api/tests/t25_runtime.rs
++++ b/crates/weblabel-api/tests/t25_runtime.rs
+@@ -216,13 +216,18 @@ async fn scenario(scenario: &'static str) {
+     let model_server = tokio::spawn(async move {
+         axum::serve(model_listener, model).await.unwrap();
+     });
+-    // Internal bearer boundary is intentionally independent of browser session security.
++    // Bearer tools share the server Host/Origin policy, not browser-session CSRF.
++    let api_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let api_address = api_listener.local_addr().unwrap();
++    let api_base = format!("http://{api_address}");
++    let mut tool_auth = state.auth.clone();
++    tool_auth.config.allowed_hosts = vec![api_address.to_string()];
++    tool_auth.config.allowed_origins = vec![api_base.clone()];
+     let tools = weblabel_api::runtime::agent_tools::router(
+         state.repository.clone(),
+         state.run_tokens.clone(),
++        tool_auth,
+     );
+-    let api_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+-    let api_base = format!("http://{}", api_listener.local_addr().unwrap());
+     let api_server = tokio::spawn(async move {
+         axum::serve(api_listener, tools).await.unwrap();
+     });

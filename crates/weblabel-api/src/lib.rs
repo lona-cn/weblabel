@@ -119,10 +119,14 @@ pub fn router(state: AppState) -> Router {
             state.repository.clone(),
             state.auth.clone(),
         ))
-        .merge(media::routes::router(state.repository.clone(), state.auth))
+        .merge(media::routes::router(
+            state.repository.clone(),
+            state.auth.clone(),
+        ))
         .merge(crate::runtime::agent_tools::router(
             state.repository.clone(),
             state.run_tokens.clone(),
+            state.auth,
         ))
         .fallback(not_found)
         .layer(middleware::from_fn(request_id))

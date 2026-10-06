@@ -216,13 +216,18 @@ async fn scenario(scenario: &'static str) {
     let model_server = tokio::spawn(async move {
         axum::serve(model_listener, model).await.unwrap();
     });
-    // Internal bearer boundary is intentionally independent of browser session security.
+    // Bearer tools share the server Host/Origin policy, not browser-session CSRF.
+    let api_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_address = api_listener.local_addr().unwrap();
+    let api_base = format!("http://{api_address}");
+    let mut tool_auth = state.auth.clone();
+    tool_auth.config.allowed_hosts = vec![api_address.to_string()];
+    tool_auth.config.allowed_origins = vec![api_base.clone()];
     let tools = weblabel_api::runtime::agent_tools::router(
         state.repository.clone(),
         state.run_tokens.clone(),
+        tool_auth,
     );
-    let api_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api_base = format!("http://{}", api_listener.local_addr().unwrap());
     let api_server = tokio::spawn(async move {
         axum::serve(api_listener, tools).await.unwrap();
     });

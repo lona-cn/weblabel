@@ -16,6 +16,7 @@ use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+    middleware,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -86,9 +87,17 @@ struct AgentToolsState {
 
 /// Mounts the internal agent tools route. No session middleware is attached:
 /// only run-scoped bearer tokens are accepted.
-pub fn router(repository: Repository, tokens: RunTokenStore) -> Router {
+pub fn router(
+    repository: Repository,
+    tokens: RunTokenStore,
+    auth: crate::auth::AuthState,
+) -> Router {
     Router::new()
         .route("/internal/agent-tools/{tool}", post(invoke_tool))
+        .route_layer(middleware::from_fn_with_state(
+            auth,
+            crate::auth::host_and_origin,
+        ))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(AgentToolsState { repository, tokens })
 }

@@ -165,6 +165,7 @@ export function create_editor(
 ```
 
 C3 的 flags 只属于编辑器会话，不进入保存文档。业务 UI 可持有不可修改的 changed_objects 投影；不直接 mutate。pointer move 只更新交互预览，不增加 generation，不触发完整快照或网络；pointer up 形成一个 command 才增加 generation。set_viewport/selection/hide 不改变业务 generation。取消/无效操作不增加 generation。undo/redo 改变文档且 generation 单调递增，不倒退。
+T28前端只在成功的document_changed/suggestion decision逻辑提交读取committed snapshot；选中/隐藏/锁定仅更新局部UI投影与历史状态，不调用整文档快照或远端保存。local flags投影不可修改且只在Rust成功后发布；INVALID_FLAGS/未知object与locked mutation拒绝不能清空已确认选中/undo状态，切图重新建立会话并清理flags。持久实例buffer按局部对象range更新；视口仅改变uniform和绘制ranges。资源计数来自实际创建/释放/上传/submit，logical texture bytes与V8 heap分别标识，不称真实VRAM。跨JS/WASM bytes当前只计实际RGBA输入，bridge耗时仅涵盖原生桥调用，不认证完整React/SaveQueue CPU或物理可见帧。
 
 Rust 函数边界：`geometry::image_to_css([f64;2], Viewport)->[f64;2]`、`css_to_image`、`validate_bbox(&BBox,w:u32,h:u32)->Result<(),DomainError>`；`editor_core::Editor::new(document,ontology)->Result<Editor,DomainError>`；`Editor::dispatch(EditorCommand)->Result<EditorDelta,DomainError>`；`Editor::snapshot()->AnnotationDocument`。渲染模块依赖只读 render scene，不反向修改 Editor。
 
@@ -256,8 +257,9 @@ export interface RuntimeEnvelope {
 ```
 
 Unknown 在契约入口立即按 JSON Schema 验证，不能以 `any` 流遍业务。NDJSON 一行一消息，单行 ≤4 MiB，stdout 专用；stderr 日志脱敏。图片字节不塞入该行：API 创建运行暂存 grant，Host/Worker 只获得已批准映射。每个 request 必有 response；超时、重复 ID、未知 method、进程退出、截断/超长行必须被测试。协议错误终止本次运行，不重启后自动重发可能已计费调用。
+三个API适配器只在本run私有内存保存已解析credential；所有公开RunEvent的message、嵌套data值及键按该确切值脱敏，包括未校验工具名、合法工具call_id及上游错误正文。供应商协议内部保留原始call_id；错误分类、已观察usage和未知null用量不被脱敏改写。
 
-MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装本项目 server 配置，不读取项目里任意第三方 MCP 配置。它通过 loopback `/internal/agent-tools/{tool}` 与 API 通信，使用专门生成的短期 run-scoped Bearer，不能使用管理员 session。token 只在子进程环境/私有通道传递，不在 argv、工具参数或输出里传递；到期/取消后立即失效。
+MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装本项目 server 配置，不读取项目里任意第三方 MCP 配置。它通过 loopback `/internal/agent-tools/{tool}` 与 API 通信，使用专门生成的短期 run-scoped Bearer，不能使用管理员 session。该路由同样检查允许Host和已提供的Origin；私有非浏览器客户端可省略Origin，浏览器cookie不替代Bearer，也不触发浏览器CSRF规则。token只在子进程环境/私有通道传递，不在argv、工具参数或输出里传递；到期/取消后立即失效。
 
 允许工具及参数：
 
@@ -310,7 +312,7 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | POST /api/annotation-import-previews/{id}/commit | loss_ack/operation_id → CAS提交一个revision，重复operation重放 | T14 |
 | POST /api/annotation-revisions/{id}/exports | 单个不可变版本的native/YOLO/COCO导出，format/loss_ack/operation_id | T14 |
 | GET /api/exports/{id}/download | 项目成员鉴权文件，响应头 X-WebLabel-Loss-Report 携带损失报告 | T14/T27 |
-| POST /internal/agent-tools/{tool} | run-scoped token，不接受 session cookie | T21 |
+| POST /internal/agent-tools/{tool} | run-scoped Bearer，不接受session；Host/已提供Origin允许列表校验，私有客户端可无Origin | T21/T29 |
 | GET/PUT /api/projects/{id}/external-processing-policy | {allow_external_processing:boolean}；成员读、项目admin写、既有及新项目默认false；无图像的外部运行也受门控 | T25主会话 |
 
 `/api/jobs` 由 T07 临时实现通用 schema 的 media job，T17 扩展同一 job engine，不能另外做两种互不兼容的 job。T07 不提前增加模型队列逻辑。

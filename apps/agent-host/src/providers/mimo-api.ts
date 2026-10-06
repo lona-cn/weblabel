@@ -16,7 +16,7 @@ import type { ModelProfile } from '../../../../packages/contracts/generated/Mode
 import type { RunEvent } from '../../../../packages/contracts/generated/RunEvent';
 import type { StartRunRequest } from '../../../../packages/contracts/generated/StartRunRequest';
 import type { ProviderAdapter, RuntimeContext } from '../registry';
-import { redactText } from '../security/redaction';
+import { redactText, redactValue } from '../security/redaction';
 import {
   BoundedHttpClient,
   DEFAULT_TOOL_BUDGETS,
@@ -281,12 +281,13 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
     async *run(input: StartRunRequest, ctx: RuntimeContext, signal: AbortSignal): AsyncIterable<RunEvent> {
       const run_id = ctx.run_id;
       let seq = 0;
+      let knownSecrets: readonly string[] = [];
       const emit = (type: RunEvent['type'], message: string, data: Record<string, unknown> | null): RunEvent => ({
         run_id,
         seq: seq++,
         type,
-        message,
-        data,
+        message: redactText(message, knownSecrets),
+        data: data === null ? null : redactValue(data, undefined, knownSecrets) as Record<string, unknown>,
       });
       yield emit('started', 'run started', null);
       // Hoisted so a failure still reports the usage observed before it (C4):
@@ -294,6 +295,7 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
       const turnUsages: NormalizedUsage[] = [];
       try {
         const secret = resolveSecretRef(config.credential.secret_ref, config.secret_env ?? process.env);
+        knownSecrets = [secret];
         if (secret.startsWith('tp-') && (config.api_base === undefined || config.api_base === OFFICIAL_API_BASES.mimo_api)) {
           throw new ProviderError('base_not_approved', 'Token Plan credentials require the exact console-provided base URL');
         }
@@ -403,7 +405,7 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
           return;
         }
         const code: ProviderErrorCode = error instanceof ProviderError ? error.code : 'adapter_error';
-        const message = error instanceof Error ? redactText(error.message) : 'unexpected adapter failure';
+        const message = error instanceof Error ? error.message : 'unexpected adapter failure';
         const usage =
           turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
           normalizeUsage(null, pricing);

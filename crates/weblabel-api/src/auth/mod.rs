@@ -56,6 +56,19 @@ pub(crate) async fn authenticate(
     }
 }
 
+/// Host/Origin gate for bearer-only agent tools. No session cookie can grant
+/// tool permissions; the tool handler still performs the run-token checks.
+pub(crate) async fn host_and_origin(
+    State(state): State<AuthState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if let Err(response) = policy::check_host_and_origin(&state, &request) {
+        return response;
+    }
+    next.run(request).await
+}
+
 pub(crate) async fn csrf_and_origin(
     State(state): State<AuthState>,
     request: Request<Body>,

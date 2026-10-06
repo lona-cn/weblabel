@@ -19,7 +19,11 @@ const SENSITIVE_KEY = /(^|[._-])(secret|token|password|passwd|pwd|apikey|authori
 const REFERENCE_KEY = /(_ref|_alias)$/i;
 const IMAGE_KEY = /(image|bytes|blob|data)/i;
 
-export function redactText(text: string): string {
+export function redactText(text: string, knownSecrets: readonly string[] = []): string {
+  // Exact resolved values may have no recognizable key prefix or label.
+  for (const secret of knownSecrets) {
+    if (secret.length > 0) text = text.replaceAll(secret, REDACTED);
+  }
   return text
     .replace(DATA_URL, IMAGE_REDACTED)
     .replace(SENSITIVE_HEADER, (match, header: string) => `${header}: ${REDACTED}`)
@@ -30,8 +34,8 @@ export function redactText(text: string): string {
     .replace(BASE64_BLOB, IMAGE_REDACTED);
 }
 
-export function redactValue(value: unknown, keyHint?: string): unknown {
-  if (typeof value === 'string') return redactText(value);
+export function redactValue(value: unknown, keyHint?: string, knownSecrets: readonly string[] = []): unknown {
+  if (typeof value === 'string') return redactText(value, knownSecrets);
   if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
   if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return IMAGE_REDACTED;
   if (Array.isArray(value)) {
@@ -41,14 +45,15 @@ export function redactValue(value: unknown, keyHint?: string): unknown {
       value.length > 32 &&
       value.every((item) => typeof item === 'number' && Number.isInteger(item) && item >= 0 && item <= 255);
     if (isImageBytes) return IMAGE_REDACTED;
-    return value.map((item) => redactValue(item, keyHint));
+    return value.map((item) => redactValue(item, keyHint, knownSecrets));
   }
   if (typeof value === 'object') {
     const redacted: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
-      if (REFERENCE_KEY.test(key)) redacted[key] = redactValue(item, key);
-      else if (SENSITIVE_KEY.test(key)) redacted[key] = REDACTED;
-      else redacted[key] = redactValue(item, key);
+      const safeKey = redactText(key, knownSecrets);
+      if (REFERENCE_KEY.test(key)) redacted[safeKey] = redactValue(item, key, knownSecrets);
+      else if (SENSITIVE_KEY.test(key)) redacted[safeKey] = REDACTED;
+      else redacted[safeKey] = redactValue(item, key, knownSecrets);
     }
     return redacted;
   }
