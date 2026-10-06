@@ -26,7 +26,7 @@ async function instrument(page: Page) {
     gpu.requestAdapter = async (...args) => {
       const adapter = await adapterRequest(...args);
       if (!adapter) return adapter;
-      observation.adapters.push({ vendor: adapter.info.vendor || 'unknown', architecture: adapter.info.architecture || 'unknown', device: adapter.info.device || 'unknown', description: adapter.info.description || 'unknown', isFallbackAdapter: adapter.info.isFallbackAdapter });
+      observation.adapters.push({ vendor: adapter.info.vendor || 'unknown', architecture: adapter.info.architecture || 'unknown', device: adapter.info.device || 'unknown', description: adapter.info.description || 'unknown', isFallbackAdapter: adapter.info.isFallbackAdapter, timestamp_query_supported: adapter.features.has('timestamp-query') });
       const requestDevice = adapter.requestDevice.bind(adapter);
       adapter.requestDevice = async (...deviceArgs) => {
         const device = await requestDevice(...deviceArgs);
@@ -123,7 +123,10 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
     Object.assign(environment, { browser: { version: page.context().browser()!.version(), user_agent: target.browser_user_agent }, gpu: adapter, dpr: target.dpr, target_canvas: target });
     await writeFile(path.join(run, 'environment.json'), JSON.stringify(environment, null, 2));
     evidence.target = target;
-    evidence.timestamp_query = await page.evaluate(() => ({ supported: window.__t31.devices.at(-1)!.features.has('timestamp-query'), measured: false, reason: 'Renderer exposes no GPU timestamp result; never infer from CPU time' }));
+    evidence.timestamp_query = await page.evaluate(() => {
+      const enabled = window.__t31.devices.at(-1)!.features.has('timestamp-query');
+      return { adapter_supported: window.__t31.adapters.at(-1)!.timestamp_query_supported, enabled_on_application_device: enabled, measured: false, reason: enabled ? 'Renderer exposes no timestamp results; no GPU duration claimed.' : 'Timestamp-query is not enabled on the actual application device; CPU time is not GPU time.' };
+    });
     const original = await page.evaluate(() => window.__wl_test!.snapshot());
     expect(original.objects).toHaveLength(count);
     expect(original.coordinate_space).toEqual({ type: 'canonical_image_pixels', width: 2048, height: 2048 });
@@ -219,19 +222,34 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
     });
     // Actual resize and DPR transitions; image coordinates must not absorb DPR.
     const projections = [];
-    for (const dpr of [1, 1.25, 2, 3]) {
-      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: dpr, mobile: false });
+    for (const [width, dpr] of [[1440, 1], [1320, 1.25], [1200, 2], [1440, 3]] as const) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: dpr, mobile: false });
       await page.evaluate(async () => { window.dispatchEvent(new Event('resize')); await window.__wl_test!.select('dense-17-37'); await window.__wl_test!.zoom(1.005); });
       const projection = await page.evaluate(() => { const hooks = window.__wl_test!, box = hooks.snapshot().objects[37].geometry, view = hooks.viewport(), label = hooks.labels().find(label => label.object_id === 'dense-17-37')!; return { box, view, label, dpr: devicePixelRatio }; });
       expect(projection.box).toEqual(canonical);
       expect(projection.dpr).toBe(dpr);
+      expect(await page.evaluate(() => window.__wl_test!.snapshot())).toEqual(snapshot);
       expect(Math.abs(projection.label.x_css - (canonical.x_min * projection.view.scale + projection.view.tx))).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(projection.label.y_css - (canonical.y_min * projection.view.scale + projection.view.ty))).toBeLessThanOrEqual(0.5);
       const surface = (await page.getByTestId('annotation-canvas').boundingBox())!;
-      const center = { x: surface.x + canonical.x_max * projection.view.scale + projection.view.tx, y: surface.y + (canonical.y_min + canonical.y_max) / 2 * projection.view.scale + projection.view.ty };
+      const center = { x: surface.x + (canonical.x_min + canonical.x_max) / 2 * projection.view.scale + projection.view.tx, y: surface.y + canonical.y_max * projection.view.scale + projection.view.ty };
       const clip = { x: Math.floor(center.x - 8), y: Math.floor(center.y - 8), width: 16, height: 16 };
+      // Isolate GPU pixels: a small box's DOM text otherwise covers the control.
+      const labelVisibility = await page.getByTestId('annotation-canvas').evaluate(canvas => {
+        const labels = canvas.nextElementSibling;
+        if (!(labels instanceof HTMLElement) || labels.getAttribute('aria-hidden') !== 'true') throw new Error('Expected actual CanvasView label overlay');
+        const previous = labels.style.visibility;
+        labels.style.visibility = 'hidden';
+        return previous;
+      });
       const selected = await page.screenshot({ path: info.outputPath(`handle-selected-dpr-${dpr}.png`), clip, scale: 'css' });
       await page.evaluate(() => window.__wl_test!.select('dense-17-0'));
       const unselected = await page.screenshot({ path: info.outputPath(`handle-unselected-dpr-${dpr}.png`), clip, scale: 'css' });
+      await page.getByTestId('annotation-canvas').evaluate((canvas, visibility) => {
+        const labels = canvas.nextElementSibling;
+        if (!(labels instanceof HTMLElement)) throw new Error('Label overlay detached during capture');
+        labels.style.visibility = visibility;
+      }, labelVisibility);
       const activePixels = await sharp(selected).removeAlpha().raw().toBuffer();
       const inactivePixels = await sharp(unselected).removeAlpha().raw().toBuffer();
       const changed: { x: number; y: number }[] = [];
@@ -240,7 +258,7 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
         if ([0, 1, 2].some(channel => Math.abs(activePixels[offset + channel] - inactivePixels[offset + channel]) > 20)) changed.push({ x, y });
       }
       const handle = changed.length ? { width_css: Math.max(...changed.map(pixel => pixel.x)) - Math.min(...changed.map(pixel => pixel.x)) + 1, height_css: Math.max(...changed.map(pixel => pixel.y)) - Math.min(...changed.map(pixel => pixel.y)) + 1 } : { width_css: 0, height_css: 0 };
-      projections.push({ ...projection, handle });
+      projections.push({ ...projection, handle, measured_control: 'bottom-middle', dom_labels_excluded_from_gpu_crop: true });
       evidence.projections = projections; await save();
       expect.soft(Math.abs(handle.width_css - 8), 'Actual selected control must be 8 CSS px at every DPR/zoom').toBeLessThanOrEqual(1);
       expect.soft(Math.abs(handle.height_css - 8), 'Actual selected control must be 8 CSS px at every DPR/zoom').toBeLessThanOrEqual(1);

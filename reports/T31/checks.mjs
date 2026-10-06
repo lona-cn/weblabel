@@ -7,11 +7,12 @@ const mode = process.argv[2];
 const pnpm = path.join(process.env.APPDATA, 'npm/node_modules/pnpm/bin/pnpm.cjs');
 const env = { ...process.env, CARGO_HOME: 'D:/cache/cargo/bin', RUSTUP_HOME: 'D:/cache/cargo', RUSTUP_TOOLCHAIN: '1.96.0', RUSTC: 'D:/cache/cargo/toolchains/1.96.0-x86_64-pc-windows-msvc/bin/rustc.exe', CARGO_TARGET_DIR: path.join(root, 'target/t31') };
 const commands = {
-  types: [process.execPath, pnpm, 'exec', 'tsc', '--noEmit', '--strict', '--target', 'ES2024', '--module', 'ESNext', '--moduleResolution', 'Bundler', '--skipLibCheck', '--lib', 'ES2024,DOM', '--typeRoots', 'apps/web/node_modules/@types', '--types', 'node', '--allowJs', '--jsx', 'react-jsx', 'tests/perf/t31_hardware.spec.ts', 'reports/T31/playwright.config.ts', 'apps/web/node_modules/vite/client.d.ts'],
+  types: [process.execPath, pnpm, 'exec', 'tsc', '--noEmit', '--strict', '--target', 'ES2024', '--module', 'ESNext', '--moduleResolution', 'Bundler', '--skipLibCheck', '--lib', 'ES2024,DOM', '--typeRoots', 'apps/web/node_modules/@types', '--types', 'node', '--allowJs', '--jsx', 'react-jsx', 'tests/perf/t31_hardware.spec.ts', 'reports/T31/playwright.config.ts', 'reports/T31/vite.config.ts', 'apps/web/node_modules/vite/client.d.ts'],
   unit: [process.execPath, '--test', 'reports/T31/gate.test.mjs'],
   contractbuild: ['D:/cache/cargo/bin/bin/cargo.exe', 'build', '--locked', '--manifest-path', path.join(root, 'Cargo.toml'), '--target-dir', env.CARGO_TARGET_DIR, '-p', 'xtask'],
   contracts: [path.join(env.CARGO_TARGET_DIR, 'debug/xtask.exe'), 'contracts-check'],
   syntax: [process.execPath, '--check', 'scripts/verify-gpu.mjs'],
+  integration: ['git', 'apply', '--check', 'reports/T31/integration.patch'],
 };
 const argv = commands[mode];
 if (!argv) throw new Error(`Unknown check ${mode}`);

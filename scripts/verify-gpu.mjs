@@ -63,7 +63,7 @@ async function main() {
   try {
     const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
     const files = execFileSync('git', ['ls-files', 'apps/web/src', 'crates', 'Cargo.toml', 'Cargo.lock', 'scripts/verify-gpu.mjs', 'tests/perf/t31_hardware.spec.ts'], { cwd: root, encoding: 'utf8' }).trim().split(/\r?\n/);
-    const sourceFiles = [...new Set([...files.filter(Boolean), 'scripts/verify-gpu.mjs', 'tests/perf/t31_hardware.spec.ts', 'reports/T31/playwright.config.ts'])];
+    const sourceFiles = [...new Set([...files.filter(Boolean), 'scripts/verify-gpu.mjs', 'tests/perf/t31_hardware.spec.ts', 'reports/T31/playwright.config.ts', 'reports/T31/vite.config.ts'])];
     source = { commit, files: Object.fromEntries(sourceFiles.map(file => [file, createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex')])) };
     await writeFile(path.join(run, 'source.json'), JSON.stringify(source, null, 2));
     let driver = 'unknown';
@@ -86,7 +86,7 @@ async function main() {
     const port = reserve.address().port;
     await new Promise(resolve => reserve.close(resolve));
     env.WEBLABEL_T31_ORIGIN = `http://127.0.0.1:${port}`;
-    const viteArgs = ['--filter', '@weblabel/web', 'exec', 'vite', '--host', '127.0.0.1', '--port', String(port), '--strictPort', '--mode', 'test'];
+    const viteArgs = ['--filter', '@weblabel/web', 'exec', 'vite', '--config', path.join(report, 'vite.config.ts'), '--host', '127.0.0.1', '--port', String(port), '--strictPort', '--mode', 'test'];
     const argv = win ? [process.execPath, pnpm, ...viteArgs] : ['pnpm', ...viteArgs];
     const serviceLog = fs.openSync(path.join(run, 'vite.log'), 'w');
     service = spawn(argv[0], argv.slice(1), { cwd: root, env, shell: false, windowsHide: true, stdio: ['ignore', serviceLog, serviceLog] });
