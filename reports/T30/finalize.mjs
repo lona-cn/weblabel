@@ -1,0 +1,23 @@
+import { execFileSync } from 'node:child_process';
+import { rm, writeFile } from 'node:fs/promises';
+import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
+const report=path.join(root,'reports/T30');
+const ports=await Promise.all([5191,4181].map(port=>new Promise(resolve=>{
+  const socket=net.createConnection({host:'127.0.0.1',port});
+  const finish=result=>{socket.destroy();resolve(result);};
+  socket.once('connect',()=>finish({port,listening:true}));
+  socket.once('error',error=>finish({port,listening:false,error:error.code}));
+  socket.setTimeout(2000,()=>finish({port,listening:null,error:'unconfirmed_timeout'}));
+})));
+const executables=['debug','release'].map(mode=>path.join(root,'target/t30',mode,'weblabel-api.exe'));
+const filter=executables.map(executable=>`ExecutablePath='${executable.replaceAll('\\','\\\\')}'`).join(' OR ');
+const command=`$ErrorActionPreference='Stop'; $items=@(Get-CimInstance Win32_Process -Filter \"${filter}\" | Select-Object ProcessId,Name); ConvertTo-Json -InputObject $items -Compress`;
+const ownedApis=JSON.parse(execFileSync('powershell.exe',['-NoProfile','-Command',command],{encoding:'utf8'}));
+const observation={observed_at:new Date().toISOString(),private_ports:ports,owned_api_executables:executables,remaining_owned_api_processes:ownedApis,provider_and_descendant_teardown:'Real integration assertions cover both original and descendant PIDs; browser contexts and production preview are awaited during teardown.'};
+await writeFile(path.join(report,'services.json'),JSON.stringify(observation,null,2));
+if(ports.some(port=>port.listening!==false||port.error!=='ECONNREFUSED')||ownedApis.length)throw new Error('Owned services have not all been proven stopped');
+await rm(path.join(report,'runtime'),{recursive:true,force:true});
+console.log(JSON.stringify({...observation,ephemeral_runtime_removed:true},null,2));

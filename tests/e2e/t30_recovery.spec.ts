@@ -6,12 +6,31 @@ import { expect, test as fixtureTest } from './fixtures';
 import type { SeededAsset } from './fixtures';
 import type { Page, TestInfo } from '@playwright/test';
 import { database_path_for_test, start_test_app } from '../support/app';
-import { actualResponse, cpuSnapshot, head, installBrowserFaults, loginClient, observeEditor, persistentCopy, privateOrigin, proxyPage, seededRandom, viewport } from '../support/faults';
+import { actualResponse, cpuSnapshot, head, id, installBrowserFaults, loginClient, observeEditor, persistentCopy, privateOrigin, proxyPage, seededRandom, viewport } from '../support/faults';
 import type { AnnotationDocument } from '../../packages/contracts/generated/AnnotationDocument';
 import type { AnnotationObject } from '../../packages/contracts/generated/AnnotationObject';
 import type { SaveResponse } from '../../packages/contracts/generated/SaveResponse';
 import type { SuggestionSet } from '../../packages/contracts/generated/SuggestionSet';
 import type { NativeDraftExport } from '../../apps/web/src/lib/persistence/types';
+import type { Viewport } from '../../apps/web/src/lib/editor/types';
+
+interface CanvasObservation {
+  viewport:Viewport;
+  css:{x:number;y:number;width:number;height:number};
+  backing:{width:number;height:number};
+  window:{width:number;height:number;dpr:number};
+  alerts:string[];
+  save:{phase:string|null;dirty:string|null};
+}
+async function canvasObservation(page:Page):Promise<CanvasObservation>{
+  const nativeViewport=await viewport(page);
+  const surface=await page.getByTestId('annotation-canvas').evaluate(canvas=>{
+    if(!(canvas instanceof HTMLCanvasElement))throw new Error('Expected actual native canvas');
+    const rect=canvas.getBoundingClientRect(),save=document.querySelector('[data-testid="save-status"]');
+    return {css:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},backing:{width:canvas.width,height:canvas.height},window:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},alerts:Array.from(document.querySelectorAll('[role="alert"]'),element=>element.textContent??''),save:{phase:save?.getAttribute('data-phase')??null,dirty:save?.getAttribute('data-dirty')??null}};
+  });
+  return {viewport:nativeViewport,...surface};
+}
 
 const test=fixtureTest.extend({
   app:async({},use)=>{const app=await start_test_app('false','background');try{await use(app);}finally{await app.stop();}},
@@ -139,7 +158,8 @@ test('F07 late runA at assetB cannot overwrite either asset or newer before_hash
   const newer=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id);
   for(const button of await page.getByTestId('accept-selected').all())await expect(button).toBeDisabled();
   const stale=await seededProject.api.request('PUT',`/api/assets/${asset.asset_revision_id}/annotation`,{operation_id:crypto.randomUUID(),base_revision_id:newer.annotation_revision_id,document:newer.document,lease:null,suggestion_decisions:[{suggestion_set_id:result.items[0].suggestion_set_id,change_ids:result.items[0].changes.map(change=>change.change_id),decision:'accept'}]});
-  expect(stale.status).toBe(409);expect(await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).toEqual(newer);
+  await info.attach('stale-acceptance-response',{body:JSON.stringify({status:stale.status,body:stale.json}),contentType:'application/json'});
+  expect(stale.status).toBe(422);expect(id(stale.json,'code')).toBe('STALE_OBJECT');expect(await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).toEqual(newer);
   const retained=await seededProject.api.request<{items:SuggestionSet[]}>('GET',`/api/ai/runs/${result.items[0].model_run_id}/suggestions`);expect(retained.json.items[0].changes).toEqual(result.items[0].changes);expect(newer.document.objects[0].attributes.helmet_state).toBe('wearing');
   await evidence(page,info,'late-ai-stale',{run_id:result.items[0].model_run_id,original,newer,otherBefore,stale:stale.json,retained:retained.json});
 });
@@ -173,16 +193,18 @@ test('F14 actual hardware device loss keeps CPU hash and unsaved history, rebuil
   await page.route(`**/api/assets/${asset.asset_revision_id}/annotation`,async route=>{if(route.request().method()==='PUT')await route.abort('failed');else await route.fallback();});
   await createBox(page);const before=await cpuSnapshot(page);expect(before.objects).toHaveLength(1);await expect(page.getByTestId('undo')).toBeEnabled();await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','save_failed');await expect(page.getByTestId('save-status')).toHaveAttribute('data-dirty','true');
   const canvasBefore=await page.getByTestId('annotation-canvas').screenshot();await info.attach('device-loss-canvas-before',{body:canvasBefore,contentType:'image/png'});
+  const surfaceBefore=await canvasObservation(page);
   const beforeHash=createHash('sha256').update(JSON.stringify(before)).digest('hex');let navigations=0;page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigations+=1;});
   const devicesBefore=await page.evaluate(()=>window.__t30Faults.devices.length);
   const lost=await page.evaluate(()=>window.__t30Faults.destroyDevice());expect(lost.reason).toBe('destroyed');
   const after=await cpuSnapshot(page);expect(createHash('sha256').update(JSON.stringify(after)).digest('hex')).toBe(beforeHash);
-  await evidence(page,info,'device-loss-baseline',{beforeHash,before,after,lost,devicesBefore});
   // Renderer rebuild must be real (a new GPUDevice), not a ready label on the destroyed device.
   await expect.poll(()=>page.evaluate(()=>window.__t30Faults.devices.length),{timeout:15000}).toBeGreaterThan(devicesBefore);
   await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state','ready');expect(navigations).toBe(0);
   const canvasAfter=await page.getByTestId('annotation-canvas').screenshot();await info.attach('device-loss-canvas-after',{body:canvasAfter,contentType:'image/png'});
+  const surfaceAfter=await canvasObservation(page);await info.attach('device-loss-surface-observations',{body:JSON.stringify({before:surfaceBefore,after:surfaceAfter}),contentType:'application/json'});
   expect(createHash('sha256').update(canvasAfter).digest('hex')).toBe(createHash('sha256').update(canvasBefore).digest('hex'));
+  await evidence(page,info,'device-loss-baseline',{beforeHash,before,after,lost,devicesBefore});
   expect(await cpuSnapshot(page)).toEqual(before);await expect(page.getByTestId('undo')).toBeEnabled();await page.getByTestId('undo').click();expect(await cpuSnapshot(page)).toEqual({...before,objects:[]});
   await createBox(page,100,60,180,140);expect((await cpuSnapshot(page)).objects).toHaveLength(1);expect(navigations).toBe(0);
   const rescue=await draft(page,info);expect(rescue.document).toEqual(await cpuSnapshot(page));await evidence(page,info,'device-rebuilt-history',{beforeHash,rescue,lost,navigations});
@@ -202,7 +224,9 @@ test('fixed seed create/move/undo/save/reload matches independent document refer
       await createBox(page,x,y,x+width,y+height);const actual=await cpuSnapshot(page);const added=actual.objects.find(object=>!model.objects.some(existing=>existing.object_id===object.object_id));if(!added)throw new Error('Committed create missing');
       const expected:AnnotationObject={object_id:added.object_id,label_id:'label_person',geometry:{type:'bbox_xyxy',x_min:xMin,y_min:yMin,x_max:xMax,y_max:yMax},attributes:{helmet_state:'unknown'},origin:{type:'manual',prediction_id:null,model_run_id:null,import_batch_id:null}};model={...model,objects:[...model.objects,expected]};
     }else if(action==='move'){
-      const object=model.objects.at(-1)!;history.push(structuredClone(model));const dx=3+Math.floor(random()*9),dy=2+Math.floor(random()*8);await page.getByTestId('tool-select').click();await page.getByTestId(`object-item-${object.object_id}`).click();
+      const object=model.objects.at(-1)!;history.push(structuredClone(model));const dx=3+Math.floor(random()*9),dy=2+Math.floor(random()*8);await page.getByTestId('tool-select').click();
+      // The real object list is virtualized; End selects and scrolls its last row through its public keyboard interface.
+      await page.getByTestId('object-list').focus();await page.keyboard.press('End');await page.getByTestId(`object-item-${object.object_id}`).click();
       const x=(object.geometry.x_min+object.geometry.x_max)/2,y=(object.geometry.y_min+object.geometry.y_max)/2;
       const start=await canonicalPointer(page,x,y),end=await canonicalPointer(page,x+dx,y+dy),deliveredDx=end[0]-start[0],deliveredDy=end[1]-start[1];
       await page.mouse.move(...await point(page,x,y));await page.mouse.down();await page.mouse.move(...await point(page,x+dx,y+dy),{steps:5});await page.mouse.up();
@@ -218,7 +242,11 @@ test('fixed seed create/move/undo/save/reload matches independent document refer
     for(let index=0;index<model.objects.length;index+=1){const expected=model.objects[index],observed=actual.objects[index];expect({...observed,geometry:expected.geometry}).toEqual(expected);for(const key of ['x_min','y_min','x_max','y_max'] as const)expect(Math.abs(observed.geometry[key]-expected.geometry[key])).toBeLessThanOrEqual(1e-6);}
     expect({...actual,objects:model.objects}).toEqual(model);transcript.push({step,action,expected:model,actual});
   }
-  }catch(cause){await evidence(page,info,'seeded-session-blocked',{seed:0x30fa17,requested_steps:48,completed_steps:transcript.length,transcript,reference:model,actual:await cpuSnapshot(page)});throw cause;}
+  }catch(cause){
+    await writeFile(info.outputPath('seeded-session-failure.json'),JSON.stringify({seed:0x30fa17,requested_steps:48,completed_steps:transcript.length,transcript,reference:model,error:String(cause)},null,2));
+    try{if(!page.isClosed())await evidence(page,info,'seeded-session-blocked',{seed:0x30fa17,requested_steps:48,completed_steps:transcript.length,transcript,reference:model,actual:await cpuSnapshot(page)});}catch(diagnosticError){await writeFile(info.outputPath('seeded-session-diagnostic-error.txt'),String(diagnosticError));}
+    throw cause;
+  }
   await synced(page);expect((await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).document).toEqual(await cpuSnapshot(page));await evidence(page,info,'seeded-session',{seed:0x30fa17,steps:48,transcript});
 });
 

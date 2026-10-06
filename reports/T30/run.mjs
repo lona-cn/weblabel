@@ -24,6 +24,7 @@ const commands = {
  browser:[process.execPath,[pnpm,'exec','playwright','test','tests/e2e/t30_recovery.spec.ts','--config=reports/T30/playwright.config.ts','--project=chromium-webgpu',...extras],root],
  baseline:[process.execPath,[pnpm,'exec','vitest','run','tests/integration/t25_ai.test.ts','tests/integration/t26_review.test.ts','tests/integration/t27_export.test.ts',...extras],root],
  types:[process.execPath,[pnpm,'exec','tsc','--noEmit','--target','ES2024','--module','ESNext','--moduleResolution','Bundler','--skipLibCheck','--lib','ES2024,DOM','--typeRoots','apps/web/node_modules/@types','--types','node','tests/support/faults.ts','tests/integration/t30_faults.test.ts','tests/e2e/t30_recovery.spec.ts',...extras],root],
+ contractbuild:[cargo,['build','--locked','--manifest-path',manifest,'--target-dir',target,'-p','xtask'],neutral],
  contracts:[path.join(target,'debug/xtask.exe'),['contracts-check'],root],
  release:[cargo,['build','--locked','--release','--manifest-path',manifest,'--target-dir',target,'-p','weblabel-api','--bin','weblabel-api'],neutral],
  web:[process.execPath,[pnpm,'--filter','@weblabel/web','exec','vite','build'],root],
