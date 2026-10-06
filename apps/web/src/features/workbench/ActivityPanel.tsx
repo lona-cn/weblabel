@@ -54,6 +54,7 @@ export function ActivityPanel({ projectId, actorId, collector, surfaceRef }: Act
     try {
       if (collector.problem) throw new Error(collector.problem);
       collector.commit();
+      if (collector.problem) throw new Error(collector.problem);
       const sessions = collector.snapshot();
       if (!sessions.some((session) => session.intervals.length)) { setMessage('无数据，未发送请求。'); return; }
       for (const session of sessions) {
@@ -61,6 +62,7 @@ export function ActivityPanel({ projectId, actorId, collector, surfaceRef }: Act
         const body: ActivityCheckpoint = { expected_version: session.version, intervals: session.intervals };
         const response = await api.request<ActivitySession>(`/api/projects/${encodeURIComponent(projectId)}/activity-sessions/${encodeURIComponent(session.session_id)}`, { method: 'PUT', body: JSON.stringify(body) });
         collector.acknowledge(session.session_id, response.version);
+        if (collector.problem) throw new Error(collector.problem);
       }
       setMessage('已明确保存至本机项目，仅包含本人区间统计。');
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }

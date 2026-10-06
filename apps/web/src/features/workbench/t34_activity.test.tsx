@@ -84,3 +84,19 @@ it('stops optional collection on quota failure but preserves measured intervals 
   now = 10_000; act(() => collector.commit());
   expect(collector.totals().task).toBe(1000);
 });
+
+it('does not publish when the final interval checkpoint discovers a storage failure', async () => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+  const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected publication'));
+  let now = 0;
+  const collector = new ActivityCollector('project', 'actor', () => now, { getItem: () => null, setItem: () => { throw new Error('quota exceeded during save'); }, removeItem: () => {} });
+  render(<ActivityPanel projectId="project" actorId="actor" collector={collector} />);
+  await userEvent.click(screen.getByTestId('activity-opt-in'));
+  now = 1000;
+  await userEvent.click(screen.getByTestId('activity-publish'));
+  expect(screen.getByRole('alert')).toHaveTextContent('quota exceeded during save');
+  expect(network).not.toHaveBeenCalled();
+  expect(collector.totals().task).toBe(1000);
+  expect(screen.getByTestId('activity-download')).toBeEnabled();
+  expect(screen.getByTestId('activity-publish')).toBeDisabled();
+});
