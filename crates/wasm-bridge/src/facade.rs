@@ -1246,7 +1246,7 @@ pub mod wasm {
     }
 
     fn to_js_error(error: ApiError) -> JsValue {
-        serde_wasm_bindgen::to_value(&error).unwrap_or_else(|_| JsValue::from_str(&error.code))
+        to_js(&error).unwrap_or_else(|_| JsValue::from_str(&error.code))
     }
 
     fn from_js<T: serde::de::DeserializeOwned>(value: JsValue, code: &str) -> Result<T, ApiError> {
