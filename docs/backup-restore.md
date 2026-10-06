@@ -22,7 +22,7 @@ node scripts/backup.mjs --data-dir "data" --backup-dir "backups/2026-10-06 中�
 
 保留用户 ID、用户名与审核/创建身份引用，保留标注历史、媒体、快照和审核关系；不把过去审计归给新用户。
 
-移除 session/CSRF、全部旧 password_hash、model profile 私有 `config_json` 和 `secret_ref`，清空外发 preview/consent/run authorization。已知 provider 配置凭证值在持久化 JSON/提示词/日志字段中再次出现时脱敏。官方 CLI 的 home、OAuth/API key 文件、环境、私有 Host 配置从未被枚举或复制。用户自己放在业务图像/属性/自由文本中的未知秘密不是自动识别承诺，分享前应自行审查。
+移除 session/CSRF、全部旧 password_hash、model profile 私有 `config_json` 和 `secret_ref`，清空外发 preview/consent/run authorization。已知 provider 配置凭证值在持久化可变 JSON/提示词/日志字段中再次出现时脱敏。若该值出现在不可变标注、规范、导入或 snapshot 正文中，命令以 `credential_in_immutable_business_data` 拒绝并删除本次不完整输出，而不是悄悄改写正文使业务 hash 失效；源数据不变。官方 CLI 的 home、OAuth/API key 文件、环境、私有 Host 配置从未被枚举或复制。用户自己放在业务图像/属性/自由文本中的未知秘密不是自动识别承诺，分享前应自行审查。
 
 排队/运行中的作业变为 interrupted，模型调用不会恢复后自动继续；活跃任务 holder/expiry 清空，历史 fencing token 和审计身份保留。模型 profile 重新进入 needs_configuration/not_run。备份不包含浏览器尚未同步的 IndexedDB 草稿；先 flush 保存，或单独导出本地草稿救援包。
 

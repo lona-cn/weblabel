@@ -60,7 +60,10 @@ function scrub(db) {
           if (column.name.endsWith('_json')) {
             const original = JSON.parse(row.value);
             const value = JSON.stringify(redact(original));
-            if (value !== JSON.stringify(original)) update.run(value, row.backup_rowid);
+            if (value !== JSON.stringify(original)) {
+              if (['annotation_revisions', 'ontology_versions', 'dataset_versions', 'annotation_import_batches'].includes(table)) throw new Error('credential_in_immutable_business_data: cannot scrub without invalidating business hashes');
+              update.run(value, row.backup_rowid);
+            }
           } else {
             const value = redact(row.value);
             if (value !== row.value) update.run(value, row.backup_rowid);

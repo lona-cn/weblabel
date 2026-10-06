@@ -34,6 +34,10 @@ node scripts/doctor.mjs --build-dir "target/local-release" --cargo-cwd "D:/cache
 
 恢复后所有 provider 私有配置被清空并标记 needs_configuration/not_run，旧外发 consent、运行授权和 preview 被移除。重新配置不能继承旧 live 证明；参考 [provider compatibility](provider-compatibility.md) 并显式授权预算后另跑实际验收。
 
+## 自愿本地测量
+
+需要记录工时时，先读 [自愿本地工时与受控试点协议](pilot-protocol.md)。记录默认关闭；明确保存才写入当前项目/用户的本机服务，不是后台遥测。备份会保留已明确提交的活动记录，但不会搬运浏览器尚未提交的本地记录。程序化演示只证明格式与计算链路，不是人工试点、ROI 或“节省30%”证据。
+
 ## 故障处理
 
 | 错误 | 安全动作 |

@@ -137,7 +137,7 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   expect((await admin.request('POST', `/api/reviews/${submit.body.review_id}/decision`, { decision: 'approve', reason: 'preserve original auditor', revision_ids: [revision.annotation_revision_id] })).status).toBe(200);
   const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null }); expect(snapshot.status).toBe(201);
   const sourceDb = new DatabaseSync(path.join(data, 'api.sqlite'));
-  sourceDb.prepare("INSERT INTO model_profiles VALUES(?, 'openai_api', 'synthetic-not-live', 'api_key', '{}', 'needs_configuration', 'not_run', NULL, NULL, ?, ?, ?)").run('t33-profile', JSON.stringify({ api_key: 'T33-secret-config-value', endpoint: 'http://invalid.example' }), 'T33-secret-ref', new Date().toISOString());
+  sourceDb.prepare("INSERT INTO model_profiles VALUES(?, 'openai_api', 'synthetic-not-live', 'api_key', ?, 'needs_configuration', 'not_run', NULL, NULL, ?, ?, ?)").run('t33-profile', JSON.stringify({ image_input: true, tools: true, structured_output: true, bbox_output: false, attributes: true }), JSON.stringify({ api_key: 'T33-secret-config-value', endpoint: 'http://invalid.example' }), 'T33-secret-ref', new Date().toISOString());
   const originalPassword = sourceDb.prepare('SELECT password_hash FROM users WHERE user_id=?').get(admin.userId)!.password_hash as string;
   const originalSessions = sourceDb.prepare('SELECT session_id,csrf_hash FROM sessions').all().flatMap(row => [row.session_id as string, row.csrf_hash as string]);
   sourceDb.close();
@@ -149,6 +149,12 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   expect(backupDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()!.n).toBe(0);
   expect(backupDb.prepare('SELECT created_by FROM annotation_revisions WHERE annotation_revision_id=?').get(revision.annotation_revision_id)!.created_by).toBe(admin.userId);
   expect(backupDb.prepare('SELECT manifest_sha256 FROM dataset_versions').get()!.manifest_sha256).toBe(snapshot.body.manifest_sha256); backupDb.close();
+  const collisionDb = new DatabaseSync(path.join(data, 'api.sqlite'));
+  collisionDb.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: 't33-object' }), 't33-profile'); collisionDb.close();
+  const collisionTarget = path.join(scratch, 'no-immutable-corruption');
+  expect(cli('backup.mjs', ['--data-dir', data, '--backup-dir', collisionTarget]).stderr).toMatch(/credential_in_immutable_business_data/);
+  expect(fs.existsSync(collisionTarget)).toBe(false);
+  expect((await admin.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
   const exists = path.join(scratch, 'existing'); fs.mkdirSync(exists); fs.writeFileSync(path.join(exists, 'preserve'), 'business');
   expect(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', exists]).stderr).toMatch(/restore_directory_exists/); expect(fs.readFileSync(path.join(exists, 'preserve'), 'utf8')).toBe('business');
   const corrupt = path.join(scratch, 'corrupt'); fs.cpSync(backupDir, corrupt, { recursive: true }); fs.appendFileSync(path.join(corrupt, 'api.sqlite'), 'damage');
@@ -173,6 +179,10 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   expect(cli('restore.mjs', ['--backup-dir', forgedObject, '--data-dir', path.join(scratch, 'no-forged-object')]).stderr).toMatch(/backup_object_missing_or_corrupt/);
   success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
   const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code); expect(fresh.userId).not.toBe(admin.userId);
+  const profiles = await fresh.request('GET', '/api/model-profiles');
+  expect(profiles.status).toBe(200);
+  expect(profiles.body.items).toEqual([expect.objectContaining({ profile_id: 't33-profile', availability: 'needs_configuration', verification: 'not_run' })]);
+  expect(JSON.stringify(profiles.body)).not.toMatch(/T33-secret-config-value|T33-secret-ref/);
   const oldSession = await fetch(recovered.base + '/api/session', { headers: { cookie: admin.cookie, origin: recovered.base } }); expect(oldSession.status).toBe(401);
   const oldLogin = await fetch(recovered.base + '/api/session/login', { method: 'POST', headers: { origin: recovered.base, 'content-type': 'application/json' }, body: JSON.stringify({ username: 'local-admin', password: 'T33-synthetic-new-password' }) }); expect(oldLogin.status).toBe(401);
   const readRevision = await fresh.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`); expect(readRevision.status).toBe(200); expect(readRevision.body).toEqual(revision);
