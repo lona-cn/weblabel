@@ -1,5 +1,4 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -23,6 +22,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const bootstrapReplays = new WeakMap<TestApp, () => Promise<number>>();
 const bootstrapClients = new WeakMap<TestApp, () => Promise<ApiClient>>();
 const bootstrapLogins = new WeakMap<TestApp, () => Promise<ApiClient>>();
+let builtDefaultApiBinary: string | null = null;
 
 async function freeLoopbackPort(): Promise<number> {
   const server = createServer();
@@ -89,16 +89,23 @@ function responseClient(
     },
   };
 }
-export async function start_test_app(cookieSecure: 'true' | 'false' = 'false'): Promise<TestApp> {
+export function prepare_test_api(): string {
   const configuredBinary = process.env.WEBLABEL_API_BINARY;
   const targetDirectory = resolve(repoRoot, process.env.CARGO_TARGET_DIR ?? 'target');
   const binary = configuredBinary ?? resolve(targetDirectory, 'debug', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
-  if (!configuredBinary && !existsSync(binary)) {
-    execFileSync('cargo', ['build', '--manifest-path', resolve(repoRoot, 'Cargo.toml'), '-p', 'weblabel-api', '--bin', 'weblabel-api'], {
+  if (!configuredBinary && builtDefaultApiBinary !== binary) {
+    // Build once per worker; an existing executable may predate the tested sources.
+    execFileSync('cargo', ['build', '--locked', '--manifest-path', resolve(repoRoot, 'Cargo.toml'), '--target-dir', targetDirectory, '-p', 'weblabel-api', '--bin', 'weblabel-api'], {
       cwd: repoRoot,
       stdio: 'inherit',
     });
+    builtDefaultApiBinary = binary;
   }
+  return binary;
+}
+
+export async function start_test_app(cookieSecure: 'true' | 'false' = 'false'): Promise<TestApp> {
+  const binary = prepare_test_api();
   const root = await mkdtemp(resolve(tmpdir(), 'weblabel-t10-'));
   const port = await freeLoopbackPort();
   const base_url = `http://127.0.0.1:${port}`;

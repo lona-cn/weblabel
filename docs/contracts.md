@@ -292,7 +292,8 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | PUT /api/assets/{asset_revision_id}/annotation | SaveRequest → SaveResponse | T11 |
 | GET /api/jobs/{id} | 作业状态、逐资产结果 | T17 |
 | GET /api/model-profiles | 持久配置公开能力/验证状态，不返回config/secret_ref；空库为空列表，不造默认profile | T16/T24前置 |
-| POST /api/ai/consents | {profile_id,input_fingerprint,approved_grants} → actor-bound持久consent_id；记录意图不是实际scope/外发授权，缺project policy时网络provider拒绝 | T24前置/T25实际授权 |
+| POST /api/ai/previews | {request:StartRunRequest,grants:{allow_image,allow_object_context,preview_crop}} → 服务端不可变preview、权威fingerprint、固定request/profile/grants及expires_at；不执行模型 | T25 |
+| POST /api/ai/consents | {preview_id} → 绑定实际actor/pins/profile/policy/scope的consent_id；仅记录批准，真实dispatch每次重验；旧仅fingerprint意图不再是启动凭据 | T25（取代T24前置创建契约） |
 | POST /api/ai/runs | StartRunRequest → run_id；T17实现幂等创建/状态机，T25叠加consent与外发门 | T17/T25 |
 | GET /api/ai/runs/{id}/events | after=seq → 事件分页 | T17 |
 | GET /api/ai/runs/{id}/suggestions | 候选集合 | T17 |
@@ -310,6 +311,7 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | POST /api/annotation-revisions/{id}/exports | 单个不可变版本的native/YOLO/COCO导出，format/loss_ack/operation_id | T14 |
 | GET /api/exports/{id}/download | 项目成员鉴权文件，响应头 X-WebLabel-Loss-Report 携带损失报告 | T14/T27 |
 | POST /internal/agent-tools/{tool} | run-scoped token，不接受 session cookie | T21 |
+| GET/PUT /api/projects/{id}/external-processing-policy | {allow_external_processing:boolean}；成员读、项目admin写、既有及新项目默认false；无图像的外部运行也受门控 | T25主会话 |
 
 `/api/jobs` 由 T07 临时实现通用 schema 的 media job，T17 扩展同一 job engine，不能另外做两种互不兼容的 job。T07 不提前增加模型队列逻辑。
 
@@ -346,3 +348,7 @@ Save：head=r7，op=a 基于 r7 写入 docA 得到 r8；重试 a/docA 返回 r8 
 AI：runA 绑定 assetA/r8/generation8；切到 assetB 后 runA 返回只能出现在 assetA；编辑对象使 hash 从 h1→h2，包含 before_hash=h1 的变更必须拒绝；AI 修改 bbox 的属性审校响应必须422。
 
 Review：批准 r8，保存 r9 后 r8 保留 approved，r9=pending/unsubmitted；snapshot S 固定 r8，r9 的创建不能改变 S 的导出 hash。
+
+## T25 服务端授权契约决定
+
+冻结预览、10分钟有效期、实际scope、服务端配置版本指纹与授权/job/run同事务，按[ADR 0002](adr/0002-server-owned-ai-authorization.md)实施；该决定不是实现或live支持已验收的声明。公共StartRunRequest保持原DTO，权威fingerprint由server preview返回；私有profile配置不回传浏览器。

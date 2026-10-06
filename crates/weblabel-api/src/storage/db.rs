@@ -57,6 +57,10 @@ impl Repository {
                 "0010_datasets",
                 include_str!("../../migrations/0010_datasets.sql"),
             ),
+            (
+                "0011_ai_authorization",
+                include_str!("../../migrations/0011_ai_authorization.sql"),
+            ),
         ] {
             let mut tx = begin_immediate(&pool, write_timeout).await?;
             let applied: i64 = sqlx::query_scalar(
