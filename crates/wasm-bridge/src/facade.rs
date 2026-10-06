@@ -833,6 +833,60 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn dense_single_edit_avoids_redundant_document_copies() {
+        const COUNT: usize = 2_000;
+        for gesture in [false, true] {
+            let mut session = dense_session(COUNT);
+            session.prepare_frame().unwrap();
+            let (original, snapshot_allocations) = allocations::measure(|| session.get_snapshot());
+            let id = original.objects[0].object_id.clone();
+            let geometry = BBox::new(2.0, 2.0, 5.0, 5.0);
+            let (delta, edit_allocations) = if gesture {
+                session.set_selection(vec![id.clone()]);
+                session.pointer(pointer(editor_core::PointerPhase::Down, 0.0, 0.0));
+                session.pointer(pointer(editor_core::PointerPhase::Move, 2.0, 2.0));
+                assert_eq!(session.get_generation(), 0);
+                allocations::measure(|| {
+                    session.pointer(pointer(editor_core::PointerPhase::Up, 2.0, 2.0))
+                })
+            } else {
+                allocations::measure(|| {
+                    session.dispatch(EditorCommand::ReplaceGeometry {
+                        object_id: id,
+                        geometry: geometry.clone(),
+                    })
+                })
+            };
+            assert!(delta.error.is_none());
+            assert_eq!(delta.generation, 1);
+            let mut expected = original.clone();
+            expected.objects[0].geometry = geometry;
+            assert_eq!(session.get_snapshot(), expected);
+            assert_eq!(delta.changed_objects, vec![expected.objects[0].clone()]);
+            assert!(delta.removed_object_ids.is_empty());
+            let undo = session.dispatch(EditorCommand::Undo);
+            assert_eq!(undo.generation, 2);
+            assert!(!undo.can_undo);
+            assert!(undo.can_redo);
+            assert_eq!(session.get_snapshot(), original);
+            let redo = session.dispatch(EditorCommand::Redo);
+            assert_eq!(redo.generation, 3);
+            assert_eq!(session.get_snapshot(), expected);
+            println!(
+                "dense edit gesture={gesture}: snapshot={snapshot_allocations}, edit={edit_allocations} actual allocations"
+            );
+            // Two full document copies are required by atomic staging and
+            // snapshot-based history. A third-copy-sized allowance covers
+            // validation, selection and renderer/delta bookkeeping.
+            assert!(
+                edit_allocations <= 3 * snapshot_allocations + 128,
+                "redundant full-document copies: {edit_allocations} allocations"
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn dense_batch_delete_has_linear_allocations_and_history_renders_correctly() {
         const COUNT: usize = 10_000;
         let mut session = dense_session(COUNT);
@@ -1345,10 +1399,10 @@ pub mod wasm {
         }
 
         pub fn get_snapshot(&self) -> Result<JsValue, JsValue> {
-            let snapshot = self.session.get_snapshot();
+            let snapshot = self.session.editor.document();
             self.serialized_input_objects
                 .set(self.serialized_input_objects.get() + snapshot.objects.len() as u64);
-            to_js(&snapshot)
+            to_js(snapshot)
         }
 
         /// Read-only diagnostics from the device actually used by this facade.

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use annotation_domain::{
     AnnotationDocument, AnnotationObject, DomainError, EditorCommand, EditorDelta, Id,
-    OntologyVersion,
+    OntologyVersion, SuggestionDecisionIntent,
 };
 use geometry::{css_to_image, Viewport};
 
@@ -67,8 +67,7 @@ impl Editor {
             EditorCommand::Undo => self.undo(),
             EditorCommand::Redo => self.redo(),
             other => {
-                let before = self.document.clone();
-                let mut after = before.clone();
+                let mut after = self.document.clone();
                 let suggestion_decisions = match &other {
                     EditorCommand::ApplySuggestions {
                         set,
@@ -95,29 +94,7 @@ impl Editor {
                         Vec::new()
                     }
                 };
-                if after == before {
-                    // A value-equal accept is still a decision: surface the
-                    // computed intents so the save transaction journals them
-                    // even though the document itself did not change.
-                    let mut delta = self.delta(false, false, Vec::new(), Vec::new());
-                    delta.suggestion_decisions = suggestion_decisions;
-                    return Ok(delta);
-                }
-                self.bump_generation()?;
-                self.document = after.clone();
-                self.history.push(
-                    HistoryEntry::new(before.clone(), after.clone())
-                        .with_suggestion_decisions(suggestion_decisions.clone()),
-                );
-                self.prune_transient_state();
-                let mut delta = self.delta(
-                    true,
-                    true,
-                    changed_objects(&before, &after),
-                    removed_objects(&before, &after),
-                );
-                delta.suggestion_decisions = suggestion_decisions;
-                Ok(delta)
+                self.install_document_edit(after, suggestion_decisions)
             }
         }
     }
@@ -130,6 +107,12 @@ impl Editor {
 
     pub fn snapshot(&self) -> AnnotationDocument {
         self.document.clone()
+    }
+
+    /// Borrow the validated document for read-only serialization without an
+    /// intermediate owned snapshot. `snapshot` remains the owned native API.
+    pub fn document(&self) -> &AnnotationDocument {
+        &self.document
     }
 
     /// Read-only canonical document order for native renderer projections.
@@ -328,24 +311,38 @@ impl Editor {
         &mut self,
         apply: impl FnOnce(&mut AnnotationDocument, &Selection) -> Result<(), DomainError>,
     ) -> Result<EditorDelta, DomainError> {
-        let before = self.document.clone();
-        let mut after = before.clone();
+        let mut after = self.document.clone();
         apply(&mut after, &self.selection)?;
         commands::validate_counted(&after, &self.ontology)?;
-        if after == before {
-            return Ok(self.delta(false, false, Vec::new(), Vec::new()));
+        self.install_document_edit(after, Vec::new())
+    }
+
+    /// Install a validated working document; keep the old allocation as the
+    /// history's before snapshot and clone only the retained after snapshot.
+    fn install_document_edit(
+        &mut self,
+        after: AnnotationDocument,
+        suggestion_decisions: Vec<SuggestionDecisionIntent>,
+    ) -> Result<EditorDelta, DomainError> {
+        if after == self.document {
+            // A value-equal accept still journals its decision without
+            // changing generation, history, or the installed document.
+            let mut delta = self.delta(false, false, Vec::new(), Vec::new());
+            delta.suggestion_decisions = suggestion_decisions;
+            return Ok(delta);
         }
         self.bump_generation()?;
-        self.document = after.clone();
-        self.history
-            .push(HistoryEntry::new(before.clone(), after.clone()));
+        let before = std::mem::replace(&mut self.document, after);
+        let changed = changed_objects(&before, &self.document);
+        let removed = removed_objects(&before, &self.document);
+        self.history.push(
+            HistoryEntry::new(before, self.document.clone())
+                .with_suggestion_decisions(suggestion_decisions.clone()),
+        );
         self.prune_transient_state();
-        Ok(self.delta(
-            true,
-            true,
-            changed_objects(&before, &after),
-            removed_objects(&before, &after),
-        ))
+        let mut delta = self.delta(true, true, changed, removed);
+        delta.suggestion_decisions = suggestion_decisions;
+        Ok(delta)
     }
 
     fn undo(&mut self) -> Result<EditorDelta, DomainError> {
@@ -353,19 +350,17 @@ impl Editor {
             return Ok(self.delta(false, false, Vec::new(), Vec::new()));
         }
         self.bump_generation()?;
-        let before = self.document.clone();
         let (restored, suggestion_decisions) = self
             .history
-            .undo(&before)
+            .undo(&self.document)
             .expect("undo availability was checked");
-        self.document = restored;
+        let before = std::mem::replace(&mut self.document, restored);
         self.prune_transient_state();
-        let after = self.document.clone();
         let mut delta = self.delta(
             true,
             true,
-            changed_objects(&before, &after),
-            removed_objects(&before, &after),
+            changed_objects(&before, &self.document),
+            removed_objects(&before, &self.document),
         );
         delta.suggestion_decisions = suggestion_decisions;
         Ok(delta)
@@ -375,19 +370,17 @@ impl Editor {
             return Ok(self.delta(false, false, Vec::new(), Vec::new()));
         }
         self.bump_generation()?;
-        let before = self.document.clone();
         let (restored, suggestion_decisions) = self
             .history
-            .redo(&before)
+            .redo(&self.document)
             .expect("redo availability was checked");
-        self.document = restored;
+        let before = std::mem::replace(&mut self.document, restored);
         self.prune_transient_state();
-        let after = self.document.clone();
         let mut delta = self.delta(
             true,
             true,
-            changed_objects(&before, &after),
-            removed_objects(&before, &after),
+            changed_objects(&before, &self.document),
+            removed_objects(&before, &self.document),
         );
         delta.suggestion_decisions = suggestion_decisions;
         Ok(delta)
@@ -440,10 +433,10 @@ fn changed_objects(
     before: &AnnotationDocument,
     after: &AnnotationDocument,
 ) -> Vec<AnnotationObject> {
-    let old: HashMap<Id, &AnnotationObject> = before
+    let old: HashMap<&Id, &AnnotationObject> = before
         .objects
         .iter()
-        .map(|object| (object.object_id.clone(), object))
+        .map(|object| (&object.object_id, object))
         .collect();
     after
         .objects
@@ -457,10 +450,10 @@ fn changed_objects(
 }
 
 fn removed_objects(before: &AnnotationDocument, after: &AnnotationDocument) -> Vec<Id> {
-    let after_ids: HashSet<Id> = after
+    let after_ids: HashSet<&Id> = after
         .objects
         .iter()
-        .map(|object| object.object_id.clone())
+        .map(|object| &object.object_id)
         .collect();
     before
         .objects

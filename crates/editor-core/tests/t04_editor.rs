@@ -345,3 +345,128 @@ fn duplicate_requires_distinct_unused_ids_and_is_atomic() {
     assert_eq!(editor.snapshot(), before);
     assert_eq!(editor.generation(), 0);
 }
+
+#[test]
+fn no_op_and_rejected_edits_preserve_the_redo_branch() {
+    let mut editor = editor();
+    let initial = editor.snapshot();
+    let geometry = annotation_domain::BBox::new(10.125, 20.25, 110.5, 220.75);
+    editor
+        .dispatch(EditorCommand::ReplaceGeometry {
+            object_id: person(),
+            geometry,
+        })
+        .unwrap();
+    let committed = editor.snapshot();
+    editor.dispatch(EditorCommand::Undo).unwrap();
+    let no_op = editor
+        .dispatch(EditorCommand::SetCompletion {
+            completion: initial.completion,
+        })
+        .unwrap();
+    assert!(!no_op.document_changed);
+    assert!(!no_op.can_undo);
+    assert!(no_op.can_redo);
+    assert_eq!(no_op.generation, 2);
+    assert_eq!(
+        editor
+            .dispatch(EditorCommand::ReplaceGeometry {
+                object_id: person(),
+                geometry: annotation_domain::BBox::new(0.0, 0.0, 0.0, 0.0),
+            })
+            .unwrap_err()
+            .code,
+        "INVALID_GEOMETRY"
+    );
+    assert_eq!(editor.snapshot(), initial);
+    assert_eq!(editor.generation(), 2);
+    assert!(editor.can_redo());
+    let redo = editor.dispatch(EditorCommand::Redo).unwrap();
+    assert_eq!(redo.generation, 3);
+    assert_eq!(editor.snapshot(), committed);
+}
+
+#[test]
+fn generation_exhaustion_rejects_document_installation_and_preserves_history() {
+    let baseline = editor();
+    let ontology =
+        serde_json::from_str(include_str!("../../../tests/fixtures/golden/ontology.json")).unwrap();
+    let mut editor =
+        Editor::from_snapshot(baseline.snapshot(), ontology, 9_007_199_254_740_990).unwrap();
+    editor
+        .dispatch(EditorCommand::SetCompletion {
+            completion: annotation_domain::Completion::Complete,
+        })
+        .unwrap();
+    let before = editor.snapshot();
+    for command in [
+        EditorCommand::SetCompletion {
+            completion: annotation_domain::Completion::InProgress,
+        },
+        EditorCommand::Undo,
+    ] {
+        assert_eq!(
+            editor.dispatch(command).unwrap_err().code,
+            "GENERATION_EXHAUSTED"
+        );
+        assert_eq!(editor.snapshot(), before);
+        assert_eq!(editor.generation(), 9_007_199_254_740_991);
+        assert!(editor.can_undo());
+        assert!(!editor.can_redo());
+    }
+}
+
+#[test]
+fn history_memory_budget_evicts_oldest_and_rejects_oversized_entries() {
+    for (count, retained_operations) in [(2_000, 3), (7_200, 0)] {
+        let mut document = editor().snapshot();
+        let mut ontology: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/golden/ontology.json"))
+                .unwrap();
+        ontology["labels"][0]["attributes"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "key": "note", "kind": "text", "required": false,
+                "default_value": null, "enum_values": [], "min": null, "max": null
+            }));
+        let mut template = document.objects[0].clone();
+        template
+            .attributes
+            .insert("note".to_owned(), Scalar::String("x".repeat(4_096)));
+        document.objects = (0..count)
+            .map(|index| {
+                let mut object = template.clone();
+                object.object_id = Id::from(format!("memory_{index:05}"));
+                object
+            })
+            .collect();
+        let mut editor = Editor::new(document, serde_json::from_value(ontology).unwrap()).unwrap();
+        let mut snapshots = vec![editor.snapshot()];
+        for completion in [
+            annotation_domain::Completion::Complete,
+            annotation_domain::Completion::InProgress,
+            annotation_domain::Completion::Complete,
+            annotation_domain::Completion::InProgress,
+        ] {
+            editor
+                .dispatch(EditorCommand::SetCompletion { completion })
+                .unwrap();
+            snapshots.push(editor.snapshot());
+        }
+        for step in 1..=retained_operations {
+            let undo = editor.dispatch(EditorCommand::Undo).unwrap();
+            assert!(undo.document_changed);
+            assert_eq!(editor.snapshot(), snapshots[4 - step]);
+            assert_eq!(undo.generation, 4 + step as u64);
+        }
+        assert!(!editor.can_undo());
+        let exhausted = editor.dispatch(EditorCommand::Undo).unwrap();
+        assert!(!exhausted.document_changed);
+        assert_eq!(exhausted.generation, 4 + retained_operations as u64);
+        for _ in 0..retained_operations {
+            editor.dispatch(EditorCommand::Redo).unwrap();
+        }
+        assert_eq!(editor.snapshot(), snapshots[4]);
+    }
+}
