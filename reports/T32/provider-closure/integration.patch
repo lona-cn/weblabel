@@ -1,0 +1,19 @@
+diff --git a/crates/weblabel-api/src/ai/mod.rs b/crates/weblabel-api/src/ai/mod.rs
+--- a/crates/weblabel-api/src/ai/mod.rs
++++ b/crates/weblabel-api/src/ai/mod.rs
+@@ -156,6 +156,15 @@ pub(crate) fn redact_json(value: &mut Value) {
+         Value::Object(map) => {
+             for (key, entry) in map.iter_mut() {
+                 let lower = key.to_ascii_lowercase();
++                // C4 public usage counters are not bearer tokens. Keep only
++                // exact safe numeric/null leaves; strings and other shapes
++                // retain the existing secret-key redaction below.
++                if matches!(key.as_str(), "input_tokens" | "output_tokens")
++                    && (entry.is_null()
++                        || entry.as_u64().is_some_and(|count| count <= 9_007_199_254_740_991))
++                {
++                    continue;
++                }
+                 if SECRET_KEY_FRAGMENTS
+                     .iter()
+                     .any(|fragment| lower.contains(fragment))
