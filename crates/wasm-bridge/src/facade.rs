@@ -119,6 +119,8 @@ struct ProjectionEntry {
 pub struct ProjectionCache {
     entries: Vec<ProjectionEntry>,
     indices: HashMap<Id, usize>,
+    selected_ids: Vec<Id>,
+    selection_needs_sync: bool,
 }
 
 impl ProjectionCache {
@@ -148,6 +150,7 @@ impl ProjectionCache {
                     .map(|(i, entry)| (entry.object_id.clone(), i)),
             );
             touched = true;
+            self.selection_needs_sync = true;
         }
         for object in changed {
             let bounds = bounds_of(object);
@@ -177,6 +180,7 @@ impl ProjectionCache {
                         locked: false,
                     });
                     touched = true;
+                    self.selection_needs_sync = true;
                 }
             }
         }
@@ -203,6 +207,10 @@ impl ProjectionCache {
     }
 
     pub fn set_selection(&mut self, selected: &[Id]) -> bool {
+        let selection_changed = self.selected_ids != selected;
+        if !selection_changed && !self.selection_needs_sync {
+            return false;
+        }
         let mut touched = false;
         for entry in &mut self.entries {
             let is_selected = selected.contains(&entry.object_id);
@@ -211,6 +219,13 @@ impl ProjectionCache {
                 touched = true;
             }
         }
+        if selection_changed {
+            self.selected_ids.clear();
+            self.selected_ids.extend(selected.iter().cloned());
+        }
+        // Bounds/color patches and order restoration preserve entry flags;
+        // structural changes must reify even previously unknown selected IDs.
+        self.selection_needs_sync = false;
         touched
     }
 
@@ -1179,6 +1194,180 @@ mod tests {
         assert!(up.document_changed);
         assert_eq!(up.changed_objects.len(), 1);
         assert_eq!(session.get_snapshot().objects.len(), 2);
+    }
+
+    fn assert_selected_frame(session: &mut EditorSession, selected_slots: &[usize]) {
+        let document = session.get_snapshot();
+        let expected: Vec<_> = document
+            .objects
+            .iter()
+            .enumerate()
+            .map(|(slot, object)| RenderObject {
+                bounds: bounds_of(object),
+                color: session.color_of(&object.label_id),
+                selected: selected_slots.contains(&slot),
+                locked: false,
+            })
+            .collect();
+        let (objects, overlays) = session.prepare_frame().unwrap().projection.unwrap();
+        assert_eq!(objects, expected);
+        assert!(overlays.is_empty());
+        assert!(session.prepare_frame().is_none());
+    }
+
+    #[test]
+    fn selected_render_flags_survive_edits_and_middle_history_restoration() {
+        let (mut document, mut ontology) = fixtures();
+        let template = document.objects[0].clone();
+        document.objects = (0..3)
+            .map(|i| {
+                let mut object = template.clone();
+                object.object_id = Id::from(format!("selected_{i}"));
+                object.geometry = BBox::new(i as f64 * 20.0, 10.0, i as f64 * 20.0 + 5.0, 15.0);
+                object
+            })
+            .collect();
+        let ids: Vec<_> = document
+            .objects
+            .iter()
+            .map(|o| o.object_id.clone())
+            .collect();
+        let mut alternate_label = ontology.labels[0].clone();
+        alternate_label.label_id = Id::from("alternate_label");
+        alternate_label.color = "#ff3300".to_owned();
+        ontology.labels.push(alternate_label.clone());
+        let mut session = EditorSession::new(document, ontology).unwrap();
+        session.prepare_frame().unwrap();
+
+        assert!(session
+            .set_selection(vec![ids[1].clone(), ids[2].clone()])
+            .error
+            .is_none());
+        assert_selected_frame(&mut session, &[1, 2]);
+        assert!(session
+            .dispatch(EditorCommand::ReplaceGeometry {
+                object_id: ids[1].clone(),
+                geometry: BBox::new(125.0, 25.0, 155.0, 65.0),
+            })
+            .error
+            .is_none());
+        assert_selected_frame(&mut session, &[1, 2]);
+        assert!(session
+            .dispatch(EditorCommand::SetLabel {
+                object_ids: vec![ids[1].clone()],
+                label_id: alternate_label.label_id,
+            })
+            .error
+            .is_none());
+        assert_selected_frame(&mut session, &[1, 2]);
+
+        assert!(session.set_selection(vec![ids[2].clone()]).error.is_none());
+        assert_selected_frame(&mut session, &[2]);
+        assert!(session
+            .dispatch(EditorCommand::Delete {
+                object_ids: vec![ids[1].clone()],
+            })
+            .error
+            .is_none());
+        assert_selected_frame(&mut session, &[1]);
+        assert!(session.dispatch(EditorCommand::Undo).error.is_none());
+        assert_selected_frame(&mut session, &[2]);
+        assert!(session.dispatch(EditorCommand::Redo).error.is_none());
+        assert_selected_frame(&mut session, &[1]);
+
+        let mut created = template;
+        created.object_id = Id::from("created_while_selected");
+        created.geometry = BBox::new(200.0, 100.0, 240.0, 140.0);
+        assert!(session
+            .dispatch(EditorCommand::Create { object: created })
+            .error
+            .is_none());
+        assert_selected_frame(&mut session, &[1]);
+        assert!(session
+            .set_selection(vec![ids[2].clone(), Id::from("created_while_selected")])
+            .error
+            .is_none());
+        assert_selected_frame(&mut session, &[1, 2]);
+        assert!(session
+            .dispatch(EditorCommand::Delete {
+                object_ids: vec![ids[2].clone()],
+            })
+            .error
+            .is_none());
+        assert_selected_frame(&mut session, &[1]);
+        assert!(session.dispatch(EditorCommand::Undo).error.is_none());
+        assert_selected_frame(&mut session, &[2]);
+        assert!(session.set_selection(Vec::new()).error.is_none());
+        assert_selected_frame(&mut session, &[]);
+    }
+
+    #[test]
+    fn projection_selection_reifies_unknown_ids_after_same_selection_topology_changes() {
+        let (document, _) = fixtures();
+        let first = document.objects[0].clone();
+        let mut future = first.clone();
+        future.object_id = Id::from("future_selected");
+        future.geometry = BBox::new(200.0, 100.0, 240.0, 140.0);
+        let color = [0.2, 0.4, 0.8, 1.0];
+        let selected = [
+            first.object_id.clone(),
+            future.object_id.clone(),
+            first.object_id.clone(),
+        ];
+        let mut projection = ProjectionCache::default();
+        assert!(!projection.set_selection(&selected));
+        assert!(projection.render_objects().is_empty());
+
+        projection.apply_delta(std::slice::from_ref(&first), &[], |_| color);
+        assert!(projection.set_selection(&selected));
+        let first_render = RenderObject {
+            bounds: bounds_of(&first),
+            color,
+            selected: true,
+            locked: false,
+        };
+        assert_eq!(projection.render_objects(), vec![first_render]);
+        assert!(!projection.set_selection(&selected));
+        projection.apply_delta(std::slice::from_ref(&future), &[], |_| color);
+        assert!(projection.set_selection(&selected));
+        let future_render = RenderObject {
+            bounds: bounds_of(&future),
+            color,
+            selected: true,
+            locked: false,
+        };
+        assert_eq!(
+            projection.render_objects(),
+            vec![first_render, future_render]
+        );
+
+        projection.apply_delta(&[], std::slice::from_ref(&first.object_id), |_| color);
+        assert!(!projection.set_selection(&selected));
+        assert_eq!(projection.render_objects(), vec![future_render]);
+        projection.apply_delta(std::slice::from_ref(&first), &[], |_| color);
+        assert!(projection.set_selection(&selected));
+        projection.restore_order(&[first, future]);
+        assert!(!projection.set_selection(&selected));
+        assert_eq!(
+            projection.render_objects(),
+            vec![first_render, future_render]
+        );
+
+        assert!(projection.set_selection(&[]));
+        assert_eq!(
+            projection.render_objects(),
+            vec![
+                RenderObject {
+                    selected: false,
+                    ..first_render
+                },
+                RenderObject {
+                    selected: false,
+                    ..future_render
+                },
+            ]
+        );
+        assert!(!projection.set_selection(&[]));
     }
 
     #[test]

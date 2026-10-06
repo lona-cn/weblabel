@@ -1,5 +1,5 @@
 use annotation_domain::{AnnotationDocument, EditorCommand, Id, Scalar};
-use editor_core::{Editor, PointerInput, PointerPhase, Tool};
+use editor_core::{Editor, LocalFlags, PointerInput, PointerPhase, Tool};
 
 fn editor() -> Editor {
     let document: AnnotationDocument =
@@ -297,6 +297,83 @@ fn hidden_locked_and_selection_state_never_enters_snapshot() {
     assert!(serialized["objects"][0].get("hidden").is_none());
     assert!(serialized["objects"][0].get("locked").is_none());
     assert_eq!(editor.generation(), 0);
+}
+
+#[test]
+fn deleting_an_unselected_flagged_object_prunes_only_its_session_flags() {
+    let mut editor = editor();
+    let survivor_id = Id::from("object_person_002");
+    let mut survivor = editor.snapshot().objects[0].clone();
+    survivor.object_id = survivor_id.clone();
+    editor
+        .dispatch(EditorCommand::Create { object: survivor })
+        .unwrap();
+    editor
+        .set_local_flags(&[person()], Some(true), None)
+        .unwrap();
+    editor
+        .set_local_flags(std::slice::from_ref(&survivor_id), Some(true), Some(true))
+        .unwrap();
+    let survivor_flags = editor.local_flags(&survivor_id);
+    let before = editor.snapshot();
+
+    let deleted = editor
+        .dispatch(EditorCommand::Delete {
+            object_ids: vec![person()],
+        })
+        .unwrap();
+    assert!(deleted.selected_object_ids.is_empty());
+    assert_eq!(deleted.removed_object_ids, vec![person()]);
+    assert_eq!(editor.local_flags(&person()), LocalFlags::default());
+    assert_eq!(editor.local_flags(&survivor_id), survivor_flags);
+
+    let undo = editor.dispatch(EditorCommand::Undo).unwrap();
+    assert_eq!(editor.snapshot(), before);
+    assert!(undo.selected_object_ids.is_empty());
+    assert_eq!(editor.local_flags(&person()), LocalFlags::default());
+    assert_eq!(editor.local_flags(&survivor_id), survivor_flags);
+    assert_eq!(undo.generation, 3);
+}
+
+#[test]
+fn multi_object_deltas_keep_canonical_order_through_edit_undo_and_redo() {
+    let mut editor = editor();
+    let second = Id::from("object_person_002");
+    let third = Id::from("object_person_003");
+    for id in [second.clone(), third.clone()] {
+        editor
+            .dispatch(EditorCommand::Duplicate {
+                object_ids: vec![person()],
+                new_ids: vec![id],
+            })
+            .unwrap();
+    }
+    let before = editor.snapshot();
+    let values = [(
+        "helmet_state".to_owned(),
+        Scalar::String("wearing".to_owned()),
+    )]
+    .into_iter()
+    .collect();
+    let edited = editor
+        .dispatch(EditorCommand::SetAttributes {
+            object_ids: vec![third, second, person()],
+            values,
+        })
+        .unwrap();
+    let after = editor.snapshot();
+    assert_eq!(edited.changed_objects, after.objects);
+    assert!(edited.removed_object_ids.is_empty());
+
+    let undo = editor.dispatch(EditorCommand::Undo).unwrap();
+    assert_eq!(undo.changed_objects, before.objects);
+    assert!(undo.removed_object_ids.is_empty());
+    assert_eq!(editor.snapshot(), before);
+
+    let redo = editor.dispatch(EditorCommand::Redo).unwrap();
+    assert_eq!(redo.changed_objects, after.objects);
+    assert!(redo.removed_object_ids.is_empty());
+    assert_eq!(editor.snapshot(), after);
 }
 
 #[test]

@@ -183,11 +183,11 @@ impl Editor {
     }
 
     pub fn set_selection(&mut self, ids: Vec<Id>) -> Result<EditorDelta, DomainError> {
-        let existing: HashSet<_> = self
+        let existing: HashSet<&Id> = self
             .document
             .objects
             .iter()
-            .map(|object| object.object_id.clone())
+            .map(|object| &object.object_id)
             .collect();
         if ids.iter().any(|id| !existing.contains(id)) {
             return Err(DomainError::new(
@@ -211,11 +211,11 @@ impl Editor {
         hidden: Option<bool>,
         locked: Option<bool>,
     ) -> Result<EditorDelta, DomainError> {
-        let existing: HashSet<_> = self
+        let existing: HashSet<&Id> = self
             .document
             .objects
             .iter()
-            .map(|object| object.object_id.clone())
+            .map(|object| &object.object_id)
             .collect();
         if ids.iter().any(|id| !existing.contains(id)) {
             return Err(DomainError::new(
@@ -333,8 +333,7 @@ impl Editor {
         }
         self.bump_generation()?;
         let before = std::mem::replace(&mut self.document, after);
-        let changed = changed_objects(&before, &self.document);
-        let removed = removed_objects(&before, &self.document);
+        let (changed, removed) = object_changes(&before, &self.document);
         self.history.push(
             HistoryEntry::new(before, self.document.clone())
                 .with_suggestion_decisions(suggestion_decisions.clone()),
@@ -356,12 +355,8 @@ impl Editor {
             .expect("undo availability was checked");
         let before = std::mem::replace(&mut self.document, restored);
         self.prune_transient_state();
-        let mut delta = self.delta(
-            true,
-            true,
-            changed_objects(&before, &self.document),
-            removed_objects(&before, &self.document),
-        );
+        let (changed, removed) = object_changes(&before, &self.document);
+        let mut delta = self.delta(true, true, changed, removed);
         delta.suggestion_decisions = suggestion_decisions;
         Ok(delta)
     }
@@ -376,12 +371,8 @@ impl Editor {
             .expect("redo availability was checked");
         let before = std::mem::replace(&mut self.document, restored);
         self.prune_transient_state();
-        let mut delta = self.delta(
-            true,
-            true,
-            changed_objects(&before, &self.document),
-            removed_objects(&before, &self.document),
-        );
+        let (changed, removed) = object_changes(&before, &self.document);
+        let mut delta = self.delta(true, true, changed, removed);
         delta.suggestion_decisions = suggestion_decisions;
         Ok(delta)
     }
@@ -419,26 +410,37 @@ impl Editor {
     }
 
     fn prune_transient_state(&mut self) {
-        let ids: HashSet<_> = self
-            .document
-            .objects
-            .iter()
-            .map(|object| object.object_id.clone())
-            .collect();
-        self.selection.retain_document_ids(&ids);
+        self.selection
+            .retain_document_objects(&self.document.objects);
     }
 }
 
-fn changed_objects(
+fn object_changes(
     before: &AnnotationDocument,
     after: &AnnotationDocument,
-) -> Vec<AnnotationObject> {
+) -> (Vec<AnnotationObject>, Vec<Id>) {
+    if before.objects.len() == after.objects.len()
+        && before
+            .objects
+            .iter()
+            .zip(&after.objects)
+            .all(|(previous, current)| previous.object_id == current.object_id)
+    {
+        let changed = before
+            .objects
+            .iter()
+            .zip(&after.objects)
+            .filter(|(previous, current)| previous != current)
+            .map(|(_, current)| current.clone())
+            .collect();
+        return (changed, Vec::new());
+    }
     let old: HashMap<&Id, &AnnotationObject> = before
         .objects
         .iter()
         .map(|object| (&object.object_id, object))
         .collect();
-    after
+    let changed = after
         .objects
         .iter()
         .filter(|object| {
@@ -446,19 +448,17 @@ fn changed_objects(
                 .map_or(true, |previous| **previous != **object)
         })
         .cloned()
-        .collect()
-}
-
-fn removed_objects(before: &AnnotationDocument, after: &AnnotationDocument) -> Vec<Id> {
+        .collect();
     let after_ids: HashSet<&Id> = after
         .objects
         .iter()
         .map(|object| &object.object_id)
         .collect();
-    before
+    let removed = before
         .objects
         .iter()
         .filter(|object| !after_ids.contains(&object.object_id))
         .map(|object| object.object_id.clone())
-        .collect()
+        .collect();
+    (changed, removed)
 }

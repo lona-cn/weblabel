@@ -133,6 +133,8 @@ T00 创建 workspace 必需的 package/crate 空壳和脚本，不创建几十�
 Renderer 用批量实例矩形、缓存 image texture、增量更新、按需重绘。预览与正式对象分层。画布标签只显示选中/悬停及视口前 100 个对象，其余通过 DOM 虚拟列表查看，不能生成万级 DOM 标签。CPU 空间索引 + 明确排序实现重叠循环选择，不做同步 GPU 回读命中。
 WASM Renderer 的 `update_viewport` 专供 pan/zoom/resize，仅更新 uniform；`update_objects` 只接收 objects/overlays projection，并将连续差异写入 instance buffer；`update_scene` 用于完整 scene/image 替换，不应被普通 pointermove 调用。
 
+Rust Core 的 dispatch/Undo/Redo 共用对象差异 producer：只有对象数量与每个位置的 ID 顺序均相等时，才逐对象做完整领域值比较并按 canonical 顺序输出 replacements；成员/顺序变化保留通用按 ID 的比较与移除路径。全部文档 validation、前后 snapshot history 和预算不因快速路径减少。临时 selection 与 flags 都为空才免建 membership 集合，否则以借用的当前 ID 过滤两者；临时状态不进入文档。Native projection 缓存实际选中 ID 列表，只有列表相同且 entry topology 未变化才免重复同步；插入/移除 entry 必须失效，bounds/color 更新与整 entry 排序保留 flags。该缓存不把 canonical 文档位置当作紧凑 GPU instance slot。
+
 无 WebGPU 显示诊断和导出/查看列表入口，不静默换 Canvas2D 并宣称完成 wgpu；WebGL 降级不在 v0.1。设备丢失时保留 CPU 文档、本地保存与错误状态，重建资源成功才恢复编辑；零尺寸 Canvas 暂停 configure/render。
 
 ## 8. 媒体与资源预算

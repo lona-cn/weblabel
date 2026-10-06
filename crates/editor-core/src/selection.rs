@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use annotation_domain::Id;
+use annotation_domain::{AnnotationObject, Id};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LocalFlags {
@@ -43,7 +43,11 @@ impl Selection {
         }
     }
 
-    pub(crate) fn retain_document_ids(&mut self, ids: &HashSet<Id>) {
+    pub(crate) fn retain_document_objects(&mut self, objects: &[AnnotationObject]) {
+        if self.selected.is_empty() && self.flags.is_empty() {
+            return;
+        }
+        let ids: HashSet<&Id> = objects.iter().map(|object| &object.object_id).collect();
         self.selected.retain(|id| ids.contains(id));
         self.flags.retain(|id, _| ids.contains(id));
     }
