@@ -13,3 +13,6 @@ __pycache__/
 .pytest_cache/
 /services/detector/.venv/
 *.egg-info/
+# Owned disposable Chromium profiles; raw measurements/screenshots remain tracked.
+/reports/T31/runs/*/runtime/
+/reports/T31/pixels/*/runtime/
