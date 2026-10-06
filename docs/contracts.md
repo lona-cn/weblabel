@@ -291,8 +291,8 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | GET /api/annotation-revisions/{id} | 鉴权不可变历史版本，审核使用 | T11 |
 | PUT /api/assets/{asset_revision_id}/annotation | SaveRequest → SaveResponse | T11 |
 | GET /api/jobs/{id} | 作业状态、逐资产结果 | T17 |
-| GET /api/model-profiles | 配置/能力/验证状态，不返回密钥 | T16 |
-| POST /api/ai/consents | {profile_id,input_fingerprint,approved_grants} → consent_id | T25 |
+| GET /api/model-profiles | 持久配置公开能力/验证状态，不返回config/secret_ref；空库为空列表，不造默认profile | T16/T24前置 |
+| POST /api/ai/consents | {profile_id,input_fingerprint,approved_grants} → actor-bound持久consent_id；记录意图不是实际scope/外发授权，缺project policy时网络provider拒绝 | T24前置/T25实际授权 |
 | POST /api/ai/runs | StartRunRequest → run_id；T17实现幂等创建/状态机，T25叠加consent与外发门 | T17/T25 |
 | GET /api/ai/runs/{id}/events | after=seq → 事件分页 | T17 |
 | GET /api/ai/runs/{id}/suggestions | 候选集合 | T17 |

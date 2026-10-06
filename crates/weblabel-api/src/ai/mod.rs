@@ -2,8 +2,10 @@
 //! and the monotonic run event stream.
 
 pub mod acceptance;
+pub mod consent;
 pub mod events;
 pub mod predictions;
+pub mod profiles;
 pub mod runs;
 pub mod suggestions;
 
@@ -46,6 +48,8 @@ pub fn router(
         run_tokens,
     };
     let mut app = Router::new()
+        .route("/api/model-profiles", get(profiles::list))
+        .route("/api/ai/consents", post(consent::create))
         .route("/api/ai/runs", post(runs::create))
         .route("/api/ai/runs/{run_id}/cancel", post(runs::cancel_route))
         .route("/api/ai/runs/{run_id}/events", get(events::list))

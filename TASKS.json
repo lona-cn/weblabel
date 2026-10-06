@@ -876,7 +876,8 @@
         "T19"
       ],
       "locks": [
-        "web-ai"
+        "web-ai",
+        "consent"
       ],
       "files": [
         "apps/web/src/features/ai/{Panel,ProviderPicker,Consent,RunProgress,CandidateList,DiffView}.tsx",
@@ -891,6 +892,8 @@
         "apps/web/src/lib/persistence/{save-queue,t13_queue.test}.ts",
         "crates/editor-core/src/editor.rs",
         "crates/wasm-bridge/src/facade.rs",
+        "crates/weblabel-api/src/ai/{mod,profiles,consent}.rs",
+        "crates/weblabel-api/tests/t24_ai_prerequisites.rs",
         "tests/e2e/{t09_canvas,t12_tools}.spec.ts",
         "tests/e2e/t24_acceptance.spec.ts",
         "playwright.t24.config.ts"
@@ -910,6 +913,9 @@
           "--config",
           "playwright.t24.config.ts",
           "--project=chromium-webgpu"
+        ],
+        [
+          "cargo", "test", "-p", "weblabel-api", "--test", "t24_ai_prerequisites", "--locked"
         ]
       ],
       "external_gate": false,
@@ -932,7 +938,7 @@
         "consent"
       ],
       "files": [
-        "apps/api/src/ai/{consent,orchestrator,acceptance}.rs",
+        "crates/weblabel-api/src/ai/{consent,orchestrator,acceptance}.rs",
         "apps/web/src/features/ai/runCoordinator.ts",
         "tests/integration/t25_ai.test.ts",
         "tests/e2e/t25_ai.spec.ts",
