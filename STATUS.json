@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "aaeaefa56cfb6e707e4174e9a4d58e410ccc041d",
-  "last_updated_at": "2026-10-06T03:30:43.455Z",
+  "application_commit": "c569fef4f88526aa49297255941b69d16e0cedd5",
+  "last_updated_at": "2026-10-06T06:49:01.246Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -297,10 +297,21 @@
       "blockers": []
     },
     "T25": {
-      "status": "running",
-      "base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
-      "integrated_commit": null,
-      "evidence": [],
+      "status": "done",
+      "base_commit": "985402f9296084059d22706e79c2bc8af1d555d6",
+      "integrated_commit": "c569fef4f88526aa49297255941b69d16e0cedd5",
+      "evidence": [
+        "reports/T25/result.json",
+        "reports/T25/tests.log",
+        "reports/T25/review.md",
+        "reports/T25/independent-final-repair-review.json",
+        "reports/T25/main-canonical-registered-g2-green.log",
+        "reports/T25/main-canonical-http-revisions.json",
+        "reports/T25/main-final-authorization-runtime-green.log",
+        "reports/T25/main-adminrace-authorization-runtime-green.log",
+        "reports/T25/main-final-node-and-contract-green.log",
+        "reports/T25/integration-notes.md"
+      ],
       "blockers": []
     },
     "T26": {
@@ -327,7 +338,7 @@
       "blockers": []
     },
     "T28": {
-      "status": "review",
+      "status": "running",
       "base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
       "integrated_commit": null,
       "evidence": [
@@ -336,7 +347,7 @@
         "reports/T28/review.md"
       ],
       "blockers": [
-        "Renderer wiring, test-only dense browser harness, budget enforcement, profile, and gate remain incomplete; see reports/T28/integration.patch."
+        "Isolated dense renderer/bridge/performance implementation active; final actual ObjectList hide/lock local flag path and Root assembly/review remain before done. Historical integration.patch is not the current recipe."
       ]
     },
     "T29": {

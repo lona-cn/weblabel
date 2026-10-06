@@ -1,0 +1,11 @@
+diff --git a/crates/weblabel-api/src/ai/mod.rs b/crates/weblabel-api/src/ai/mod.rs
+--- a/crates/weblabel-api/src/ai/mod.rs
++++ b/crates/weblabel-api/src/ai/mod.rs
+@@ -50,6 +50,7 @@
+     };
+     let mut app = Router::new()
+         .route("/api/model-profiles", get(profiles::list))
++        .route("/api/ai/previews", post(consent::preview))
+         .route("/api/ai/consents", post(consent::create))
+         .route("/api/ai/runs", post(runs::create))
+         .route("/api/ai/runs/{run_id}/cancel", post(runs::cancel_route))

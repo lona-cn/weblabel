@@ -1,0 +1,17 @@
+diff --git a/crates/weblabel-api/src/ai/mod.rs b/crates/weblabel-api/src/ai/mod.rs
+--- a/crates/weblabel-api/src/ai/mod.rs
++++ b/crates/weblabel-api/src/ai/mod.rs
+@@ -6,3 +6,4 @@
+ pub mod events;
++pub mod orchestrator;
+ pub mod predictions;
+ pub mod profiles;
+@@ -51,6 +52,7 @@
+         .route("/api/model-profiles", get(profiles::list))
+         .route("/api/ai/consents", post(consent::create))
+-        .route("/api/ai/runs", post(runs::create))
++        .route("/api/ai/runs", post(orchestrator::start))
++        .route("/api/ai/suggestions/{suggestion_set_id}/decision", post(acceptance::decision_route))
+         .route("/api/ai/runs/{run_id}/cancel", post(runs::cancel_route))
+         .route("/api/ai/runs/{run_id}/events", get(events::list))
+         .route("/api/ai/runs/{run_id}/suggestions", get(suggestions::list))

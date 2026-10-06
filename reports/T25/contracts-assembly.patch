@@ -1,0 +1,50 @@
+diff --git a/crates/annotation-domain/src/lib.rs b/crates/annotation-domain/src/lib.rs
+index be7d3957..d6b3b54c 100644
+--- a/crates/annotation-domain/src/lib.rs
++++ b/crates/annotation-domain/src/lib.rs
+@@ -1,5 +1,7 @@
+ //! Shared, validated wire model for annotation documents and candidate runs.
+ 
++pub mod ai_authorization;
++pub use ai_authorization::{AiApprovedGrants, AiPreviewRequest, AiPreviewResponse, AiConsentRequest, AiConsentResponse, ExternalProcessingPolicy};
+ pub mod document;
+ pub mod geometry;
+ pub mod hash;
+diff --git a/crates/xtask/src/contracts.rs b/crates/xtask/src/contracts.rs
+index c84dd4bb..633ed79a 100644
+--- a/crates/xtask/src/contracts.rs
++++ b/crates/xtask/src/contracts.rs
+@@ -5,6 +5,7 @@ use annotation_domain::{
+     ModelProfile, OntologyVersion, RunEvent, SaveRequest, SaveResponse, StartRunRequest,
+     SuggestionSet,
+ };
++use annotation_domain::{AiApprovedGrants, AiPreviewRequest, AiPreviewResponse, AiConsentRequest, AiConsentResponse, ExternalProcessingPolicy};
+ use schemars::JsonSchema;
+ use serde::Serialize;
+ use ts_rs::TS;
+@@ -37,6 +38,12 @@ pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
+     RunEvent::export_all_to(output)?;
+     EditorCommand::export_all_to(output)?;
+     EditorDelta::export_all_to(output)?;
++    AiApprovedGrants::export_all_to(output)?;
++    AiPreviewRequest::export_all_to(output)?;
++    AiPreviewResponse::export_all_to(output)?;
++    AiConsentRequest::export_all_to(output)?;
++    AiConsentResponse::export_all_to(output)?;
++    ExternalProcessingPolicy::export_all_to(output)?;
+ 
+     write_schema::<AnnotationDocument>(output, "annotation_document.schema.json")?;
+     write_schema::<OntologyVersion>(output, "ontology_version.schema.json")?;
+@@ -51,6 +58,12 @@ pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
+     write_schema::<RunEvent>(output, "run_event.schema.json")?;
+     write_schema::<EditorCommand>(output, "editor_command.schema.json")?;
+     write_schema::<EditorDelta>(output, "editor_delta.schema.json")?;
++    write_schema::<AiApprovedGrants>(output, "ai_approved_grants.schema.json")?;
++    write_schema::<AiPreviewRequest>(output, "ai_preview_request.schema.json")?;
++    write_schema::<AiPreviewResponse>(output, "ai_preview_response.schema.json")?;
++    write_schema::<AiConsentRequest>(output, "ai_consent_request.schema.json")?;
++    write_schema::<AiConsentResponse>(output, "ai_consent_response.schema.json")?;
++    write_schema::<ExternalProcessingPolicy>(output, "external_processing_policy.schema.json")?;
+     Ok(())
+ }
+ 

@@ -1,0 +1,29 @@
+diff --git a/crates/weblabel-api/src/projects/mod.rs b/crates/weblabel-api/src/projects/mod.rs
+index 7786740c..d153fe0e 100644
+--- a/crates/weblabel-api/src/projects/mod.rs
++++ b/crates/weblabel-api/src/projects/mod.rs
+@@ -172,9 +172,21 @@ async fn add_member(
+             )
+         }
+     }
+-    match sqlx::query("INSERT INTO memberships(project_id,user_id,role) VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role")
+-        .bind(&project_id).bind(user_id).bind(role.as_str()).execute(&state.pool).await {
+-        Ok(_) => (StatusCode::OK, Json(json!({"project_id": project_id, "user_id": user_id, "role": role.as_str()}))).into_response(),
++    let result = async {
++        let mut tx = state.pool.begin().await?;
++        sqlx::query("INSERT INTO memberships(project_id,user_id,role) VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role")
++            .bind(&project_id).bind(user_id).bind(role.as_str()).execute(&mut *tx).await?;
++        // START and runtime tools require can_write. A silent provider may never
++        // call a tool again, so notify the existing cancellation watcher in the
++        // same transaction that removes its actor's run permission.
++        if !role.can_write() {
++            sqlx::query("UPDATE model_runs SET cancel_requested=1 WHERE project_id=? AND actor_id=? AND state IN ('queued','running')")
++                .bind(&project_id).bind(user_id).execute(&mut *tx).await?;
++        }
++        tx.commit().await
++    }.await;
++    match result {
++        Ok(()) => (StatusCode::OK, Json(json!({"project_id": project_id, "user_id": user_id, "role": role.as_str()}))).into_response(),
+         Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "MEMBERSHIP_FAILED", "Could not update membership"),
+     }
+ }

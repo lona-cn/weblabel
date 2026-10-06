@@ -1,0 +1,529 @@
+diff --git a/crates/weblabel-api/src/ai/runs.rs b/crates/weblabel-api/src/ai/runs.rs
+index 8003dc13..3a606ac5 100644
+--- a/crates/weblabel-api/src/ai/runs.rs
++++ b/crates/weblabel-api/src/ai/runs.rs
+@@ -372,6 +372,83 @@ pub async fn create_batch(
+             "Could not start the model run transaction",
+         )
+     })?;
++    // A successful START is a durable receipt, not a fresh capability request.
++    // Compare against the pinned profile used by that START before revalidating
++    // mutable inputs or the preview window. Visibility still applies today.
++    if let Some(existing) = find_idempotency_on(tx.connection(), actor_id, operation_id)
++        .await
++        .map_err(|_| {
++            storage_failure("RUN_CREATE_FAILED", "Could not read the idempotency record")
++        })?
++    {
++        let stored: Value = serde_json::from_str(&existing.response_json).map_err(|_| {
++            storage_failure(
++                "IDEMPOTENCY_RECORD_CORRUPT",
++                "Stored idempotency response is invalid",
++            )
++        })?;
++        let summaries: Vec<RunSummary> =
++            serde_json::from_value(stored["runs"].clone()).map_err(|_| {
++                storage_failure(
++                    "IDEMPOTENCY_RECORD_CORRUPT",
++                    "Stored idempotency response is invalid",
++                )
++            })?;
++        let conflict = || {
++            RunFailure::new(
++                StatusCode::CONFLICT,
++                "IDEMPOTENCY_KEY_REUSE",
++                "operation_id was reused with a different run request",
++            )
++        };
++        if summaries.len() != requests.len() {
++            return Err(conflict());
++        }
++        let mut combined = String::new();
++        for (summary, request) in summaries.iter().zip(&requests) {
++            let record = load_record(tx.connection(), &summary.run_id)
++                .await
++                .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not look up model run"))?
++                .ok_or_else(|| {
++                    storage_failure("IDEMPOTENCY_RECORD_CORRUPT", "Stored model run is missing")
++                })?;
++            if record.actor_id != actor_id || record.operation_id != operation_id {
++                return Err(storage_failure(
++                    "IDEMPOTENCY_RECORD_CORRUPT",
++                    "Stored model run identity is invalid",
++                ));
++            }
++            if member_role(tx.connection(), &record.project_id, actor_id)
++                .await
++                .map_err(|_| storage_failure("RUN_LOOKUP_FAILED", "Could not authorize model run"))?
++                .is_none()
++            {
++                return Err(RunFailure::new(
++                    StatusCode::NOT_FOUND,
++                    "RUN_NOT_FOUND",
++                    "Model run not found",
++                ));
++            }
++            let snapshot: ModelProfile = serde_json::from_str(&record.profile_snapshot_json)
++                .map_err(|_| {
++                    storage_failure("IDEMPOTENCY_RECORD_CORRUPT", "Stored profile is invalid")
++                })?;
++            combined.push_str(&hash_request(&snapshot, request).map_err(|_| {
++                RunFailure::new(
++                    StatusCode::UNPROCESSABLE_ENTITY,
++                    "INVALID_RUN_REQUEST",
++                    "run request cannot be serialized",
++                )
++            })?);
++        }
++        if existing.request_hash != sha256_hex(combined.as_bytes()) {
++            return Err(conflict());
++        }
++        return Ok(CreateOutcome {
++            runs: summaries,
++            idempotent_replay: true,
++        });
++    }
+     let mut project_id: Option<String> = None;
+     let mut validated = Vec::with_capacity(requests.len());
+     let mut profile_cache: BTreeMap<String, ModelProfile> = BTreeMap::new();
+@@ -481,14 +558,6 @@ pub async fn create_batch(
+         sha256_hex(combined.as_bytes())
+     };
+ 
+-    if let Some(existing) = find_idempotency_on(tx.connection(), actor_id, operation_id)
+-        .await
+-        .map_err(|_| {
+-            storage_failure("RUN_CREATE_FAILED", "Could not read the idempotency record")
+-        })?
+-    {
+-        return replay_or_conflict(existing, batch_hash);
+-    }
+     let run_ids: Vec<&str> = validated.iter().map(|item| item.run_id.as_str()).collect();
+     let enqueued = JobQueue::enqueue_on(
+         tx.connection(),
+@@ -644,46 +713,6 @@ async fn find_idempotency_on(
+     .transpose()
+ }
+ 
+-fn replay_or_conflict(
+-    existing: ExistingOperation,
+-    batch_hash: String,
+-) -> Result<CreateOutcome, RunFailure> {
+-    if existing.request_hash != batch_hash {
+-        return Err(RunFailure::new(
+-            StatusCode::CONFLICT,
+-            "IDEMPOTENCY_KEY_REUSE",
+-            "operation_id was reused with a different run request",
+-        ));
+-    }
+-    let stored: Value = serde_json::from_str(&existing.response_json).map_err(|_| {
+-        storage_failure(
+-            "IDEMPOTENCY_RECORD_CORRUPT",
+-            "Stored idempotency response is invalid",
+-        )
+-    })?;
+-    let runs = stored["runs"]
+-        .as_array()
+-        .ok_or_else(|| {
+-            storage_failure(
+-                "IDEMPOTENCY_RECORD_CORRUPT",
+-                "Stored idempotency response is invalid",
+-            )
+-        })?
+-        .iter()
+-        .map(|value| serde_json::from_value(value.clone()))
+-        .collect::<Result<Vec<RunSummary>, _>>()
+-        .map_err(|_| {
+-            storage_failure(
+-                "IDEMPOTENCY_RECORD_CORRUPT",
+-                "Stored idempotency response is invalid",
+-            )
+-        })?;
+-    Ok(CreateOutcome {
+-        runs,
+-        idempotent_replay: true,
+-    })
+-}
+-
+ fn hash_request(
+     snapshot: &ModelProfile,
+     request: &StartRunRequest,
+diff --git a/crates/weblabel-api/src/ai/predictions.rs b/crates/weblabel-api/src/ai/predictions.rs
+index 6e18c1f6..393f4906 100644
+--- a/crates/weblabel-api/src/ai/predictions.rs
++++ b/crates/weblabel-api/src/ai/predictions.rs
+@@ -118,6 +118,16 @@ pub async fn record_candidate(
+         });
+     }
+     for issue in &envelope.issues {
++        if let Some(region) = &issue.region {
++            if let Err(error) =
++                annotation_domain::validate_bbox(region, target.width, target.height)
++            {
++                return Ok(CandidateOutcome::Rejected {
++                    code: "INVALID_GEOMETRY",
++                    message: error.message.to_owned(),
++                });
++            }
++        }
+         if issue.message.chars().count() > 4096 || issue.code.chars().count() > 128 {
+             return Ok(CandidateOutcome::Rejected {
+                 code: "INVALID_CANDIDATE",
+diff --git a/crates/weblabel-api/tests/t25_authorization.rs b/crates/weblabel-api/tests/t25_authorization.rs
+index 9d21536a..dea4fa7d 100644
+--- a/crates/weblabel-api/tests/t25_authorization.rs
++++ b/crates/weblabel-api/tests/t25_authorization.rs
+@@ -438,7 +438,7 @@ async fn changed_request_and_legacy_row_cannot_enqueue_and_valid_replay_is_atomi
+     other["context"]["draft_generation"] = json!(1);
+     assert_eq!(
+         f.start(&cookie, &csrf, &other).await.0,
+-        StatusCode::FORBIDDEN
++        StatusCode::CONFLICT
+     );
+     // Existing T24 intent data remains stored but is not a capability.
+     let mut tx = f.state.repository.begin_write().await.unwrap();
+@@ -448,7 +448,7 @@ async fn changed_request_and_legacy_row_cannot_enqueue_and_valid_replay_is_atomi
+     other["consent_id"] = json!("legacy");
+     assert_eq!(
+         f.start(&cookie, &csrf, &other).await.0,
+-        StatusCode::FORBIDDEN
++        StatusCode::CONFLICT
+     );
+     assert_eq!(f.counts().await, (1, 1, 1));
+ }
+@@ -643,6 +643,8 @@ async fn another_authorized_project_member_cannot_confirm_or_use_the_original_ac
+         .scope(&actor, &cookie, &csrf, "openai_api", true, false)
+         .await;
+     let (request, preview) = f.authorized(&cookie, &csrf, &scope, no_grants()).await;
++    let (status, original_run) = f.start(&cookie, &csrf, &request).await;
++    assert_eq!(status, StatusCode::ACCEPTED, "{original_run}");
+     let (status, user, _) = send(
+         &f.app,
+         "POST",
+@@ -696,7 +698,7 @@ async fn another_authorized_project_member_cannot_confirm_or_use_the_original_ac
+         StatusCode::FORBIDDEN
+     );
+     assert_eq!(f.count_consents().await, 1);
+-    assert_eq!(f.counts().await, (0, 0, 0));
++    assert_eq!(f.counts().await, (1, 1, 1));
+ }
+ 
+ #[tokio::test]
+@@ -780,3 +782,117 @@ async fn public_contract_rejects_implicit_full_image_and_malformed_authorization
+             .allow_external_processing
+     );
+ }
++
++#[tokio::test]
++async fn successful_start_replay_survives_expired_preview_and_changed_pins_without_execution_authority(
++) {
++    let f = Fixture::new().await;
++    let (cookie, csrf, actor) = f.login().await;
++    let scope = f
++        .scope(&actor, &cookie, &csrf, "openai_api", true, false)
++        .await;
++    let (request, _) = f.authorized(&cookie, &csrf, &scope, no_grants()).await;
++    let (status, created) = f.start(&cookie, &csrf, &request).await;
++    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
++    let mut tx = f.state.repository.begin_write().await.unwrap();
++    sqlx::query("INSERT OR REPLACE INTO ai_run_previews SELECT preview_id,actor_id,project_id,profile_id,input_fingerprint,request_json,profile_configuration_hash,grants_json,created_at,'2000-01-01T00:00:00Z' FROM ai_run_previews").execute(tx.connection()).await.unwrap();
++    tx.commit().await.unwrap();
++    let (status, replay) = f.start(&cookie, &csrf, &request).await;
++    assert_eq!(status, StatusCode::ACCEPTED, "{replay}");
++    assert_eq!(replay["run_id"], created["run_id"]);
++    f.sql(r#"UPDATE model_profiles SET config_json='{"changed":true}'"#)
++        .await;
++    let (status, replay) = f.start(&cookie, &csrf, &request).await;
++    assert_eq!(status, StatusCode::ACCEPTED, "{replay}");
++    assert_eq!(replay["run_id"], created["run_id"]);
++    let mut mismatch = request.clone();
++    mismatch["prompt"] = json!("different payload");
++    assert_eq!(
++        f.start(&cookie, &csrf, &mismatch).await.0,
++        StatusCode::CONFLICT
++    );
++    let mut fresh = request.clone();
++    fresh["operation_id"] = json!("fresh-operation");
++    assert!(!f.start(&cookie, &csrf, &fresh).await.0.is_success());
++    let token = f.state.run_tokens.issue(
++        created["run_id"].as_str().unwrap(),
++        &scope.project,
++        Duration::from_secs(60),
++    );
++    assert_eq!(
++        f.tool(&token, "get_context", json!({})).await.0,
++        StatusCode::FORBIDDEN
++    );
++    f.sql("DELETE FROM memberships").await;
++    assert_eq!(
++        f.start(&cookie, &csrf, &request).await.0,
++        StatusCode::NOT_FOUND
++    );
++    assert_eq!(f.counts().await, (1, 1, 1));
++}
++
++#[tokio::test]
++async fn native_issue_regions_are_validated_before_any_prediction_is_persisted() {
++    let f = Fixture::new().await;
++    let (cookie, csrf, actor) = f.login().await;
++    let scope = f
++        .scope(&actor, &cookie, &csrf, "claude_local", true, false)
++        .await;
++    let (request, _) = f.authorized(&cookie, &csrf, &scope, no_grants()).await;
++    let (status, created) = f.start(&cookie, &csrf, &request).await;
++    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
++    let token = f.state.run_tokens.issue(
++        created["run_id"].as_str().unwrap(),
++        &scope.project,
++        Duration::from_secs(60),
++    );
++    for region in [
++        json!({"type":"bbox_xyxy","x_min":8,"y_min":1,"x_max":2,"y_max":4}),
++        json!({"type":"bbox_xyxy","x_min":2,"y_min":1,"x_max":2,"y_max":4}),
++        json!({"type":"bbox_xyxy","x_min":0,"y_min":0,"x_max":100000,"y_max":4}),
++        json!({"type":"bbox_xyxy","x_min":-1,"y_min":0,"x_max":2,"y_max":4}),
++        json!({"type":"bbox_xyxy","x_min":0,"y_min":5,"x_max":2,"y_max":3}),
++        json!({"type":"bbox_xyxy","x_min":0,"y_min":2,"x_max":2,"y_max":2}),
++        json!({"type":"bbox_xyxy","x_min":0,"y_min":0,"x_max":2,"y_max":24.1}),
++        json!({"type":"bbox_xyxy","x_min":0,"y_min":0,"x_max":"32","y_max":24}),
++    ] {
++        let (status, body) = f.tool(&token, "report_issues", json!({"issues":[{"issue_id":"boundary-issue","object_id":null,"code":"review","message":"synthetic","region":region}]})).await;
++        assert!(!status.is_success(), "invalid region persisted: {body}");
++    }
++    let mut tx = f.state.repository.begin_write().await.unwrap();
++    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM predictions")
++        .fetch_one(tx.connection())
++        .await
++        .unwrap();
++    assert_eq!(count, 0);
++    tx.commit().await.unwrap();
++    let (status, body) = f.tool(&token, "report_issues", json!({"issues":[{"issue_id":"media-boundary","object_id":null,"code":"review","message":"synthetic","region":{"type":"bbox_xyxy","x_min":0,"y_min":0,"x_max":32,"y_max":24}}]})).await;
++    assert_eq!(status, StatusCode::OK, "{body}");
++}
++
++#[tokio::test]
++async fn issue_region_crop_containment_does_not_replace_geometry_validation() {
++    let f = Fixture::new().await;
++    let (cookie, csrf, actor) = f.login().await;
++    let scope = f
++        .scope(&actor, &cookie, &csrf, "claude_local", true, false)
++        .await;
++    let (request, _) = f.authorized(&cookie, &csrf, &scope, crop_grants()).await;
++    let (status, created) = f.start(&cookie, &csrf, &request).await;
++    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
++    let token = f.state.run_tokens.issue(
++        created["run_id"].as_str().unwrap(),
++        &scope.project,
++        Duration::from_secs(60),
++    );
++    for region in [
++        json!({"type":"bbox_xyxy","x_min":8,"y_min":4,"x_max":3,"y_max":10}),
++        json!({"type":"bbox_xyxy","x_min":3,"y_min":4,"x_max":3,"y_max":10}),
++        json!({"type":"bbox_xyxy","x_min":1,"y_min":3,"x_max":12,"y_max":15}),
++    ] {
++        let (status, body) = f.tool(&token, "report_issues", json!({"issues":[{"issue_id":"crop-invalid","object_id":null,"code":"review","message":"synthetic","region":region}]})).await;
++        assert!(!status.is_success(), "{body}");
++    }
++    let (status, body) = f.tool(&token, "report_issues", json!({"issues":[{"issue_id":"crop-boundary","object_id":null,"code":"review","message":"synthetic","region":crop_grants()["preview_crop"]}]})).await;
++    assert_eq!(status, StatusCode::OK, "{body}");
++}
+diff --git a/crates/weblabel-api/tests/t25_runtime.rs b/crates/weblabel-api/tests/t25_runtime.rs
+index 4ea52a2e..230acbcb 100644
+--- a/crates/weblabel-api/tests/t25_runtime.rs
++++ b/crates/weblabel-api/tests/t25_runtime.rs
+@@ -95,6 +95,10 @@ async fn expired_capability_cannot_start_provider_or_issue_new_token() {
+ async fn policy_revocation_stops_silent_provider_and_revokes_token() {
+     scenario("policy_revoke").await;
+ }
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn membership_demotion_stops_silent_provider_before_deadline() {
++    scenario("membership_revoke").await;
++}
+ async fn scenario(scenario: &'static str) {
+     let temp = tempfile::tempdir().unwrap();
+     let config = ServerConfig {
+@@ -284,7 +288,7 @@ async fn scenario(scenario: &'static str) {
+     };
+     let queue = JobQueue::new(state.repository.clone());
+     let cancel = async {
+-        if !matches!(scenario, "cancel" | "policy_revoke") {
++        if !matches!(scenario, "cancel" | "policy_revoke" | "membership_revoke") {
+             return;
+         }
+         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+@@ -295,6 +299,18 @@ async fn scenario(scenario: &'static str) {
+             );
+             tokio::time::sleep(Duration::from_millis(10)).await;
+         }
++        if scenario == "membership_revoke" {
++            let (status, membership, _) = call(
++                &app,
++                &format!("/api/projects/{project}/members"),
++                json!({"user_id":actor,"role":"viewer"}),
++                Some(&cookie),
++                Some(csrf),
++            )
++            .await;
++            assert_eq!(status, StatusCode::OK, "{membership}");
++            return;
++        }
+         if scenario == "policy_revoke" {
+             let (status, policy, _) = call(
+                 &app,
+@@ -352,7 +368,7 @@ async fn scenario(scenario: &'static str) {
+         status,
+         match scenario {
+             "success" | "crop" => "succeeded",
+-            "cancel" | "policy_revoke" => "cancelled",
++            "cancel" | "policy_revoke" | "membership_revoke" => "cancelled",
+             _ => "failed",
+         },
+         "events={events:?}"
+@@ -374,6 +390,7 @@ async fn scenario(scenario: &'static str) {
+         }
+     );
+     assert_eq!(state.run_tokens.active_tokens_for_run(run_id), 0);
++    println!("synthetic scenario={scenario} state={status} predictions={predictions} model_calls={} active_tokens={}", model_calls.load(std::sync::atomic::Ordering::SeqCst), state.run_tokens.active_tokens_for_run(run_id));
+     if scenario == "expired" {
+         assert!(events.iter().any(|(_, _, data)| data
+             .as_deref()
+diff --git a/apps/agent-host/src/mcp/server.ts b/apps/agent-host/src/mcp/server.ts
+index a153115a..811277a5 100644
+--- a/apps/agent-host/src/mcp/server.ts
++++ b/apps/agent-host/src/mcp/server.ts
+@@ -79,15 +79,39 @@ async function callAgentTools(
+       signal: controller.signal,
+     });
+     const declared = Number(response.headers.get('content-length') ?? '0');
+-    const maxBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
++    const maxBytes = Math.min(options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES, DEFAULT_MAX_RESPONSE_BYTES);
+     if (declared > maxBytes) {
++      controller.abort();
++      await response.body?.cancel().catch(() => {});
+       return { ok: false, status: response.status, body: 'TOOL_OUTPUT_TOO_LARGE' };
+     }
+-    const body = await response.text();
+-    if (body.length > maxBytes) {
+-      return { ok: false, status: response.status, body: 'TOOL_OUTPUT_TOO_LARGE' };
++    if (!response.body) return { ok: response.ok, status: response.status, body: '' };
++    const reader = response.body.getReader();
++    const cancelRead = () => { void reader.cancel().catch(() => {}); };
++    controller.signal.addEventListener('abort', cancelRead, { once: true });
++    const chunks: Uint8Array[] = [];
++    let bytes = 0;
++    try {
++      while (true) {
++        if (controller.signal.aborted) throw new Error('Agent tools response timed out');
++        const { done, value } = await reader.read();
++        if (controller.signal.aborted) throw new Error('Agent tools response timed out');
++        if (done) break;
++        bytes += value.byteLength;
++        if (bytes > maxBytes) {
++          controller.abort();
++          await reader.cancel().catch(() => {});
++          return { ok: false, status: response.status, body: 'TOOL_OUTPUT_TOO_LARGE' };
++        }
++        chunks.push(value);
++      }
++      const decoder = new TextDecoder();
++      const body = chunks.map(chunk => decoder.decode(chunk, { stream: true })).join('') + decoder.decode();
++      return { ok: response.ok, status: response.status, body };
++    } finally {
++      controller.signal.removeEventListener('abort', cancelRead);
++      reader.releaseLock();
+     }
+-    return { ok: response.ok, status: response.status, body };
+   } catch (error) {
+     const message = error instanceof Error ? error.message : String(error);
+     return { ok: false, status: 0, body: JSON.stringify({ code: 'AGENT_TOOLS_UNREACHABLE', message }) };
+diff --git a/apps/agent-host/test/t21_mcp.test.ts b/apps/agent-host/test/t21_mcp.test.ts
+index 8869bc7c..aa0b32f0 100644
+--- a/apps/agent-host/test/t21_mcp.test.ts
++++ b/apps/agent-host/test/t21_mcp.test.ts
+@@ -674,3 +674,86 @@ it('refuses to start without a run token in the child environment', async () =>
+   expect(stderr).not.toContain('Bearer');
+   rmSync(harness, { recursive: true, force: true });
+ }, 30_000);
++
++it('bounds chunked multibyte tool responses by bytes and cancels before buffering the tail', async () => {
++  let cancelled = false;
++  let pulls = 0;
++  let signal: AbortSignal | null = null;
++  const server = createAgentToolsServer({apiBase:'http://127.0.0.1:48100', token:RUN_TOKEN, maxResponseBytes:8,
++    fetch: async (_url, init) => {
++      signal = init.signal as AbortSignal;
++      return new Response(new ReadableStream<Uint8Array>({
++        pull(controller) {
++          pulls += 1;
++          controller.enqueue(new TextEncoder().encode('界界界'));
++          if (pulls === 20) controller.close();
++        },
++        cancel() { cancelled = true; },
++      }, {highWaterMark:0}));
++    }});
++  const client = new Client({name:'boundary-client', version:'0.0.0'});
++  const [ct, st] = InMemoryTransport.createLinkedPair();
++  await Promise.all([client.connect(ct), server.connect(st)]);
++  try {
++    const result = await client.callTool({name:'get_context', arguments:{}});
++    expect(asRecord(result).isError).toBe(true);
++    expect(textOf(result)).toContain('TOOL_OUTPUT_TOO_LARGE');
++    expect(pulls).toBe(1);
++    expect(cancelled).toBe(true);
++    expect(signal!.aborted).toBe(true);
++  } finally { await client.close(); await server.close(); }
++});
++
++it('rejects an oversized chunked response through the actual stdio MCP caller and closes its HTTP stream', async () => {
++  const harness = mkdtempSync(join(tmpdir(), 't21-mcp-boundary-'));
++  const register = writeLoaderHarness(harness);
++  let sent = 0;
++  const chunk = Buffer.from('界'.repeat(256 * 1024));
++  let resolveClosed!: () => void;
++  const closed = new Promise<void>(resolve => { resolveClosed = resolve; });
++  const api = createServer((_request, response) => {
++    response.setHeader('content-type', 'application/json');
++    const timer = setInterval(() => {
++      sent += chunk.byteLength;
++      response.write(chunk);
++      if (sent >= chunk.byteLength * 64) { clearInterval(timer); response.end(); }
++    }, 5);
++    response.on('close', () => { clearInterval(timer); resolveClosed(); });
++  });
++  await new Promise<void>(resolve => api.listen(0, '127.0.0.1', resolve));
++  const transport = new StdioClientTransport({command:process.execPath,
++    args:['--import', pathToFileURL(register).href, mainEntry],
++    env:childEnvironment({WEBLABEL_RUN_TOKEN:RUN_TOKEN, WEBLABEL_API_BASE:
++      'http://127.0.0.1:' + (api.address() as AddressInfo).port}),
++    stderr:'pipe', cwd:repoRoot});
++  const client = new Client({name:'boundary-stdio', version:'0.0.0'});
++  try {
++    await client.connect(transport);
++    const result = await client.callTool({name:'get_context', arguments:{}});
++    expect(asRecord(result).isError).toBe(true);
++    expect(textOf(result)).toContain('TOOL_OUTPUT_TOO_LARGE');
++    await closed;
++    expect(sent).toBeLessThan(chunk.byteLength * 64);
++  } finally {
++    await client.close();
++    await new Promise<void>((resolve, reject) => api.close(error => error ? reject(error) : resolve()));
++    rmSync(harness, {recursive:true, force:true});
++  }
++}, 30_000);
++
++it('cancels a silent response body on timeout and returns a controlled MCP error', async () => {
++  let cancelled = false;
++  const server = createAgentToolsServer({apiBase:'http://127.0.0.1:48100',token:RUN_TOKEN,timeoutMs:25,
++    fetch:async () => new Response(new ReadableStream<Uint8Array>({
++      pull() { return new Promise<void>(() => {}); }, cancel() { cancelled = true; },
++    }))});
++  const client = new Client({name:'boundary-timeout',version:'0.0.0'});
++  const [ct, st] = InMemoryTransport.createLinkedPair();
++  await Promise.all([client.connect(ct),server.connect(st)]);
++  try {
++    const result = await client.callTool({name:'get_context',arguments:{}});
++    expect(asRecord(result).isError).toBe(true);
++    expect(textOf(result)).toContain('AGENT_TOOLS_UNREACHABLE');
++    expect(cancelled).toBe(true);
++  } finally { await client.close(); await server.close(); }
++});
