@@ -75,7 +75,7 @@ export async function buildRelease(argv = process.argv.slice(2)) {
   if (fs.existsSync(output)) throw new Error('build_directory_exists: choose a new output directory');
   if (command(['pnpm', '--version']) !== pins.pnpm) throw new Error('pnpm_version');
   const env = { ...process.env, RUSTUP_TOOLCHAIN: pins.rust, CARGO_TARGET_DIR: target };
-  if (!command(['rustc', '--version'], cwd, env).startsWith(`rustc ${pins.rust} `)) throw new Error('rust_version');
+  if (!command([env.RUSTC ?? 'rustc', '--version'], cwd, env).startsWith(`rustc ${pins.rust} `)) throw new Error('rust_version');
   if (!command(['cargo', '--version'], cwd, env).startsWith(`cargo ${pins.rust} `)) throw new Error('cargo_version');
   if (command(['wasm-bindgen', '--version'], cwd, env) !== `wasm-bindgen ${pins.wasm_bindgen}`) throw new Error('wasm_bindgen_version');
   if (command(['wasm-pack', '--version'], cwd, env) !== `wasm-pack ${pins.wasm_pack}`) throw new Error('wasm_pack_version');
@@ -93,8 +93,11 @@ export async function buildRelease(argv = process.argv.slice(2)) {
   fs.mkdirSync(path.join(output, 'api'), { recursive: true });
   const apiName = process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api';
   fs.copyFileSync(path.join(target, 'release', apiName), path.join(output, 'api', apiName));
-  fs.cpSync(path.join(root, 'target/agent-host'), path.join(output, 'host'), { recursive: true });
-  fs.cpSync(path.join(root, 'crates/weblabel-api/migrations'), path.join(output, 'migrations'), { recursive: true });
+  fs.mkdirSync(path.join(output, 'host'));
+  for (const name of ['runtime.mjs', 'mcp.mjs']) fs.copyFileSync(path.join(root, 'target/agent-host', name), path.join(output, 'host', name));
+  fs.mkdirSync(path.join(output, 'migrations'));
+  const migrationSource = path.join(root, 'crates/weblabel-api/migrations');
+  for (const name of fs.readdirSync(migrationSource).filter(name => /^\d+_.+\.sql$/.test(name)).sort()) fs.copyFileSync(checkedPath(migrationSource, name), path.join(output, 'migrations', name));
   const manifestData = { format: 'weblabel-local-release', version: 1, platform: process.platform, arch: process.arch, pins, source_commit: command(['git', 'rev-parse', 'HEAD']), files: entries(output) };
   for (const required of [`api/${apiName}`, 'host/runtime.mjs', 'host/mcp.mjs', 'web/index.html', 'web/wasm/wasm_bridge.js', 'web/wasm/wasm_bridge_bg.wasm']) if (!manifestData.files.some(item => item.path === required && item.size > 0)) throw new Error(`build_missing: ${required}`);
   fs.writeFileSync(path.join(output, 'release.json'), JSON.stringify(manifestData, null, 2));

@@ -7,7 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { buildRelease, root, sha, files } from '../../scripts/build.mjs';
-import { validateRelease, stopTree } from '../../scripts/start-local.mjs';
+import { validateRelease, stopTree, taskkillPath } from '../../scripts/start-local.mjs';
+import { schemaHash } from '../../scripts/backup.mjs';
 
 const scratch = path.join(root, 'target', `T33 中文 spaces & ${crypto.randomUUID()}`);
 let build: string;
@@ -22,17 +23,19 @@ async function port() {
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('port missing');
   const closed = once(server, 'close'); server.close(); await closed; return address.port;
 }
-async function launch(data: string) {
+async function launch(data: string, requireBootstrap = true) {
   const webPort = await port(), apiPort = await port();
   const script = `import {startLocal} from ${JSON.stringify(new URL('../../scripts/start-local.mjs', import.meta.url).href)}; await startLocal(${JSON.stringify(['--build-dir', build, '--data-dir', data, '--port', String(webPort), '--api-port', String(apiPort)])}); process.on('message',()=>{process.emit('SIGINT');process.disconnect();});`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: root, shell: false, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  // Windows runtime PATH deliberately excludes Python, pnpm and official provider CLIs.
+  const env = { ...process.env, PATH: taskkillPath ? path.dirname(taskkillPath) : '/usr/bin:/bin', WEBLABEL_HOST_CONFIG: '' };
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: root, env, shell: false, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   children.push(child);
   let output = ''; child.stdout?.on('data', chunk => { output += String(chunk); }); child.stderr?.on('data', chunk => { output += String(chunk); });
   const base = `http://127.0.0.1:${webPort}`;
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
     const code = output.match(/WEBLABEL_BOOTSTRAP_CODE=([0-9a-f]+)/)?.[1];
-    if (code) { try { if ((await fetch(base + '/api/session')).status === 401) return { child, base, code, apiPort }; } catch {} }
+    if (code || !requireBootstrap) { try { if ((await fetch(base + '/api/session')).status === 401) return { child, base, code: code ?? '', apiPort }; } catch {} }
     if (child.exitCode !== null) throw new Error(output);
     // Real release processes and HTTP polling own independent clocks; fake timers cannot drive them.
     await delay(50);
@@ -53,7 +56,7 @@ async function authenticated(base: string, code: string) {
     const result = await fetch(base + route, { method, headers: { cookie, origin: base, 'x-csrf-token': body.csrf_token, ...(payload !== undefined ? { 'content-type': 'application/json' } : {}) }, body: payload === undefined ? undefined : JSON.stringify(payload) });
     return { status: result.status, body: await result.json() as Value };
   };
-  return { request, cookie, csrf: body.csrf_token, userId: body.user_id };
+  return { request, cookie, csrf: body.csrf_token, userId: body.user_id, username: body.username };
 }
 beforeAll(async () => {
   fs.mkdirSync(scratch, { recursive: true });
@@ -151,6 +154,22 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   expect(cli('restore.mjs', ['--backup-dir', corrupt, '--data-dir', path.join(scratch, 'no-corrupt')]).stderr).toMatch(/hash_mismatch/); expect(fs.existsSync(path.join(scratch, 'no-corrupt'))).toBe(false);
   const incompatible = path.join(scratch, 'incompatible'); fs.cpSync(backupDir, incompatible, { recursive: true }); const badManifest = JSON.parse(fs.readFileSync(path.join(incompatible, 'backup.json'), 'utf8')); badManifest.schema_hash = '0'.repeat(64); fs.writeFileSync(path.join(incompatible, 'backup.json'), JSON.stringify(badManifest));
   expect(cli('restore.mjs', ['--backup-dir', incompatible, '--data-dir', path.join(scratch, 'no-schema')]).stderr).toMatch(/schema_mismatch/);
+  const forged = path.join(scratch, 'forged-schema'); fs.cpSync(backupDir, forged, { recursive: true });
+  const forgedDb = new DatabaseSync(path.join(forged, 'api.sqlite'));
+  forgedDb.exec('CREATE TABLE malicious_extra (secret TEXT)');
+  const forgedManifest = JSON.parse(fs.readFileSync(path.join(forged, 'backup.json'), 'utf8'));
+  forgedManifest.schema_hash = schemaHash(forgedDb); forgedDb.close();
+  const forgedEntry = forgedManifest.files.find((entry: Value) => entry.path === 'api.sqlite');
+  forgedEntry.sha256 = sha(path.join(forged, 'api.sqlite')); forgedEntry.size = fs.statSync(path.join(forged, 'api.sqlite')).size;
+  fs.writeFileSync(path.join(forged, 'backup.json'), JSON.stringify(forgedManifest));
+  expect(cli('restore.mjs', ['--backup-dir', forged, '--data-dir', path.join(scratch, 'no-forged-schema')]).stderr).toMatch(/schema_incompatible/);
+  const forgedObject = path.join(scratch, 'forged-object'); fs.cpSync(backupDir, forgedObject, { recursive: true });
+  const objectManifest = JSON.parse(fs.readFileSync(path.join(forgedObject, 'backup.json'), 'utf8'));
+  const objectEntry = objectManifest.files.find((entry: Value) => entry.path.startsWith('objects/'));
+  fs.appendFileSync(path.join(forgedObject, objectEntry.path), 'object corruption');
+  objectEntry.sha256 = sha(path.join(forgedObject, objectEntry.path)); objectEntry.size = fs.statSync(path.join(forgedObject, objectEntry.path)).size;
+  fs.writeFileSync(path.join(forgedObject, 'backup.json'), JSON.stringify(objectManifest));
+  expect(cli('restore.mjs', ['--backup-dir', forgedObject, '--data-dir', path.join(scratch, 'no-forged-object')]).stderr).toMatch(/backup_object_missing_or_corrupt/);
   success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
   const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code); expect(fresh.userId).not.toBe(admin.userId);
   const oldSession = await fetch(recovered.base + '/api/session', { headers: { cookie: admin.cookie, origin: recovered.base } }); expect(oldSession.status).toBe(401);
@@ -163,5 +182,12 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   expect(job.state, JSON.stringify(job)).toBe('succeeded');
   const download = await fetch(recovered.base + job.result.download_url, { headers: { cookie: fresh.cookie, origin: recovered.base } }); expect(download.status).toBe(200);
   const restoredDb = new DatabaseSync(path.join(restored, 'api.sqlite'), { readOnly: true }); expect(restoredDb.prepare('SELECT manifest_sha256 FROM dataset_versions').get()!.manifest_sha256).toBe(snapshot.body.manifest_sha256); expect(restoredDb.prepare('PRAGMA foreign_key_check').all()).toEqual([]); restoredDb.close();
-  await stop(recovered.child); await stop(running.child);
+  await stop(recovered.child);
+  const restarted = await launch(restored, false);
+  const loginAgain = await fetch(restarted.base + '/api/session/login', { method: 'POST', headers: { origin: restarted.base, 'content-type': 'application/json' }, body: JSON.stringify({ username: fresh.username, password: 'T33-synthetic-new-password' }) });
+  expect(loginAgain.status).toBe(200);
+  const reloginCookie = loginAgain.headers.get('set-cookie')!.split(';')[0]!;
+  const durableRead = await fetch(restarted.base + `/api/annotation-revisions/${revision.annotation_revision_id}`, { headers: { origin: restarted.base, cookie: reloginCookie } });
+  expect(durableRead.status).toBe(200); expect(await durableRead.json()).toEqual(revision);
+  await stop(restarted.child); await stop(running.child);
 }, 120000);
