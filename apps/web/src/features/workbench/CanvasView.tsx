@@ -98,13 +98,15 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
     <div className="gpu-diagnostics" data-testid="gpu-status" data-actual-backend={deviceState === 'ready' ? 'webgpu' : 'none'} data-adapter-kind={adapter} data-device-state={deviceState} role="status" aria-live="polite">
       {deviceState === 'ready' ? `WebGPU · ${adapter} adapter · 就绪` : deviceState === 'unsupported' ? 'WebGPU 不支持；仅可查看对象' : deviceState === 'recovering' ? 'WebGPU 设备丢失；正在重建渲染器，未保存内容和撤销历史已保留…' : deviceState === 'lost' ? 'WebGPU 不可用；仅可查看，CPU 文档和未保存内容已保留' : '正在初始化真实 WebGPU…'}
     </div>
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div className="canvas-surface">
       <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
         {labels.map((label) => <span key={label.object_id} data-testid="canvas-label" data-object-id={label.object_id} data-selected={label.selected} style={{ position: 'absolute', transform: 'translate('+label.x_css+'px, '+label.y_css+'px)', fontSize: 11, color: label.selected ? '#fff' : '#f1d68a', background: '#17212be6', padding: '1px 3px' }}>{label.object_id}</span>)}
       </div>
     </div>
-    {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
-    {deviceState === 'lost' && hostRef.current?.status === 'lost' ? <button type="button" data-testid="gpu-retry" onClick={() => { void hostRef.current?.retryRenderer(); }}>重试 WebGPU 渲染器</button> : null}
+    {error || deviceState === 'lost' ? <div className="canvas-state error">
+      {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
+      {deviceState === 'lost' && hostRef.current?.status === 'lost' ? <button type="button" data-testid="gpu-retry" onClick={() => { void hostRef.current?.retryRenderer(); }}>重试 WebGPU 渲染器</button> : null}
+    </div> : null}
   </>;
 }

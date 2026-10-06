@@ -8,7 +8,7 @@ type RendererHandle = {
   resize(width: number, height: number, dpr: number): void;
   render(): void;
   recover(): Promise<void>;
-  simulate_device_loss(): void;
+  device_lost(): Promise<string>;
   device_state(): string;
   adapter_diagnostics(): string;
   dispose(): void;
@@ -28,6 +28,9 @@ type RendererModule = {
 declare global {
   interface Window {
     __t05?: RendererHandle;
+  }
+  interface Window {
+    __t05Device?: { destroy(): void; lost: Promise<{ reason: string }> };
   }
 }
 
@@ -322,7 +325,26 @@ test('zoom keeps the bbox stroke and handle at fixed screen width at the C8 view
   await page.evaluate(() => window.__t05?.dispose());
 });
 
-test('simulated device loss keeps the scene and recover() restores rendering', async ({ page }) => {
+test('actual external device loss keeps the scene and recover() restores rendering', async ({ page }) => {
+  await page.addInitScript(() => {
+    type Device = NonNullable<Window['__t05Device']>;
+    type Adapter = { requestDevice(...args: unknown[]): Promise<Device> };
+    // DOM typings omit WebGPU; this named boundary describes actual browser handles.
+    const gpuNavigator = navigator as unknown as { gpu: { requestAdapter(...args: unknown[]): Promise<Adapter | null> } };
+    const gpu = gpuNavigator.gpu;
+    const requestAdapter = gpu.requestAdapter.bind(gpu);
+    gpu.requestAdapter = async (...args) => {
+      const adapter = await requestAdapter(...args);
+      if (!adapter) return null;
+      const requestDevice = adapter.requestDevice.bind(adapter);
+      adapter.requestDevice = async (...deviceArgs) => {
+        const device = await requestDevice(...deviceArgs);
+        window.__t05Device = device;
+        return device;
+      };
+      return adapter;
+    };
+  });
   const boot = await bootGoldenScene(page, GOLDEN_PROJECTION, { scale: 2, tx: 13, ty: -7 });
   expect(boot.state).toBe('ready');
   console.info(`T05_RUST_RENDERER_LOSS ${boot.adapter}`);
@@ -334,10 +356,16 @@ test('simulated device loss keeps the scene and recover() restores rendering', a
     handleRun: scene.runLength(129, 233, scene.handle),
   });
   const before = await captureScene(page, 'reports/T05/loss-before.png');
-  const loss = await page.evaluate(() => {
+  const loss = await page.evaluate(async () => {
     const renderer = window.__t05;
     if (!renderer) return { state: 'missing', renderError: 'renderer missing' };
-    renderer.simulate_device_loss();
+    const device = window.__t05Device;
+    if (!device) throw new Error('Actual requestDevice result missing');
+    const notification = renderer.device_lost();
+    device.destroy();
+    const info = await device.lost;
+    if (info.reason !== 'destroyed') throw new Error(`Unexpected real device loss: ${info.reason}`);
+    await notification;
     const state = renderer.device_state();
     let renderError = '';
     try {

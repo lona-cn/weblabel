@@ -1258,6 +1258,7 @@ pub mod wasm {
         session: EditorSession,
         renderer: std::rc::Rc<std::cell::RefCell<Option<renderer_wgpu::Renderer>>>,
         disposed: std::rc::Rc<std::cell::Cell<bool>>,
+        recovering: std::rc::Rc<std::cell::Cell<bool>>,
         last_renderer_stats: std::cell::Cell<renderer_wgpu::stats::RendererStats>,
         adapter_diagnostics: String,
         canvas: web_sys::HtmlCanvasElement,
@@ -1422,6 +1423,9 @@ pub mod wasm {
             if self.disposed.get() {
                 "disposed".into()
             } else {
+                if self.recovering.get() {
+                    return "recovering".into();
+                }
                 self.renderer
                     .borrow()
                     .as_ref()
@@ -1430,26 +1434,43 @@ pub mod wasm {
             }
         }
 
-        /// Only the renderer moves into this future. No facade/session borrow
-        /// spans requestAdapter/requestDevice, so dispose and CPU reads remain
-        /// safe while recovery is pending.
+        /// The shared slot keeps the old scene/resources synchronously disposable.
+        /// Only request metadata/new GPU handles cross await, never a WASM borrow.
         pub fn recover_renderer(&mut self) -> Result<js_sys::Promise, JsValue> {
             self.session.ensure_live().map_err(to_js_error)?;
-            let mut renderer = self.renderer.borrow_mut().take().ok_or_else(|| {
-                to_js_error(api_error("GPU_RECOVERING", "renderer is rebuilding"))
-            })?;
-            renderer.set_recovery_viewport(scene_viewport(self.session.get_viewport()));
-            self.last_renderer_stats.set(renderer.stats());
+            if self.recovering.get() {
+                return Err(to_js_error(api_error(
+                    "GPU_RECOVERING",
+                    "renderer is rebuilding",
+                )));
+            }
+            let request = {
+                let mut slot = self.renderer.borrow_mut();
+                let renderer = slot.as_mut().ok_or_else(|| {
+                    to_js_error(api_error("GPU_DEVICE_LOST", "renderer disposed"))
+                })?;
+                renderer.set_recovery_viewport(scene_viewport(self.session.get_viewport()));
+                renderer.request_recovery(Some(self.disposed.clone()))?
+            };
+            self.recovering.set(true);
             self.session.invalidate_frame();
             let slot = self.renderer.clone();
             let disposed = self.disposed.clone();
+            let recovering = self.recovering.clone();
             Ok(wasm_bindgen_futures::future_to_promise(async move {
-                let result = renderer.recover_with_fence(Some(&disposed)).await;
+                let requested = request.await;
+                recovering.set(false);
                 if disposed.get() {
-                    renderer.dispose();
                     return Ok(JsValue::UNDEFINED);
                 }
-                *slot.borrow_mut() = Some(renderer);
+                let result = requested
+                    .map_err(|error| JsValue::from_str(&error.to_string()))
+                    .and_then(|requested| {
+                        slot.borrow_mut()
+                            .as_mut()
+                            .ok_or_else(|| JsValue::from_str("renderer disposed"))?
+                            .finish_recovery(requested)
+                    });
                 result.map(|()| JsValue::UNDEFINED).map_err(|error| {
                     to_js_error(api_error(
                         "GPU_RECOVERY_FAILED",
@@ -1467,7 +1488,10 @@ pub mod wasm {
         pub fn render(&mut self, timestamp_ms: f64) -> Result<(), JsValue> {
             let _ = timestamp_ms;
             let mut renderer = self.renderer.borrow_mut();
-            if self.disposed.get() || renderer.as_ref().is_none_or(|r| r.is_device_lost()) {
+            if self.disposed.get()
+                || self.recovering.get()
+                || renderer.as_ref().is_none_or(|r| r.is_device_lost())
+            {
                 return Err(to_js_error(api_error(
                     "GPU_DEVICE_LOST",
                     "WebGPU device is not ready; CPU editor retained",
@@ -1495,8 +1519,9 @@ pub mod wasm {
             }
             self.session.dispose();
             self.disposed.set(true);
-            if let Some(renderer) = self.renderer.borrow_mut().as_mut() {
+            if let Some(mut renderer) = self.renderer.borrow_mut().take() {
                 renderer.dispose();
+                self.last_renderer_stats.set(renderer.stats());
             }
         }
     }
@@ -1552,6 +1577,7 @@ pub mod wasm {
             session,
             renderer: std::rc::Rc::new(std::cell::RefCell::new(Some(renderer))),
             disposed: std::rc::Rc::new(std::cell::Cell::new(false)),
+            recovering: std::rc::Rc::new(std::cell::Cell::new(false)),
             last_renderer_stats,
             adapter_diagnostics,
             canvas,
