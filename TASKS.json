@@ -1183,6 +1183,7 @@
           "playwright",
           "test",
           "tests/e2e/t30_recovery.spec.ts",
+          "--config=reports/T30/playwright.config.ts",
           "--project=chromium-webgpu"
         ]
       ],

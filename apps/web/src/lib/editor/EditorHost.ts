@@ -191,15 +191,15 @@ export class EditorHost {
     return this.consumeDelta(delta);
   }
 
-  setTool(tool: EditorTool): void {
+  setTool(tool: EditorTool): boolean {
     // A tool switch cancels any in-progress gesture (T12): the Rust core drops
     // it in set_tool and the web side releases the gesture's pointer captures.
     this.releaseCaptures();
     this.activePointerId = null;
-    this.guard((facade) => {
+    return this.guard((facade) => {
       facade.set_tool(tool);
-      return null;
-    }, 'EDITOR_BRIDGE_FAILURE');
+      return true;
+    }, 'EDITOR_BRIDGE_FAILURE') === true;
   }
 
   setActiveLabel(labelId: Id): void {

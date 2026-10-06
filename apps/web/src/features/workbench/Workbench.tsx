@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
 import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
 import type { AnnotationRevision } from '../../../../../packages/contracts/generated/AnnotationRevision';
@@ -45,6 +45,8 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   const [job, setJob] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [host, setHost] = useState<EditorHost | null>(null);
+  const subscribeHostStatus = useCallback((notify: () => void) => host?.subscribeStatus(notify) ?? (() => {}), [host]);
+  const hostStatus = useSyncExternalStore(subscribeHostStatus, () => host?.status ?? 'idle', () => 'idle');
   const [objects, setObjects] = useState<AnnotationObject[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [localFlags, setLocalFlags] = useState<LocalObjectFlagMap>({});
@@ -89,6 +91,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
     }), [host, queue]);
   const activeLoaded = loaded?.media.asset_revision_id === selectedAssetId ? loaded : null;
   const activeHost = activeLoaded && !activeLoaded.readOnlyPreview ? host : null;
+  const editableHost = activeHost && hostStatus === 'ready' ? activeHost : null;
   const activeObjects = activeLoaded ? objects : [];
   const activeSelectedIds = activeLoaded ? selectedIds : [];
 
@@ -227,38 +230,41 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   }, [loaded, queue, selectedAssetId]);
 
   function setActiveTool(next: Tool) {
-    setTool(next);
+    if (editableHost?.setTool(next)) setTool(next);
   }
 
   function selectObject(objectId: string) {
-    activeHost?.select([objectId]);
+    editableHost?.select([objectId]);
   }
 
   function changeLocalFlags(ids: readonly string[], flags: { hidden?: boolean; locked?: boolean }) {
-    if (!activeHost || activeLoaded?.readOnlyPreview || submissionLockRef.current) return;
-    const delta = activeHost.setLocalFlags(ids, flags);
+    if (!editableHost || activeLoaded?.readOnlyPreview || submissionLockRef.current) return;
+    const delta = editableHost.setLocalFlags(ids, flags);
     if (!delta) setError('Editor did not accept the transient flag update.');
     else if (delta.error) setError(`${delta.error.code}: ${delta.error.message}`);
   }
 
   function changeAttribute(key: string, value: Scalar) {
-    if (!activeHost) { setError('The editor is not ready for attribute editing.'); return; }
+    if (!editableHost) { setError('The editor is not ready for attribute editing.'); return; }
     if (!activeSelectedIds.length) { setError('Select an object before editing attributes.'); return; }
-    const delta = activeHost.dispatch({ kind: 'set_attributes', object_ids: activeSelectedIds, values: { [key]: value } });
+    const delta = editableHost.dispatch({ kind: 'set_attributes', object_ids: activeSelectedIds, values: { [key]: value } });
     if (!delta) setError('Editor did not return the attribute update.');
     else if (delta.error) setError(`${delta.error.code}: ${delta.error.message}`);
   }
 
   function setCompletion(value: 'unprocessed' | 'in_progress' | 'complete' | 'confirmed_negative') {
-    if (!activeLoaded) return;
+    if (editableHost?.status !== 'ready') return;
+    if (value !== 'confirmed_negative') {
+      const delta = editableHost.dispatch({ kind: 'set_completion', completion: value });
+      if (!delta || delta.error) return;
+    }
     setCompletionChoice(value);
     setNegativeConfirmed(false);
-    if (value !== 'confirmed_negative' && activeHost) activeHost.dispatch({ kind: 'set_completion', completion: value });
   }
 
   function confirmNegative() {
-    if (!activeHost || activeObjects.length !== 0 || !negativeConfirmed) return;
-    activeHost.dispatch({ kind: 'set_completion', completion: 'confirmed_negative' });
+    if (!editableHost || activeObjects.length !== 0 || !negativeConfirmed) return;
+    editableHost.dispatch({ kind: 'set_completion', completion: 'confirmed_negative' });
   }
 
   async function exportCurrent() {
@@ -334,29 +340,29 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
         </section>
         <ObjectList objects={activeObjects} selectedIds={activeSelectedIds} localFlags={localFlags}
           onSelect={selectObject} onSetLocalFlags={changeLocalFlags}
-          flagsEditable={!!activeHost && !activeLoaded?.readOnlyPreview && !submissionLockRef.current}
+          flagsEditable={!!editableHost && !activeLoaded?.readOnlyPreview && !submissionLockRef.current}
           status={loadState === 'error' ? 'error' : !activeLoaded || loadState === 'loading' ? 'loading' : 'ready'} />
-        {activeLoaded ? <AttributePanel object={activeObjects.find((item) => activeSelectedIds.includes(item.object_id)) ?? null} ontology={activeLoaded.ontology} onChange={changeAttribute} disabled={!activeHost} /> : null}
+        {activeLoaded ? <AttributePanel object={activeObjects.find((item) => activeSelectedIds.includes(item.object_id)) ?? null} ontology={activeLoaded.ontology} onChange={changeAttribute} disabled={!editableHost} /> : null}
       </aside>
       <section className="canvas-column" aria-label="标注工作区">
-        <div id="canvas-toolbar-row" className="canvas-toolbar-row"><Toolbar active={tool} disabled={!activeLoaded || !activeHost} onChange={setActiveTool} /><div className="canvas-actions"><button type="button" aria-label="适配画布" disabled={!activeHost} onClick={() => activeHost?.fitImage()}>适配画布</button>
+        <div id="canvas-toolbar-row" className="canvas-toolbar-row"><Toolbar active={tool} disabled={!activeLoaded || !editableHost} onChange={setActiveTool} /><div className="canvas-actions"><button type="button" aria-label="适配画布" disabled={!editableHost} onClick={() => editableHost?.fitImage()}>适配画布</button>
           <ResizeControls targetId="canvas-toolbar-row" axis="height" decreaseName="减小画布工具栏高度" increaseName="增大画布工具栏高度" minimum={46} maximum={180} step={16} />
-          <button type="button" data-testid="undo" disabled={!activeHost || !historyState.canUndo} onClick={() => activeHost?.dispatch({ kind: 'undo' })}>撤销</button>
-          <button type="button" data-testid="redo" disabled={!activeHost || !historyState.canRedo} onClick={() => activeHost?.dispatch({ kind: 'redo' })}>重做</button>
+          <button type="button" data-testid="undo" disabled={!editableHost || !historyState.canUndo} onClick={() => editableHost?.dispatch({ kind: 'undo' })}>撤销</button>
+          <button type="button" data-testid="redo" disabled={!editableHost || !historyState.canRedo} onClick={() => editableHost?.dispatch({ kind: 'redo' })}>重做</button>
         </div></div>
         <div className="canvas-stage" data-testid="canvas-container">
           {activeLoaded ? <CanvasView key={`${activeLoaded.media.asset_revision_id}:${activeLoaded.revisionId}:${activeLoaded.readOnlyPreview}`} request={activeLoaded} readOnly={activeLoaded.readOnlyPreview} activeTool={tool} onDelta={applyDelta} onHostReady={(readyHost) => { if (selectedAssetId !== activeLoaded.media.asset_revision_id) return; setLocalFlags(readyHost.getLocalFlags()); setHost(readyHost); readyHost.setActiveLabel(activeLoaded.ontology.labels[0]?.label_id ?? ''); }} /> : <div className={`canvas-state${loadState === 'error' ? ' error' : ''}`} role={loadState === 'error' ? 'alert' : 'status'}>{loadState === 'error' ? '媒体加载失败。' : selectedAssetId || loadState === 'loading' ? '正在加载服务端媒体与标注…' : '选择或导入媒体以开始标注。'}</div>}
         </div>
         <footer className="canvas-footer"><span>工具：{tool}</span><span>{activeLoaded ? `${activeLoaded.media.canonical_width} × ${activeLoaded.media.canonical_height} canonical` : '—'}</span><span>对象 {activeObjects.length}</span></footer>
         {activeLoaded ? <SaveStatus queue={queue} asset_revision_id={activeLoaded.media.asset_revision_id} recovery={recovery} onViewServer={viewServerRevision} onResumeLocal={resumeLocalDraft} /> : null}
-        <section className="completion-panel" aria-label="标注完成状态"><label htmlFor="completion-state">完成状态</label><select id="completion-state" data-testid="completion-state" value={completionChoice} disabled={!activeHost} onChange={(event) => setCompletion(event.target.value as typeof completionChoice)}>
+        <section className="completion-panel" aria-label="标注完成状态"><label htmlFor="completion-state">完成状态</label><select id="completion-state" data-testid="completion-state" value={completionChoice} disabled={!editableHost} onChange={(event) => setCompletion(event.target.value as typeof completionChoice)}>
           <option value="unprocessed">未处理</option><option value="in_progress">处理中</option><option value="complete">已完成</option><option value="confirmed_negative">已确认无目标</option>
         </select>
         {completionChoice === 'confirmed_negative' ? <div data-testid="negative-confirmation" className="negative-confirmation" role="group" aria-label="确认负样本">
           <p>确认该图像确实没有目标对象。空白文档不会自动成为负样本。</p>
           {activeObjects.length ? <p role="alert">请先移除全部对象后再确认。</p> : null}
-          <label><input data-testid="negative-confirm-checkbox" type="checkbox" checked={negativeConfirmed} disabled={activeObjects.length > 0 || !activeHost} onChange={(event) => setNegativeConfirmed(event.target.checked)} />我已检查图像并确认没有目标对象</label>
-          <button data-testid="negative-confirm-submit" type="button" disabled={!negativeConfirmed || activeObjects.length > 0 || !activeHost} onClick={confirmNegative}>确认负样本并保存</button>
+          <label><input data-testid="negative-confirm-checkbox" type="checkbox" checked={negativeConfirmed} disabled={activeObjects.length > 0 || !editableHost} onChange={(event) => setNegativeConfirmed(event.target.checked)} />我已检查图像并确认没有目标对象</label>
+          <button data-testid="negative-confirm-submit" type="button" disabled={!negativeConfirmed || activeObjects.length > 0 || !editableHost} onClick={confirmNegative}>确认负样本并保存</button>
         </div> : null}</section>
         <section className="export-panel" aria-label="固定版本导出"><label htmlFor="export-format">导出格式</label><select id="export-format" data-testid="export-format" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as typeof exportFormat)}><option value="coco">COCO</option><option value="yolo">YOLO</option><option value="native">WebLabel 原生包</option></select>
           <p>COCO/YOLO 不包含全部对象属性；点击确认导出即确认接受该格式的信息损失，产物绑定保存后的不可变标注版本。</p><button data-testid="export-start" type="button" disabled={!activeLoaded || exporting} onClick={() => void exportCurrent()}>{exporting ? '保存并导出中…' : '确认信息损失并导出'}</button>{exportMessage ? <p role="status">{exportMessage}</p> : null}</section>

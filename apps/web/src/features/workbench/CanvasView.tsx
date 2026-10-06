@@ -93,9 +93,6 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
     if (readOnly) hostRef.current?.cancelGesture();
   }, [readOnly, deviceState]);
 
-  useEffect(() => {
-    hostRef.current?.setTool(activeTool);
-  }, [activeTool]);
 
   return <>
     <div className="gpu-diagnostics" data-testid="gpu-status" data-actual-backend={deviceState === 'ready' ? 'webgpu' : 'none'} data-adapter-kind={adapter} data-device-state={deviceState} role="status" aria-live="polite">

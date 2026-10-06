@@ -51,7 +51,11 @@ describe('T26 serialized review submission', () => {
     let persistedMutations = 0;
     const pointerPhases: string[] = [];
     let viewport = { scale: 1, tx: 0, ty: 0, css_width: 100, css_height: 100, dpr: 1 };
-    const facade = {
+    let releaseDeviceLoss!: (reason: string) => void;
+    const loss = new Promise<string>((resolve) => { releaseDeviceLoss = resolve; });
+    let deviceState: 'ready' | 'disposed' = 'ready';
+    const unexpected = (): never => { throw new Error('Unexpected native call in captured-gesture consumer'); };
+    const facade: EditorFacade = {
       pointer: (input: PointerInput) => {
         pointerPhases.push(input.phase);
         if (input.phase === 'down') gestureActive = true;
@@ -59,14 +63,20 @@ describe('T26 serialized review submission', () => {
         const document_changed = input.phase === 'up' && gestureActive;
         if (document_changed) attemptedMutations += 1;
         if (input.phase === 'up') gestureActive = false;
-        return { document_changed, generation: 0, selected_object_ids: [], suggestion_decisions: [], error: null, repaint: false, can_undo: false, can_redo: false } as unknown as EditorDelta;
+        return { document_changed, generation: 0, changed_objects: [], removed_object_ids: [], selected_object_ids: [], suggestion_decisions: [], error: null, repaint: false, can_undo: false, can_redo: false };
       },
+      dispatch: unexpected, set_tool: unexpected, set_active_label: unexpected, zoom_at: unexpected,
+      set_selection: unexpected, set_local_flags: unexpected, get_snapshot: unexpected,
+      get_generation: () => 0, get_object_hashes: unexpected, set_predictions: unexpected,
       get_viewport: () => viewport,
       set_viewport: (next: typeof viewport) => { viewport = next; },
       fit_image: () => undefined,
       render: () => undefined,
-      dispose: () => undefined,
-    } as unknown as EditorFacade;
+      device_lost: () => loss,
+      get_device_state: () => deviceState,
+      recover_renderer: unexpected,
+      dispose: () => { deviceState = 'disposed'; releaseDeviceLoss('disposed'); },
+    };
     const locked = { current: false };
     const host = new EditorHost({
       facadeFactory: { create: async () => ({ facade, transfer: { method: 'copyBytes', byteLength: 400, durationMs: 0 } }) },

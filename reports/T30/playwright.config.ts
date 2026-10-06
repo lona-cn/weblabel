@@ -12,6 +12,6 @@ export default defineConfig({
   retries:0,
   reporter:[['list'],['json',{outputFile:path.join(root,'reports/T30',process.env.WEBLABEL_T30_RUN_TAG?`browser-results-${process.env.WEBLABEL_T30_RUN_TAG}.json`:'browser-results.json')}]],
   projects:[{name:'chromium-webgpu',use:{channel:'chromium',launchOptions:{args:['--enable-unsafe-webgpu']}}}],
-  webServer:{command:`"${process.execPath}" "${pnpm}" --filter @weblabel/web exec vite --host 127.0.0.1 --port 5191 --strictPort --mode test`,cwd:root,url:'http://127.0.0.1:5191/',reuseExistingServer:false,timeout:30000},
+  webServer:{command:`"${process.execPath}" scripts/build-web-bridge.mjs && "${process.execPath}" "${pnpm}" --filter @weblabel/web exec vite --host 127.0.0.1 --port 5191 --strictPort --mode test`,cwd:root,url:'http://127.0.0.1:5191/',reuseExistingServer:false,timeout:120000},
   use:{baseURL:'http://127.0.0.1:5191',viewport:{width:1440,height:1000},trace:'on',screenshot:'on',video:'off'},
 });
