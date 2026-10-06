@@ -123,6 +123,7 @@ export class ActivityCollector {
     }
   }
   clear(): void {
+    this.setEnabled(false);
     const storage = typeof this.storageSource === 'function' ? this.storageSource() : this.storageSource;
     storage?.removeItem(this.storageKey);
     this.storage = storage;

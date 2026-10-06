@@ -12,6 +12,11 @@ function ids(value, field) {
   if (!Array.isArray(value) || value.some((id) => typeof id !== 'string' || !id || id.length > 128) || new Set(value).size !== value.length) throw new Error(`Invalid ${field}`);
   return value;
 }
+function addInteger(total, value) {
+  const next = total + value;
+  if (!Number.isSafeInteger(next)) throw new Error('Report total exceeds safe integer precision');
+  return next;
+}
 
 export function analyzePilot(input) {
   if (input?.schema_version !== 1 || !Array.isArray(input.samples)) throw new Error('Expected schema_version 1 and samples');
@@ -34,9 +39,15 @@ export function analyzePilot(input) {
     if ((sample.returned_tasks === null) !== (sample.reviewed_tasks === null) || (sample.returned_tasks !== null && sample.returned_tasks > sample.reviewed_tasks)) throw new Error('Invalid return denominator');
     if (sample.fees_usd !== null && (typeof sample.fees_usd !== 'number' || !Number.isFinite(sample.fees_usd) || sample.fees_usd < 0)) throw new Error('Invalid fees_usd');
     const missed = gt.filter((id) => !final.includes(id));
-    return { ...sample, human_total_ms: HUMAN_KINDS.reduce((sum, kind) => sum + sample.durations_ms[kind], 0), missed_objects: missed.length, missed_object_ids: missed, ai_never_proposed_gt: proposed === null ? null : gt.filter((id) => !proposed.includes(id)).length };
+    const human_total_ms = HUMAN_KINDS.reduce((sum, kind) => addInteger(sum, sample.durations_ms[kind]), 0);
+    return { ...sample, human_total_ms, active_total_ms: addInteger(human_total_ms, sample.durations_ms.model_wait), missed_objects: missed.length, missed_object_ids: missed, ai_never_proposed_gt: proposed === null ? null : gt.filter((id) => !proposed.includes(id)).length };
   });
-  const sums = (rows, field) => rows.length && rows.every((row) => row[field] !== null) ? rows.reduce((sum, row) => sum + row[field], 0) : null;
+  const sums = (rows, field) => {
+    if (!rows.length || rows.some((row) => row[field] === null)) return null;
+    const total = rows.reduce((sum, row) => field === 'fees_usd' ? sum + row[field] : addInteger(sum, row[field]), 0);
+    if (!Number.isFinite(total)) throw new Error('Report monetary total is not finite');
+    return total;
+  };
   const arms = Object.fromEntries(ARMS.map((arm) => {
     const rows = records.filter((row) => row.arm === arm);
     const reviewed = sums(rows, 'reviewed_tasks');
@@ -45,8 +56,9 @@ export function analyzePilot(input) {
       samples: rows.length, sample_units: [...new Set(rows.map((row) => row.sample_unit))], image_count: new Set(rows.map((row) => row.image_id)).size,
       object_count: rows.reduce((sum, row) => sum + row.ground_truth_object_ids.length, 0), task_count: new Set(rows.map((row) => row.task_id)).size,
       seeds: [...new Set(rows.map((row) => row.seed))], auditors: [...new Set(rows.map((row) => row.auditor))], quality_methods: [...new Set(rows.map((row) => row.quality_method))], ai_configurations: [...new Set(rows.map((row) => row.ai_configuration))],
-      durations_ms: Object.fromEntries(KINDS.map((kind) => [kind, rows.reduce((sum, row) => sum + row.durations_ms[kind], 0)])),
-      human_total_ms: rows.reduce((sum, row) => sum + row.human_total_ms, 0), missed_objects: rows.reduce((sum, row) => sum + row.missed_objects, 0),
+      durations_ms: Object.fromEntries(KINDS.map((kind) => [kind, rows.reduce((sum, row) => addInteger(sum, row.durations_ms[kind]), 0)])),
+      human_total_ms: rows.reduce((sum, row) => addInteger(sum, row.human_total_ms), 0), missed_objects: rows.reduce((sum, row) => sum + row.missed_objects, 0),
+      active_total_ms: rows.reduce((sum, row) => addInteger(sum, row.active_total_ms), 0),
       ai_never_proposed_gt: sums(rows, 'ai_never_proposed_gt'), wrong_objects: sums(rows, 'wrong_objects'), wrong_labels: sums(rows, 'wrong_labels'), wrong_attributes: sums(rows, 'wrong_attributes'),
       returned_tasks: returned, reviewed_tasks: reviewed, return_rate: reviewed ? returned / reviewed : null, fees_usd: sums(rows, 'fees_usd'),
     }];
@@ -61,7 +73,7 @@ export function analyzePilot(input) {
 }
 
 export function reportCsv(report) {
-  const fields = ['arm', 'status', 'evidence_kind', 'samples', 'sample_units', 'image_count', 'object_count', 'task_count', 'seeds', 'auditors', 'quality_methods', 'ai_configurations', 'human_total_ms', ...KINDS.map((kind) => `${kind}_ms`), 'missed_objects', 'ai_never_proposed_gt', 'wrong_objects', 'wrong_labels', 'wrong_attributes', 'returned_tasks', 'reviewed_tasks', 'return_rate', 'fees_usd', 'goal_human_time_reduction', 'roi'];
+  const fields = ['arm', 'status', 'evidence_kind', 'samples', 'sample_units', 'image_count', 'object_count', 'task_count', 'seeds', 'auditors', 'quality_methods', 'ai_configurations', 'human_total_ms', 'active_total_ms', ...KINDS.map((kind) => `${kind}_ms`), 'missed_objects', 'ai_never_proposed_gt', 'wrong_objects', 'wrong_labels', 'wrong_attributes', 'returned_tasks', 'reviewed_tasks', 'return_rate', 'fees_usd', 'goal_human_time_reduction', 'roi'];
   const cell = (value) => {
     let text = value === null ? 'null' : Array.isArray(value) ? JSON.stringify(value) : String(value);
     if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;

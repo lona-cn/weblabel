@@ -112,6 +112,7 @@ it('counts every missing GT object including objects AI never proposed and prese
   const report = analyzePilot({ schema_version: 1, samples: [sample] });
   const metrics = report.arms.this_tool_same_AI;
   expect(metrics.human_total_ms).toBe(1500); expect(metrics.durations_ms.model_wait).toBe(9000);
+  expect(metrics.active_total_ms).toBe(10_500);
   expect(metrics.missed_objects).toBe(2); expect(metrics.ai_never_proposed_gt).toBe(1);
   expect(report.records[0].missed_object_ids).toEqual(['proposed-but-missed', 'never-proposed-and-missed']);
   expect(metrics.fees_usd).toBeNull(); expect(metrics.wrong_objects).toBeNull(); expect(metrics.return_rate).toBeNull();
@@ -120,6 +121,8 @@ it('counts every missing GT object including objects AI never proposed and prese
   expect(() => analyzePilot({ schema_version: 1, samples: [sample, { ...sample, arm: 'current_tool_same_AI', ai_configuration: 'different-config' }] })).toThrow();
   expect(() => analyzePilot({ schema_version: 1, samples: [{ ...sample, final_ground_truth_object_ids: ['not-in-gt'] }] })).toThrow();
   expect(() => analyzePilot({ schema_version: 1, samples: [{ ...sample, fees_usd: Number.NaN }] })).toThrow();
+  expect(() => analyzePilot({ schema_version: 1, samples: [{ ...sample, durations_ms: { ...sample.durations_ms, task: Number.MAX_SAFE_INTEGER } }] })).toThrow();
+  expect(() => analyzePilot({ schema_version: 1, samples: [{ ...sample, fees_usd: 1e308 }, { ...sample, sample_id: 'image-2', fees_usd: 1e308 }] })).toThrow();
 });
 
 it('reports noData rather than ROI when no pilot samples exist', async () => {
@@ -147,4 +150,10 @@ it('handles idle threshold boundaries, refocus, a new cleared session and corrup
   corrupt.clear(); expect(corrupt.problem).toBeNull();
   const denied = new ActivityCollector('project', 'actor', () => now, () => { throw new Error('storage denied'); });
   expect(denied.problem).not.toBeNull(); expect(denied.isEnabled()).toBe(false);
+  let saved: string | null = null;
+  const cannotClear = new ActivityCollector('project', 'actor', () => now, { getItem: () => saved, setItem: (_key, value) => { saved = value; }, removeItem: () => { throw new Error('delete denied'); } });
+  cannotClear.setEnabled(true); now += 1000; cannotClear.commit();
+  const journal = saved;
+  expect(() => cannotClear.clear()).toThrow();
+  expect(cannotClear.isEnabled()).toBe(false); expect(saved).toBe(journal); expect(cannotClear.totals().task).toBe(1000);
 });

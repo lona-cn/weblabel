@@ -1,4 +1,5 @@
-import { useEffect, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import type { RefObject } from 'react';
 import type { ActivityKind } from '../../../../../packages/contracts/generated/ActivityKind';
 import type { ActivityCheckpoint } from '../../../../../packages/contracts/generated/ActivityCheckpoint';
 import type { ActivitySession } from '../../../../../packages/contracts/generated/ActivitySession';
