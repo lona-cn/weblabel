@@ -2,18 +2,18 @@
 use std::future::Future;
 #[cfg(target_arch = "wasm32")]
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::JsValue;
 
 #[cfg(target_arch = "wasm32")]
 use crate::{
-    buffers::{bbox_instances_into, overlay_instances_into, BBoxInstance},
+    buffers::{BBoxInstance, bbox_instances_into, overlay_instances_into},
     scene::{
-        changed_element_range, dirty_byte_range, scene_upload_plan, validate_projection,
-        validate_scene, CanonicalImage, Overlay, RenderObject, RenderScene, Viewport,
+        CanonicalImage, Overlay, RenderObject, RenderScene, Viewport, changed_element_range,
+        dirty_byte_range, scene_upload_plan, validate_projection, validate_scene,
     },
 };
 
@@ -80,6 +80,7 @@ pub struct Renderer {
     diagnostics: String,
     stats: crate::stats::RendererStats,
     visible_ranges: Vec<std::ops::Range<u32>>,
+    selected_control_ranges: Vec<std::ops::Range<u32>>,
     lost: Arc<AtomicBool>,
     loss_notification: js_sys::Promise,
 }
@@ -475,10 +476,23 @@ impl Renderer {
         let browser_info = device.as_webgpu().map(|device| device.adapter_info());
         let diagnostics = format!(
             "backend={:?}; device_type={:?}; name={}; surface={:?}; render_view={:?}; vendor={}; architecture={}; device={}",
-            info.backend, info.device_type, info.name, format, render_format,
-            browser_info.as_ref().map(|info| info.vendor()).unwrap_or_default(),
-            browser_info.as_ref().map(|info| info.architecture()).unwrap_or_default(),
-            browser_info.as_ref().map(|info| info.device()).unwrap_or_default()
+            info.backend,
+            info.device_type,
+            info.name,
+            format,
+            render_format,
+            browser_info
+                .as_ref()
+                .map(|info| info.vendor())
+                .unwrap_or_default(),
+            browser_info
+                .as_ref()
+                .map(|info| info.architecture())
+                .unwrap_or_default(),
+            browser_info
+                .as_ref()
+                .map(|info| info.device())
+                .unwrap_or_default()
         );
         let (css_w, css_h) = if paused {
             (0, 0)
@@ -704,6 +718,7 @@ impl Renderer {
                 ..Default::default()
             },
             visible_ranges: Vec::new(),
+            selected_control_ranges: Vec::new(),
         };
         this.canvas.set_width(css_w);
         this.canvas.set_height(css_h);
@@ -877,6 +892,7 @@ impl Renderer {
             &scene.objects,
             scene.viewport,
             &mut self.visible_ranges,
+            &mut self.selected_control_ranges,
         ) as u64;
         self.stats.record_cpu_call(
             scene.objects.len(),
@@ -937,13 +953,18 @@ impl Renderer {
             pass.set_pipeline(&self.image_pipeline);
             pass.set_bind_group(1, &self.image_bind, &[]);
             pass.draw(0..6, 0..1);
-            if !self.visible_ranges.is_empty() {
+            if !self.visible_ranges.is_empty() || !self.selected_control_ranges.is_empty() {
                 let bind =
                     instance_bind(&self.device, &self.instance_layout, &self.instance_buffer);
                 pass.set_pipeline(&self.box_pipeline);
                 pass.set_bind_group(1, &bind, &[]);
                 for range in &self.visible_ranges {
                     pass.draw(0..6, range.clone());
+                }
+                // Reuse committed bbox storage; controls are CSS-space vertices, not CPU geometry.
+                pass.set_pipeline(&self.overlay_pipeline);
+                for range in &self.selected_control_ranges {
+                    pass.draw(0..48, range.clone());
                 }
             }
             if !scene.overlays.is_empty() {
@@ -955,7 +976,9 @@ impl Renderer {
         }
         self.queue.submit([encoder.finish()]);
         self.stats.record_submission(
-            1 + self.visible_ranges.len() as u64 + u64::from(!scene.overlays.is_empty()),
+            1 + self.visible_ranges.len() as u64
+                + self.selected_control_ranges.len() as u64
+                + u64::from(!scene.overlays.is_empty()),
         );
         self.queue.present(frame);
         if suboptimal {

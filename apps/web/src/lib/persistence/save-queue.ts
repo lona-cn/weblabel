@@ -566,7 +566,6 @@ export class SaveQueue {
       return reusable;
     }
     const suggestion_decisions = state.journal.slice(state.synced_intent_seq).map((entry) => entry.intent);
-    Object.freeze(suggestion_decisions);
     const lease = this.getLease(state.asset_revision_id);
     const request: SaveRequest = {
       operation_id: this.mintOperationId(state),
@@ -575,7 +574,6 @@ export class SaveQueue {
       lease: lease === null ? null : { task_id: lease.task_id, fencing_token: lease.fencing_token },
       suggestion_decisions,
     };
-    Object.freeze(request);
     const operation: PendingOperation = {
       operation_id: request.operation_id,
       generation: state.local_generation,
@@ -584,7 +582,7 @@ export class SaveQueue {
       prepared_at: iso(this.clock.now()),
       request,
     };
-    Object.freeze(operation);
+    freezeDeep(operation);
     state.pending = operation;
     return operation;
   }

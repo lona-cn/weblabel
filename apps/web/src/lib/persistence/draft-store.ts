@@ -9,13 +9,19 @@ import type {
 } from './types';
 import { DRAFT_SCHEMA_VERSION, StorageError, realClock } from './types';
 
+// Only this producer certifies nodes, after every JSON child and the node itself
+// are frozen. External Object.isFrozen roots can still contain mutable children.
+const certifiedFrozen = new WeakSet<object>();
+
 /** Deep-freezes any draft-layer value (documents, intents, prepared requests). */
 export function freezeDeep<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value;
+  if (certifiedFrozen.has(value)) return value;
   for (const nested of Object.values(value as Record<string, unknown>)) {
     freezeDeep(nested);
   }
   Object.freeze(value);
+  certifiedFrozen.add(value);
   return value;
 }
 

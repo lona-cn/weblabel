@@ -394,6 +394,72 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('T31 persistence producer immutability boundaries', () => {
+  it('freezes mutable descendants of external shallow-frozen records and documents, including aliases', async () => {
+    const store = new DraftStore(new InMemoryDraftStorage());
+    const document = Object.freeze(makeDocument());
+    const geometryAlias = document.objects[0].geometry;
+    const record = Object.freeze(makeRecord({ document }));
+    await store.save(record);
+
+    expect(() => { geometryAlias.x_min = 99; }).toThrow(TypeError);
+    expect(() => { document.objects.push(document.objects[0]); }).toThrow(TypeError);
+    expect(() => { document.objects[0].attributes.helmet_state = 'wearing'; }).toThrow(TypeError);
+    // A fresh shallow-frozen wrapper around a previously certified subtree
+    // must still freeze its new mutable journal.
+    const changeIds = ['change_001'];
+    const journal = [{ seq: 1, generation: 9, intent: { ...ACCEPT, change_ids: changeIds }, recorded_at: record.updated_at }];
+    await store.save(Object.freeze({ ...record, intent_journal: journal }));
+    expect(() => { changeIds.push('tampered'); }).toThrow(TypeError);
+    expect(await store.load(record.asset_revision_id)).toMatchObject({
+      document: makeDocument(),
+      intent_journal: [{ intent: ACCEPT }],
+    });
+  });
+
+  it('isolates shallow-frozen caller inputs and protects retry payloads and journals while an older ACK lands', async () => {
+    const fixture = makeQueue();
+    const document = Object.freeze(makeDocument());
+    const changeIds = ['change_001'];
+    const intent = Object.freeze({ ...ACCEPT, change_ids: changeIds });
+    enqueue(fixture, { generation: 8, document, base_revision_id: 'r7', suggestion_decisions: [intent] });
+    document.objects[0].geometry.x_min = 99;
+    document.objects[0].attributes.helmet_state = 'wearing';
+    changeIds.push('tampered');
+    await fixture.queue.whenPersisted('asset_a');
+    expect(await fixture.storage.get('asset_a')).toMatchObject({
+      document: makeDocument(), intent_journal: [{ intent: ACCEPT }],
+    });
+
+    void fixture.queue.flush('asset_a');
+    const pending = fixture.queue.toRecord('asset_a')!;
+    const wire = JSON.stringify(pending.pending!.request);
+    expect(() => { pending.document.objects[0].geometry.x_min = 77; }).toThrow(TypeError);
+    expect(() => { pending.pending!.request.document.objects[0].attributes.helmet_state = 'tampered'; }).toThrow(TypeError);
+    expect(() => { pending.intent_journal[0].intent.change_ids.push('tampered'); }).toThrow(TypeError);
+    expect(() => { pending.pending!.request.suggestion_decisions.push(REVERT); }).toThrow(TypeError);
+    fixture.transport.failNetwork(0);
+    await microtasks();
+    void fixture.queue.retry('asset_a');
+    expect(JSON.stringify(fixture.transport.saves[1].request)).toBe(wire);
+
+    enqueue(fixture, { generation: 9, document: makeDocument({ completion: 'complete' }), suggestion_decisions: [REVERT] });
+    fixture.transport.ackSave(1, 'r8');
+    await microtasks();
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({
+      dirty: true, local_generation: 9, synced_generation: 8, base_revision_id: 'r8',
+    });
+    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    expect(fixture.transport.saves[2].request).toMatchObject({
+      base_revision_id: 'r8', document: { completion: 'complete' }, suggestion_decisions: [REVERT],
+    });
+    expect(JSON.stringify(fixture.transport.saves[0].request)).toBe(wire);
+    fixture.transport.ackSave(2, 'r9');
+    await microtasks();
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: false, synced_generation: 9 });
+  });
+});
+
 // ===========================================================================
 // Card entry case: pure reconcileAck.
 // ===========================================================================
@@ -602,7 +668,7 @@ describe('T13 behavior 2: retry reuses the prepared operation', () => {
     // Produce a real prepared operation, then simulate a reload: JSON round-trip
     // (as IndexedDB structured-clone does) and restore into a fresh queue.
     const producing = makeQueue();
-    enqueue(producing, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
+    enqueue(producing, { generation: 8, document: makeDocument(), base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
     producing.clock.advance(SAVE_DEBOUNCE_MS);
     producing.transport.failNetwork(0);
     await microtasks();
@@ -618,8 +684,15 @@ describe('T13 behavior 2: retry reuses the prepared operation', () => {
     expect(() => {
       (live?.pending?.request as SaveRequest).base_revision_id = 'tampered';
     }).toThrow();
+    expect(() => { live!.document.objects[0].geometry.x_min = 99; }).toThrow(TypeError);
+    expect(() => { live!.pending!.request.document.objects[0].geometry.x_min = 99; }).toThrow(TypeError);
+    expect(() => { live!.intent_journal[0].intent.change_ids.push('tampered'); }).toThrow(TypeError);
     // Mutating the caller's object after restore cannot reach the queue copy.
     (reloaded.pending?.request as SaveRequest).document = makeDocument({ completion: 'confirmed_negative' });
+    reloaded.document.objects[0].geometry.x_min = 99;
+    reloaded.intent_journal[0].intent.change_ids.push('tampered');
+    reloaded.pending!.request.suggestion_decisions[0].change_ids.push('tampered');
+    expect(fixture.queue.toRecord('asset_a')!.intent_journal[0].intent).toEqual(ACCEPT);
 
     void fixture.queue.retry('asset_a');
     expect(fixture.transport.saves).toHaveLength(1);

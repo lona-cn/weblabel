@@ -6,9 +6,11 @@ pub fn visible_ranges(
     objects: &[RenderObject],
     view: Viewport,
     out: &mut Vec<std::ops::Range<u32>>,
+    controls: &mut Vec<std::ops::Range<u32>>,
 ) -> usize {
     out.clear();
-    if !view.valid() {
+    controls.clear();
+    if !view.valid() || view.css_width <= 0.0 || view.css_height <= 0.0 {
         return 0;
     }
     // The shader centers its CSS-space stroke on each geometric edge. DPR
@@ -18,9 +20,28 @@ pub fn visible_ranges(
     let top = (-view.ty - margin) / view.scale;
     let right = (view.css_width - view.tx + margin) / view.scale;
     let bottom = (view.css_height - view.ty + margin) / view.scale;
+    let control_margin = crate::scene::control_diameter_css_pixels() / 2.0;
+    let control_left = (-view.tx - control_margin) / view.scale;
+    let control_top = (-view.ty - control_margin) / view.scale;
+    let control_right = (view.css_width - view.tx + control_margin) / view.scale;
+    let control_bottom = (view.css_height - view.ty + control_margin) / view.scale;
     let mut visible = 0;
     for (i, object) in objects.iter().enumerate() {
         let [x0, y0, x1, y1] = object.bounds;
+        if object.selected
+            && !object.locked
+            && x0 < control_right
+            && x1 > control_left
+            && y0 < control_bottom
+            && y1 > control_top
+        {
+            let index = i as u32;
+            if let Some(last) = controls.last_mut().filter(|range| range.end == index) {
+                last.end += 1;
+            } else {
+                controls.push(index..index + 1);
+            }
+        }
         if x0 < right && x1 > left && y0 < bottom && y1 > top {
             visible += 1;
             let i = i as u32;
@@ -125,6 +146,73 @@ mod tests {
     }
 
     #[test]
+    fn selected_controls_keep_four_css_pixel_fringe_without_admitting_locked_or_unselected_objects()
+    {
+        let mut ranges = Vec::new();
+        let mut controls = Vec::new();
+        for scale in [0.25, 1.0, 4.0] {
+            for dpr in [1.0, 1.25, 2.0, 3.0] {
+                let mut viewport = view(scale);
+                viewport.tx = -10.0 * scale;
+                viewport.ty = -10.0 * scale;
+                viewport.dpr = dpr;
+                for gap_css in [0.5, 2.0, 4.0, 4.5] {
+                    let css_boxes = [
+                        [-10.0, 20.0, -gap_css, 30.0],
+                        [100.0 + gap_css, 20.0, 110.0, 30.0],
+                        [20.0, -10.0, 30.0, -gap_css],
+                        [20.0, 100.0 + gap_css, 30.0, 110.0],
+                    ];
+                    let mut objects = css_boxes.map(|b| {
+                        object(
+                            true,
+                            [
+                                (b[0] - viewport.tx) / scale,
+                                (b[1] - viewport.ty) / scale,
+                                (b[2] - viewport.tx) / scale,
+                                (b[3] - viewport.ty) / scale,
+                            ],
+                        )
+                    });
+                    visible_ranges(&objects, viewport, &mut ranges, &mut controls);
+                    assert_eq!(ranges, if gap_css < 0.75 { vec![0..4] } else { vec![] });
+                    assert_eq!(
+                        controls,
+                        if gap_css < 4.0 { vec![0..4] } else { vec![] },
+                        "scale={scale} dpr={dpr} gap_css={gap_css}"
+                    );
+                    objects[1].locked = true;
+                    objects[2].selected = false;
+                    visible_ranges(&objects, viewport, &mut ranges, &mut controls);
+                    assert_eq!(
+                        controls,
+                        if gap_css < 4.0 {
+                            vec![0..1, 3..4]
+                        } else {
+                            vec![]
+                        }
+                    );
+                }
+            }
+        }
+        let mut invalid = view(1.0);
+        invalid.css_width = 0.0;
+        ranges.push(0..1);
+        controls.push(0..1);
+        assert_eq!(
+            visible_ranges(
+                &[object(true, [1.0, 1.0, 5.0, 5.0])],
+                invalid,
+                &mut ranges,
+                &mut controls
+            ),
+            0
+        );
+        assert!(ranges.is_empty());
+        assert!(controls.is_empty());
+    }
+
+    #[test]
     fn draw_ranges_preserve_sparse_instance_indices_and_merge_adjacent_visible_objects() {
         let objects = [
             object(false, [1.0, 1.0, 5.0, 5.0]),
@@ -133,12 +221,19 @@ mod tests {
             object(false, [3.0, 3.0, 7.0, 7.0]),
         ];
         let mut ranges = Vec::new();
-        assert_eq!(visible_ranges(&objects, view(1.0), &mut ranges), 3);
+        let mut controls = Vec::new();
+        assert_eq!(
+            visible_ranges(&objects, view(1.0), &mut ranges, &mut controls),
+            3
+        );
         assert_eq!(ranges, vec![0..2, 3..4]);
         let mut panned = view(1.0);
         panned.tx = -200.0;
         panned.ty = -200.0;
-        assert_eq!(visible_ranges(&objects, panned, &mut ranges), 1);
+        assert_eq!(
+            visible_ranges(&objects, panned, &mut ranges, &mut controls),
+            1
+        );
         assert_eq!(ranges, vec![2..3]);
     }
 
@@ -174,7 +269,8 @@ mod tests {
                         })
                         .into();
                     let mut ranges = Vec::new();
-                    visible_ranges(&objects, viewport, &mut ranges);
+                    let mut controls = Vec::new();
+                    visible_ranges(&objects, viewport, &mut ranges, &mut controls);
                     assert_eq!(
                         ranges,
                         if gap_css < 0.75 { vec![0..4] } else { vec![] },

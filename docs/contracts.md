@@ -172,11 +172,17 @@ export function create_editor(
 C3 的 flags 只属于编辑器会话，不进入保存文档。业务 UI 可持有不可修改的 changed_objects 投影；不直接 mutate。pointer move 只更新交互预览，不增加 generation，不触发完整快照或网络；pointer up 形成一个 command 才增加 generation。set_viewport/selection/hide 不改变业务 generation。取消/无效操作不增加 generation。undo/redo 改变文档且 generation 单调递增，不倒退。
 T28前端只在成功的document_changed/suggestion decision逻辑提交读取committed snapshot；选中/隐藏/锁定仅更新局部UI投影与历史状态，不调用整文档快照或远端保存。local flags投影不可修改且只在Rust成功后发布；INVALID_FLAGS/未知object与locked mutation拒绝不能清空已确认选中/undo状态，切图重新建立会话并清理flags。持久实例buffer按局部对象range更新；视口仅改变uniform和绘制ranges。资源计数来自实际创建/释放/上传/submit，logical texture bytes与V8 heap分别标识，不称真实VRAM。跨JS/WASM bytes当前只计实际RGBA输入，bridge耗时仅涵盖原生桥调用，不认证完整React/SaveQueue CPU或物理可见帧。
 
+T31原生selected controls：未锁定、未隐藏的选中对象在四角及四边中点绘制8个8CSS像素方块。锚点先做canonical→CSS变换再加±4CSS偏移，DPR不进入持久坐标；4CSS可见fringe独立于bbox描边margin，零面积视口不产生绘制ranges。复用同一48-byte实例buffer和已有bind；一次扫描生成可复用bbox/control ranges，全部bbox后再绘controls。preview flags=0保留原有单中心控件，不生成八份CPU几何。
+
+T31普通direct/gesture提交先在单一working clone上执行并校验，generation/no-op/error检查通过后move旧文档为history.before并只克隆已安装文档为history.after；undo/redo按既有snapshot history还原且保持128条/64MiB预算。WASM只同步序列化不可变当前文档借用，native owned snapshot及全部JS wire保持不变；ApplySuggestions另有既有事务working clone，不将两克隆归因外推到所有命令。
+
+T31持久化producer：每次逻辑提交与恢复仍执行JSON防御拷贝，enqueue内立即冻结并调用本地存储，不推迟或合并durability。模块私有WeakSet仅认证自身已递归冻结全部JSON子节点且成功冻结根的对象；仅认证节点跳过重复遍历，外部Object.isFrozen浅根继续深冻结。prepared request、pending与有序decision journal保持不可变，同operation重试payload、旧ACK不能清新dirty、quota/CAS/flush语义不变。producer计数不是完整消费者CPU或真实硬件性能通过证据。
+
 T30设备恢复扩展：三项方法是每个facade实现的required能力。device_lost返回当前真实GPUDevice对应的owned one-shot Promise，在原生device lost callback收到Destroyed/Unknown时resolve诊断字符串；JS idle等待不持有WASM borrow，不靠RAF/poll/submit检测。get_device_state只读返回实际renderer状态。recover_renderer只重建GPU资源，不create_editor、不刷新应用、不以snapshot新建会话；同一Rust editor、generation、history、selection、local flags、preview、predictions及既有SaveQueue保留。Host发布lost/recovering期间阻止编辑，CPU只读访问和保存队列继续可用；成功后重订阅新device的loss，dirty一次，零尺寸仍暂停提交；失败为GPU_RECOVERY_FAILED并保留CPU会话，允许显式retry，绝不重新调用AI。异步重建与通知都必须以asset epoch、facade identity、disposed fence隔离切图/卸载；旧请求完成不得配置新画布或访问已free的facade。
 
 T30资源寿命：pending的requestAdapter/requestDevice只持轻量请求元数据；旧renderer/scene保留在可同步dispose的共享owner。dispose在等待门释放前销毁旧buffer/texture/device并释放scene引用；晚返回的新device销毁且不配置旧canvas。请求完成后才同步借saved scene上传并move，不克隆整图/CPU文档，不跨await持facade/session borrow。release不导出simulate_device_loss；测试从浏览器外部捕获真实GPUDevice并destroy。Canvas CSS尺寸不受backing intrinsic尺寸反馈；状态/alert/retry用overlay，Dense与独立React消费者提供positioned stage。父控件订阅Host状态且仅ready可编辑；工具/完成状态在Native成功后更新React投影，不因恢复重复set_tool或清空preview。
 
-Rust 函数边界：`geometry::image_to_css([f64;2], Viewport)->[f64;2]`、`css_to_image`、`validate_bbox(&BBox,w:u32,h:u32)->Result<(),DomainError>`；`editor_core::Editor::new(document,ontology)->Result<Editor,DomainError>`；`Editor::dispatch(EditorCommand)->Result<EditorDelta,DomainError>`；`Editor::snapshot()->AnnotationDocument`。渲染模块依赖只读 render scene，不反向修改 Editor。
+Rust 函数边界：`geometry::image_to_css([f64;2], Viewport)->[f64;2]`、`css_to_image`、`validate_bbox(&BBox,w:u32,h:u32)->Result<(),DomainError>`；`editor_core::Editor::new(document,ontology)->Result<Editor,DomainError>`；`Editor::dispatch(EditorCommand)->Result<EditorDelta,DomainError>`；`Editor::document()->&AnnotationDocument` 仅不可变借用，`Editor::snapshot()->AnnotationDocument` 保持独立owned copy。渲染模块依赖只读render scene，不反向修改Editor。
 
 WASM public facade 按 C3 命名；内部 JsValue/serde_wasm_bindgen 包装留在 wasm-bridge。`dispose` 释放监听、rAF、图像和 GPU 引用；重复调用无副作用。create_editor 异步完成时需匹配当前 asset token，旧图片初始化结果不得挂到新图片 Canvas。
 
