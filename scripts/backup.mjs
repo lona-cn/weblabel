@@ -53,6 +53,9 @@ function scrub(db) {
     db.exec("UPDATE model_runs SET state='interrupted' WHERE state IN ('queued','running'); UPDATE jobs SET state='interrupted',worker_id=NULL,lease_until=NULL WHERE state IN ('queued','running'); UPDATE task_leases SET holder_id=NULL,expires_at=0;");
     for (const { name: table } of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('schema_migrations','model_profiles')").all()) {
       const columns = db.prepare(`PRAGMA table_info(${quote(table)})`).all().filter(column => column.type === 'TEXT' && (column.name.endsWith('_json') || ['message', 'reason', 'prompt'].includes(column.name)));
+      // Keep immutable content, approval bindings and audit history byte-for-byte.
+      // Model profile snapshots are credential configuration; only pinned business inputs fail closed.
+      const immutableBusiness = ['annotation_revisions', 'ontology_versions', 'dataset_versions', 'annotation_import_batches', 'annotation_exports', 'dataset_exports', 'review_submissions', 'review_decisions', 'review_issues', 'predictions', 'prediction_audit', 'suggestion_sets', 'run_events'].includes(table);
       for (const column of columns) {
         const rows = db.prepare(`SELECT rowid AS backup_rowid,${quote(column.name)} AS value FROM ${quote(table)} WHERE ${quote(column.name)} IS NOT NULL`).all();
         const update = db.prepare(`UPDATE ${quote(table)} SET ${quote(column.name)}=? WHERE rowid=?`);
@@ -61,12 +64,15 @@ function scrub(db) {
             const original = JSON.parse(row.value);
             const value = JSON.stringify(redact(original));
             if (value !== JSON.stringify(original)) {
-              if (['annotation_revisions', 'ontology_versions', 'dataset_versions', 'annotation_import_batches'].includes(table)) throw new Error('credential_in_immutable_business_data: cannot scrub without invalidating business hashes');
+              if (immutableBusiness || (table === 'model_runs' && column.name === 'context_json')) throw new Error('credential_in_immutable_business_data: cannot scrub immutable business history');
               update.run(value, row.backup_rowid);
             }
           } else {
             const value = redact(row.value);
-            if (value !== row.value) update.run(value, row.backup_rowid);
+            if (value !== row.value) {
+              if (immutableBusiness || (table === 'model_runs' && column.name === 'prompt')) throw new Error('credential_in_immutable_business_data: cannot scrub immutable business history');
+              update.run(value, row.backup_rowid);
+            }
           }
         }
       }
