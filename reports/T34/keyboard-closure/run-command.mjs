@@ -1,0 +1,14 @@
+import { spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { resolveArgv } from '../../../scripts/task.mjs';
+const root = resolve(import.meta.dirname, '../../..');
+const [label, command, ...args] = process.argv.slice(2);
+if (!label || !command) throw new Error('Usage: run-command.mjs LABEL COMMAND ARGS');
+const argv = resolveArgv([command, ...args]);
+const result = spawnSync(argv[0], argv.slice(1), { cwd: root, env: process.env, encoding: 'utf8', shell: false, maxBuffer: 32 * 1024 * 1024 });
+const output = `${result.stdout ?? ''}${result.stderr ?? ''}${result.error ? String(result.error) : ''}`;
+writeFileSync(resolve(import.meta.dirname, `${label}.log`), output);
+writeFileSync(resolve(import.meta.dirname, `${label}.command.json`), JSON.stringify({ requested_argv: [command, ...args], actual_argv: argv, cwd: root, exit_code: result.status, signal: result.signal }, null, 2));
+process.stdout.write(output);
+process.exit(result.status ?? 1);
