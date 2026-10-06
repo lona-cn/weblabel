@@ -3,6 +3,7 @@
   "title": "AiPreviewResponse",
   "type": "object",
   "required": [
+    "execution_configuration_hash",
     "expires_at",
     "grants",
     "input_fingerprint",
@@ -11,6 +12,10 @@
     "request"
   ],
   "properties": {
+    "execution_configuration_hash": {
+      "description": "SHA-256 over the selected execution config, already sealed by input_fingerprint.",
+      "type": "string"
+    },
     "expires_at": {
       "type": "string",
       "format": "date-time"

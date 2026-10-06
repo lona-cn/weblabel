@@ -26,6 +26,8 @@ pub struct AiPreviewRequest {
 pub struct AiPreviewResponse {
     pub preview_id: Id,
     pub input_fingerprint: String,
+    /// SHA-256 over the selected execution config, already sealed by input_fingerprint.
+    pub execution_configuration_hash: String,
     pub request: StartRunRequest,
     pub profile: ModelProfile,
     pub grants: AiApprovedGrants,

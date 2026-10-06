@@ -57,6 +57,7 @@ fn normalized(request: &StartRunRequest) -> StartRunRequest {
 async fn configuration_hash(
     c: &mut SqliteConnection,
     profile: &ModelProfile,
+    execution_hash: Option<&mut String>,
 ) -> Result<String, RunFailure> {
     let row = sqlx::query("SELECT config_json,secret_ref FROM model_profiles WHERE profile_id=?")
         .bind(&*profile.profile_id)
@@ -68,6 +69,9 @@ async fn configuration_hash(
         serde_json::from_str(&row.try_get::<String, _>("config_json").map_err(storage)?)
             .map_err(storage)?;
     let secret_ref: Option<String> = row.try_get("secret_ref").map_err(storage)?;
+    if let Some(output) = execution_hash {
+        *output = annotation_domain::hash::execution_configuration_hash(&configuration).map_err(storage)?;
+    }
     Ok(sha256_hex(
         serde_json::to_vec(
             &json!({"profile":profile,"configuration":configuration,"secret_ref":secret_ref}),
@@ -81,6 +85,7 @@ async fn current(
     actor: &str,
     request: &StartRunRequest,
     grants: &AiApprovedGrants,
+    execution_hash: Option<&mut String>,
 ) -> Result<(ModelProfile, String, String), RunFailure> {
     runs::validate_context_on(c, actor, request).await?;
     let profile = runs::resolve_profile_on(c, &request.profile_id, true).await?;
@@ -169,7 +174,7 @@ async fn current(
     .fetch_one(&mut *c)
     .await
     .map_err(storage)?;
-    let hash = configuration_hash(c, &profile).await?;
+    let hash = configuration_hash(c, &profile, execution_hash).await?;
     let fingerprint=sha256_hex(&serde_json::to_vec(&json!({
         "request":normalized(request),"grants":grants,"profile_configuration_hash":hash,
         "annotation_content_hash":revision.try_get::<String,_>("content_hash").map_err(storage)?,
@@ -214,7 +219,7 @@ async fn load_preview(
     {
         return Err(rejected("PREVIEW_EXPIRED"));
     }
-    let (_, hash, fingerprint) = current(c, actor, &preview.request, &preview.grants).await?;
+    let (_, hash, fingerprint) = current(c, actor, &preview.request, &preview.grants, None).await?;
     if hash != preview.configuration_hash || fingerprint != preview.fingerprint {
         return Err(rejected("PREVIEW_INPUT_CHANGED"));
     }
@@ -233,7 +238,8 @@ pub(super) async fn preview(
         input.request.context.selected_object_ids.sort();
         if input.request.context.selected_object_ids.windows(2).any(|w|w[0]==w[1]) { return Err(rejected("DUPLICATE_SELECTED_OBJECT")); }
         let mut tx=state.repository.begin_write().await.map_err(storage)?;
-        let (profile,hash,fingerprint)=current(tx.connection(),&actor.user_id,&input.request,&input.grants).await?;
+        let mut execution_configuration_hash = String::new();
+        let (profile,hash,fingerprint)=current(tx.connection(),&actor.user_id,&input.request,&input.grants,Some(&mut execution_configuration_hash)).await?;
         if profile.provider_id==ProviderId::Mock && !state.allow_mock_runs { return Err(rejected("PROFILE_UNAVAILABLE")); }
         input.request.context.input_fingerprint=fingerprint.clone();
         let id=Uuid::new_v4().to_string();
@@ -243,7 +249,7 @@ pub(super) async fn preview(
             .bind(serde_json::to_string(&input.request).map_err(storage)?).bind(hash).bind(serde_json::to_string(&input.grants).map_err(storage)?)
             .bind(now_rfc3339()).bind(&expires).execute(tx.connection()).await.map_err(storage)?;
         tx.commit().await.map_err(storage)?;
-        Ok::<_,RunFailure>((StatusCode::CREATED,Json(AiPreviewResponse {preview_id:id.into(),input_fingerprint:fingerprint,request:input.request,profile,grants:input.grants,expires_at:expires})).into_response())
+        Ok::<_,RunFailure>((StatusCode::CREATED,Json(AiPreviewResponse {preview_id:id.into(),input_fingerprint:fingerprint,execution_configuration_hash,request:input.request,profile,grants:input.grants,expires_at:expires})).into_response())
     }.await;
     result.unwrap_or_else(response)
 }

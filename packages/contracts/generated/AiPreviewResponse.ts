@@ -4,4 +4,8 @@ import type { Id } from "./Id";
 import type { ModelProfile } from "./ModelProfile";
 import type { StartRunRequest } from "./StartRunRequest";
 
-export type AiPreviewResponse = { preview_id: Id, input_fingerprint: string, request: StartRunRequest, profile: ModelProfile, grants: AiApprovedGrants, expires_at: string, };
+export type AiPreviewResponse = { preview_id: Id, input_fingerprint: string, 
+/**
+ * SHA-256 over the selected execution config, already sealed by input_fingerprint.
+ */
+execution_configuration_hash: string, request: StartRunRequest, profile: ModelProfile, grants: AiApprovedGrants, expires_at: string, };

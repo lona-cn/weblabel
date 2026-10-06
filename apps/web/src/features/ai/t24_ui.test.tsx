@@ -45,7 +45,7 @@ const candidate: SuggestionSet = {
 const grants = { allow_image: true, allow_object_context: true, preview_crop: null } as const;
 const serverPreview: RunApi['preview'] = async (request, approved) => ({
   preview_id: 'preview-1', request: { ...request, context: { ...request.context, input_fingerprint: 'server-authoritative-fingerprint' } },
-  input_fingerprint: 'server-authoritative-fingerprint', profile, grants: approved, expires_at: new Date(Date.now() + 600_000).toISOString(),
+  input_fingerprint: 'server-authoritative-fingerprint', execution_configuration_hash: 'server-authoritative-execution-hash', profile, grants: approved, expires_at: new Date(Date.now() + 600_000).toISOString(),
 });
 const ontology: OntologyVersion = { ontology_version_id: 'ontology-1', project_id: 'project-1', version_no: 1, guidelines_markdown: 'Review <script>alert(1)</script> helmets.', allow_out_of_bounds: false, labels: [{ label_id: 'label-person', name: 'person', color: '#3366ff', shortcut: null, allowed_geometry_types: ['bbox_xyxy'], attributes: [{ key: 'helmet_state', kind: 'enum', required: true, default_value: 'unknown', enum_values: ['unknown', 'wearing'], min: null, max: null }] }] };
 const validEntry: CandidateEntry = { key: `${candidateCacheKey('run-1', 'asset-A')}:0`, asset_revision_id: 'asset-A', run_id: 'run-1', run_context: context, candidate, schema_error: null, objects: new Map([[person.object_id, person]]) };
