@@ -10,7 +10,7 @@
     { "provider_id": "detector_local", "auth_kind": "local_weights", "model_family": "rtdetr", "full_model_required": true, "official_runtime_required": false }
   ],
   "samples": ["clear", "occluded"],
-  "required_evidence": ["actual_provider", "full_model_id", "auth_kind", "runtime_version", "canonical_sha256", "input_fingerprint", "response_id", "human_visual_review", "candidate_diff", "accept_save", "undo_save", "quota_error", "cancel", "unsupported_image", "tool_restriction"],
+  "required_evidence": ["actual_provider", "full_model_id", "auth_kind", "runtime_version", "canonical_sha256", "input_fingerprint", "execution_configuration_hash", "response_id", "human_visual_review", "candidate_diff", "accept_save", "undo_save", "quota_error", "cancel", "unsupported_image", "tool_restriction"],
   "detector": { "lock_path": "services/detector/models.lock.json", "load_and_forward_required": true, "precomputed_predictions_allowed": false },
   "missing_prerequisite_result": "blocked",
   "blocked_exit_code": 2,
