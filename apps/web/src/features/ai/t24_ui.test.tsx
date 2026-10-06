@@ -14,6 +14,7 @@ import { SaveQueue } from '../../lib/persistence/save-queue';
 import { candidateCacheKey, canAcceptSuggestion, type CandidateEntry, type RunApi } from './useRun';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 import type { DraftRecord, SaveRequest, SaveResponse } from '../../lib/persistence/types';
+import { ActivityCollector } from '../workbench/activity';
 
 let visibilityDescriptor: PropertyDescriptor | undefined;
 afterEach(() => {
@@ -368,12 +369,20 @@ describe('T24 AI review behavior', () => {
     });
     const cancel = vi.fn(async () => undefined);
     const api: RunApi = { preview: serverPreview, start, events, suggestions, cancel };
-    render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={async () => 'consent'} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()} />);
+    let clock = 0;
+    const activity = new ActivityCollector('project-1', 'synthetic-actor', () => clock);
+    activity.setEnabled(true);
+    const waitingChanged = (waiting: boolean) => activity.setKind(waiting ? 'model_wait' : 'task');
+    render(<Panel onModelWaitingChange={waitingChanged} asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={async () => 'consent'} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Inspect helmets' } });
     await act(async () => { fireEvent.click(screen.getByTestId('ai-run')); await vi.advanceTimersByTimeAsync(0); });
     fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' })); await vi.advanceTimersByTimeAsync(0); });
     expect(suggestions).toHaveBeenCalledTimes(1);
+    clock = 5000;
+    activity.commit();
+    expect(activity.totals().model_wait).toBe(0);
+    expect(activity.totals().task).toBe(5000);
     if (scenario === 'failure') {
       expect(screen.getByRole('alert').textContent).toContain('suggestions unavailable');
       await act(async () => { await vi.advanceTimersByTimeAsync(500); });

@@ -753,6 +753,10 @@ async fn build_driver(
     })
 }
 
+#[cfg(all(test, windows))]
+#[path = "model_jobs_shutdown_tests.rs"]
+mod shutdown_tests;
+
 /// Production execution: a fixed, service-configured Node host, never a mock
 /// fallback. Credentials reach only the private child environment.
 pub struct ProductionRunner {
@@ -808,9 +812,12 @@ impl Drop for RuntimeLease {
     fn drop(&mut self) {
         self.tokens.revoke_run(&self.run_id);
         if let Some(root) = self.root.take() {
-            // Dropping the worker future must still reclaim a blocked pipe reader.
-            std::thread::spawn(move || {
-                let _ = crate::runtime::supervisor::reclaim_process_tree(root);
+            // The Tokio runtime joins blocking tasks before the API process exits;
+            // a detached std thread could be terminated before reclaiming the Host.
+            tokio::task::spawn_blocking(move || {
+                if let Err(error) = crate::runtime::supervisor::reclaim_process_tree(root) {
+                    tracing::error!(%error, "cancelled Host process tree reclamation failed");
+                }
             });
         }
     }

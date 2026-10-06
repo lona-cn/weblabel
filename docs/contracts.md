@@ -306,7 +306,7 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 
 | 方法/路径 | 请求与返回 | 所属任务 |
 |---|---|---|
-| POST /api/session/bootstrap | {launch_code,password} → session cookie + csrf_token + local-admin identity; password is chosen by the user and never echoed | T10 |
+| POST /api/session/bootstrap | {launch_code,password} → session cookie + csrf_token + identity；空DB为local-admin，合格本机恢复为restore-admin-UUID；密码由用户选择且不回显 | T10/T33 |
 | POST /api/session/login | {username,password} → session + csrf_token；Host/Origin总校验，已失效credential可重新登录，有效session仍须CSRF | T10/T29 |
 | POST /api/session/logout | 清除服务端 session | T10 |
 | GET /api/session | 当前principal/项目角色；传入失效session时401并返回同Path/SameSite/Secure属性的Max-Age=0清理Cookie，DB失败不当作失效 | T10/T29 |
@@ -341,8 +341,13 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | GET /api/exports/{id}/download | 项目成员鉴权文件，响应头 X-WebLabel-Loss-Report 携带损失报告 | T14/T27 |
 | POST /internal/agent-tools/{tool} | run-scoped Bearer，不接受session；Host/已提供Origin允许列表校验，私有客户端可无Origin | T21/T29 |
 | GET/PUT /api/projects/{id}/external-processing-policy | {allow_external_processing:boolean}；成员读、项目admin写、既有及新项目默认false；无图像的外部运行也受门控 | T25主会话 |
+| PUT /api/projects/{id}/activity-sessions/{session_id} | {expected_version,intervals}；本人累计不可改前缀checkpoint，精确intervals重放，冲突409；所有项目角色自愿显式保存 | T34 |
+| GET /api/projects/{id}/activity-sessions | 只读本人的有界分页；无自动上传或远端遥测 | T34 |
 
 `/api/jobs` 由 T07 临时实现通用 schema 的 media job，T17 扩展同一 job engine，不能另外做两种互不兼容的 job。T07 不提前增加模型队列逻辑。
+生产media_import、dataset_export、model worker分别按kind租用同一持久队列，不能互相抢走job；停机接收watch并join worker。debug集成fixture显式manual drain不用于真实release验收。Host进程树清理完成须独立运行时证据，不能由worker join推断。
+
+T33恢复认证仅由本机启动WEBLABEL_RESTORE_AUTH=1请求：必须已有users、全部password_hash为空且sessions为空才输出新的10分钟一次性launch code；bootstrap在同一事务再次复查并创建全新唯一restore-admin-UUID，为每个恢复项目添加admin成员。不覆盖旧身份/审计/已批准revision，不复活旧密码/session。任何幸存或并发新增credential/session均拒绝恢复bootstrap；正常已有账号启动行为不变。
 
 v0.1 使用 polling，active job/run 每 500ms，后台/idle 2s；支持 after seq，取消轮询并按 asset/run 隔离缓存。不同时实现 SSE/WebSocket。停止/恢复轮询不能重新提交模型请求。
 
@@ -362,6 +367,7 @@ T14 migration 0007增加不可变annotation_import_batches与annotation_exports�
 外键开启；关键关联包含 project_id 校验，head unique(asset_revision_id,ontology_version_id)。idempotency unique(actor_id,operation_id,operation_kind)。作业 lease 与任务租约分开；重启恢复 running job 为 interrupted/retryable，并且模型调用存在费用不确定性时要求显式重试。
 
 文件路径只由 SHA256/内部 ID 生成。先写临时文件、fsync/原子 rename，再提交 DB 引用；崩溃可能遗留孤儿文件，但不能创建引用不存在文件的已完成记录。删除/GC 不是 v0.1 必需功能，不实现“清理全部”按钮。
+T34 migration 0013_activity_sessions：(project_id,actor_id,session_id)联合主键；version与intervals_json在同一写事务CAS更新。intervals按seq从0连续，duration_ms为正整数，每session最多10000区间/24小时；kind限task/annotation/correction/review/switch/model_wait。统计不进入标注/审核事务，不改变revision或decision。浏览器默认关闭，project+actor分区，commit记录单调时钟区间；失焦/人工60秒空闲不计人工，model_wait与人工分类分离。损坏/不可保存journal显式可救援但不影响主编辑/保存。发布必须用户明确点击本机项目保存；返回JSON错误且不回显输入内容。
 
 ## C8. 固定测试向量
 

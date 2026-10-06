@@ -378,7 +378,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
           <p>COCO/YOLO 不包含全部对象属性；点击确认导出即确认接受该格式的信息损失，产物绑定保存后的不可变标注版本。</p><button data-testid="export-start" type="button" disabled={!activeLoaded || exporting} onClick={() => void exportCurrent()}>{exporting ? '保存并导出中…' : '确认信息损失并导出'}</button>{exportMessage ? <p role="status">{exportMessage}</p> : null}</section>
       </section>
     </div>
-    <WorkbenchAi assetId={selectedAssetId ?? ''} media={activeLoaded?.media ?? null}
+    <WorkbenchAi key={projectId} assetId={selectedAssetId ?? ''} media={activeLoaded?.media ?? null}
       ontology={activeLoaded?.ontology ?? null} host={activeHost} queue={queue}
       revisionId={activeLoaded?.revisionId ?? null} selectedIds={activeSelectedIds} onModelWaitingChange={modelWaitingChanged} />
     {projectId && session ? <div onPointerDownCapture={() => recordActivity('review')} onInputCapture={() => recordActivity('review')}><ReviewPanel projectId={projectId} session={session} onLeaseChange={updateTaskLease} onSubmitTask={submitReviewTask} /></div> : null}
