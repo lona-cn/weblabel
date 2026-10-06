@@ -4,12 +4,12 @@ use crate::auth::{error, Principal, Role};
 use annotation_domain::{
     ActivityCheckpoint, ActivityInterval, ActivitySession, ActivitySessionPage,
 };
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     Extension, Json,
 };
-use axum::extract::rejection::{JsonRejection, QueryRejection};
 use serde::Deserialize;
 use sqlx::Row;
 
@@ -63,7 +63,13 @@ pub(super) async fn checkpoint(
     Extension(actor): Extension<Principal>,
     body: Result<Json<ActivityCheckpoint>, JsonRejection>,
 ) -> Result<Json<ActivitySession>, Failure> {
-    let Json(body) = body.map_err(|rejection| error(rejection.status(), "INVALID_ACTIVITY", "Request JSON does not match activity schema"))?;
+    let Json(body) = body.map_err(|rejection| {
+        error(
+            rejection.status(),
+            "INVALID_ACTIVITY",
+            "Request JSON does not match activity schema",
+        )
+    })?;
     require_project_role(
         &state.auth,
         &actor.user_id,
@@ -128,7 +134,13 @@ pub(super) async fn list(
     Extension(actor): Extension<Principal>,
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Result<Json<ActivitySessionPage>, Failure> {
-    let Query(query) = query.map_err(|rejection| error(rejection.status(), "INVALID_ACTIVITY", "Activity pagination query is invalid"))?;
+    let Query(query) = query.map_err(|rejection| {
+        error(
+            rejection.status(),
+            "INVALID_ACTIVITY",
+            "Activity pagination query is invalid",
+        )
+    })?;
     require_project_role(
         &state.auth,
         &actor.user_id,

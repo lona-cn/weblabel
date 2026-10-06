@@ -40,6 +40,7 @@ it('does not issue a Publish request for zero samples and stops collection on un
   let now = 0;
   const collector = new ActivityCollector('project', 'actor', () => now);
   const view = render(<ActivityPanel projectId="project" actorId="actor" collector={collector} />);
+  await userEvent.click(screen.getByText('查看工时分类、明细与保存操作'));
   await userEvent.click(screen.getByTestId('activity-publish'));
   expect(screen.getByRole('status')).toHaveTextContent('无数据');
   expect(network).not.toHaveBeenCalled();
