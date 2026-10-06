@@ -280,11 +280,20 @@ async fn current_session(
                 ),
             }
         }
-        Ok(None) => error(
-            StatusCode::UNAUTHORIZED,
-            "UNAUTHENTICATED",
-            "Authentication required",
-        ),
+        Ok(None) => {
+            let mut response = error(
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHENTICATED",
+                "Authentication required",
+            );
+            response.headers_mut().insert(
+                header::SET_COOKIE,
+                cookie("", &state, 0)
+                    .parse()
+                    .expect("session expiry cookie is a valid header"),
+            );
+            response
+        }
         Err(_) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "AUTHENTICATION_FAILED",

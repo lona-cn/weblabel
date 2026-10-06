@@ -278,9 +278,9 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | 方法/路径 | 请求与返回 | 所属任务 |
 |---|---|---|
 | POST /api/session/bootstrap | {launch_code,password} → session cookie + csrf_token + local-admin identity; password is chosen by the user and never echoed | T10 |
-| POST /api/session/login | {username,password} → session + csrf_token | T10 |
+| POST /api/session/login | {username,password} → session + csrf_token；Host/Origin总校验，已失效credential可重新登录，有效session仍须CSRF | T10/T29 |
 | POST /api/session/logout | 清除服务端 session | T10 |
-| GET /api/session | 当前 principal、项目角色 | T10 |
+| GET /api/session | 当前principal/项目角色；传入失效session时401并返回同Path/SameSite/Secure属性的Max-Age=0清理Cookie，DB失败不当作失效 | T10/T29 |
 | GET/POST /api/projects | 列表 / {name,description,allow_self_review} → project | T10 |
 | POST /api/projects/{id}/members | {user_id,role} → membership | T10 |
 | GET/POST /api/projects/{id}/ontologies | 已发布规范 / 发布不可变版本 | T10 |

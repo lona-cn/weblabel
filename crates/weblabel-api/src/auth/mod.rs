@@ -67,6 +67,21 @@ pub(crate) async fn csrf_and_origin(
     let method = request.method().as_str();
     if !matches!(method, "GET" | "HEAD" | "OPTIONS") {
         if let Some(token) = cookie_value(request.headers(), "weblabel_session") {
+            // Replacing an expired credential is not an authenticated mutation.
+            // Active sessions still require CSRF; Host/Origin were checked above.
+            if request.uri().path() == "/api/session/login" {
+                match session::principal(&state, &token).await {
+                    Ok(None) => return next.run(request).await,
+                    Ok(Some(_)) => {}
+                    Err(_) => {
+                        return error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "AUTHENTICATION_FAILED",
+                            "Authentication failed",
+                        )
+                    }
+                }
+            }
             let Some(csrf) = request
                 .headers()
                 .get("x-csrf-token")
