@@ -91,7 +91,7 @@ export async function generateDemo(directory) {
   const images = [], samples = [];
   const seed = 'T34-public-synthetic-20261006';
   for (let index = 0; index < 20; index++) {
-    const width = 160, height = 120, count = 2 + index % 4;
+    const width = 192, height = 120, count = 2 + index % 4;
     const gt = Array.from({ length: count }, (_, object) => ({ object_id: `gt-${index}-${object}`, label: 'synthetic_rectangle', bbox_xyxy: [8 + object * 35, 10 + index % 10, 28 + object * 35, 35 + index % 10] }));
     const rgba = Buffer.alloc(width * height * 4);
     for (let pixel = 0; pixel < width * height; pixel++) { rgba[pixel * 4] = 220; rgba[pixel * 4 + 1] = 230; rgba[pixel * 4 + 2] = 240; rgba[pixel * 4 + 3] = 255; }
