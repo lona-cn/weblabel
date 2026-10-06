@@ -74,10 +74,20 @@ it('F09/F17 real SQLite timeout and killed owned API preserve atomic revision an
     faultDb.exec("CREATE TRIGGER t30_head_failure BEFORE UPDATE OF annotation_revision_id ON annotation_heads BEGIN SELECT RAISE(ABORT,'T30 actual midpoint storage failure'); END");
     try{
       const failed=await client.request<{code:string}>('PUT',`/api/assets/${pins.assetRevisionId}/annotation`,body);midpointFailure=failed.json;
-      expect(failed.status).toBe(503);expect(failed.json.code).toBe('SAVE_UNAVAILABLE');
+      expect(failed.status).toBe(500);expect(failed.json.code).toBe('ANNOTATION_SAVE_FAILED');
+      expect(JSON.stringify(failed.json)).not.toContain('T30 actual midpoint storage failure');
       expect(await head(client,pins.assetRevisionId,pins.ontologyId)).toEqual(before);
       expect(faultDb.prepare('SELECT count(*) AS n FROM annotation_revisions WHERE asset_revision_id=?').get(pins.assetRevisionId)?.n).toBe(1);
     }finally{faultDb.exec('DROP TRIGGER t30_head_failure');faultDb.close();}
+    const deferredDb=new DatabaseSync(service.database);let commitFailure:unknown;
+    deferredDb.exec("CREATE TABLE t30_commit_parent(id INTEGER PRIMARY KEY); CREATE TABLE t30_commit_child(parent_id INTEGER REFERENCES t30_commit_parent(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER t30_commit_failure AFTER INSERT ON annotation_revisions BEGIN INSERT INTO t30_commit_child(parent_id) VALUES(1); END");
+    try{
+      const failed=await client.request<{code:string}>('PUT',`/api/assets/${pins.assetRevisionId}/annotation`,body);commitFailure=failed.json;
+      expect(failed.status).toBe(503);expect(failed.json.code).toBe('SAVE_UNAVAILABLE');
+      expect(await head(client,pins.assetRevisionId,pins.ontologyId)).toEqual(before);
+      expect(deferredDb.prepare('SELECT count(*) AS n FROM annotation_revisions WHERE asset_revision_id=?').get(pins.assetRevisionId)?.n).toBe(1);
+      expect(deferredDb.prepare('SELECT count(*) AS n FROM t30_commit_child').get()?.n).toBe(0);
+    }finally{deferredDb.exec('DROP TRIGGER t30_commit_failure; DROP TABLE t30_commit_child; DROP TABLE t30_commit_parent');deferredDb.close();}
     const db=new DatabaseSync(service.database);db.exec('BEGIN IMMEDIATE');
     try{
       const timeout=await client.request<{code:string}>('PUT',`/api/assets/${pins.assetRevisionId}/annotation`,body);
@@ -98,7 +108,7 @@ it('F09/F17 real SQLite timeout and killed owned API preserve atomic revision an
     expect(replay.status).toBe(200);expect(replay.json.idempotent_replay).toBe(true);expect(replay.json.revision).toEqual(saved.json.revision);
     const inspect=new DatabaseSync(service.database);
     try{expect(inspect.prepare('SELECT count(*) AS n FROM annotation_revisions WHERE asset_revision_id=?').get(pins.assetRevisionId)?.n).toBe(2);expect(inspect.prepare('PRAGMA integrity_check').get()?.integrity_check).toBe('ok');}finally{inspect.close();}
-    await writeEvidence('atomic-crash-restart',{api_port:new URL(service.base).port,operation_id:body.operation_id,before,midpoint_failure:midpointFailure,committed:saved.json.revision,replay:replay.json,kill_cutpoint:'client request issued with actual SQLite write lock held; no privileged backend entry barrier'});
+    await writeEvidence('atomic-crash-restart',{api_port:new URL(service.base).port,operation_id:body.operation_id,before,midpoint_failure:midpointFailure,commit_failure:commitFailure,committed:saved.json.revision,replay:replay.json,kill_cutpoint:'client request issued with actual SQLite write lock held; no privileged backend entry barrier'});
   }finally{await service?.stop();await app.stop();}
 },30000);
 
