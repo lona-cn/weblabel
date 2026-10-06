@@ -93,7 +93,8 @@ it('accepts Chinese/space paths, serves complete current products, enforces orig
   const data = path.join(scratch, '启动 & 中文 data'); const running = await launch(data);
   const web = await fetch(running.base); expect(web.status).toBe(200); expect(await web.text()).toContain('<div id="root">');
   expect((await fetch(running.base + '/wasm/wasm_bridge_bg.wasm')).headers.get('content-type')).toBe('application/wasm');
-  expect((await fetch(running.base + '/api/projects', { headers: { origin: 'https://attacker.invalid' } })).status).toBe(403);
+  const denied = await fetch(running.base + '/api/projects', { headers: { origin: 'https://attacker.invalid' } });
+  expect(denied.status).toBe(403); expect(await denied.json()).toMatchObject({ code: 'LOOPBACK_ORIGIN_DENIED', details: null });
   expect((await fetch(running.base + '/api/projects')).status).toBe(401);
   expect(cli('start-local.mjs', ['--build-dir', build, '--data-dir', data, '--port', String(await port()), '--api-port', String(await port())]).stderr).toMatch(/data_in_use/);
   await authenticated(running.base, running.code);

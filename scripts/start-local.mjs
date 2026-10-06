@@ -3,9 +3,14 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { root, pins, options, requireNode, validateEntries, checkedPath, mainGuard } from './build.mjs';
 
 export const taskkillPath = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/taskkill.exe') : null;
+function proxyError(response, status, code, message) {
+  response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  response.end(JSON.stringify({ code, message, request_id: randomUUID(), details: null }));
+}
 export function validateRelease(build) {
   if (!fs.existsSync(path.join(build, 'release.json'))) throw new Error('build_missing: run the release build first');
   const manifest = JSON.parse(fs.readFileSync(path.join(build, 'release.json'), 'utf8'));
@@ -70,13 +75,13 @@ export async function startLocal(argv = process.argv.slice(2)) {
   }
   const allowed = new Set(manifest.files.filter(item => item.path.startsWith('web/')).map(item => item.path));
   const server = http.createServer((request, response) => {
-    if (request.headers.host !== `127.0.0.1:${port}` || (request.headers.origin && request.headers.origin !== base)) { response.writeHead(403).end('loopback_origin_denied'); return; }
-    let url; try { url = new URL(request.url ?? '/', base); } catch { response.writeHead(400).end(); return; }
+    if (request.headers.host !== `127.0.0.1:${port}` || (request.headers.origin && request.headers.origin !== base)) { proxyError(response, 403, 'LOOPBACK_ORIGIN_DENIED', 'Host or Origin is not the configured local entrypoint'); return; }
+    let url; try { url = new URL(request.url ?? '/', base); } catch { proxyError(response, 400, 'INVALID_URL', 'Request URL is invalid'); return; }
     if (url.pathname.startsWith('/api/')) {
       const headers = { ...request.headers, host: `127.0.0.1:${apiPort}` };
       if (request.headers.origin) headers.origin = apiBase;
       const upstream = http.request(new URL(url.pathname + url.search, apiBase), { method: request.method, headers }, incoming => { response.writeHead(incoming.statusCode ?? 502, incoming.headers); incoming.pipe(response); });
-      upstream.on('error', () => { if (!response.headersSent) response.writeHead(503); response.end('api_unavailable'); });
+      upstream.on('error', () => { if (response.headersSent) response.destroy(); else proxyError(response, 503, 'API_UNAVAILABLE', 'The local API is unavailable'); });
       request.on('aborted', () => upstream.destroy()); request.pipe(upstream); return;
     }
     if (!['GET', 'HEAD'].includes(request.method ?? '')) { response.writeHead(405).end(); return; }
@@ -85,7 +90,13 @@ export async function startLocal(argv = process.argv.slice(2)) {
     if (!allowed.has(name)) { response.writeHead(404).end(); return; }
     const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.wasm': 'application/wasm', '.css': 'text/css', '.png': 'image/png' };
     response.writeHead(200, { 'content-type': types[path.extname(name)] ?? 'application/octet-stream', 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache' });
-    if (request.method === 'HEAD') response.end(); else fs.createReadStream(path.join(build, name)).pipe(response);
+    if (request.method === 'HEAD') response.end();
+    else {
+      const stream = fs.createReadStream(path.join(build, name));
+      stream.on('error', () => response.destroy());
+      response.on('close', () => stream.destroy());
+      stream.pipe(response);
+    }
   });
   let child;
   let stopping;

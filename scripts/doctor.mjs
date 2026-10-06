@@ -14,7 +14,7 @@ export function diagnose(argv = process.argv.slice(2)) {
     let actual = 'unavailable', status = 'missing';
     try {
       const [command, ...commandArgs] = resolveArgv([name === 'node' ? process.execPath : name, '--version']);
-      const r = spawnSync(command, commandArgs, { cwd, env: { ...process.env, RUSTUP_TOOLCHAIN: pins.rust }, shell: false, windowsHide: true, timeout: 15000, encoding: 'utf8' });
+      const r = spawnSync(command, commandArgs, { cwd, env: { ...process.env, RUSTUP_TOOLCHAIN: pins.rust, RUSTUP_AUTO_INSTALL: '0', COREPACK_ENABLE_NETWORK: '0', COREPACK_ENABLE_AUTO_PIN: '0', COREPACK_DEFAULT_TO_LATEST: '0' }, shell: false, windowsHide: true, timeout: 15000, encoding: 'utf8' });
       if (r.status === 0) { actual = r.stdout.trim(); status = (name === 'rustc' || name === 'cargo' ? actual.startsWith(expected) : actual === expected) ? 'pinned' : 'version_mismatch'; }
     } catch {}
     result.tools.push({ name, expected: expected.trim(), actual, status });
