@@ -6,7 +6,6 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import type { ApiClient, ApiResponse, TestApp } from '../../support/app';
-import { prepare_test_api } from '../../support/app';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 export function object(value: unknown): Record<string, unknown> {
@@ -73,10 +72,16 @@ export interface SecurityApp extends TestApp {
 let compiledRouter: string | undefined;
 async function routerBinary(): Promise<string> {
   if (compiledRouter) return compiledRouter;
-  const api = prepare_test_api();
+  const compilerEnv = { ...process.env };
+  delete compilerEnv.RUSTUP_TOOLCHAIN;
+  const toolchain = execFileSync('rustup', ['show', 'active-toolchain'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim().split(/\s+/, 1)[0]!;
+  compilerEnv.RUSTUP_TOOLCHAIN = toolchain;
+  const compiler = execFileSync('rustup', ['which', 'rustc'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim();
+  compilerEnv.RUSTC = compiler;
+  console.log(`T29 repository toolchain: ${toolchain}; compiler: ${compiler}`);
   const buildArgs = ['build', '--locked', '--manifest-path', join(root, 'Cargo.toml'), '--target-dir', join(root, 'target'), '--config', `build.build-dir=${JSON.stringify(join(root, 'target'))}`, '-p', 'weblabel-api', '--lib', '--message-format=json'];
   console.log('T29 source-library compile: cargo ' + buildArgs.join(' '));
-  const output = execFileSync('cargo', buildArgs, { cwd: process.env.CARGO_HOME ?? root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+  const output = execFileSync('cargo', buildArgs, { cwd: process.env.CARGO_HOME ?? root, env: compilerEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
   const messages = output.split('\n').filter(line => line.startsWith('{')).map(line => object(JSON.parse(line)));
   const artifacts = messages.filter(item => item.reason === 'compiler-artifact');
   const nativePaths = messages.flatMap(item => Array.isArray(item.linked_paths) ? item.linked_paths.filter((path): path is string => typeof path === 'string') : []);
@@ -97,8 +102,8 @@ async function routerBinary(): Promise<string> {
     externs.push('--extern', `${name}=${library}`);
     dependencyDirectories.add(dirname(library));
   }
-  const binary = join(dirname(api), `t29-router-${crypto.randomUUID()}${process.platform === 'win32' ? '.exe' : ''}`);
-  execFileSync(process.env.RUSTC ?? 'rustc', ['--edition=2021', '--crate-name', 't29_router', join(root, 'tests/fixtures/security/router.rs'), ...Array.from(dependencyDirectories).flatMap(directory => ['-L', `dependency=${directory}`]), ...nativePaths.flatMap(path => ['-L', path]), ...externs, '-o', binary], { cwd: root, stdio: 'inherit' });
+  const binary = join(root, 'target', 'debug', `t29-router-${crypto.randomUUID()}${process.platform === 'win32' ? '.exe' : ''}`);
+  execFileSync(compiler, ['--edition=2021', '--crate-name', 't29_router', join(root, 'tests/fixtures/security/router.rs'), ...Array.from(dependencyDirectories).flatMap(directory => ['-L', `dependency=${directory}`]), ...nativePaths.flatMap(path => ['-L', path]), ...externs, '-o', binary], { cwd: root, env: compilerEnv, stdio: 'inherit' });
   compiledRouter = binary;
   return binary;
 }

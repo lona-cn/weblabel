@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { spawnSync, spawn } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { readdir, readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -10,7 +10,13 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const report = join(root, 'reports/T29');
 const sentinel = `T29-synthetic-build-secret-${randomUUID()}`;
-const env = { ...process.env, OPENAI_API_KEY: sentinel, ANTHROPIC_API_KEY: sentinel, MIMO_API_KEY: sentinel, WEBLABEL_RUN_TOKEN: sentinel, T29_SYNTHETIC_KEY: sentinel };
+const compilerEnv = { ...process.env };
+delete compilerEnv.RUSTUP_TOOLCHAIN;
+const toolchain = execFileSync('rustup', ['show', 'active-toolchain'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim().split(/\s+/, 1)[0];
+compilerEnv.RUSTUP_TOOLCHAIN = toolchain;
+compilerEnv.RUSTC = execFileSync('rustup', ['which', 'rustc'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim();
+console.log(`T29 repository toolchain: ${toolchain}; compiler: ${compilerEnv.RUSTC}`);
+const env = { ...compilerEnv, OPENAI_API_KEY: sentinel, ANTHROPIC_API_KEY: sentinel, MIMO_API_KEY: sentinel, WEBLABEL_RUN_TOKEN: sentinel, T29_SYNTHETIC_KEY: sentinel };
 const commands = [];
 const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
 if (revision.status !== 0) throw new Error('Cannot record production source commit');
@@ -77,7 +83,7 @@ try {
     if (unauthenticated.status !== 401) throw new Error('Release project route failed session gate');
     if (logs.includes(sentinel)) throw new Error('Release API leaked credential in actual logs');
     await writeFile(join(report, 'release-smoke.log'), logs.replace(/^WEBLABEL_BOOTSTRAP_CODE=.*$/gm, 'WEBLABEL_BOOTSTRAP_CODE=[REDACTED_SYNTHETIC_LAUNCH_CODE]'));
-    await writeFile(join(report, 'production-scan.json'), JSON.stringify({ status: 'passed', source_commit: sourceCommit, scope: 'Actual release Rust API, release WASM, Vite production assets with sourcemaps, default Host build and additionally minified Host sourcemaps. Synthetic credentials only; no live providers.', sentinel_sha256: createHash('sha256').update(sentinel).digest('hex'), commands, files: evidence, sourcemaps: maps.length, smoke: { health: 204, test_route: privateTestRoute.status, unauthenticated_projects: unauthenticated.status, secret_in_logs: false } }, null, 2) + '\n');
+    await writeFile(join(report, 'production-scan.json'), JSON.stringify({ status: 'passed', source_commit: sourceCommit, toolchain, compiler: compilerEnv.RUSTC, scope: 'Actual release Rust API, release WASM, Vite production assets with sourcemaps, default Host build and additionally minified Host sourcemaps. Synthetic credentials only; no live providers.', sentinel_sha256: createHash('sha256').update(sentinel).digest('hex'), commands, files: evidence, sourcemaps: maps.length, smoke: { health: 204, test_route: privateTestRoute.status, unauthenticated_projects: unauthenticated.status, secret_in_logs: false } }, null, 2) + '\n');
     console.log(`Production scan passed: ${evidence.length} actual product files, ${maps.length} sourcemaps; release HTTP smoke 204/404/401.`);
   } finally { if (child.exitCode === null && child.signalCode === null) { child.kill(); await closed.promise; } await rm(temporary, { recursive: true, force: true }); }
 } finally {
