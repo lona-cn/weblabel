@@ -20,8 +20,10 @@ import importlib.util
 import io
 import json
 import math
+import os
 import platform
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -149,33 +151,67 @@ def load_models_lock(path):
     return lock
 
 
-def _sha256_file(path: Path) -> str:
+def _sha256_handle(handle) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(_HASH_CHUNK)
-            if not chunk:
-                break
-            digest.update(chunk)
+    while True:
+        chunk = handle.read(_HASH_CHUNK)
+        if not chunk:
+            break
+        digest.update(chunk)
     return digest.hexdigest()
 
 
-def verify_weights(lock, weights_dir):
-    """Verify every pinned file in ``weights_dir`` against its locked sha256.
-    Missing files -> ``needs_configuration``; any mismatch -> ``weights_hash_mismatch``."""
-    root = Path(weights_dir)
-    missing: list[str] = []
-    for entry in lock["files"]:
-        target = root / entry["path"]
-        if not target.is_file():
-            missing.append(entry["path"])
+def _confined_weight_target(root: Path, name: str) -> Path:
+    """Resolve before application stat/open, keeping the selected root fixed.
+
+    Plain filenames are already enforced by load_models_lock; this is the
+    filesystem/reparse-point boundary, not a second lexical path policy.
+    """
+    try:
+        # Path.resolve() adds a target stat in non-strict mode (Python 3.12).
+        # Resolve reparse metadata without that application-level target stat.
+        target = Path(os.path.realpath(root / name))
+    except (OSError, RuntimeError) as error:
+        raise WeightsError("weights_path_escape", f"cannot resolve pinned file {name}") from error
+    if not target.is_relative_to(root):
+        raise WeightsError("weights_path_escape", f"pinned file {name} escapes configured weights directory")
+    return target
+
+
+def _confined_weight_targets(lock, root: Path) -> list[Path]:
+    # Check ALL paths before inspecting or reading any locked file.
+    return [_confined_weight_target(root, entry["path"]) for entry in lock["files"]]
+
+
+def _verify_weights_at_root(lock, root: Path):
+    targets = _confined_weight_targets(lock, root)
+    missing = [entry["path"] for entry, target in zip(lock["files"], targets) if not target.is_file()]
     if missing:
         raise ConfigurationError("needs_configuration", f"weights missing: {', '.join(sorted(missing))}")
     for entry in lock["files"]:
-        target = root / entry["path"]
-        size = target.stat().st_size
-        if size != entry["bytes"] or _sha256_file(target) != entry["sha256"]:
-            raise WeightsError("weights_hash_mismatch", f"pinned file {entry['path']} does not match models.lock.json")
+        # A path may have changed during preflight. Re-resolve and confine it
+        # again, then measure and hash the same opened file descriptor.
+        target = _confined_weight_target(root, entry["path"])
+        try:
+            with target.open("rb") as handle:
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise ConfigurationError("needs_configuration", f"weights missing: {entry['path']}")
+                if info.st_size != entry["bytes"] or _sha256_handle(handle) != entry["sha256"]:
+                    raise WeightsError("weights_hash_mismatch", f"pinned file {entry['path']} does not match models.lock.json")
+        except (FileNotFoundError, IsADirectoryError) as error:
+            raise ConfigurationError("needs_configuration", f"weights missing: {entry['path']}") from error
+
+
+def verify_weights(lock, weights_dir):
+    """Verify pinned files inside the explicitly configured resolved root.
+
+    An operator may select a public root outside the repository. Locked-file
+    escapes are refused before application stat/hash/read; missing files use
+    needs_configuration and size/hash mismatches use weights_hash_mismatch.
+    Size and hash describe one opened FD, not files reopened by later loaders.
+    """
+    _verify_weights_at_root(lock, Path(weights_dir).resolve())
     return None
 
 
@@ -476,6 +512,13 @@ class Predictor:
     proceed unless every pinned file matches its sha256. Executing this path
     requires the user-authorized weights download plus the torch/transformers
     runtime; that execution is T32's gate and is not exercised by T18.
+
+    Confinement is rechecked before each downstream loader and loaders receive
+    the resolved root, not a mutable directory alias. These checks do not lock
+    the filesystem: without OS no-follow/locking, concurrent replacement after
+    a check can still race open or a loader. A verified FD is not proof of the
+    bytes later reopened by transformers; keep the selected root immutable
+    during loading.
     """
 
     def __init__(self, *, processor, model, torch, lock):
@@ -487,14 +530,16 @@ class Predictor:
     @classmethod
     def load(cls, lock_path, weights_dir, *, find_spec=None):
         lock = load_models_lock(lock_path)
-        verify_weights(lock, Path(weights_dir))
+        root = Path(weights_dir).resolve()
+        _verify_weights_at_root(lock, root)
         check_runtime(find_spec)
         import torch  # noqa: PLC0415 — lazy so the offline suite never needs it
         from transformers import AutoImageProcessor, AutoModelForObjectDetection  # noqa: PLC0415
 
-        weights_dir = str(weights_dir)
-        processor = AutoImageProcessor.from_pretrained(weights_dir, local_files_only=True)
-        model = AutoModelForObjectDetection.from_pretrained(weights_dir, local_files_only=True)
+        _confined_weight_targets(lock, root)
+        processor = AutoImageProcessor.from_pretrained(str(root), local_files_only=True)
+        _confined_weight_targets(lock, root)
+        model = AutoModelForObjectDetection.from_pretrained(str(root), local_files_only=True)
         model.eval()
         return cls(processor=processor, model=model, torch=torch, lock=lock)
 
