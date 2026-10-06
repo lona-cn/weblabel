@@ -1,20 +1,23 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import assert from 'node:assert/strict';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const manifest = JSON.parse(readFileSync(new URL('../tests/live/manifest.json', import.meta.url), 'utf8'));
-const lock = JSON.parse(readFileSync(path.join(root, manifest.detector.lock_path), 'utf8'));
+const lock = JSON.parse(readPublicConfiguration(path.join(root, manifest.detector.lock_path), 1_048_576, 'DETECTOR_LOCK_OUTSIDE_REPOSITORY_OR_TOO_LARGE'));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-const fail = code => { throw new Error(code); };
-function fileSha256(file) {
-  const fd = openSync(file, 'r');
+function fail(code) { throw new Error(code); }
+function fileSha256(file, repository) {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
+    const actual = fstatSync(fd, { bigint: true });
+    const expected = statSync(confinedFile(repository, file), { bigint: true });
+    if (!actual.isFile() || actual.dev !== expected.dev || actual.ino !== expected.ino) fail('LOCKED_FILE_CHANGED_BEFORE_HASH');
     const hash = createHash('sha256');
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let count;
@@ -28,8 +31,8 @@ const probeEnv = Object.fromEntries(['PATH', 'Path', 'SystemRoot', 'WINDIR', 'TE
 
 // Only fixed, session-free official version/help surfaces. No shell, auth-status,
 // settings discovery, account enumeration, environment credential inspection or login.
-function probe(command, args, extra = {}, input) {
-  const result = spawnSync(command, args, { cwd: root, shell: false, windowsHide: true, encoding: 'utf8', timeout: 15_000, maxBuffer: 1024 * 1024, env: { ...probeEnv, ...extra }, input });
+function probe(command, args) {
+  const result = spawnSync(command, args, { cwd: root, shell: false, windowsHide: true, encoding: 'utf8', timeout: 15_000, maxBuffer: 1024 * 1024, env: probeEnv });
   return { argv: [path.basename(command), ...args], exit_code: result.status, error_code: result.error && 'code' in result.error ? result.error.code : null, stdout_sha256: sha(result.stdout ?? ''), stdout: result.stdout ?? '' };
 }
 function publicProbe(result) {
@@ -59,27 +62,40 @@ function runtimeProbe(name, flags) {
     tool_boundary: 'unknown_not_verified',
   };
 }
-function weightsDiagnostic() {
-  const weightsRoot = path.join(root, 'services/detector/weights');
-  const files = lock.files.map(entry => {
-    const file = path.join(weightsRoot, entry.path);
-    if (!existsSync(file)) return { file: entry.path, status: 'missing' };
-    const relative = path.relative(root, realpathSync(file));
-    if (relative.startsWith('..') || path.isAbsolute(relative)) return { file: entry.path, status: 'outside_repository_refused' };
-    return { file: entry.path, status: statSync(file).size === entry.bytes && fileSha256(file) === entry.sha256 ? 'verified' : 'hash_or_size_mismatch' };
-  });
-  const request = method => JSON.stringify({ protocol_version: 1, id: `t32-${method}`, kind: 'request', method, payload: {} });
-  const worker = probe(executable('python'), ['-m', 'weblabel_detector'], {
-    PYTHONPATH: path.join(root, 'services/detector/src'), PYTHONDONTWRITEBYTECODE: '1',
-    WEBLABEL_DETECTOR_MODELS_LOCK: path.join(root, manifest.detector.lock_path),
-    WEBLABEL_DETECTOR_WEIGHTS_DIR: weightsRoot, HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1',
-  }, `${request('probe')}\n${request('shutdown')}\n`);
-  let profile = null;
+function confinedFile(repository, file) {
+  const resolved = realpathSync(file);
+  const relative = path.relative(realpathSync(repository), resolved);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail('OUTSIDE_REPOSITORY_REFUSED');
+  return resolved;
+}
+function readPublicConfiguration(file, maxBytes, code) {
+  let resolved;
+  try { resolved = confinedFile(root, file); } catch { fail(code); }
+  const fd = openSync(resolved, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const response = worker.stdout.trim().split('\n').map(line => JSON.parse(line)).find(item => item.kind === 'response' && item.id === 't32-probe');
-    if (response?.payload?.ok === true) profile = response.payload.profile;
-  } catch { /* Malformed output is a failed probe, never a success. */ }
-  return { files, worker_probe: publicProbe(worker), profile, load_and_forward: 'not_run', predictions_file: 'never_read' };
+    const actual = fstatSync(fd, { bigint: true });
+    const expected = statSync(confinedFile(root, resolved), { bigint: true });
+    if (!actual.isFile() || actual.size > BigInt(maxBytes) || actual.dev !== expected.dev || actual.ino !== expected.ino) fail(code);
+    return readFileSync(fd, 'utf8');
+  } finally { closeSync(fd); }
+}
+export function lockedFilesDiagnostic(repository, weightsRoot, entries, authorized = false) {
+  const files = entries.map(entry => {
+    const file = path.resolve(weightsRoot, entry.path);
+    if (!existsSync(file)) return { file: entry.path, status: 'missing' };
+    let confined;
+    try { confined = confinedFile(repository, file); } catch { return { file: entry.path, status: 'outside_repository_refused' }; }
+    const size = statSync(confined).size;
+    return { file: entry.path, bytes: size, status: size !== entry.bytes ? 'size_mismatch' : authorized ? fileSha256(confined, repository) === entry.sha256 ? 'verified' : 'hash_mismatch' : 'present_size_checked_not_hashed' };
+  });
+  return files;
+}
+function weightsDiagnostic(authorized = false) {
+  const weightsRoot = path.join(root, 'services/detector/weights');
+  const files = lockedFilesDiagnostic(root, weightsRoot, lock.files, authorized);
+  // Actual worker configuration readiness is queried from the own service,
+  // after authorization. A local worker with unrelated env proves nothing.
+  return { files, worker_probe: 'not_run', profile: null, load_and_forward: 'not_run', predictions_file: 'never_read' };
 }
 function diagnose() {
   const codex = runtimeProbe('codex', ['app-server']);
@@ -99,7 +115,7 @@ function diagnose() {
         case 'claude_local': return channel(required, ['official subscription login, actual full Sonnet model and image transport remain unknown', 'installed version/help does not establish current Sonnet entitlement or safe tool boundaries', 'real version-pinned init/auth/tools/MCP/result capture; placeholder schema files do not qualify', 'Host probe model is unknown/blocked; authorized configuration and hard quantity budgets missing'], claude);
         case 'openai_api': return channel(required, ['explicitly authorized API credential and account-entitled full Luna model unknown (not inspected)', 'run-scoped authorization, service-owned configuration and bounded quantity budgets', 'upstream actual model/response ID/runtime receipt not observed in this run', 'two authorized visual samples and human-reviewed Workbench acceptance/Undo']);
         case 'mimo_api': return channel(required, ['authorized MiMo account/key/plan endpoint and current image-capable full model unknown (not inspected)', 'run-scoped authorization, service-owned configuration and bounded quantity budgets', 'upstream actual model/response ID/runtime receipt not observed in this run', 'current official documentation refresh required; prior T02 metadata is not current account evidence']);
-        case 'detector_local': return channel(required, [...detector.files.filter(file => file.status !== 'verified').map(file => `${file.status}: ${file.file}`), ...(detector.profile?.availability === 'ready' ? [] : ['real Python torch/transformers worker reports needs_configuration or cannot start']), 'locked Predictor.load and real forward pass not run', 'service-owned detector configuration/label mapping and authorized hardware Workbench visual review'], detector);
+        case 'detector_local': return channel(required, [...detector.files.filter(file => file.status !== 'verified').map(file => `${file.status}: ${file.file}`), 'full hash and actual service worker configuration probe require explicitly authorized detector --run', 'locked Predictor.load and real forward pass not run', 'service-owned detector configuration/label mapping and authorized hardware Workbench visual review'], detector);
         default: return fail('UNKNOWN_REQUIRED_PROVIDER');
       }
     }),
@@ -111,10 +127,7 @@ function exact(value, keys, code) {
 }
 function readRunConfig(file) {
   if (!file) fail('RUN_CONFIGURATION_REQUIRED');
-  const full = path.resolve(root, file);
-  const relative = path.relative(root, realpathSync(full));
-  if (relative.startsWith('..') || path.isAbsolute(relative) || statSync(full).size > 16_384) fail('RUN_CONFIGURATION_OUTSIDE_REPOSITORY_OR_TOO_LARGE');
-  const config = JSON.parse(readFileSync(full, 'utf8'));
+  const config = JSON.parse(readPublicConfiguration(path.resolve(root, file), 16_384, 'RUN_CONFIGURATION_OUTSIDE_REPOSITORY_OR_TOO_LARGE'));
   exact(config, ['base_url', 'provider_id', 'profile_id', 'model_id', 'host_config_path', 'authorization'], 'INVALID_RUN_CONFIGURATION');
   const required = manifest.required.find(item => item.provider_id === config.provider_id);
   if (!required) fail('REQUIRED_CHANNEL_ONLY_NO_SUBSTITUTION');
@@ -134,12 +147,10 @@ function readRunConfig(file) {
   if (config.provider_id !== 'detector_local' && (!auth.allow_external_processing || auth.acknowledge_unknown_cost !== true)) fail('EXPLICIT_EGRESS_AND_UNKNOWN_COST_AUTHORIZATION_REQUIRED');
   return { config, required };
 }
-function readHostBudget(config) {
+export function readHostBudget(config) {
   if (typeof config.host_config_path !== 'string' || config.host_config_path.length === 0) fail('PUBLIC_SERVICE_HOST_CONFIGURATION_REQUIRED');
-  const file = path.resolve(root, config.host_config_path);
-  const relative = path.relative(root, realpathSync(file));
-  if (relative.startsWith('..') || path.isAbsolute(relative) || statSync(file).size > 1_048_576) fail('HOST_CONFIGURATION_OUTSIDE_REPOSITORY_OR_TOO_LARGE');
-  const host = JSON.parse(readFileSync(file, 'utf8'));
+  const rawHostConfiguration = readPublicConfiguration(path.resolve(root, config.host_config_path), 1_048_576, 'HOST_CONFIGURATION_OUTSIDE_REPOSITORY_OR_TOO_LARGE');
+  const host = JSON.parse(rawHostConfiguration);
   const forbidden = value => value && typeof value === 'object' && Object.entries(value).some(([key, item]) => ['secret_env', 'source_env', 'fetch_impl', 'transport', 'runToken', 'imageSource', 'api_key', 'token', 'password'].includes(key) || forbidden(item));
   if (forbidden(host)) fail('PUBLIC_CONFIGURATION_ONLY_NO_PRIVATE_VALUES_OR_INJECTION');
   if (host.apiBase !== config.base_url.replace(/\/$/, '') || !Array.isArray(host.providers)) fail('HOST_SERVICE_ORIGIN_MISMATCH');
@@ -152,7 +163,7 @@ function readHostBudget(config) {
     exact(selected.budgets, Object.keys(limits), 'EXPLICIT_HOST_QUANTITY_BUDGET_REQUIRED');
     for (const [key, cap] of Object.entries(limits)) if (!Number.isSafeInteger(selected.budgets[key]) || selected.budgets[key] < 1 || selected.budgets[key] > cap) fail('HOST_QUANTITY_BUDGET_OUT_OF_BOUNDS');
     if (selected.budgets.max_tool_turns > config.authorization.max_provider_calls_per_run) fail('AUTHORIZED_CALL_BUDGET_SMALLER_THAN_HOST_LIMIT');
-    return { ...selected.budgets, host_configuration_sha256: sha(readFileSync(file)), cost_usd: null };
+    return { rawHostConfiguration, budget: { ...selected.budgets, host_configuration_sha256: sha(rawHostConfiguration), cost_usd: null } };
   }
   if (!Number.isSafeInteger(selected.runTimeoutMs) || selected.runTimeoutMs < 1 || selected.runTimeoutMs > 120_000) fail('EXPLICIT_HOST_RUNTIME_TIMEOUT_REQUIRED');
   if (config.provider_id === 'claude_local') {
@@ -161,7 +172,7 @@ function readHostBudget(config) {
     const python = executable('python');
     if (!existsSync(python) || realpathSync(selected.workerCommand?.executable ?? '') !== realpathSync(python) || JSON.stringify(selected.workerCommand?.argv) !== JSON.stringify(['-m', 'weblabel_detector']) || realpathSync(selected.lockPath ?? '') !== realpathSync(path.join(root, manifest.detector.lock_path))) fail('REAL_PINNED_DETECTOR_WORKER_CONFIGURATION_REQUIRED');
   }
-  return { max_run_ms: selected.runTimeoutMs, max_provider_calls_per_run: config.provider_id === 'detector_local' ? 1 : config.authorization.max_provider_calls_per_run, host_configuration_sha256: sha(readFileSync(file)), cost_usd: null };
+  return { rawHostConfiguration, budget: { max_run_ms: selected.runTimeoutMs, max_provider_calls_per_run: config.provider_id === 'detector_local' ? 1 : config.authorization.max_provider_calls_per_run, host_configuration_sha256: sha(rawHostConfiguration), cost_usd: null } };
 }
 async function generatedSamples() {
   const { default: sharp } = await import('sharp');
@@ -172,48 +183,146 @@ async function generatedSamples() {
     return { kind, bytes, source_sha256: sha(bytes), visual_expectation: kind === 'clear' ? 'Stylized person with a yellow helmet; confirm what the model actually sees, no accuracy claim.' : 'Same person with head/helmet occluded; helmet_state should be unknown if not visible.' };
   }));
 }
+export function serviceRequest(baseUrl, cookie, csrf) {
+  return async (method, route, body = undefined) => {
+    const response = await fetch(new URL(route, baseUrl), { method, redirect: 'error', signal: AbortSignal.timeout(30_000), headers: { cookie, origin: baseUrl.replace(/\/$/, ''), 'x-csrf-token': csrf, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    if (!response.ok) fail(`SERVICE_HTTP_${response.status}`);
+    return response.json();
+  };
+}
+
+// Rust service lifecycle does not own the provider observation payload.
+export async function observeRun(request, runId, row) {
+  const { validateContract } = await import('../packages/contracts/src/validate.js');
+  let after = 0;
+  row.events = [];
+  row.provider_observations = [];
+  row.receipts = [];
+  row.receipt = null;
+  row.usage = null;
+  row.provider_error = null;
+  row.service_error = null;
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    let next;
+    do {
+      const page = await request('GET', `/api/ai/runs/${encodeURIComponent(runId)}/events?limit=200&after=${after}`);
+      for (const event of page.items) {
+        if (!validateContract('run_event', event).valid || event.run_id !== runId) fail('INVALID_PERSISTED_RUN_EVENT');
+        if (event.seq !== after + 1) fail('RUN_EVENTS_OBSERVATION_GAP');
+        after = event.seq;
+        row.events.push(event);
+        const data = event.data;
+        if (data?.dropped === 'event_data_too_large') fail('PROVIDER_OBSERVATION_DATA_DROPPED');
+        const observed = data && ('receipts' in data || 'receipt' in data || 'usage' in data || 'error_code' in data);
+        if (observed) {
+          row.provider_observations.push({ seq: event.seq, type: event.type, data });
+          if (Array.isArray(data.receipts)) row.receipts = data.receipts;
+          if ('receipt' in data) row.receipt = data.receipt;
+          else if (Array.isArray(data.receipts)) row.receipt = data.receipts.at(-1) ?? null;
+          if ('usage' in data) row.usage = data.usage;
+          if ('cost_display' in data) row.cost_display = data.cost_display;
+        }
+        if (['succeeded', 'failed', 'cancelled'].includes(event.type)) {
+          const error = data?.error_code ?? data?.code ?? null;
+          if (observed) { row.provider_terminal = event.type; row.provider_error = error; }
+          else if (error) row.service_error = error;
+        }
+      }
+      next = page.next_cursor;
+      if (next !== null && (typeof next !== 'string' || next !== String(after))) fail('INVALID_RUN_EVENTS_CURSOR');
+      row.terminal = ['succeeded', 'failed', 'cancelled'].includes(page.run?.state) ? page.run.state : null;
+    } while (next !== null);
+    if (row.terminal) return row;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  fail('REAL_RUN_TERMINAL_NOT_OBSERVED');
+}
+
+export function requireObservedIdentity(row, config, required) {
+  const receipts = row.receipts;
+  if (!row.receipt || !Array.isArray(receipts) || receipts.length === 0 || JSON.stringify(row.receipt) !== JSON.stringify(receipts.at(-1))) fail('ACTUAL_PROVIDER_IDENTITY_REQUIRED');
+  for (const receipt of receipts) {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) fail('ACTUAL_PROVIDER_IDENTITY_REQUIRED');
+    if (receipt.provider_id !== config.provider_id || receipt.actual_model_id !== config.model_id || receipt.requested_model_id !== config.model_id || receipt.auth_kind !== required.auth_kind || typeof receipt.response_id !== 'string' || !receipt.response_id) fail('ACTUAL_PROVIDER_IDENTITY_REQUIRED');
+    if (receipt.runtime_version === null && ['openai_api', 'mimo_api'].includes(config.provider_id)) {
+      if (receipt.runtime_version_status !== 'not_exposed') fail('ACTUAL_RUNTIME_VERSION_STATUS_REQUIRED');
+    } else if (typeof receipt.runtime_version !== 'string' || !receipt.runtime_version) fail('ACTUAL_RUNTIME_VERSION_REQUIRED');
+    if (config.provider_id === 'detector_local' && receipt.weights_loaded !== true) fail('ACTUAL_LOCKED_LOAD_FORWARD_RECEIPT_REQUIRED');
+  }
+  row.actual_provider = row.receipt.provider_id;
+  row.full_model_id = row.receipt.actual_model_id;
+  row.auth_kind = row.receipt.auth_kind;
+  row.runtime_version = row.receipt.runtime_version;
+  row.response_id = row.receipt.response_id;
+}
+
+export async function hostExecutionConfigurationHash(rawHostConfiguration, config) {
+  // Use the project's actual Rust WASM bridge, not a second JS canonicalizer:
+  // serde Value preserves float/integer forms and UTF-8 object-key ordering.
+  const directory = path.join(root, 'crates/wasm-bridge/target/weblabel-web-public/wasm');
+  const javascript = path.join(directory, 'wasm_bridge.js');
+  const binary = path.join(directory, 'wasm_bridge_bg.wasm');
+  if (!existsSync(javascript) || !existsSync(binary)) fail('EXECUTION_CONFIGURATION_HASH_WASM_BUILD_REQUIRED');
+  const bridge = await import(pathToFileURL(confinedFile(root, javascript)).href);
+  if (typeof bridge.host_execution_configuration_hash !== 'function' || typeof bridge.initSync !== 'function') fail('EXECUTION_CONFIGURATION_HASH_WASM_BUILD_REQUIRED');
+  bridge.initSync({ module: readFileSync(confinedFile(root, binary)) });
+  let hash;
+  try { hash = bridge.host_execution_configuration_hash(rawHostConfiguration, config.provider_id, config.profile_id); }
+  catch { fail('INVALID_PUBLIC_EXECUTION_CONFIGURATION'); }
+  if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) fail('INVALID_EXECUTION_CONFIGURATION_HASH');
+  return hash;
+}
+
+export function requirePreviewExecutionConfiguration(preview, hash) {
+  if (typeof preview.execution_configuration_hash !== 'string' || !/^[a-f0-9]{64}$/.test(preview.execution_configuration_hash) || preview.execution_configuration_hash !== hash) fail('SERVICE_EXECUTION_CONFIGURATION_HASH_MISMATCH');
+}
+
 async function run(file, diagnostic) {
   const { config, required } = readRunConfig(file);
   // The production Host still refuses this exact unsupported channel. No API
   // impersonation or config flag can turn that into a subscription pass.
   if (config.provider_id === 'codex_local') fail('UNSUPPORTED_RUNTIME');
-  if (config.provider_id === 'detector_local') {
-    const detector = diagnostic.channels.find(item => item.provider_id === 'detector_local').tried_probe;
-    if (detector.files.some(item => item.status !== 'verified') || detector.profile?.availability !== 'ready') fail('LOCKED_WEIGHTS_AND_REAL_RUNTIME_REQUIRED');
-  }
-  const budget = readHostBudget(config);
+  const { budget, rawHostConfiguration } = readHostBudget(config);
   if (!process.stdin.isTTY || !process.stdout.isTTY) fail('HUMAN_VISUAL_REVIEW_TERMINAL_REQUIRED');
   const cookie = process.env.WEBLABEL_LIVE_SESSION_COOKIE;
   const csrf = process.env.WEBLABEL_LIVE_CSRF;
   if (!cookie || !csrf || /[\r\n]/.test(cookie + csrf)) fail('EXPLICIT_SERVICE_SESSION_AND_CSRF_REQUIRED_NO_LOGIN_PERFORMED');
   const { validateContract } = await import('../packages/contracts/src/validate.js');
   const { chromium, expect } = await import('@playwright/test');
-  const evidenceDir = path.join(root, 'reports/T32/local-live', randomUUID());
+  const evidenceDir = path.join(root, 'reports/T32/interactive-closure/local-live', randomUUID());
   await mkdir(evidenceDir, { recursive: true });
   /** @type {Record<string, 'not_run' | Record<string, unknown>>} */
   const errorPaths = Object.fromEntries(['quota_error', 'cancel', 'unsupported_image', 'tool_restriction'].map(key => [key, 'not_run']));
-  const evidence = { provider_id: config.provider_id, requested_model_id: config.model_id, required_auth_kind: required.auth_kind, status: 'blocked', samples: [], error_paths: errorPaths, identity_receipt: 'not_observed', local_runtime: { runner_node: process.version, runner_sha256: sha(readFileSync(fileURLToPath(import.meta.url))), checkout_host_dispatch_sha256: sha(readFileSync(path.join(root, 'apps/agent-host/src/runtime/dispatch.ts'))), executed_host_build_identity: 'must_come_from_runtime_receipt_not_checkout_hash' } };
+  const evidence = { provider_id: config.provider_id, requested_model_id: config.model_id, required_auth_kind: required.auth_kind, status: 'blocked', samples: [], error_paths: errorPaths, identity_receipt: 'not_observed', run_error: null, resources: { terminal: 'open', browser: 'not_opened' }, local_runtime: { runner_node: process.version, runner_sha256: sha(readFileSync(fileURLToPath(import.meta.url))), checkout_host_dispatch_sha256: sha(readFileSync(path.join(root, 'apps/agent-host/src/runtime/dispatch.ts'))), executed_host_build_identity: 'must_come_from_runtime_receipt_not_checkout_hash' } };
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   let browser;
   let started = 0;
+  const external = config.provider_id !== 'detector_local';
   try {
-    const request = async (method, route, body) => {
-      const response = await fetch(new URL(route, config.base_url), { method, redirect: 'error', signal: AbortSignal.timeout(30_000), headers: { cookie, origin: config.base_url.replace(/\/$/, ''), 'x-csrf-token': csrf, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
-      if (!response.ok) fail(`SERVICE_HTTP_${response.status}`);
-      return response.json();
-    };
+    const detector = config.provider_id === 'detector_local' ? weightsDiagnostic(true) : null;
+    if (detector) {
+      diagnostic.channels.find(item => item.provider_id === 'detector_local').tried_probe = detector;
+      if (detector.files.some(item => item.status !== 'verified')) fail('LOCKED_WEIGHTS_REQUIRED');
+    }
+    const request = serviceRequest(config.base_url, cookie, csrf);
     const profiles = await request('GET', '/api/model-profiles');
     const profile = profiles.items?.find(item => item.profile_id === config.profile_id);
     if (!profile || !validateContract('model_profile', profile).valid || profile.provider_id !== config.provider_id || profile.model_id !== config.model_id || profile.auth_kind !== required.auth_kind || profile.availability !== 'ready' || !profile.capabilities.image_input) fail('SERVICE_PROFILE_NOT_READY_OR_CHANNEL_MISMATCH');
+    if (detector) {
+      detector.profile = profile;
+      detector.worker_probe = 'actual_service_configuration_profile';
+      evidence.service_configuration_probe = profile;
+    }
     const samples = await generatedSamples();
-    const external = config.provider_id !== 'detector_local';
     console.error(JSON.stringify({ data_egress: external, possible_model_fees_usd: external ? null : 0, cost_display: external ? 'unknown; calls may incur fees including after cancellation' : 'local inference only', account: required.auth_kind, hard_quantity_budget: budget, max_model_runs: config.authorization.max_model_runs, samples: samples.map(({ bytes, ...publicSample }) => publicSample) }, null, 2));
     const authorizationPhrase = `AUTHORIZE T32 GENERATED ${config.provider_id}`;
     if (await terminal.question(`Type ${authorizationPhrase} to create an isolated project and execute this channel: `) !== authorizationPhrase) fail('HUMAN_AUTHORIZATION_DECLINED');
+    const executionConfigurationHash = await hostExecutionConfigurationHash(rawHostConfiguration, config);
     const project = await request('POST', '/api/projects', { name: `T32 live ${randomUUID()}`, description: 'Authorized generated images only; not business data', allow_self_review: true });
     const ontology = await request('POST', `/api/projects/${project.project_id}/ontologies`, { guidelines_markdown: 'Inspect actual visible helmet attributes; occlusion means unknown. Never invent a visual result.', labels: [{ label_id: 'label_person', name: 'Person', color: '#0099ff', shortcut: null, allowed_geometry_types: ['bbox_xyxy'], attributes: [{ key: 'helmet_state', kind: 'enum', required: false, default_value: 'unknown', enum_values: ['wearing', 'not_wearing', 'unknown'], min: null, max: null }] }] });
     if (external) await request('PUT', `/api/projects/${project.project_id}/external-processing-policy`, { allow_external_processing: true });
     browser = await chromium.launch({ channel: 'chrome', headless: false });
+    evidence.resources.browser = 'open';
     const context = await browser.newContext();
     const separator = cookie.indexOf('=');
     if (separator < 1 || cookie.includes(';')) fail('SINGLE_EXPLICIT_SESSION_COOKIE_REQUIRED');
@@ -279,6 +388,7 @@ async function run(file, diagnostic) {
       assert.equal(previewHttp.status(), 201);
       const preview = await previewHttp.json();
       assert.ok(validateContract('ai_preview_response', preview).valid);
+      requirePreviewExecutionConfiguration(preview, executionConfigurationHash);
       assert.equal(preview.request.context.canonical_sha256, asset.canonical_sha256);
       before = await head();
       console.error(JSON.stringify({ sample: sample.kind, canonical_sha256: asset.canonical_sha256, input_fingerprint: preview.request.context.input_fingerprint, actual_preview: preview.grants }));
@@ -295,44 +405,16 @@ async function run(file, diagnostic) {
       diagnostic.outbound_model_calls = external ? null : 0;
       const row = { sample: sample.kind, source_sha256: sample.source_sha256, canonical_sha256: asset.canonical_sha256, input_fingerprint: preview.request.context.input_fingerprint, run_id: queued.run_id, actual_provider: null, full_model_id: null, auth_kind: null, runtime_version: null, response_id: null, receipt: null, receipts: [], terminal: null, human_visual_review: null, accept_save: null, undo_save: null };
       evidence.samples.push(row);
-      for (let attempt = 0; attempt < 240; attempt += 1) {
-        const events = await request('GET', `/api/ai/runs/${queued.run_id}/events?limit=200`);
-        for (const event of events.items) assert.ok(validateContract('run_event', event).valid);
-        const terminalEvent = events.items.findLast(event => ['succeeded', 'failed', 'cancelled'].includes(event.type));
-        if (terminalEvent) {
-          row.terminal = terminalEvent.type;
-          const data = terminalEvent.data ?? {};
-          row.receipts = Array.isArray(data.receipts) ? data.receipts : [];
-          const receipt = data.receipt ?? data.receipts?.at(-1) ?? null;
-          if (receipt) {
-            row.actual_provider = receipt.provider_id ?? null;
-            row.full_model_id = receipt.actual_model_id ?? null;
-            row.auth_kind = receipt.auth_kind ?? null;
-            row.runtime_version = receipt.runtime_version ?? null;
-            row.response_id = receipt.response_id ?? null;
-            row.receipt = receipt;
-            evidence.identity_receipt = 'observed_from_persisted_run_event';
-          }
-          const code = data.error_code ?? data.code ?? null;
-          if (typeof code === 'string') {
-            if (/quota|rate_limit/.test(code)) evidence.error_paths.quota_error = { code, run_id: queued.run_id };
-            if (/image|unsupported/.test(code)) evidence.error_paths.unsupported_image = { code, run_id: queued.run_id };
-            if (/tool_|method_not_permitted/.test(code)) evidence.error_paths.tool_restriction = { code, run_id: queued.run_id };
-          }
-          break;
-        }
-        await new Promise(resolve => setTimeout(resolve, 500));
+      await observeRun(request, queued.run_id, row);
+      if (row.receipt) evidence.identity_receipt = 'observed_from_persisted_run_event';
+      const code = row.provider_error ?? row.service_error;
+      if (typeof code === 'string') {
+        if (/quota|rate_limit/.test(code)) evidence.error_paths.quota_error = { code, run_id: queued.run_id };
+        if (/image|unsupported/.test(code)) evidence.error_paths.unsupported_image = { code, run_id: queued.run_id };
+        if (/tool_|method_not_permitted/.test(code)) evidence.error_paths.tool_restriction = { code, run_id: queued.run_id };
       }
       if (row.terminal !== 'succeeded') fail('REAL_RUN_DID_NOT_SUCCEED');
-      if (row.receipt) {
-        assert.equal(row.actual_provider, config.provider_id);
-        assert.equal(row.full_model_id, config.model_id);
-        assert.equal(row.auth_kind, required.auth_kind);
-        assert.equal(row.receipt.requested_model_id, config.model_id);
-        // Remote HTTP server versions are not a documented response field.
-        // null + not_exposed is recorded, not an impossible API prerequisite.
-        if (row.runtime_version === null && ['openai_api', 'mimo_api'].includes(config.provider_id)) assert.equal(row.receipt.runtime_version_status, 'not_exposed');
-      }
+      requireObservedIdentity(row, config, required);
       const suggestions = await request('GET', `/api/ai/runs/${queued.run_id}/suggestions`);
       for (const set of suggestions.items) assert.ok(validateContract('suggestion_set', set).valid);
       const suggestion = suggestions.items.find(set => set.context.asset_revision_id === asset.asset_revision_id && set.state === 'pending' && set.changes.length > 0);
@@ -385,6 +467,7 @@ async function run(file, diagnostic) {
         assert.equal(previewHttp.status(), 201);
         const preview = await previewHttp.json();
         assert.ok(validateContract('ai_preview_response', preview).valid);
+        requirePreviewExecutionConfiguration(preview, executionConfigurationHash);
         assert.equal(preview.request.context.asset_revision_id, pinnedAsset);
         pending.set(preview.request.context.canonical_sha256, { input_fingerprint: preview.input_fingerprint, annotation_revision_id: beforeCancel.annotation_revision_id });
         await page.getByTestId('ai-consent').getByRole('checkbox').check();
@@ -398,16 +481,8 @@ async function run(file, diagnostic) {
         const cancelledHttp = await cancelResponse;
         const cancellation = { run_id: queued.run_id, cancel_http_status: cancelledHttp.status(), terminal: null, remote_billing: external ? 'may_have_cost_unknown' : 'local_only', receipts: [] };
         evidence.error_paths.cancel = cancellation;
-        for (let attempt = 0; attempt < 240; attempt += 1) {
-          const events = await request('GET', `/api/ai/runs/${queued.run_id}/events?limit=200`);
-          const terminalEvent = events.items.findLast(event => ['succeeded', 'failed', 'cancelled'].includes(event.type));
-          if (terminalEvent) {
-            cancellation.terminal = terminalEvent.type;
-            cancellation.receipts = terminalEvent.data?.receipts ?? [];
-            break;
-          }
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
+        await observeRun(request, queued.run_id, cancellation);
+        if (cancellation.terminal !== 'cancelled') fail('REAL_CANCEL_DID_NOT_CANCEL');
         assert.deepEqual(await request('GET', headPath), beforeCancel);
         await page.screenshot({ path: path.join(evidenceDir, 'cancel.png'), fullPage: true });
         diagnostic.model_runs_started = started;
@@ -420,11 +495,15 @@ async function run(file, diagnostic) {
       ...(config.provider_id === 'detector_local' && !row.receipt?.weights_loaded ? [`${row.sample}: actual locked load/forward receipt not exposed`] : []),
     ]);
     for (const [kind, outcome] of Object.entries(evidence.error_paths)) if (outcome === 'not_run') evidence.missing_evidence.push(`${kind}: not_run`);
+  } catch (error) {
+    evidence.run_error = error instanceof Error ? error.message : 'DIAGNOSTIC_OR_RUN_FAILED';
+    throw error;
   } finally {
     diagnostic.model_runs_started = started;
     diagnostic.outbound_model_calls = external && started > 0 ? null : 0;
     const observedChannel = diagnostic.channels.find(channel => channel.provider_id === config.provider_id);
     const observedReceipt = evidence.samples.findLast(sample => sample.receipt)?.receipt;
+    if (observedReceipt) evidence.identity_receipt = 'observed_from_persisted_run_event';
     observedChannel.verification = evidence.samples.length > 0 ? 'partial_live_observation_not_gate_pass' : 'not_run';
     observedChannel.input_hashes = evidence.samples.map(sample => sample.canonical_sha256);
     observedChannel.actual_provider = observedReceipt?.provider_id ?? null;
@@ -432,17 +511,25 @@ async function run(file, diagnostic) {
     observedChannel.auth_kind = observedReceipt?.auth_kind ?? null;
     observedChannel.response_id = observedReceipt?.response_id ?? null;
     observedChannel.runtime_version = observedReceipt?.runtime_version ?? observedChannel.runtime_version;
-    terminal.close();
-    await browser?.close();
-    await writeFile(path.join(evidenceDir, 'summary.json'), JSON.stringify(evidence, null, 2));
-    diagnostic.evidence_path = path.relative(root, path.join(evidenceDir, 'summary.json')).replaceAll('\\', '/');
+    try { terminal.close(); evidence.resources.terminal = 'closed'; } catch { evidence.resources.terminal = 'close_failed'; }
+    try { if (browser) { await browser.close(); evidence.resources.browser = 'closed'; } } catch { evidence.resources.browser = 'close_failed'; }
+    // Cleanup failure cannot replace the original service/human refusal.
+    try {
+      await writeFile(path.join(evidenceDir, 'summary.json'), JSON.stringify(evidence, null, 2));
+      diagnostic.evidence_path = path.relative(root, path.join(evidenceDir, 'summary.json')).replaceAll('\\', '/');
+    } catch {
+      diagnostic.evidence_write_error = 'SUMMARY_WRITE_FAILED';
+      if (!evidence.run_error) fail('SUMMARY_WRITE_FAILED');
+    }
   }
 }
 
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 const args = process.argv.slice(2);
 if (args.length === 1 && args[0] === '--help') {
   console.log('T32 live gates: node scripts/verify-live.mjs [--check-required] | --run --config <repo-local-public-authorization.json>\nDefault diagnoses five independent channels; blocked exits 2. No account commands/model calls/downloads.\n--run needs ten-minute provider-specific authorization, generated-image scope, max_model_runs (2..3), max_provider_calls_per_run (1..8), unknown-cost acknowledgement for external channels, explicit public service Host configuration with hard quantity budgets, own loopback production origin (not 5173/4174), existing service session via WEBLABEL_LIVE_SESSION_COOKIE and WEBLABEL_LIVE_CSRF, and human visual review. No login or credential-file reading.\nCalls go through actual Workbench, preview/consent, service jobs, Host, native EditorCore and nativeSaveQueue. Codex production remains UNSUPPORTED_RUNTIME; unavailable profiles and missing locked detector weights refuse dispatch. Prices/metadata not exposed by upstream remain null/unknown. No engineering fixture or UI-only result passes G4.');
   console.log('--prepare-inputs writes only the two own generated local PNGs and their hashes under reports/T32/programmatic-inputs. It does not authorize upload, execute a model, or satisfy a live gate.');
+  console.log('Default/check-required only use fixed session-free version/help and realpath-confined locked public-file existence/size; no full weights hash or Python worker. Authorized detector --run checks full locked hashes before consulting actual service worker readiness. --run additionally requires a fresh node scripts/build-web-bridge.mjs build: Rust WASM hashes the selected public Host provider config exactly as the service. Both ordinary and cancellation previews must expose the same execution_configuration_hash before consent/START. Persisted events use after/next_cursor paging; service lifecycle cannot replace provider checkpoints/terminal receipts/usage/errors. Missing/dropped identity refuses before Native acceptance.');
 } else if (args.length === 1 && args[0] === '--prepare-inputs') {
   const directory = path.join(root, 'reports/T32/programmatic-inputs');
   await mkdir(directory, { recursive: true });
@@ -468,4 +555,5 @@ if (args.length === 1 && args[0] === '--help') {
   }
   console.log(JSON.stringify(report, null, 2));
   process.exitCode = manifest.blocked_exit_code;
+}
 }
