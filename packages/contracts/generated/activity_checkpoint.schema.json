@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ActivityCheckpoint",
+  "type": "object",
+  "required": [
+    "expected_version",
+    "intervals"
+  ],
+  "properties": {
+    "expected_version": {
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    },
+    "intervals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ActivityInterval"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "ActivityInterval": {
+      "type": "object",
+      "required": [
+        "duration_ms",
+        "kind",
+        "seq"
+      ],
+      "properties": {
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 86400000.0,
+          "minimum": 1.0
+        },
+        "kind": {
+          "$ref": "#/definitions/ActivityKind"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActivityKind": {
+      "type": "string",
+      "enum": [
+        "task",
+        "annotation",
+        "correction",
+        "review",
+        "switch",
+        "model_wait"
+      ]
+    }
+  }
+}

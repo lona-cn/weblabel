@@ -65,6 +65,10 @@ impl Repository {
                 "0012_ai_capability_deadline",
                 include_str!("../../migrations/0012_ai_capability_deadline.sql"),
             ),
+            (
+                "0013_activity_sessions",
+                include_str!("../../migrations/0013_activity_sessions.sql"),
+            ),
         ] {
             let mut tx = begin_immediate(&pool, write_timeout).await?;
             let applied: i64 = sqlx::query_scalar(

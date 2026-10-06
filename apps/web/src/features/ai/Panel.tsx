@@ -13,7 +13,7 @@ import { ProviderPicker } from './ProviderPicker';
 import { RunProgress } from './RunProgress';
 import { useRun, type ConsentPreview, type RunApi } from './useRun';
 
-export function Panel({ asset_revision_id, profiles, context, ontology, getDocument, getGeneration, generation, dispatch, saveQueue, obtainConsent, refreshContext, grants, api, csrfToken, intent: initialIntent = 'audit_attributes' }: {
+export function Panel({ asset_revision_id, profiles, context, ontology, getDocument, getGeneration, generation, dispatch, saveQueue, obtainConsent, refreshContext, grants, api, csrfToken, intent: initialIntent = 'audit_attributes', onModelWaitingChange }: {
   asset_revision_id: string;
   profiles: readonly ModelProfile[];
   context: RunContext;
@@ -29,6 +29,7 @@ export function Panel({ asset_revision_id, profiles, context, ontology, getDocum
   csrfToken?: string | null;
   api?: RunApi;
   intent?: RunIntent;
+  onModelWaitingChange?: (waiting: boolean) => void;
 }) {
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(profiles[0]?.profile_id ?? null);
   const [intent, setIntent] = useState<RunIntent>(initialIntent);
@@ -58,6 +59,8 @@ export function Panel({ asset_revision_id, profiles, context, ontology, getDocum
     csrfToken,
     api,
   });
+  useEffect(() => { onModelWaitingChange?.(controller.modelWaiting); }, [controller.modelWaiting, onModelWaitingChange]);
+  useEffect(() => () => onModelWaitingChange?.(false), [onModelWaitingChange]);
   const previewKey = preview === null ? null : JSON.stringify(preview);
   const consentChecked = previewKey !== null && confirmedPreviewKey === previewKey;
 

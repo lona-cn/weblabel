@@ -11,7 +11,7 @@ import { api, csrfToken, type ApiMedia } from '../../lib/t15/api';
 import { Panel } from './Panel';
 import type { ConsentPreview } from './useRun';
 
-export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId, selectedIds }: {
+export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId, selectedIds, onModelWaitingChange }: {
   assetId: string;
   media: ApiMedia | null;
   ontology: OntologyVersion | null;
@@ -19,6 +19,7 @@ export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId,
   queue: SaveQueue;
   revisionId: string | null;
   selectedIds: readonly string[];
+  onModelWaitingChange?: (waiting: boolean) => void;
 }) {
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +86,7 @@ export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId,
       getDocument={() => host?.getSnapshot() ?? null} getGeneration={() => host?.getGeneration() ?? null}
       dispatch={(command) => host?.dispatch(command) ?? null} saveQueue={queue}
       refreshContext={refreshContext} obtainConsent={obtainConsent} csrfToken={csrfToken()}
+      onModelWaitingChange={onModelWaitingChange}
       grants={{ allow_image: true, allow_object_context: true, preview_crop: null }} /> : <p role="status">加载编辑器后可审校当前图像。</p>}
   </section>;
 }

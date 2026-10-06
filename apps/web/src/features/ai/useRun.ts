@@ -390,5 +390,6 @@ export function useRun(options: RunControllerOptions) {
     }
   }, [busy, options]);
 
-  return { run, preparePreview, cancel, runId, events, candidates: candidateEntries, error, busy, savedMessage, acceptSelected };
+  const modelWaiting = runIds.some((id) => runContexts.current.get(id)?.project_id === options.context.project_id && !finishedRuns.current.has(id));
+  return { run, preparePreview, cancel, runId, events, candidates: candidateEntries, error, busy, modelWaiting, savedMessage, acceptSelected };
 }

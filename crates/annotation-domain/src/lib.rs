@@ -1,5 +1,6 @@
 //! Shared, validated wire model for annotation documents and candidate runs.
 
+pub mod activity;
 pub mod ai_authorization;
 pub mod document;
 pub mod geometry;
@@ -10,6 +11,7 @@ pub mod revision;
 mod schema;
 pub mod suggestion_validation;
 
+pub use activity::{ActivityCheckpoint, ActivityInterval, ActivityKind, ActivitySession, ActivitySessionPage};
 pub use ai_authorization::{
     AiApprovedGrants, AiConsentRequest, AiConsentResponse, AiPreviewRequest, AiPreviewResponse,
     ExternalProcessingPolicy,

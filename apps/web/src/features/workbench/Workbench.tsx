@@ -24,6 +24,8 @@ import type { ReviewTask } from '../review/api';
 import { setReviewEditorLocked, submitCurrentReviewRevision } from '../review/submission';
 import { WorkbenchAi } from '../ai/WorkbenchAi';
 import { ExternalProcessingPolicy } from '../projects/ExternalProcessingPolicy';
+import { ActivityCollector } from './activity';
+import { ActivityPanel } from './ActivityPanel';
 
 type TaskLease = { asset_revision_id: string; task_id: string; fencing_token: number };
 type Props = { projectId?: string; onProjects?: () => void; onDatasets?: () => void };
@@ -33,6 +35,10 @@ function reportError(reason: unknown): string { return reason instanceof Error ?
 
 export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = () => {} }: Props) {
   const { session, logout } = useSession();
+  const activitySurfaceRef = useRef<HTMLElement>(null);
+  const activity = useMemo(() => new ActivityCollector(projectId, session?.user_id ?? '', undefined, () => window.localStorage), [projectId, session?.user_id]);
+  const recordActivity = useCallback((kind: Parameters<ActivityCollector['interact']>[0]) => activity.interact(kind), [activity]);
+  const modelWaitingChanged = useCallback((waiting: boolean) => activity.setKind(waiting ? 'model_wait' : 'task'), [activity]);
   const workspaceHeadingRef = useRef<HTMLElement>(null);
   useEffect(() => { workspaceHeadingRef.current?.focus(); }, []);
   const [project, setProject] = useState<Project | null>(null);
@@ -188,10 +194,11 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
       setCompletionChoice(document.completion);
       setNegativeConfirmed(false);
       setLoadState('ready');
+      if (activity.getKind() === 'switch') activity.setKind('task');
       queue.switchAsset(media.asset_revision_id);
     }).catch((reason: unknown) => { if (alive) { setError(reportError(reason)); setLoadState('error'); } });
     return () => { alive = false; };
-  }, [selectedAssetId, assets, ontologies, loaded, queue]);
+  }, [selectedAssetId, assets, ontologies, loaded, queue, activity]);
 
   async function importFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -204,6 +211,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   }
 
   const selectAsset = (asset: ApiMedia) => {
+    if (asset.asset_revision_id !== selectedAssetId) recordActivity('switch');
     setSelectedAssetId(asset.asset_revision_id);
     const url = new URL(location.href);
     url.searchParams.set('project_id', projectId);
@@ -226,8 +234,9 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
       queue.enqueue({ asset_revision_id: loaded.media.asset_revision_id, ontology_version_id: loaded.ontology.ontology_version_id,
         base_revision_id: queue.getStatus(loaded.media.asset_revision_id).base_revision_id ?? loaded.revisionId,
         generation: delta.generation, document: snapshot, suggestion_decisions: delta.suggestion_decisions });
+      recordActivity(snapshot.objects.length > objects.length ? 'annotation' : 'correction');
     }
-  }, [loaded, queue, selectedAssetId]);
+  }, [loaded, queue, selectedAssetId, objects.length, recordActivity]);
 
   function setActiveTool(next: Tool) {
     if (editableHost?.setTool(next)) setTool(next);
@@ -319,13 +328,14 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
   }
 
   if (!session) return null;
-  return <main className="app-shell">
+  return <main ref={activitySurfaceRef} className="app-shell">
     <header className="topbar"><a className="brand" href="/" aria-label="WebLabel 项目"><span className="brand-mark" aria-hidden="true">W</span><span>WebLabel</span></a>
       <nav aria-label="主导航" className="main-nav"><button type="button" onClick={onProjects}>项目</button><button type="button" aria-current="page">工作台</button><button type="button" onClick={onDatasets}>数据集与导出</button></nav>
       <span className="session-user">{session.username}</span><button type="button" className="logout-button" onClick={() => void logout()}>退出</button>
     </header>
     <header ref={workspaceHeadingRef} tabIndex={-1} className="workspace-heading"><div><p className="eyebrow">{project?.name ?? '项目'} / {activeLoaded?.media.original_name ?? '选择媒体'}</p><input className="project-name-field" data-testid="project-name" aria-label="项目名称" value={project?.name ?? ''} readOnly /></div><span className="local-state">服务端版本 · canonical 像素坐标</span></header>
     {projectId ? <ExternalProcessingPolicy key={projectId} projectId={projectId} canManage={project?.project_id === projectId && project.role === 'admin'} /> : null}
+    {projectId ? <ActivityPanel key={projectId + session.user_id} projectId={projectId} actorId={session.user_id} collector={activity} surfaceRef={activitySurfaceRef} /> : null}
     {error ? <p className="api-error" role="alert">{error}</p> : null}
     <section ref={importSurfaceRef} className="asset-import-bar" aria-label="项目媒体导入"><label htmlFor="media-import">导入图片</label><input ref={importRef} id="media-import" data-testid="media-import" type="file" accept="image/png,image/jpeg" multiple onChange={(event) => void importFiles(event.currentTarget.files)} />{job ? <span role="status">导入处理中…</span> : null}</section>
     <div ref={editorSurfaceRef} className="workbench-grid">
@@ -370,7 +380,7 @@ export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = 
     </div>
     <WorkbenchAi assetId={selectedAssetId ?? ''} media={activeLoaded?.media ?? null}
       ontology={activeLoaded?.ontology ?? null} host={activeHost} queue={queue}
-      revisionId={activeLoaded?.revisionId ?? null} selectedIds={activeSelectedIds} />
-    {projectId && session ? <ReviewPanel projectId={projectId} session={session} onLeaseChange={updateTaskLease} onSubmitTask={submitReviewTask} /> : null}
+      revisionId={activeLoaded?.revisionId ?? null} selectedIds={activeSelectedIds} onModelWaitingChange={modelWaitingChanged} />
+    {projectId && session ? <div onPointerDownCapture={() => recordActivity('review')} onInputCapture={() => recordActivity('review')}><ReviewPanel projectId={projectId} session={session} onLeaseChange={updateTaskLease} onSubmitTask={submitReviewTask} /></div> : null}
   </main>;
 }

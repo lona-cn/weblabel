@@ -1,6 +1,7 @@
 use std::{error::Error, fs, path::Path};
 
 use annotation_domain::{
+    ActivityCheckpoint, ActivityInterval, ActivityKind, ActivitySession, ActivitySessionPage,
     AiApprovedGrants, AiConsentRequest, AiConsentResponse, AiPreviewRequest, AiPreviewResponse,
     AnnotationDocument, AnnotationRevision, ApiError, EditorCommand, EditorDelta,
     ExternalProcessingPolicy, MediaRevision, ModelProfile, OntologyVersion, RunEvent, SaveRequest,
@@ -25,6 +26,11 @@ fn write_json<T: Serialize>(directory: &Path, file: &str, value: &T) -> Result<(
 /// Generate the committed wire artifacts exclusively from annotation-domain Rust declarations.
 pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(output)?;
+    ActivityKind::export_all_to(output)?;
+    ActivityInterval::export_all_to(output)?;
+    ActivityCheckpoint::export_all_to(output)?;
+    ActivitySession::export_all_to(output)?;
+    ActivitySessionPage::export_all_to(output)?;
     AnnotationDocument::export_all_to(output)?;
     OntologyVersion::export_all_to(output)?;
     MediaRevision::export_all_to(output)?;
@@ -46,6 +52,9 @@ pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     ExternalProcessingPolicy::export_all_to(output)?;
 
     write_schema::<AnnotationDocument>(output, "annotation_document.schema.json")?;
+    write_schema::<ActivityCheckpoint>(output, "activity_checkpoint.schema.json")?;
+    write_schema::<ActivitySession>(output, "activity_session.schema.json")?;
+    write_schema::<ActivitySessionPage>(output, "activity_session_page.schema.json")?;
     write_schema::<OntologyVersion>(output, "ontology_version.schema.json")?;
     write_schema::<MediaRevision>(output, "media_revision.schema.json")?;
     write_schema::<AnnotationRevision>(output, "annotation_revision.schema.json")?;

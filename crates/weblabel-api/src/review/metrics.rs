@@ -9,6 +9,7 @@ use axum::{
     http::StatusCode,
     Extension, Json,
 };
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use serde::Deserialize;
 use sqlx::Row;
 
@@ -60,8 +61,9 @@ pub(super) async fn checkpoint(
     State(state): State<ReviewState>,
     Path((project_id, session_id)): Path<(String, String)>,
     Extension(actor): Extension<Principal>,
-    Json(body): Json<ActivityCheckpoint>,
+    body: Result<Json<ActivityCheckpoint>, JsonRejection>,
 ) -> Result<Json<ActivitySession>, Failure> {
+    let Json(body) = body.map_err(|rejection| error(rejection.status(), "INVALID_ACTIVITY", "Request JSON does not match activity schema"))?;
     require_project_role(
         &state.auth,
         &actor.user_id,
@@ -89,7 +91,7 @@ pub(super) async fn checkpoint(
     if previous == body.intervals {
         tx.rollback().await.map_err(|_| unavailable())?;
         return Ok(Json(ActivitySession {
-            session_id,
+            session_id: session_id.into(),
             version,
             intervals: previous,
         }));
@@ -107,7 +109,7 @@ pub(super) async fn checkpoint(
         .bind(&project_id).bind(&actor.user_id).bind(&session_id).bind(version as i64).bind(payload).execute(tx.connection()).await.map_err(|_| unavailable())?;
     tx.commit().await.map_err(|_| unavailable())?;
     Ok(Json(ActivitySession {
-        session_id,
+        session_id: session_id.into(),
         version,
         intervals: body.intervals,
     }))
@@ -124,8 +126,9 @@ pub(super) async fn list(
     State(state): State<ReviewState>,
     Path(project_id): Path<String>,
     Extension(actor): Extension<Principal>,
-    Query(query): Query<PageQuery>,
+    query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Result<Json<ActivitySessionPage>, Failure> {
+    let Query(query) = query.map_err(|rejection| error(rejection.status(), "INVALID_ACTIVITY", "Activity pagination query is invalid"))?;
     require_project_role(
         &state.auth,
         &actor.user_id,
@@ -146,7 +149,7 @@ pub(super) async fn list(
     let mut items = Vec::with_capacity(rows.len().min(limit as usize));
     for row in rows.into_iter().take(limit as usize) {
         items.push(ActivitySession {
-            session_id: row.get("session_id"),
+            session_id: row.get::<String, _>("session_id").into(),
             version: row.get::<i64, _>("version") as u64,
             intervals: serde_json::from_str(&row.get::<String, _>("intervals_json"))
                 .map_err(|_| unavailable())?,

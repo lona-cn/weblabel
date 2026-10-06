@@ -1,6 +1,7 @@
 pub mod decisions;
 pub mod issues;
 pub mod leases;
+pub mod metrics;
 pub mod submissions;
 pub mod tasks;
 
@@ -23,6 +24,8 @@ pub fn router(repository: Repository, auth: AuthState) -> Router {
         auth: auth.clone(),
     };
     Router::new()
+        .route("/api/projects/{project_id}/activity-sessions", get(metrics::list))
+        .route("/api/projects/{project_id}/activity-sessions/{session_id}", axum::routing::put(metrics::checkpoint))
         .route(
             "/api/projects/{project_id}/tasks",
             get(tasks::list).post(tasks::create),
