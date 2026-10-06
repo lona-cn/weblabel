@@ -1237,6 +1237,14 @@
       ],
       "checks": [
         [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--config",
+          "reports/T32/vitest.config.ts"
+        ],
+        [
           "node",
           "scripts/verify-live.mjs",
           "--check-required"
