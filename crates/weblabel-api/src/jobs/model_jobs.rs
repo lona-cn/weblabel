@@ -35,6 +35,7 @@ pub use crate::ai::predictions::SubmitCandidates;
 const MODEL_JOB_KIND: &str = "model_run";
 pub const MAX_RUN_JOB_ITEMS: usize = 100;
 const MAX_JOB_RESULT_BYTES: usize = 256 * 1024;
+#[cfg(debug_assertions)]
 const DRAIN_MAX_JOBS: usize = 32;
 
 #[derive(Debug, Error)]
@@ -288,9 +289,16 @@ pub async fn process_model_next(
 
 /// Production media-import worker that never leases model or export jobs.
 pub async fn process_media_import_next(
-    repository: &Repository, queue: &JobQueue, worker_id: &str,
+    repository: &Repository,
+    queue: &JobQueue,
+    worker_id: &str,
 ) -> Result<Option<String>, ModelJobError> {
-    let Some(lease) = queue.lease_next_kind(worker_id, Duration::from_secs(300), Some("media_import")).await? else { return Ok(None); };
+    let Some(lease) = queue
+        .lease_next_kind(worker_id, Duration::from_secs(300), Some("media_import"))
+        .await?
+    else {
+        return Ok(None);
+    };
     let job_id = lease.job_id.clone();
     ingest::process_import_job(repository, &media_worker(), queue, &lease).await?;
     Ok(Some(job_id))

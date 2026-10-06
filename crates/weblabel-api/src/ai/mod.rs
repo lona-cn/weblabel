@@ -47,7 +47,7 @@ pub fn router(
         allow_mock_runs,
         run_tokens,
     };
-    let mut app = Router::new()
+    let app = Router::new()
         .route("/api/model-profiles", get(profiles::list))
         .route("/api/ai/previews", post(consent::preview))
         .route("/api/ai/consents", post(consent::create))
@@ -63,9 +63,7 @@ pub fn router(
     // Test builds only: drains the shared job queue through the real worker
     // path. Release builds do not compile this entry point.
     #[cfg(debug_assertions)]
-    {
-        app = app.route("/internal/test/jobs/drain", post(model_jobs::drain));
-    }
+    let app = app.route("/internal/test/jobs/drain", post(model_jobs::drain));
     app.route_layer(middleware::from_fn_with_state(
         auth.clone(),
         auth::authenticate,
@@ -158,11 +156,14 @@ pub(crate) fn redact_json(value: &mut Value) {
                 // Usage counters are public C4 scalars, not credentials; malformed values remain redacted.
                 let public_usage = matches!(key.as_str(), "input_tokens" | "output_tokens")
                     && (entry.is_null()
-                        || entry.as_u64().is_some_and(|count| count <= 9_007_199_254_740_991));
+                        || entry
+                            .as_u64()
+                            .is_some_and(|count| count <= 9_007_199_254_740_991));
                 let lower = key.to_ascii_lowercase();
-                if !public_usage && SECRET_KEY_FRAGMENTS
-                    .iter()
-                    .any(|fragment| lower.contains(fragment))
+                if !public_usage
+                    && SECRET_KEY_FRAGMENTS
+                        .iter()
+                        .any(|fragment| lower.contains(fragment))
                 {
                     *entry = Value::String("[REDACTED]".to_owned());
                 } else {
@@ -194,12 +195,15 @@ mod usage_redaction_tests {
             "other": {"token": null, "refresh_token": 17, "Input_tokens": 17}
         });
         super::redact_json(&mut value);
-        assert_eq!(value, serde_json::json!({
-            "usage": {"input_tokens": null, "output_tokens": 17},
-            "limits": {"input_tokens": 9007199254740991_u64, "output_tokens": 0},
-            "malformed": {"input_tokens": "[REDACTED]", "output_tokens": "[REDACTED]"},
-            "unsafe": {"input_tokens": "[REDACTED]", "output_tokens": "[REDACTED]"},
-            "other": {"token": "[REDACTED]", "refresh_token": "[REDACTED]", "Input_tokens": "[REDACTED]"}
-        }));
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "usage": {"input_tokens": null, "output_tokens": 17},
+                "limits": {"input_tokens": 9007199254740991_u64, "output_tokens": 0},
+                "malformed": {"input_tokens": "[REDACTED]", "output_tokens": "[REDACTED]"},
+                "unsafe": {"input_tokens": "[REDACTED]", "output_tokens": "[REDACTED]"},
+                "other": {"token": "[REDACTED]", "refresh_token": "[REDACTED]", "Input_tokens": "[REDACTED]"}
+            })
+        );
     }
 }

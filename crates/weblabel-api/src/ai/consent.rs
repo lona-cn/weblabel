@@ -70,7 +70,8 @@ async fn configuration_hash(
             .map_err(storage)?;
     let secret_ref: Option<String> = row.try_get("secret_ref").map_err(storage)?;
     if let Some(output) = execution_hash {
-        *output = annotation_domain::hash::execution_configuration_hash(&configuration).map_err(storage)?;
+        *output = annotation_domain::hash::execution_configuration_hash(&configuration)
+            .map_err(storage)?;
     }
     Ok(sha256_hex(
         serde_json::to_vec(

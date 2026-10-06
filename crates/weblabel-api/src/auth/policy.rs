@@ -110,7 +110,8 @@ impl AuthState {
     pub async fn enable_restore_bootstrap(&self) -> Result<bool, sqlx::Error> {
         let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users) AND NOT EXISTS(SELECT 1 FROM users WHERE password_hash != '') AND NOT EXISTS(SELECT 1 FROM sessions)")
             .fetch_one(&self.pool).await?;
-        self.restore_bootstrap_enabled.store(eligible, std::sync::atomic::Ordering::Release);
+        self.restore_bootstrap_enabled
+            .store(eligible, std::sync::atomic::Ordering::Release);
         Ok(eligible)
     }
 }
