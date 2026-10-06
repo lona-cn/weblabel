@@ -28,7 +28,7 @@ pnpm start:local
 | 保存/审核/快照/权限 | T27/T29 已集成报告 | 不可变版本与鉴权导出工程验收，不是公网部署 |
 | 崩溃/设备恢复 | [T30 result](reports/T30/result.json)：注册 integration 7 + 真实硬件 browser 9；受影响 T09 5 | 实际源码与浏览器交互证据；不是模型调用或 T31 所有性能阈值 |
 | 真实模型诊断 | [T32 result](reports/T32/result.json)：注册 exit 2，工程 consumer 35 passed，五渠道 blocked，外发 0 | 实际 loopback API/Host/worker 工程 proof，不是官方账户/型号支持 |
-| 本地发行/备份恢复 | T33 的 source/evidence 与主 Agent 集成重放 | API/Web/WASM/Host 实际 hash、CLI/SQLite/恢复读路径；最终验收以报告 exit/count 为准 |
+| 本地发行/备份恢复 | [T33 result](reports/T33/result.json)：注册 6 passed、独立实际 CLI 数据恢复 smoke；发行 manifest 记录实际 source commit/hash | API/Web/WASM/Host 实际产品；原审核身份与精确 revision/media/snapshot hash 保留；主 Agent 仍须集成根入口与最终 shutdown 源码 |
 | 最终发布 | 主 Agent T35 | 仍需 G4 独立真实条件，不能由 pnpm build/doctor 替代 |
 
 ### 五个必需 live 渠道
