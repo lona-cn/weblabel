@@ -135,18 +135,32 @@ interface ResponsesStreamEvent {
 interface ResponsesStreamResult {
   toolCalls: ResponsesToolCall[];
   text: string;
-  usage: unknown;
+}
+
+interface ResponsesReceipt {
+  provider_id: 'openai_api';
+  requested_model_id: string;
+  actual_model_id: string | null;
+  response_id: string | null;
+  auth_kind: 'api_key';
+  transport: 'openai_responses_sse';
+  runtime_version: null;
+  runtime_version_status: 'not_exposed';
+  budgets: { max_tool_turns: number; max_run_ms: number; max_total_bytes: number; request_timeout_ms: number; cost_usd: null };
 }
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
-async function consumeResponsesStream(frames: AsyncIterable<SseFrame>, budget: ToolLoopBudget): Promise<ResponsesStreamResult> {
+async function consumeResponsesStream(
+  frames: AsyncIterable<SseFrame>,
+  budget: ToolLoopBudget,
+  observeResponse: (response: { id?: unknown; model?: unknown; usage?: unknown }) => void,
+): Promise<ResponsesStreamResult> {
   const calls = new Map<string, ResponsesToolCall>();
   const order: ResponsesToolCall[] = [];
   let text = '';
-  let usage: unknown = null;
   let terminal = false;
   let failure: string | null = null;
   for await (const frame of frames) {
@@ -157,6 +171,15 @@ async function consumeResponsesStream(frames: AsyncIterable<SseFrame>, budget: T
     }
     const event = payload as ResponsesStreamEvent; // every field read below is type-checked
     const type = typeof event.type === 'string' ? event.type : frame.event;
+    if (
+      (type === 'response.created' || type === 'response.in_progress' || type === 'response.completed' ||
+        type === 'response.failed' || type === 'response.incomplete') &&
+      typeof event.response === 'object' && event.response !== null && !Array.isArray(event.response)
+    ) {
+      // Observe before parsing tools or raising stream/terminal failures. Metadata
+      // is evidence only, never a tool ID, schema, permission or model selection.
+      observeResponse(event.response as { id?: unknown; model?: unknown; usage?: unknown });
+    }
     if (type === 'response.output_item.added' && typeof event.item === 'object' && event.item !== null) {
       const item = event.item as { type?: unknown; id?: unknown; call_id?: unknown; name?: unknown; arguments?: unknown };
       if (item.type === 'function_call') {
@@ -180,16 +203,13 @@ async function consumeResponsesStream(frames: AsyncIterable<SseFrame>, budget: T
       text += event.delta;
     } else if (type === 'response.completed') {
       terminal = true;
-      if (typeof event.response === 'object' && event.response !== null) {
-        usage = (event.response as { usage?: unknown }).usage ?? null;
-      }
     } else if (type === 'response.failed' || type === 'response.incomplete') {
       failure = type;
     }
   }
   if (failure !== null) throw new ProviderError('provider_reported_failure', `provider reported ${failure}`);
   if (!terminal) throw new ProviderError('interrupted_stream', 'stream ended before response.completed');
-  return { toolCalls: order, text, usage };
+  return { toolCalls: order, text };
 }
 
 export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): ProviderAdapter {
@@ -287,6 +307,7 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
       // Hoisted so a failure still reports the usage observed before it (C4):
       // unknown stays unknown, never 0.
       const turnUsages: NormalizedUsage[] = [];
+      const receipts: ResponsesReceipt[] = [];
       try {
         const secret = resolveSecretRef(config.credential.secret_ref, config.secret_env ?? process.env);
         knownSecrets = [secret];
@@ -309,6 +330,16 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
 
         for (;;) {
           budget.beginTurn();
+          client.resolveRequestUrl('/responses');
+          const receipt: ResponsesReceipt = {
+            provider_id: 'openai_api', requested_model_id: config.model_id,
+            actual_model_id: null, response_id: null, auth_kind: 'api_key', transport: 'openai_responses_sse',
+            runtime_version: null, runtime_version_status: 'not_exposed',
+            budgets: { max_tool_turns: budgets.max_tool_turns, max_run_ms: budgets.max_run_ms,
+              max_total_bytes: budgets.max_total_bytes, request_timeout_ms: config.timeout_ms ?? 60_000, cost_usd: null },
+          };
+          receipts.push(receipt);
+          const usageIndex = turnUsages.length;
           const frames = client.sendStream(
             '/responses',
             {
@@ -317,8 +348,14 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
             },
             signal,
           );
-          const parsed = await consumeResponsesStream(frames, budget);
-          turnUsages.push(normalizeUsage(parsed.usage, pricing));
+          const parsed = await consumeResponsesStream(frames, budget, response => {
+            if (typeof response.id === 'string' && response.id.length > 0) receipt.response_id = response.id;
+            if (typeof response.model === 'string' && response.model.length > 0) receipt.actual_model_id = response.model;
+            if (response.usage !== undefined && response.usage !== null) turnUsages[usageIndex] = normalizeUsage(response.usage, pricing);
+          });
+          // An entirely completed turn without usage makes totals unknown; an
+          // HTTP/stream failure cannot erase usage already observed in this run.
+          turnUsages[usageIndex] ??= normalizeUsage(null, pricing);
 
           let proposed = false;
           for (const call of parsed.toolCalls) {
@@ -385,22 +422,26 @@ export function createOpenAiApiAdapter(config: OpenAiApiAdapterConfig): Provider
         const usage =
           turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
           normalizeUsage(null, pricing);
-        yield emit('succeeded', 'run succeeded', { usage, cost_display: costDisplay(usage), turns: budget.turns });
+        yield emit('succeeded', 'run succeeded', { usage, cost_display: costDisplay(usage), turns: budget.turns,
+          receipts, receipt: receipts.at(-1) ?? null });
       } catch (error) {
-        if (signal?.aborted === true) {
-          yield emit('cancelled', 'run cancelled', null);
-          return;
-        }
         const code: ProviderErrorCode = error instanceof ProviderError ? error.code : 'adapter_error';
         const message = error instanceof Error ? error.message : 'unexpected adapter failure';
         const usage =
           turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
           normalizeUsage(null, pricing);
+        if (signal?.aborted === true) {
+          yield emit('cancelled', 'run cancelled', { usage, cost_display: costDisplay(usage),
+            receipts, receipt: receipts.at(-1) ?? null });
+          return;
+        }
         yield emit('failed', `run failed: ${code}`, {
           error_code: code,
           error_message: message,
           usage,
           cost_display: costDisplay(usage),
+          receipts,
+          receipt: receipts.at(-1) ?? null,
         });
       }
     },

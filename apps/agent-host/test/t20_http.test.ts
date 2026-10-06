@@ -1,10 +1,11 @@
 //! T20 — OpenAI/Luna, Anthropic and MiMo HTTP provider adapters.
 //!
-//! All HTTP traffic is fixture-driven through an injected `fetch_impl`; this
-//! suite performs no network calls, sends no real credentials and no real
-//! media. Live provider evidence belongs to T32 and is NOT claimed here.
+//! Synthetic HTTP protocol evidence only; injected fixtures and explicit
+//! administrator-approved loopback TCP servers send no real credentials/media
+//! to an external provider. Live evidence belongs to T32 and is NOT claimed here.
 
 import { readFileSync } from 'node:fs';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1108,4 +1109,195 @@ it('cancels a run without mapping cancellation to a failure', async () => {
 it('decodes JSON with a controlled invalid_json error', () => {
   expect(decodeJson('{"a":1}')).toEqual({ a: 1 });
   expect(() => decodeJson('{nope')).toThrow(/invalid_json/);
+});
+
+// Actual TCP consumers exercise upstream identity independently of configuration.
+type ReceiptProvider = 'openai_api' | 'mimo_api';
+
+function receiptFrame(provider: ReceiptProvider, identity: Record<string, unknown>, tool = false): string {
+  const usage = provider === 'openai_api'
+    ? { input_tokens: 17, output_tokens: 5 }
+    : { prompt_tokens: 17, completion_tokens: 5 };
+  const args = JSON.stringify({ issues: [] });
+  if (provider === 'openai_api') {
+    return (tool ? `data: ${JSON.stringify({ type: 'response.output_item.added', item: {
+      type: 'function_call', id: 'item_receipt', call_id: identity.tool_id ?? 'call_receipt',
+      name: 'report_issues', arguments: args,
+    } })}\n\n` : `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: '{"changes":[],"issues":[],"score":null}' })}\n\n`)
+      + `data: ${JSON.stringify({ type: 'response.completed', response: { ...identity, usage } })}\n\n`;
+  }
+  return `data: ${JSON.stringify({ ...identity, choices: [{ delta: tool ? {
+    tool_calls: [{ index: 0, id: identity.tool_id ?? 'call_receipt', function: { name: 'report_issues', arguments: args } }],
+  } : { content: '{"changes":[],"issues":[],"score":null}' }, finish_reason: tool ? 'tool_calls' : 'stop' }], usage })}\n\n`
+    + 'data: [DONE]\n\n';
+}
+
+async function withReceiptServer(
+  provider: ReceiptProvider,
+  respond: (turn: number, request: IncomingMessage, response: ServerResponse, body: Record<string, unknown>) => void,
+  consume: (adapter: ProviderAdapter) => Promise<void>,
+  overrides: Partial<OpenAiApiAdapterConfig> = {},
+): Promise<void> {
+  let turn = 0;
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    respond(++turn, request, response, JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>);
+  });
+  await new Promise<void>((resolveListening, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolveListening);
+  });
+  try {
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('No receipt fixture port');
+    const config = {
+      profile_id: 'receipt_tcp', model_id: 'configured-not-actual',
+      credential: { secret_ref: 'env:T32_RECEIPT_KEY' },
+      secret_env: { T32_RECEIPT_KEY: 'arbitrary-unprefixed-receipt-credential' },
+      api_base: `http://127.0.0.1:${address.port}`, local_admins: ['receipt-admin'],
+      base_approval: { approved: true as const, approved_by: 'receipt-admin', approved_at: '2026-10-06T00:00:00Z',
+        allow_private_network: true, allow_insecure_http: true },
+      account_model_verified: true, ...overrides,
+    };
+    await consume(provider === 'openai_api' ? createOpenAiApiAdapter(config) : createMiMoApiAdapter(config));
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolveClosed, reject) => server.close(error => error ? reject(error) : resolveClosed()));
+  }
+}
+
+it.each(['openai_api', 'mimo_api'] as const)('TCP %s receipts keep actual per-turn identity, not the requested model', async provider => {
+  await withReceiptServer(provider, (turn, _request, response) => {
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end(receiptFrame(provider, { id: `response_actual_${turn}`, model: `actual-full-model-${turn}`,
+      provider_id: 'spoofed', auth_kind: 'official_user_login', runtime_version: 'fake' }, turn === 1));
+  }, async adapter => {
+    const ctx = makeContext();
+    const events = await collectRun(adapter, startRunRequest(), ctx);
+    const data = runData(events, 'succeeded');
+    expect(ctx.submitted).toEqual([{ changes: [], issues: [], score: null }]);
+    expect(data.usage).toEqual({ input_tokens: 34, output_tokens: 10, cost_usd: null });
+    expect(data.receipts).toEqual([1, 2].map(turn => ({
+      provider_id: provider, requested_model_id: 'configured-not-actual', actual_model_id: `actual-full-model-${turn}`,
+      response_id: `response_actual_${turn}`, auth_kind: 'api_key',
+      transport: provider === 'openai_api' ? 'openai_responses_sse' : 'mimo_chat_completions_sse',
+      runtime_version: null, runtime_version_status: 'not_exposed',
+      budgets: { max_tool_turns: 8, max_run_ms: 120000, max_total_bytes: 1048576, request_timeout_ms: 60000, cost_usd: null },
+    })));
+    expect(data.receipt).toEqual((data.receipts as unknown[])[1]);
+  });
+});
+
+it.each(['openai_api', 'mimo_api'] as const)('TCP %s missing upstream fields remain null despite requested configuration', async provider => {
+  await withReceiptServer(provider, (_turn, _request, response) => {
+    response.end(receiptFrame(provider, { id: 42, model: null, metadata: { id: 'fake', model: 'configured-not-actual' } }));
+  }, async adapter => {
+    const data = runData(await collectRun(adapter, startRunRequest(), makeContext()), 'succeeded');
+    expect(data.receipt).toMatchObject({ requested_model_id: 'configured-not-actual', actual_model_id: null, response_id: null,
+      runtime_version: null, runtime_version_status: 'not_exposed' });
+  });
+});
+
+it.each(['openai_api', 'mimo_api'] as const)('TCP %s later 502 retains first identity and usage without inventing second identity', async provider => {
+  await withReceiptServer(provider, (turn, _request, response) => {
+    if (turn === 1) response.end(receiptFrame(provider, { id: 'first-response', model: 'actual-full-first' }, true));
+    else { response.writeHead(502); response.end('upstream unavailable'); }
+  }, async adapter => {
+    const data = runData(await collectRun(adapter, startRunRequest(), makeContext()), 'failed');
+    expect(data.error_code).toBe('upstream_5xx');
+    expect(data.usage).toEqual({ input_tokens: 17, output_tokens: 5, cost_usd: null });
+    expect(data.receipts).toEqual([
+      expect.objectContaining({ actual_model_id: 'actual-full-first', response_id: 'first-response' }),
+      expect.objectContaining({ actual_model_id: null, response_id: null }),
+    ]);
+    expect(data.receipt).toEqual((data.receipts as unknown[])[1]);
+  });
+});
+
+it.each(['openai_api', 'mimo_api'] as const)('TCP %s receipt metadata is publicly redacted but tool-result IDs remain original', async provider => {
+  const secret = 'arbitrary-unprefixed-receipt-credential';
+  let secondBody: Record<string, unknown> | undefined;
+  await withReceiptServer(provider, (turn, _request, response, body) => {
+    if (turn === 2) secondBody = body;
+    response.end(receiptFrame(provider, { id: `response-${secret}`, model: `actual-${secret}`, tool_id: secret }, turn === 1));
+  }, async adapter => {
+    const events = await collectRun(adapter, startRunRequest(), makeContext());
+    const data = runData(events, 'succeeded');
+    expect(JSON.stringify(events)).not.toContain(secret);
+    expect(data.receipt).toMatchObject({ response_id: 'response-[REDACTED]', actual_model_id: 'actual-[REDACTED]' });
+    expect(data.receipts).toEqual([1, 2].map(() => expect.objectContaining({
+      response_id: 'response-[REDACTED]', actual_model_id: 'actual-[REDACTED]',
+    })));
+    expect(runData(events, 'tool_call').call_id).toBe('[REDACTED]');
+    const entries = (provider === 'openai_api' ? secondBody?.input : secondBody?.messages) as Record<string, unknown>[];
+    expect(entries.find(entry => provider === 'openai_api' ? entry.type === 'function_call_output' : entry.role === 'tool'))
+      .toMatchObject(provider === 'openai_api' ? { call_id: secret, output: '{"accepted":true}' } : { tool_call_id: secret, content: '{"accepted":true}' });
+    expect(data.usage).toEqual({ input_tokens: 34, output_tokens: 10, cost_usd: null });
+  });
+});
+
+const partialReceiptCases = (['openai_api', 'mimo_api'] as const).flatMap(provider =>
+  (['provider_failure', 'interrupted', 'timeout'] as const).map(termination => ({ provider, termination })));
+it.each(partialReceiptCases)('TCP $provider retains observed receipt and usage before $termination', async ({ provider, termination }) => {
+  // Real TCP timeout exercises the client's platform deadline; fake timers
+  // would also replace Undici timers rather than observing that transport.
+  await withReceiptServer(provider, (_turn, _request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      const usage = provider === 'openai_api' ? { input_tokens: 17, output_tokens: 5 } : { prompt_tokens: 17, completion_tokens: 5 };
+      const identity = { id: 'observed-before-terminal', model: 'actual-observed-full', usage };
+      response.write(`data: ${JSON.stringify(provider === 'openai_api'
+        ? { type: 'response.created', response: identity }
+        : { ...identity, choices: [] })}\n\n`);
+      if (termination === 'provider_failure') {
+        response.end(`data: ${JSON.stringify(provider === 'openai_api'
+          ? { type: 'response.failed', response: identity }
+          : { choices: [{ delta: {}, finish_reason: 'length' }] })}\n\n`);
+      } else if (termination === 'interrupted') response.end();
+    }, async adapter => {
+      const ctx = makeContext();
+      const events = await collectRun(adapter, startRunRequest(), ctx);
+      const data = runData(events, 'failed');
+      expect(data.error_code).toBe(
+        termination === 'provider_failure' ? 'provider_reported_failure' : termination === 'timeout' ? 'timeout' : 'interrupted_stream');
+      expect(data.usage).toEqual({ input_tokens: 17, output_tokens: 5, cost_usd: null });
+      expect(data.receipts).toEqual([expect.objectContaining({ actual_model_id: 'actual-observed-full', response_id: 'observed-before-terminal' })]);
+      expect(data.receipt).toEqual((data.receipts as unknown[])[0]);
+      expect(ctx.submitted).toEqual([]);
+    }, { timeout_ms: 100 });
+});
+
+it.each(['openai_api', 'mimo_api'] as const)('TCP %s stops at the enforced turn budget without creating an unsent receipt', async provider => {
+  let served = 0;
+  await withReceiptServer(provider, (_turn, _request, response) => {
+    served++;
+    response.end(receiptFrame(provider, { id: 'only-upstream-response', model: 'actual-one-turn' }, true));
+  }, async adapter => {
+    const data = runData(await collectRun(adapter, startRunRequest(), makeContext()), 'failed');
+    expect(data.error_code).toBe('tool_turn_budget_exceeded');
+    expect(served).toBe(1);
+    expect(data.receipts).toEqual([expect.objectContaining({ response_id: 'only-upstream-response', actual_model_id: 'actual-one-turn',
+      budgets: { max_tool_turns: 1, max_run_ms: 2000, max_total_bytes: 8192, request_timeout_ms: 500, cost_usd: null } })]);
+  }, { budgets: { max_tool_turns: 1, max_run_ms: 2000, max_total_bytes: 8192 }, timeout_ms: 500 });
+});
+
+it.each(['openai_api', 'mimo_api'] as const)('TCP %s cancellation on the next request preserves prior observed evidence', async provider => {
+  const controller = new AbortController();
+  let served = 0;
+  await withReceiptServer(provider, (turn, _request, response) => {
+    served++;
+    if (turn === 1) response.end(receiptFrame(provider, { id: 'before-cancel', model: 'actual-before-cancel' }, true));
+    else controller.abort();
+  }, async adapter => {
+    const ctx = makeContext();
+    const data = runData(await collectRun(adapter, startRunRequest(), ctx, controller.signal), 'cancelled');
+    expect(served).toBe(2);
+    expect(ctx.submitted).toEqual([]);
+    expect(data.usage).toEqual({ input_tokens: 17, output_tokens: 5, cost_usd: null });
+    expect(data.receipts).toEqual([
+      expect.objectContaining({ response_id: 'before-cancel', actual_model_id: 'actual-before-cancel' }),
+      expect.objectContaining({ response_id: null, actual_model_id: null }),
+    ]);
+    expect(data.receipt).toEqual((data.receipts as unknown[])[1]);
+  });
 });

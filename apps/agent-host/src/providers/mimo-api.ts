@@ -128,6 +128,8 @@ interface MiMoToolCall {
 }
 
 interface MiMoStreamEvent {
+  id?: unknown;
+  model?: unknown;
   choices?: unknown;
   usage?: unknown;
 }
@@ -135,18 +137,32 @@ interface MiMoStreamEvent {
 interface MiMoStreamResult {
   toolCalls: MiMoToolCall[];
   text: string;
-  usage: unknown;
+}
+
+interface MiMoReceipt {
+  provider_id: 'mimo_api';
+  requested_model_id: string;
+  actual_model_id: string | null;
+  response_id: string | null;
+  auth_kind: 'api_key';
+  transport: 'mimo_chat_completions_sse';
+  runtime_version: null;
+  runtime_version_status: 'not_exposed';
+  budgets: { max_tool_turns: number; max_run_ms: number; max_total_bytes: number; request_timeout_ms: number; cost_usd: null };
 }
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
-async function consumeMiMoStream(frames: AsyncIterable<SseFrame>, budget: ToolLoopBudget): Promise<MiMoStreamResult> {
+async function consumeMiMoStream(
+  frames: AsyncIterable<SseFrame>,
+  budget: ToolLoopBudget,
+  observeChunk: (chunk: MiMoStreamEvent) => void,
+): Promise<MiMoStreamResult> {
   const calls = new Map<number, MiMoToolCall>();
   const order: MiMoToolCall[] = [];
   let text = '';
-  let usage: unknown = null;
   let terminal = false;
   for await (const frame of frames) {
     budget.chargeBytes(byteLength(frame.data));
@@ -159,7 +175,9 @@ async function consumeMiMoStream(frames: AsyncIterable<SseFrame>, budget: ToolLo
       throw new ProviderError('invalid_json', 'stream frame is not a JSON object');
     }
     const chunk = payload as MiMoStreamEvent; // every field read below is type-checked
-    if (chunk.usage !== undefined && chunk.usage !== null) usage = chunk.usage;
+    // Preserve upstream evidence even if a later chunk/transport/tool fails.
+    // Chunk metadata never participates in internal tool identity or authority.
+    observeChunk(chunk);
     if (!Array.isArray(chunk.choices) || chunk.choices.length === 0) continue;
     const choice = chunk.choices[0];
     if (typeof choice !== 'object' || choice === null) continue;
@@ -192,7 +210,7 @@ async function consumeMiMoStream(frames: AsyncIterable<SseFrame>, budget: ToolLo
     }
   }
   if (!terminal) throw new ProviderError('interrupted_stream', 'stream ended before [DONE]');
-  return { toolCalls: order, text, usage };
+  return { toolCalls: order, text };
 }
 
 export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdapter {
@@ -293,6 +311,7 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
       // Hoisted so a failure still reports the usage observed before it (C4):
       // unknown stays unknown, never 0.
       const turnUsages: NormalizedUsage[] = [];
+      const receipts: MiMoReceipt[] = [];
       try {
         const secret = resolveSecretRef(config.credential.secret_ref, config.secret_env ?? process.env);
         knownSecrets = [secret];
@@ -318,6 +337,16 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
 
         for (;;) {
           budget.beginTurn();
+          client.resolveRequestUrl('/chat/completions');
+          const receipt: MiMoReceipt = {
+            provider_id: 'mimo_api', requested_model_id: config.model_id,
+            actual_model_id: null, response_id: null, auth_kind: 'api_key', transport: 'mimo_chat_completions_sse',
+            runtime_version: null, runtime_version_status: 'not_exposed',
+            budgets: { max_tool_turns: budgets.max_tool_turns, max_run_ms: budgets.max_run_ms,
+              max_total_bytes: budgets.max_total_bytes, request_timeout_ms: config.timeout_ms ?? 60_000, cost_usd: null },
+          };
+          receipts.push(receipt);
+          const usageIndex = turnUsages.length;
           const frames = client.sendStream(
             '/chat/completions',
             {
@@ -326,8 +355,14 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
             },
             signal,
           );
-          const parsed = await consumeMiMoStream(frames, budget);
-          turnUsages.push(normalizeUsage(parsed.usage, pricing));
+          const parsed = await consumeMiMoStream(frames, budget, chunk => {
+            if (typeof chunk.id === 'string' && chunk.id.length > 0) receipt.response_id = chunk.id;
+            if (typeof chunk.model === 'string' && chunk.model.length > 0) receipt.actual_model_id = chunk.model;
+            if (chunk.usage !== undefined && chunk.usage !== null) turnUsages[usageIndex] = normalizeUsage(chunk.usage, pricing);
+          });
+          // Completed turns with missing usage remain unknown, while a later
+          // failure retains earlier observed usage rather than inventing zero.
+          turnUsages[usageIndex] ??= normalizeUsage(null, pricing);
 
           let proposed = false;
           for (const call of parsed.toolCalls) {
@@ -398,22 +433,26 @@ export function createMiMoApiAdapter(config: MiMoApiAdapterConfig): ProviderAdap
         const usage =
           turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
           normalizeUsage(null, pricing);
-        yield emit('succeeded', 'run succeeded', { usage, cost_display: costDisplay(usage), turns: budget.turns });
+        yield emit('succeeded', 'run succeeded', { usage, cost_display: costDisplay(usage), turns: budget.turns,
+          receipts, receipt: receipts.at(-1) ?? null });
       } catch (error) {
-        if (signal?.aborted === true) {
-          yield emit('cancelled', 'run cancelled', null);
-          return;
-        }
         const code: ProviderErrorCode = error instanceof ProviderError ? error.code : 'adapter_error';
         const message = error instanceof Error ? error.message : 'unexpected adapter failure';
         const usage =
           turnUsages.reduce<NormalizedUsage | null>((acc, turn) => (acc === null ? turn : mergeUsage(acc, turn, pricing)), null) ??
           normalizeUsage(null, pricing);
+        if (signal?.aborted === true) {
+          yield emit('cancelled', 'run cancelled', { usage, cost_display: costDisplay(usage),
+            receipts, receipt: receipts.at(-1) ?? null });
+          return;
+        }
         yield emit('failed', `run failed: ${code}`, {
           error_code: code,
           error_message: message,
           usage,
           cost_display: costDisplay(usage),
+          receipts,
+          receipt: receipts.at(-1) ?? null,
         });
       }
     },
