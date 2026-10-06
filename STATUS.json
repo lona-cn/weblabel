@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "5ca36cf8a7cb69b74a0499565a24b4306feed439",
-  "last_updated_at": "2026-10-06T08:08:06.571Z",
+  "application_commit": "efc611f61be0b0b8c6c5f1fd52b6ac6eb9adcfa0",
+  "last_updated_at": "2026-10-06T08:44:28.088Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -354,15 +354,15 @@
       "blockers": []
     },
     "T29": {
-      "status": "running",
+      "status": "done",
       "base_commit": "732a2b48feaa8dcc0af8de1a88b47b5835e60dc3",
-      "integrated_commit": null,
-      "evidence": ["reports/T29/main-cookie-recovery-green.log", "reports/T29/main-host-probe-wire.log"],
+      "integrated_commit": "efc611f61be0b0b8c6c5f1fd52b6ac6eb9adcfa0",
+      "evidence": ["reports/T29/result.json", "reports/T29/tests.log", "reports/T29/review.md", "reports/T29/main-final-execution.json", "reports/T29/main-pinned-final-registered.log", "reports/T29/main-production-scan.json", "reports/T29/independent-final-evidence-closure.json"],
       "blockers": []
     },
     "T30": {
-      "status": "pending",
-      "base_commit": null,
+      "status": "running",
+      "base_commit": "4ae638360874e7e4c2ac1b9cca6ab54737e91f2a",
       "integrated_commit": null,
       "evidence": [],
       "blockers": []
