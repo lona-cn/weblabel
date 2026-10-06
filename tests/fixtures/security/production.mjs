@@ -12,6 +12,9 @@ const report = join(root, 'reports/T29');
 const sentinel = `T29-synthetic-build-secret-${randomUUID()}`;
 const env = { ...process.env, OPENAI_API_KEY: sentinel, ANTHROPIC_API_KEY: sentinel, MIMO_API_KEY: sentinel, WEBLABEL_RUN_TOKEN: sentinel, T29_SYNTHETIC_KEY: sentinel };
 const commands = [];
+const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+if (revision.status !== 0) throw new Error('Cannot record production source commit');
+const sourceCommit = revision.stdout.trim();
 function run(argv, cwd = root) {
   if (argv[0] === 'cargo') argv.push('--config', `build.build-dir=${JSON.stringify(join(root, 'target'))}`);
   const resolved = process.platform === 'win32' && argv[0] === 'pnpm' ? [process.execPath, resolve(dirname(process.execPath), 'node_modules/corepack/dist/pnpm.js'), ...argv.slice(1)] : argv;
@@ -74,7 +77,7 @@ try {
     if (unauthenticated.status !== 401) throw new Error('Release project route failed session gate');
     if (logs.includes(sentinel)) throw new Error('Release API leaked credential in actual logs');
     await writeFile(join(report, 'release-smoke.log'), logs.replace(/^WEBLABEL_BOOTSTRAP_CODE=.*$/gm, 'WEBLABEL_BOOTSTRAP_CODE=[REDACTED_SYNTHETIC_LAUNCH_CODE]'));
-    await writeFile(join(report, 'production-scan.json'), JSON.stringify({ status: 'passed', scope: 'Actual release Rust API, release WASM, Vite production assets with sourcemaps, default Host build and additionally minified Host sourcemaps. Synthetic credentials only; no live providers.', sentinel_sha256: createHash('sha256').update(sentinel).digest('hex'), commands, files: evidence, sourcemaps: maps.length, smoke: { health: 204, test_route: privateTestRoute.status, unauthenticated_projects: unauthenticated.status, secret_in_logs: false } }, null, 2) + '\n');
+    await writeFile(join(report, 'production-scan.json'), JSON.stringify({ status: 'passed', source_commit: sourceCommit, scope: 'Actual release Rust API, release WASM, Vite production assets with sourcemaps, default Host build and additionally minified Host sourcemaps. Synthetic credentials only; no live providers.', sentinel_sha256: createHash('sha256').update(sentinel).digest('hex'), commands, files: evidence, sourcemaps: maps.length, smoke: { health: 204, test_route: privateTestRoute.status, unauthenticated_projects: unauthenticated.status, secret_in_logs: false } }, null, 2) + '\n');
     console.log(`Production scan passed: ${evidence.length} actual product files, ${maps.length} sourcemaps; release HTTP smoke 204/404/401.`);
   } finally { if (child.exitCode === null && child.signalCode === null) { child.kill(); await closed.promise; } await rm(temporary, { recursive: true, force: true }); }
 } finally {
