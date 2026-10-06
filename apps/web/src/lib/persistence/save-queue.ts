@@ -6,7 +6,7 @@ import type { ApiError } from '../../../../../packages/contracts/generated/ApiEr
 import type { SaveRequest } from '../../../../../packages/contracts/generated/SaveRequest';
 import type { SaveResponse } from '../../../../../packages/contracts/generated/SaveResponse';
 
-import { DraftStore, exportNativeDraft, freezeDeep } from './draft-store';
+import { DraftStore, exportNativeDraft, freezeDeep, immutableDocument } from './draft-store';
 import type {
   Clock,
   ConflictAction,
@@ -161,7 +161,7 @@ function toTransportError(error: unknown): TransportError {
   });
 }
 
-/** One JSON-safe, deep-frozen copy per logical operation: payloads are immutable. */
+/** Defensive JSON-safe copy for caller-owned intents and restored pending values. */
 function frozenCopy<T>(value: T): T {
   return freezeDeep(JSON.parse(JSON.stringify(value)) as T);
 }
@@ -194,7 +194,7 @@ export class SaveQueue {
   enqueue(input: EnqueueInput): void {
     const state = this.stateFor(input);
     state.ontology_version_id = input.ontology_version_id;
-    state.document = frozenCopy(input.document);
+    state.document = immutableDocument(input.document);
     state.local_generation = Math.max(state.local_generation, input.generation);
     state.edit_seq += 1;
     for (const intent of input.suggestion_decisions ?? []) {
@@ -285,7 +285,7 @@ export class SaveQueue {
     state.base_revision_id = input.annotation_revision_id;
     state.local_generation = input.generation;
     state.synced_generation = input.generation;
-    state.document = frozenCopy(input.document);
+    state.document = immutableDocument(input.document);
     state.last_ack = {
       revision_id: input.annotation_revision_id,
       generation: input.generation,
@@ -333,7 +333,7 @@ export class SaveQueue {
       if (head === null) {
         throw new Error('cannot adopt the server version: no annotation head is available');
       }
-      state.document = frozenCopy(head.document);
+      state.document = immutableDocument(head.document);
       state.base_revision_id = head.annotation_revision_id;
       state.synced_generation = state.local_generation;
       state.synced_intent_seq = state.journal.length;
@@ -415,7 +415,7 @@ export class SaveQueue {
     state.base_revision_id = record.base_revision_id;
     state.local_generation = record.generation;
     state.synced_generation = record.synced_generation;
-    state.document = frozenCopy(record.document);
+    state.document = immutableDocument(record.document);
     state.journal = record.intent_journal.map((entry) => frozenCopy(entry));
     state.synced_intent_seq = record.synced_intent_seq;
     state.next_seq = record.intent_journal.reduce((max, entry) => Math.max(max, entry.seq), 0);

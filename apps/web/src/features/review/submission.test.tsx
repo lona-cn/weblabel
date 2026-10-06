@@ -66,7 +66,10 @@ describe('T26 serialized review submission', () => {
         return { document_changed, generation: 0, changed_objects: [], removed_object_ids: [], selected_object_ids: [], suggestion_decisions: [], error: null, repaint: false, can_undo: false, can_redo: false };
       },
       dispatch: unexpected, set_tool: unexpected, set_active_label: unexpected, zoom_at: unexpected,
-      set_selection: unexpected, set_local_flags: unexpected, get_snapshot: unexpected,
+      set_selection: unexpected, set_local_flags: unexpected,
+      get_snapshot: () => ({ schema_version: 1, asset_revision_id: 'asset-1', ontology_version_id: 'ontology-1',
+        coordinate_space: { type: 'canonical_image_pixels', width: 10, height: 10 }, completion: 'unprocessed', objects: [] }),
+      get_commit_readback: unexpected,
       get_generation: () => 0, get_object_hashes: unexpected, set_predictions: unexpected,
       get_viewport: () => viewport,
       set_viewport: (next: typeof viewport) => { viewport = next; },

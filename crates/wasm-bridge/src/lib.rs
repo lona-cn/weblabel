@@ -6,8 +6,8 @@ mod facade;
 mod input;
 
 pub use facade::{
-    api_error, api_error_from_domain, validate_canonical_rgba, EditorSession, PreparedFrame,
-    ProjectionCache,
+    api_error, api_error_from_domain, validate_canonical_rgba, CommitReadback, EditorSession,
+    PreparedFrame, ProjectionCache,
 };
 pub use input::{pointer_input, tool, viewport, LocalFlagsArgs, PointerInputArgs, ViewportArgs};
 

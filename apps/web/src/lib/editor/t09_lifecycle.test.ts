@@ -108,8 +108,6 @@ class FakeEditorFacade implements EditorFacade {
   readonly fitCalls: number[] = [];
   readonly selectionCalls: Id[][] = [];
   readonly flagCalls: [Id[], { hidden?: boolean; locked?: boolean }][] = [];
-  readonly snapshotCalls: number[] = [];
-  readonly generationCalls: number[] = [];
   readonly predictionCalls: SuggestionSet[][] = [];
   readonly renderCalls: number[] = [];
   disposeCount = 0;
@@ -152,8 +150,9 @@ class FakeEditorFacade implements EditorFacade {
   fit_image(): void { this.fitCalls.push(0); }
   set_selection(ids: Id[]): EditorDelta { this.selectionCalls.push(ids); return this.deltaFactory('selection'); }
   set_local_flags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta { this.flagCalls.push([ids, flags]); return this.deltaFactory('flags'); }
-  get_snapshot(): AnnotationDocument { this.snapshotCalls.push(0); return makeDocument(); }
-  get_generation(): number { this.generationCalls.push(0); return 0; }
+  get_snapshot(): AnnotationDocument { return makeDocument(); }
+  get_commit_readback(): never { throw new Error('Lifecycle fixture has no document commits'); }
+  get_generation(): number { return 0; }
   get_object_hashes(): Record<Id, string> { return {}; }
   get_viewport(): Viewport { return this.viewport; }
   set_predictions(sets: SuggestionSet[]): void { this.predictionCalls.push(sets); }
@@ -534,8 +533,6 @@ describe('T09 pointer streaming', () => {
     }
 
     expect(facade.pointerCalls).toHaveLength(5);
-    expect(facade.snapshotCalls).toHaveLength(0);
-    expect(facade.generationCalls).toHaveLength(0);
     for (const [index, input] of facade.pointerCalls.entries()) {
       expect(input).toEqual({
         phase: 'move', pointer_id: 3, x_css: 100 + index, y_css: 50,

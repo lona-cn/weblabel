@@ -249,6 +249,20 @@ pub struct CanvasLabel {
     pub selected: bool,
 }
 
+/// Borrowed native header and only the requested canonical object slots.
+/// This is an internal readback, not a change to C1/C3 wire contracts.
+#[derive(serde::Serialize)]
+pub struct CommitReadback<'a> {
+    pub generation: u64,
+    pub schema_version: u8,
+    pub asset_revision_id: &'a Id,
+    pub ontology_version_id: &'a Id,
+    pub coordinate_space: &'a annotation_domain::CoordinateSpace,
+    pub completion: &'a annotation_domain::Completion,
+    pub object_count: usize,
+    pub changed_positions: Vec<usize>,
+}
+
 /// Everything one `render()` needs to push to the GPU.
 /// touched since the previous frame (incremental renderer updates).
 #[derive(Debug, Clone, PartialEq)]
@@ -465,6 +479,35 @@ impl EditorSession {
         self.editor.snapshot()
     }
 
+    pub fn get_commit_readback(
+        &self,
+        expected_generation: u64,
+        changed_ids: &[Id],
+    ) -> Result<CommitReadback<'_>, ApiError> {
+        self.ensure_live()?;
+        if expected_generation != self.editor.generation() {
+            return Err(api_error("STALE_GENERATION", "commit readback generation is stale"));
+        }
+        let document = self.editor.document();
+        let changed_positions = changed_ids
+            .iter()
+            .map(|id| {
+                self.projection.indices.get(id).copied()
+                    .ok_or_else(|| api_error("OBJECT_NOT_FOUND", "commit readback object is absent"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CommitReadback {
+            generation: expected_generation,
+            schema_version: document.schema_version,
+            asset_revision_id: &document.asset_revision_id,
+            ontology_version_id: &document.ontology_version_id,
+            coordinate_space: &document.coordinate_space,
+            completion: &document.completion,
+            object_count: document.objects.len(),
+            changed_positions,
+        })
+    }
+
     pub fn get_generation(&self) -> u64 {
         self.editor.generation()
     }
@@ -654,6 +697,33 @@ mod tests {
 
     fn person() -> Id {
         Id::from("object_person_001")
+    }
+
+    #[test]
+    fn commit_readback_rejects_stale_reads_and_restores_middle_object_slots() {
+        let (mut document, ontology) = fixtures();
+        document.completion = annotation_domain::Completion::Complete;
+        let mut middle = document.objects[0].clone();
+        middle.object_id = Id::from("middle");
+        let mut last = middle.clone();
+        last.object_id = Id::from("last");
+        document.objects.extend([middle, last]);
+        let mut session = EditorSession::from_snapshot(document, ontology, 7).unwrap();
+        let removed = session.dispatch(EditorCommand::Delete { object_ids: vec![Id::from("middle")] });
+        assert!(removed.error.is_none());
+        assert_eq!(session.get_commit_readback(7, &[]).err().unwrap().code, "STALE_GENERATION");
+        assert_eq!(session.get_commit_readback(8, &[Id::from("last")]).unwrap().changed_positions, vec![1]);
+        assert_eq!(session.get_commit_readback(8, &[Id::from("middle")]).err().unwrap().code, "OBJECT_NOT_FOUND");
+        let restored = session.dispatch(EditorCommand::Undo);
+        assert!(restored.error.is_none());
+        let readback = session.get_commit_readback(restored.generation, &[Id::from("middle"), Id::from("last")]).unwrap();
+        assert_eq!(readback.changed_positions, vec![1, 2]);
+        assert_eq!(readback.object_count, 3);
+        assert_eq!(readback.completion, &annotation_domain::Completion::Complete);
+        let incomplete = session.dispatch(EditorCommand::SetCompletion { completion: annotation_domain::Completion::InProgress });
+        assert!(incomplete.error.is_none());
+        assert_eq!(session.get_commit_readback(restored.generation, &[]).err().unwrap().code, "STALE_GENERATION");
+        assert_eq!(session.get_commit_readback(incomplete.generation, &[]).unwrap().completion, &annotation_domain::Completion::InProgress);
     }
 
     // Count actual native heap allocations on this test's thread, not internal
@@ -1403,6 +1473,22 @@ pub mod wasm {
             self.serialized_input_objects
                 .set(self.serialized_input_objects.get() + snapshot.objects.len() as u64);
             to_js(snapshot)
+        }
+
+        pub fn get_commit_readback(
+            &self,
+            expected_generation: f64,
+            changed_ids: Vec<String>,
+        ) -> Result<JsValue, JsValue> {
+            // The C3 safe-integer generation crosses JS as Number, not BigInt.
+            // Compare before casting so NaN, fractions and out-of-range reads fail.
+            if expected_generation != self.session.get_generation() as f64 {
+                return Err(to_js_error(api_error("STALE_GENERATION", "commit readback generation is stale")));
+            }
+            let ids: Vec<Id> = changed_ids.into_iter().map(Id::from).collect();
+            let readback = self.session.get_commit_readback(expected_generation as u64, &ids)
+                .map_err(to_js_error)?;
+            to_js(&readback)
         }
 
         /// Read-only diagnostics from the device actually used by this facade.

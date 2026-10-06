@@ -24,6 +24,7 @@ import {
   InMemoryDraftStorage,
   exportNativeDraft,
   serializeNativeDraft,
+  freezeDeep,
 } from './draft-store';
 import {
   RECOVERY_CONFLICT_OPTIONS,
@@ -415,6 +416,35 @@ describe('T31 persistence producer immutability boundaries', () => {
       document: makeDocument(),
       intent_journal: [{ intent: ACCEPT }],
     });
+  });
+
+  it('retains privately frozen document versions across failed retry, future edits and ordered decisions', async () => {
+    const fixture = makeQueue();
+    const original = freezeDeep(makeDocument());
+    enqueue(fixture, { generation: 8, document: original, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
+    expect(fixture.queue.toRecord('asset_a')!.document).toBe(original);
+    void fixture.queue.flush('asset_a');
+    const prepared = fixture.transport.saves[0].request;
+    fixture.transport.failNetwork(0);
+    await microtasks();
+    void fixture.queue.retry('asset_a');
+    const future = freezeDeep({ ...original, completion: 'complete' as const });
+    enqueue(fixture, { generation: 9, document: future, suggestion_decisions: [REVERT] });
+    expect(fixture.transport.saves[1].request).toEqual(prepared);
+    expect(prepared.document).toBe(original);
+    expect(prepared.document.completion).toBe(original.completion);
+    expect(fixture.queue.toRecord('asset_a')!.document).toBe(future);
+    expect(future.objects[0]).toBe(original.objects[0]);
+    fixture.transport.ackSave(1, 'r8');
+    await microtasks();
+    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    expect(fixture.transport.saves[2].request).toMatchObject({
+      base_revision_id: 'r8', document: future, suggestion_decisions: [REVERT],
+    });
+    expect(fixture.queue.toRecord('asset_a')!.intent_journal.map(entry => entry.intent)).toEqual([ACCEPT, REVERT]);
+    fixture.transport.ackSave(2, 'r9');
+    await microtasks();
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: false, synced_generation: 9 });
   });
 
   it('isolates shallow-frozen caller inputs and protects retry payloads and journals while an older ACK lands', async () => {

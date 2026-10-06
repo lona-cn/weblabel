@@ -2,6 +2,7 @@
 // DPR-aware viewport + canvas-local pointer routing, dirty-flag render
 // scheduling, and idempotent disposal. Geometry math lives in Rust
 // (geometry::viewport); this class only forwards browser facts.
+import { freezeDeep } from '../persistence/draft-store';
 import { assertCanonicalBudget, bridgeStats, createEditorFacadeFactory, DEFAULT_WASM_BRIDGE_URL, toApiError } from './loader';
 import type { CanvasLabel, RenderStats, LocalObjectFlagMap, LocalObjectFlags } from './types';
 import type {
@@ -60,6 +61,9 @@ export class EditorHost {
   private readonly onDelta: EditorHostOptions['onDelta'];
   private canvas: HTMLCanvasElement | null = null;
   private facade: EditorFacade | null = null;
+  private documentMirror: AnnotationDocument | null = null;
+  private mirrorIndices = new Map<Id, number>();
+  private committedDocuments = new WeakMap<EditorDelta, AnnotationDocument>();
   private resizeObserver: ResizeObserver | null = null;
   private size: CanvasSize | null = null;
   private statusValue: EditorHostStatus = 'idle';
@@ -174,6 +178,14 @@ export class EditorHost {
       return;
     }
     this.facade = created.facade;
+    try {
+      this.initializeMirror(created.facade);
+    } catch (reason) {
+      this.releaseFacade();
+      this.errorValue = toApiError(reason, 'EDITOR_INIT_FAILED', this.nextRequestId);
+      this.statusValue = 'error';
+      throw this.errorValue;
+    }
 
     this.transfersValue = [...this.transfersValue, created.transfer];
     this.statusValue = 'ready';
@@ -263,11 +275,11 @@ export class EditorHost {
   }
 
   getCommittedSnapshot(delta: EditorDelta): AnnotationDocument | null {
-    return delta.document_changed || delta.suggestion_decisions.length > 0 ? this.getSnapshot() : null;
+    return this.committedDocuments.get(delta) ?? null;
   }
 
   getSnapshot(): AnnotationDocument | null {
-    return this.guard((facade) => facade.get_snapshot(), 'EDITOR_BRIDGE_FAILURE', true);
+    return this.guard((facade) => freezeDeep(facade.get_snapshot()), 'EDITOR_BRIDGE_FAILURE', true);
   }
 
   getGeneration(): number | null {
@@ -384,6 +396,14 @@ export class EditorHost {
       return;
     }
     if (!this.currentFacade(facade, assetToken, disposeToken)) return;
+    try {
+      this.initializeMirror(facade);
+    } catch (reason) {
+      this.errorValue = toApiError(reason, 'EDITOR_BRIDGE_FAILURE', this.nextRequestId);
+      this.statusValue = 'error';
+      this.notifyStatus();
+      return;
+    }
     this.statusValue = 'ready';
     this.errorValue = null;
     // Resize may have happened while read-only. Do not reset an unchanged view:
@@ -400,6 +420,9 @@ export class EditorHost {
     const facade = this.facade;
     this.facade = null;
     this.localFlagsValue = EMPTY_LOCAL_FLAGS;
+    this.documentMirror = null;
+    this.mirrorIndices.clear();
+    this.committedDocuments = new WeakMap();
     if (facade) {
       facade.dispose();
       const stats = facade.get_render_stats?.();
@@ -431,8 +454,72 @@ export class EditorHost {
     }
   }
 
+  private initializeMirror(facade: EditorFacade): void {
+    this.documentMirror = freezeDeep(facade.get_snapshot());
+    this.reindexMirror(this.documentMirror.objects);
+  }
+
+  private reindexMirror(objects: AnnotationDocument['objects']): void {
+    this.mirrorIndices.clear();
+    objects.forEach((object, index) => this.mirrorIndices.set(object.object_id, index));
+  }
+
+  private updateMirror(facade: EditorFacade, delta: EditorDelta): AnnotationDocument {
+    const previous = this.documentMirror;
+    if (!previous) throw new Error('editor document mirror is not initialized');
+    const readback = facade.get_commit_readback(delta.generation, delta.changed_objects.map(object => object.object_id));
+    const { generation, object_count, changed_positions, ...header } = readback;
+    if (generation !== delta.generation || changed_positions.length !== delta.changed_objects.length) {
+      throw new Error('native commit readback does not match the delta');
+    }
+    let objects = previous.objects;
+    if (delta.removed_object_ids.length || delta.changed_objects.length) {
+      // Only the flat reference array is copied. Rust supplies every replacement
+      // subtree and its canonical slot; JavaScript never edits geometry.
+      const structural = delta.removed_object_ids.length > 0 ||
+        delta.changed_objects.some(object => !this.mirrorIndices.has(object.object_id));
+      if (structural) {
+        const removed = new Set(delta.removed_object_ids);
+        const changed = new Set(delta.changed_objects.map(object => object.object_id));
+        const survivors = previous.objects.filter(object => !removed.has(object.object_id) && !changed.has(object.object_id));
+        objects = new Array(object_count);
+        delta.changed_objects.forEach((object, index) => {
+          objects[changed_positions[index]] = freezeDeep(object);
+        });
+        let survivor = 0;
+        for (let index = 0; index < objects.length; index += 1) {
+          if (!objects[index]) objects[index] = survivors[survivor++];
+        }
+        if (survivor !== survivors.length || objects.some(object => !object)) throw new Error('native commit object order is incomplete');
+        this.reindexMirror(objects);
+      } else {
+        objects = previous.objects.slice();
+        delta.changed_objects.forEach((object, index) => {
+          const position = changed_positions[index];
+          if (this.mirrorIndices.get(object.object_id) !== position) throw new Error('native commit object slot drifted');
+          objects[position] = freezeDeep(object);
+        });
+      }
+    }
+    if (objects.length !== object_count) throw new Error('native commit object count drifted');
+    const document = freezeDeep({ ...header, objects });
+    this.documentMirror = document;
+    return document;
+  }
+
   private consumeDelta(delta: EditorDelta | null): EditorDelta | null {
     if (delta === null) return null;
+    if (delta.error === null && (delta.document_changed || delta.suggestion_decisions.length > 0)) {
+      try {
+        if (!this.facade) throw new Error('editor facade is not mounted');
+        this.committedDocuments.set(delta, this.updateMirror(this.facade, delta));
+      } catch (reason) {
+        this.errorValue = toApiError(reason, 'EDITOR_BRIDGE_FAILURE', this.nextRequestId);
+        this.statusValue = 'error';
+        this.notifyStatus();
+        return { ...delta, error: this.errorValue };
+      }
+    }
     if (delta.error !== null) this.errorValue = delta.error;
     else if (delta.removed_object_ids.length) {
       let next: Record<Id, LocalObjectFlags> | null = null;

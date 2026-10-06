@@ -59,6 +59,13 @@ export interface RenderStats {
   live_buffers: number; buffer_creations: number; buffer_releases: number;
   visible_instances: number; logical_texture_bytes: number; rejected_resources: number;
 }
+
+/** Internal native readback; headers and slots refer to exactly one generation. */
+export interface CommitReadback extends Omit<AnnotationDocument, 'objects'> {
+  generation: number;
+  object_count: number;
+  changed_positions: number[];
+}
 export interface EditorFacade {
   dispatch(command: EditorCommand): EditorDelta;
   pointer(input: PointerInput): EditorDelta;
@@ -70,6 +77,7 @@ export interface EditorFacade {
   set_selection(ids: Id[]): EditorDelta;
   set_local_flags(ids: readonly Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
   get_snapshot(): AnnotationDocument;
+  get_commit_readback(expected_generation: number, changed_ids: Id[]): CommitReadback;
   get_generation(): number;
   get_object_hashes(): Record<Id, string>;
   get_viewport(): Viewport;

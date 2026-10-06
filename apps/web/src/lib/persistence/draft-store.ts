@@ -1,5 +1,6 @@
 // T13 · draft persistence: the DraftRecord store over the injected storage
 // seam, plus the native-draft rescue export (testing-contracts §8).
+import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
 import type {
   Clock,
   DraftRecord,
@@ -23,6 +24,13 @@ export function freezeDeep<T>(value: T): T {
   Object.freeze(value);
   certifiedFrozen.add(value);
   return value;
+}
+
+/** Only privately certified trees can be adopted; external frozen roots are copied. */
+export function immutableDocument(document: AnnotationDocument): AnnotationDocument {
+  return certifiedFrozen.has(document)
+    ? document
+    : freezeDeep(JSON.parse(JSON.stringify(document)) as AnnotationDocument);
 }
 
 /** Deep-freezes a record so prepared payloads can never be mutated in place. */
