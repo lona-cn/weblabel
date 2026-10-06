@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "34066af62bf6f03b9a30cae18922e774354ab68e",
-  "last_updated_at": "2026-10-06T17:47:14.558Z",
+  "application_commit": "ec28dd5e028a525434b8c7176dd1af297cc25a26",
+  "last_updated_at": "2026-10-06T19:31:46.812Z",
   "tasks": {
     "T00": {
       "status": "done",
@@ -384,9 +384,9 @@
       "blockers": []
     },
     "T31": {
-      "status": "running",
+      "status": "blocked",
       "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": "34066af62bf6f03b9a30cae18922e774354ab68e",
+      "integrated_commit": "ec28dd5e028a525434b8c7176dd1af297cc25a26",
       "evidence": [
         "reports/T31/result.json",
         "reports/T31/runs/2026-10-06T16-36-24.410Z/result.json",
@@ -416,10 +416,32 @@
         "reports/T31/main-native-cuts-production-partial.json",
         "reports/T33/main-owned-native-cuts-product-build.log",
         "reports/T31/main-independent-native-cuts-evidence-review.json",
-        "reports/T31/production-delete-investigation/result.json"
+        "reports/T31/production-delete-investigation/result.json",
+        "reports/T31/main-production-keyboard-source-review.json",
+        "reports/T31/main-keyboard-browser-results.json",
+        "reports/T31/main-independent-production-keyboard-review.json",
+        "reports/T31/main-independent-keyboard-auth-closure.json",
+        "reports/T31/main-keyboard-archive-reader-smoke.json",
+        "reports/T31/main-production-keyboard-package-ui.json",
+        "reports/T31/main-production-keyboard-package-ui.webp",
+        "reports/T31/main-production-keyboard-package-ui-stop.json",
+        "reports/T33/main-owned-production-keyboard-product-build.log",
+        "reports/T31/runs/2026-10-06T19-08-43.511Z/result.json",
+        "reports/T31/runs/2026-10-06T19-08-43.511Z/source.json",
+        "reports/T31/runs/2026-10-06T19-08-43.511Z/auth-sanitization.json",
+        "reports/T31/node-worker-crash-investigation/main-system-evidence.json",
+        "reports/T31/node-worker-crash-investigation/main-import-probe.json",
+        "reports/T31/node-worker-crash-investigation/main-closed-loopback-probe.json",
+        "reports/T31/main-independent-keyboard-package-and-partial-hardware-review.json",
+        "reports/T31/node-worker-crash-investigation/source-research.json",
+        "reports/T31/node-worker-crash-investigation/findings.md",
+        "reports/T31/node-worker-crash-investigation/main-fork-phase-probe.json",
+        "reports/T31/node-worker-crash-investigation/main-diagnostic-disposition.json",
+        "reports/T31/node-worker-crash-investigation/main-own-api-process-inspection.json",
+        "reports/T31/main-current-partial-archive-reader-smoke.json"
       ],
       "blockers": [
-        "原ed完整8000正式验收2passed/1failed/0skip/flaky，2k committedCPU P958.569ms>8；旧c2 22.013与eff部分8.922真实失败全部保留，8/33/计时/场景/次数不变。34066af6已集成Core borrowed-ID/prune/通用ordered-ID delta与Projection selection/topology缓存；Main119/119受影响Native测试、fresh release WASM/API、2/2真实NVIDIA生产者/fullIDB场景及独立完整source复审通过。fresh34066生产包普通UI双框/选择/移动/临时flags/UndoMove/RedoMove和gen5 fullIDB=APIrev5通过；额外Delete快捷键真实20s超时、仍2对象/rev5且无浏览器错误，已确认生产未挂载现有Keyboard，隔离writer按native fence/单一保存路径修复中。39文件独立证据审查无真实性阻断，但仍明确Delete RED与旧P95 FAIL。未重复失败操作或宣告通过；仍待当前source完整生产快捷键与原8000硬件验收，T31running/T32blocked/T35notready/G4不升级。"
+        "原ed完整8000中2k committed CPU P95 8.569ms>8的FAIL保留；ec28生产Keyboard切换Main真实硬件12/12、fresh发行包普通UI Delete/Undo/Redo wholeAPI/IDB/ACK链和独立审查通过。未改8/33/计时/场景/次数的19-08正式验收2passed/1failed：首2k Nodeworker46188以3221226505/0xC0000409退出，10k真实NVIDIA完成4000测量样本及64controls，不是完整8000或2k通过。当前trace1027members中7个auth-only修改/1020字节保持已独立闭合，非历史Git清洗；WebP实际1024x711不冒充浏览器1440x1000 raster。read-only源码/官方调查及实际CLI collection、受控TCP、fork/IPC+Sharp/16px PNG实验完成，无自有formal API残留进程；本机异常参数/原生堆栈/最后fixture阶段仍不可得，根因未知。Node官方确认24.15 Windows TCP缺陷62561在24.16修复，但不能认定本机同因。等待固定Node24.16隔离迁移或保持24.15只采集自有worker原生诊断的明确选择；未改版本/JIT/全局WER，未重复不变失败。T31/G4不升级，T32真实账号/模型仍blocked，T35依赖不就绪。"
       ]
     },
     "T32": {
