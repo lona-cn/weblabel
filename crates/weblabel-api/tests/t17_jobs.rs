@@ -1537,33 +1537,598 @@ async fn raw_provider_output_is_size_capped_and_secrets_are_redacted() {
     assert_eq!(last["data"]["code"], "PREDICTION_TOO_LARGE");
 }
 
-#[tokio::test]
-async fn event_retention_is_explicitly_bounded() {
-    let fixture = fixture().await;
-    let (status, created) = fixture.create_run("t17-op-retention", "retention").await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
-    let run_id = created["run_id"].as_str().unwrap().to_owned();
-    let mut steps = Vec::new();
-    for index in 0..2100_i64 {
-        steps.push(MockStep::Emit(progress_event(
-            &format!("pev-{index}"),
-            index,
-            &format!("progress {index}"),
-        )));
+async fn worker_callbacks_after_authority_loss(fenced: bool) {
+    struct LoseAuthority {
+        repository: weblabel_api::storage::Repository,
+        job_id: String,
+        fenced: bool,
+        callbacks_exercised: std::sync::atomic::AtomicBool,
     }
-    steps.push(MockStep::Complete);
-    let mut scripts = BTreeMap::new();
-    scripts.insert(run_id.clone(), steps);
+    impl RunRunner for LoseAuthority {
+        fn execute<'a>(
+            &'a self,
+            driver: &'a model_jobs::RunDriver,
+        ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
+        {
+            Box::pin(async move {
+                driver
+                    .emit(progress_event("callback-owned-event", 1, "owned event"))
+                    .await
+                    .unwrap();
+                driver
+                    .submit_candidates(issue_candidate(
+                        "callback-owned-candidate", 2, "owned-issue", "owned candidate",
+                    ))
+                    .await
+                    .unwrap();
+                let mut tx = self.repository.begin_write().await.unwrap();
+                let before: (i64, i64, i64) = sqlx::query_as(
+                    "SELECT (SELECT COUNT(*) FROM run_events WHERE run_id=?), \
+                     (SELECT COUNT(*) FROM predictions WHERE run_id=?), \
+                     (SELECT COUNT(*) FROM suggestion_sets WHERE run_id=?)",
+                )
+                .bind(driver.run_id()).bind(driver.run_id()).bind(driver.run_id())
+                .fetch_one(tx.connection()).await.unwrap();
+                assert_eq!(before, (4, 1, 1), "valid callbacks must persist their output");
+                let update = if self.fenced {
+                    "UPDATE jobs SET worker_id='callback-replacement',fencing_token=fencing_token+1 \
+                     WHERE job_id=?"
+                } else {
+                    "UPDATE jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE job_id=?"
+                };
+                sqlx::query(update).bind(&self.job_id).execute(tx.connection()).await.unwrap();
+                let authority_before: (String, String, i64, String, i64, i64, Option<String>, String) =
+                    sqlx::query_as(
+                        "SELECT state,worker_id,fencing_token,lease_until,progress_completed, \
+                         progress_total,result_json,updated_at FROM jobs WHERE job_id=?",
+                    )
+                    .bind(&self.job_id).fetch_one(tx.connection()).await.unwrap();
+                tx.commit().await.unwrap();
+
+                // Fresh provider identities and a domain-valid candidate arrive
+                // immediately after loss, without waiting for the next heartbeat.
+                let event = driver
+                    .emit(progress_event("callback-stale-event", 3, "stale event"))
+                    .await;
+                let candidate = driver
+                    .submit_candidates(issue_candidate(
+                        "callback-stale-candidate", 4, "stale-issue", "stale candidate",
+                    ))
+                    .await;
+                let mut tx = self.repository.begin_write().await.unwrap();
+                let after: (i64, i64, i64) = sqlx::query_as(
+                    "SELECT (SELECT COUNT(*) FROM run_events WHERE run_id=?), \
+                     (SELECT COUNT(*) FROM predictions WHERE run_id=?), \
+                     (SELECT COUNT(*) FROM suggestion_sets WHERE run_id=?)",
+                )
+                .bind(driver.run_id()).bind(driver.run_id()).bind(driver.run_id())
+                .fetch_one(tx.connection()).await.unwrap();
+                let authority_after: (String, String, i64, String, i64, i64, Option<String>, String) =
+                    sqlx::query_as(
+                        "SELECT state,worker_id,fencing_token,lease_until,progress_completed, \
+                         progress_total,result_json,updated_at FROM jobs WHERE job_id=?",
+                    )
+                    .bind(&self.job_id).fetch_one(tx.connection()).await.unwrap();
+                tx.commit().await.unwrap();
+                eprintln!(
+                    "callback authority fenced={}: before={before:?} after={after:?} event={event:?} candidate={candidate:?}",
+                    self.fenced
+                );
+                assert!(
+                    matches!(event, Err(model_jobs::ModelJobError::Queue(
+                        weblabel_api::jobs::queue::QueueError::InvalidRequest
+                    ))),
+                    "stale event must fail closed: {event:?}"
+                );
+                assert!(
+                    matches!(candidate, Err(model_jobs::ModelJobError::Queue(
+                        weblabel_api::jobs::queue::QueueError::InvalidRequest
+                    ))),
+                    "stale candidate must fail closed: {candidate:?}"
+                );
+                assert_eq!(after, before, "stale callbacks must not persist any output");
+                assert_eq!(authority_after, authority_before, "foreign authority must be untouched");
+                self.callbacks_exercised.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(RunOutcome::Completed)
+            })
+        }
+    }
+    let fixture = fixture().await;
+    let (status, created) = fixture.create_run("t17-op-callback-loss", "callback fencing").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
     let queue = JobQueue::new(fixture.repository.clone());
-    model_jobs::process_next(
+    let runner = LoseAuthority {
+        repository: fixture.repository.clone(),
+        job_id: created["job_id"].as_str().unwrap().to_owned(),
+        fenced,
+        callbacks_exercised: std::sync::atomic::AtomicBool::new(false),
+    };
+    let result = model_jobs::process_model_next(
+        &fixture.repository, &queue, "t17-callback-worker", Duration::from_secs(30), &runner,
+    ).await;
+    assert!(runner.callbacks_exercised.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(matches!(
+        result,
+        Err(model_jobs::ModelJobError::Queue(
+            weblabel_api::jobs::queue::QueueError::InvalidRequest
+        ))
+    ), "lost worker must not conclude the run: {result:?}");
+    let run_id = created["run_id"].as_str().unwrap();
+    let (status, events) = fixture
+        .request("GET", &format!("/api/ai/runs/{run_id}/events?after=0"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    assert_eq!(events["run"]["state"], "running");
+    assert_eq!(events["items"].as_array().unwrap().len(), 4);
+    assert_eq!(events["items"][2]["message"], "owned event");
+    assert_eq!(events["items"][3]["type"], "candidate");
+}
+
+#[tokio::test]
+async fn expired_worker_callbacks_cannot_persist_output() {
+    worker_callbacks_after_authority_loss(false).await;
+}
+
+#[tokio::test]
+async fn fenced_worker_callbacks_cannot_persist_output() {
+    worker_callbacks_after_authority_loss(true).await;
+}
+
+#[tokio::test]
+async fn silent_model_run_retains_lease_until_completion() {
+    struct SilentRunner {
+        started: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release: tokio::sync::Notify,
+    }
+    impl RunRunner for SilentRunner {
+        fn execute<'a>(
+            &'a self,
+            _driver: &'a model_jobs::RunDriver,
+        ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
+        {
+            Box::pin(async move {
+                self.started.lock().await.take().unwrap().send(()).unwrap();
+                self.release.notified().await;
+                Ok(RunOutcome::Completed)
+            })
+        }
+    }
+
+    let fixture = fixture().await;
+    let (status, created) = fixture.create_run("t17-op-silent", "silent provider").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+    let job_id = created["job_id"].as_str().unwrap();
+    let queue = JobQueue::new(fixture.repository.clone());
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let runner = std::sync::Arc::new(SilentRunner {
+        started: tokio::sync::Mutex::new(Some(started_tx)),
+        release: tokio::sync::Notify::new(),
+    });
+    let execution = tokio::spawn({
+        let repository = fixture.repository.clone();
+        let queue = queue.clone();
+        let runner = runner.clone();
+        async move {
+            model_jobs::process_model_next(
+                &repository,
+                &queue,
+                "t17-silent-worker",
+                Duration::from_millis(300),
+                &*runner,
+            )
+            .await
+        }
+    });
+    started_rx.await.unwrap();
+    // Intentionally cross the initial lease, with no provider event or item
+    // completion that could incidentally report progress on the worker's behalf.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let stolen = queue
+        .lease_next_kind(
+            "t17-competing-worker",
+            Duration::from_secs(30),
+            Some("model_run"),
+        )
+        .await
+        .unwrap();
+    runner.release.notify_one();
+    let result = execution.await.unwrap();
+    assert!(stolen.is_none(), "silent in-flight job was reclaimed: {stolen:?}");
+    assert_eq!(result.unwrap().as_deref(), Some(job_id));
+    let job = queue
+        .status(&fixture.project_id, job_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.state, "succeeded");
+    assert_eq!((job.progress_completed, job.progress_total), (1, 1));
+}
+
+#[tokio::test]
+async fn heartbeat_keeps_polling_an_item_that_holds_the_writer() {
+    struct HoldWriter {
+        repository: weblabel_api::storage::Repository,
+    }
+    impl RunRunner for HoldWriter {
+        fn execute<'a>(
+            &'a self,
+            _driver: &'a model_jobs::RunDriver,
+        ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
+        {
+            Box::pin(async move {
+                let writer = self.repository.begin_write().await.unwrap();
+                // A renewal becomes due before this async operation can release
+                // its transaction. It must not stop the item from being polled.
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                writer.commit().await.unwrap();
+                Ok(RunOutcome::Completed)
+            })
+        }
+    }
+    let fixture = fixture().await;
+    let (status, created) = fixture.create_run("t17-op-held-writer", "held writer").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+    let queue = JobQueue::new(fixture.repository.clone());
+    let result = model_jobs::process_model_next(
+        &fixture.repository,
+        &queue,
+        "t17-held-writer",
+        Duration::from_millis(300),
+        &HoldWriter { repository: fixture.repository.clone() },
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "heartbeat must keep polling the item that can release its writer: {result:?}"
+    );
+    let job = queue
+        .status(&fixture.project_id, created["job_id"].as_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.state, "succeeded");
+    assert_eq!((job.progress_completed, job.progress_total), (1, 1));
+}
+
+#[tokio::test]
+async fn queue_rechecks_expiry_after_waiting_for_writer() {
+    let fixture = fixture().await;
+    let queue = JobQueue::new(fixture.repository.clone());
+    for finishing in [false, true] {
+        let queued = queue
+            .enqueue(
+                Some(&fixture.project_id),
+                "lease_clock_probe",
+                if finishing { "finish-clock" } else { "progress-clock" },
+                &json!({}),
+            )
+            .await
+            .unwrap();
+        let lease = queue
+            .lease_next_kind("clock-worker", Duration::from_secs(30), Some("lease_clock_probe"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.job_id, queued.job_id);
+        let mut writer = fixture.repository.begin_write().await.unwrap();
+        let operation = async {
+            if finishing {
+                queue.finish(&lease, true, &json!({"succeeded":1})).await
+            } else {
+                queue.report_progress(&lease, 1, 1, &json!({"succeeded":1})).await
+            }
+        };
+        tokio::pin!(operation);
+        // Poll exactly once while BEGIN IMMEDIATE is held. This guarantees
+        // the request has entered the wait, without scheduling guesses.
+        std::future::poll_fn(|cx| {
+            assert!(operation.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let expired_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        sqlx::query("UPDATE jobs SET lease_until=? WHERE job_id=?")
+            .bind(&expired_at)
+            .bind(&queued.job_id)
+            .execute(writer.connection())
+            .await
+            .unwrap();
+        writer.commit().await.unwrap();
+        let result = operation.await;
+        assert!(
+            matches!(result, Err(weblabel_api::jobs::queue::QueueError::InvalidRequest)),
+            "waiting {finishing:?} request must recheck server time: {result:?}"
+        );
+        let job = queue.status(&fixture.project_id, &queued.job_id).await.unwrap().unwrap();
+        assert_eq!(job.state, "running");
+        assert_eq!(job.progress_completed, 0);
+        assert_eq!(job.result, None);
+        assert_eq!(
+            fixture.db_text("SELECT lease_until FROM jobs WHERE job_id=?", &[&queued.job_id]).await,
+            Some(expired_at)
+        );
+        // Do not let this deliberately expired probe become the next case's claim.
+        queue.lease_next_kind("clock-reclaimer", Duration::from_secs(30), Some("lease_clock_probe"))
+            .await.unwrap().unwrap();
+    }
+    let queued = queue
+        .enqueue(Some(&fixture.project_id), "claim_clock_probe", "claim-clock", &json!({}))
+        .await
+        .unwrap();
+    let writer = fixture.repository.begin_write().await.unwrap();
+    let claim = queue.lease_next_kind(
+        "fresh-clock-worker",
+        Duration::from_secs(30),
+        Some("claim_clock_probe"),
+    );
+    tokio::pin!(claim);
+    std::future::poll_fn(|cx| {
+        assert!(claim.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let released_at = chrono::Utc::now();
+    writer.commit().await.unwrap();
+    let lease = claim.await.unwrap().unwrap();
+    assert_eq!(lease.job_id, queued.job_id);
+    let until = chrono::DateTime::parse_from_rfc3339(&lease.lease_until).unwrap();
+    assert!(
+        until >= released_at + chrono::Duration::seconds(30) - chrono::Duration::milliseconds(1),
+        "new claim's original lease budget must start after acquiring the writer"
+    );
+}
+
+#[tokio::test]
+async fn model_job_heartbeat_drops_runner_on_expiry_or_fence_loss() {
+    struct PendingRunner {
+        started: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        dropped: std::sync::atomic::AtomicBool,
+    }
+    struct RunnerGuard<'a>(&'a std::sync::atomic::AtomicBool);
+    impl Drop for RunnerGuard<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    impl RunRunner for PendingRunner {
+        fn execute<'a>(
+            &'a self,
+            _driver: &'a model_jobs::RunDriver,
+        ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
+        {
+            Box::pin(async move {
+                let _guard = RunnerGuard(&self.dropped);
+                self.started.lock().await.take().unwrap().send(()).unwrap();
+                std::future::pending().await
+            })
+        }
+    }
+
+    for fenced in [false, true] {
+        let fixture = fixture().await;
+        let (status, created) = fixture.create_run("t17-op-heartbeat-loss", "lease loss").await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+        let job_id = created["job_id"].as_str().unwrap();
+        let run_id = created["run_id"].as_str().unwrap();
+        let queue = JobQueue::new(fixture.repository.clone());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let runner = std::sync::Arc::new(PendingRunner {
+            started: tokio::sync::Mutex::new(Some(started_tx)),
+            dropped: std::sync::atomic::AtomicBool::new(false),
+        });
+        let execution = tokio::spawn({
+            let repository = fixture.repository.clone();
+            let queue = queue.clone();
+            let runner = runner.clone();
+            async move {
+                model_jobs::process_model_next(
+                    &repository,
+                    &queue,
+                    "t17-lost-worker",
+                    Duration::from_millis(300),
+                    &*runner,
+                )
+                .await
+            }
+        });
+        match tokio::time::timeout(Duration::from_secs(5), started_rx).await {
+            Ok(started) => started.unwrap(),
+            Err(_) => {
+                execution.abort();
+                let _ = execution.await;
+                panic!("trusted heartbeat must not starve runner startup");
+            }
+        }
+        let mut tx = fixture.repository.begin_write().await.unwrap();
+        let update = if fenced {
+            "UPDATE jobs SET worker_id='replacement-worker',fencing_token=fencing_token+1 \
+             WHERE job_id=?"
+        } else {
+            "UPDATE jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE job_id=?"
+        };
+        sqlx::query(update).bind(job_id).execute(tx.connection()).await.unwrap();
+        let before: (String, i64, String, String, i64, Option<String>) = sqlx::query_as(
+            "SELECT worker_id,fencing_token,lease_until,state,progress_completed,result_json \
+             FROM jobs WHERE job_id=?",
+        )
+        .bind(job_id)
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), execution)
+            .await
+            .expect("lost authority must stop a silent runner")
+            .unwrap();
+        assert!(matches!(
+            result,
+            Err(model_jobs::ModelJobError::Queue(
+                weblabel_api::jobs::queue::QueueError::InvalidRequest
+            ))
+        ));
+        assert!(runner.dropped.load(std::sync::atomic::Ordering::SeqCst));
+        let mut tx = fixture.repository.begin_write().await.unwrap();
+        let after: (String, i64, String, String, i64, Option<String>) = sqlx::query_as(
+            "SELECT worker_id,fencing_token,lease_until,state,progress_completed,result_json \
+             FROM jobs WHERE job_id=?",
+        )
+        .bind(job_id)
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(after, before, "a stale heartbeat cannot revive ownership");
+        let (status, events) = fixture
+            .request("GET", &format!("/api/ai/runs/{run_id}/events?after=0"), None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{events}");
+        assert_eq!(events["run"]["state"], "running");
+        assert_eq!(events["items"].as_array().unwrap().len(), 2);
+        assert_eq!(events["items"][1]["type"], "started");
+    }
+}
+
+#[tokio::test]
+async fn model_job_progress_rejects_expired_authority() {
+    struct ExpireLease {
+        repository: weblabel_api::storage::Repository,
+        job_id: String,
+    }
+    impl RunRunner for ExpireLease {
+        fn execute<'a>(
+            &'a self,
+            driver: &'a model_jobs::RunDriver,
+        ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
+        {
+            Box::pin(async move {
+                driver
+                    .emit(progress_event("expiry-event", 0, "persisted before expiry"))
+                    .await
+                    .unwrap();
+                // Move only this fixture's durable lease past the server clock,
+                // without changing its worker, fence, state or progress budget.
+                let mut tx = self.repository.begin_write().await.unwrap();
+                sqlx::query(
+                    "UPDATE jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE job_id=?",
+                )
+                .bind(&self.job_id)
+                .execute(tx.connection())
+                .await
+                .unwrap();
+                tx.commit().await.unwrap();
+                Ok(RunOutcome::Completed)
+            })
+        }
+    }
+
+    let fixture = fixture().await;
+    let (status, created) = fixture.create_run("t17-op-expiry", "lease expiry").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+    let job_id = created["job_id"].as_str().unwrap().to_owned();
+    let run_id = created["run_id"].as_str().unwrap();
+    let queue = JobQueue::new(fixture.repository.clone());
+    let result = model_jobs::process_next(
         &fixture.repository,
         &queue,
         "t17-worker",
         Duration::from_secs(30),
-        &scripted_runner(scripts),
+        &ExpireLease {
+            repository: fixture.repository.clone(),
+            job_id: job_id.clone(),
+        },
+    )
+    .await;
+    assert!(
+        matches!(
+            result,
+            Err(model_jobs::ModelJobError::Queue(
+                weblabel_api::jobs::queue::QueueError::InvalidRequest
+            ))
+        ),
+        "expired producer must lose job authority: {result:?}"
+    );
+    let job = queue
+        .status(&fixture.project_id, &job_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.state, "running");
+    assert_eq!(job.progress_completed, 0);
+    assert_eq!(job.result, None);
+    let (status, events) = fixture
+        .request("GET", &format!("/api/ai/runs/{run_id}/events?after=0"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    assert_eq!(events["items"][2]["message"], "persisted before expiry");
+    assert_eq!(events["items"].as_array().unwrap().len(), 3);
+    assert_eq!(events["run"]["state"], "running");
+}
+
+#[tokio::test]
+async fn event_retention_is_explicitly_bounded() {
+    struct RetentionProducer;
+    impl RunRunner for RetentionProducer {
+        fn execute<'a>(
+            &'a self,
+            driver: &'a model_jobs::RunDriver,
+        ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
+        {
+            Box::pin(async move {
+                for index in 0..2100_i64 {
+                    driver
+                        .emit(progress_event(
+                            &format!("pev-{index}"),
+                            index,
+                            &format!("progress {index}"),
+                        ))
+                        .await
+                        .map_err(model_jobs::RunnerError::from)?;
+                    // Bound each poll's work, like an async provider channel,
+                    // so the trusted worker can heartbeat independently.
+                    if index % 100 == 99 {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                Ok(RunOutcome::Completed)
+            })
+        }
+    }
+
+    let fixture = fixture().await;
+    let (status, created) = fixture.create_run("t17-op-retention", "retention").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+    let run_id = created["run_id"].as_str().unwrap().to_owned();
+    let job_id = created["job_id"].as_str().unwrap().to_owned();
+    let (status, other) = fixture.create_run("t17-op-retention-other", "other run").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{other}");
+    let other_run_id = other["run_id"].as_str().unwrap();
+    let other_job_id = other["job_id"].as_str().unwrap();
+    let (status, other_events_before) = fixture
+        .request(
+            "GET",
+            &format!("/api/ai/runs/{other_run_id}/events?after=0"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{other_events_before}");
+    let queue = JobQueue::new(fixture.repository.clone());
+    let other_job_before = queue
+        .status(&fixture.project_id, other_job_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let processed = model_jobs::process_next(
+        &fixture.repository,
+        &queue,
+        "t17-worker",
+        Duration::from_secs(30),
+        &RetentionProducer,
     )
     .await
     .unwrap();
+    assert_eq!(processed.as_deref(), Some(job_id.as_str()));
 
     let total = fixture
         .db_scalar(
@@ -1595,6 +2160,74 @@ async fn event_retention_is_explicitly_bounded() {
         oldest > 1,
         "the oldest events were pruned, min seq {oldest}"
     );
+    assert_eq!(oldest, 104, "retention preserves the exact newest window");
+    let mut after = 0_i64;
+    let mut retained = Vec::new();
+    loop {
+        let (status, page) = fixture
+            .request(
+                "GET",
+                &format!("/api/ai/runs/{run_id}/events?after={after}&limit=200"),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(page["run"]["state"], "succeeded");
+        let items = page["items"].as_array().unwrap();
+        for item in items {
+            let seq = item["seq"].as_i64().unwrap();
+            assert_eq!(seq, 104 + retained.len() as i64);
+            assert_eq!(item["run_id"], run_id);
+            if seq < 2103 {
+                assert_eq!(item["type"], "progress");
+                assert_eq!(item["message"], format!("progress {}", seq - 3));
+            } else {
+                assert_eq!(item["type"], "succeeded");
+            }
+            retained.push(item.clone());
+        }
+        match page["next_cursor"].as_str() {
+            Some(cursor) => {
+                let next = cursor.parse::<i64>().unwrap();
+                assert!(next > after);
+                assert_eq!(items.last().unwrap()["seq"], next);
+                after = next;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(retained.len(), 2000);
+    // A cursor older than the retained window exposes the gap, and replay
+    // returns the same newest events rather than resetting sequence numbers.
+    let (status, replay) = fixture
+        .request(
+            "GET",
+            &format!("/api/ai/runs/{run_id}/events?after=1&limit=200"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay["items"].as_array().unwrap(), &retained[..200]);
+    let (status, other_events_after) = fixture
+        .request(
+            "GET",
+            &format!("/api/ai/runs/{other_run_id}/events?after=0"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{other_events_after}");
+    assert_eq!(other_events_after, other_events_before);
+    assert_eq!(
+        queue.status(&fixture.project_id, other_job_id).await.unwrap(),
+        Some(other_job_before)
+    );
+    let job = queue
+        .status(&fixture.project_id, &job_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.state, "succeeded");
+    assert_eq!((job.progress_completed, job.progress_total), (1, 1));
 }
 
 #[tokio::test]

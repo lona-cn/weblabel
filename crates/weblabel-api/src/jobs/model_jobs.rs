@@ -11,7 +11,7 @@ use axum::{
     Extension, Json,
 };
 use serde_json::{json, Value};
-use sqlx::Row;
+use sqlx::{Row, SqliteConnection};
 use thiserror::Error;
 
 use crate::{
@@ -95,8 +95,9 @@ pub trait RunRunner: Send + Sync {
 
 /// Everything a runner may touch while executing one run. All writes go through
 /// the normalized event/prediction funnels.
-pub struct RunDriver {
+pub struct RunDriver<'lease> {
     repository: Repository,
+    lease: &'lease LeasedJob,
     record: RunRecord,
     context: RunContext,
     profile: ModelProfile,
@@ -106,7 +107,7 @@ pub struct RunDriver {
     objects: BTreeMap<String, AnnotationObject>,
 }
 
-impl RunDriver {
+impl RunDriver<'_> {
     pub fn run_id(&self) -> &str {
         &self.record.run_id
     }
@@ -130,6 +131,7 @@ impl RunDriver {
     /// Records a provider event with normalized sequence numbering.
     pub async fn emit(&self, event: ProviderEvent) -> Result<(), ModelJobError> {
         let mut tx = self.repository.begin_write().await?;
+        ensure_job_lease(tx.connection(), self.lease).await?;
         let provider_event_id = if event.provider_event_id.is_empty() {
             None
         } else {
@@ -155,6 +157,7 @@ impl RunDriver {
     /// run is quarantined and never applied.
     pub async fn submit_candidates(&self, submit: SubmitCandidates) -> Result<(), ModelJobError> {
         let mut tx = self.repository.begin_write().await?;
+        ensure_job_lease(tx.connection(), self.lease).await?;
         let current = runs::load_record(tx.connection(), &self.record.run_id)
             .await?
             .ok_or(ModelJobError::InvalidPayload)?;
@@ -257,7 +260,7 @@ pub async fn process_next(
             crate::datasets::export::process_job(repository, queue, &lease).await?;
         }
         MODEL_JOB_KIND => {
-            execute_model_run(repository, queue, &lease, runner).await?;
+            execute_model_run(repository, queue, &lease, lease_for, runner).await?;
         }
         _ => {
             queue
@@ -283,7 +286,7 @@ pub async fn process_model_next(
         return Ok(None);
     };
     let job_id = lease.job_id.clone();
-    execute_model_run(repository, queue, &lease, runner).await?;
+    execute_model_run(repository, queue, &lease, lease_for, runner).await?;
     Ok(Some(job_id))
 }
 
@@ -334,6 +337,7 @@ async fn execute_model_run(
     repository: &Repository,
     queue: &JobQueue,
     lease: &LeasedJob,
+    lease_for: Duration,
     runner: &dyn RunRunner,
 ) -> Result<(), ModelJobError> {
     let run_ids = lease
@@ -347,14 +351,40 @@ async fn execute_model_run(
     let total = run_ids.len() as u64;
     let mut results = Vec::with_capacity(run_ids.len());
     let mut completed = 0_u64;
+    let mut progress = queue_progress(queue, lease, completed, total, &results).await?;
+    let heartbeat_period = (lease_for / 3).max(Duration::from_nanos(1));
+    let mut heartbeat = tokio::time::interval_at(
+        tokio::time::Instant::now() + heartbeat_period,
+        heartbeat_period,
+    );
     for run_id in run_ids {
         let run_id = run_id
             .as_str()
             .filter(|value| !value.is_empty() && value.chars().count() <= 128)
             .ok_or(ModelJobError::InvalidPayload)?;
-        results.push(execute_run_item(repository, lease, runner, run_id).await?);
+        let result = {
+            let item = execute_run_item(repository, lease, runner, run_id);
+            let renewal = async {
+                loop {
+                    heartbeat.tick().await;
+                    // Poll renewal concurrently with the item: the item may
+                    // own the SQLite writer needed by this checkpoint.
+                    queue.report_progress(lease, completed, total, &progress).await?;
+                    heartbeat.reset();
+                }
+            };
+            tokio::pin!(item, renewal);
+            tokio::select! {
+                biased;
+                // Failure drops the item and ProductionRunner's RuntimeLease,
+                // using only the originally claimed worker/fencing identity.
+                result = &mut renewal => return result,
+                result = &mut item => result?,
+            }
+        };
+        results.push(result);
         completed += 1;
-        queue_progress(queue, lease, completed, total, &results).await?;
+        progress = queue_progress(queue, lease, completed, total, &results).await?;
     }
 
     let succeeded = results
@@ -402,23 +432,42 @@ async fn queue_progress(
     completed: u64,
     total: u64,
     results: &[ItemResult],
-) -> Result<(), ModelJobError> {
+) -> Result<Value, ModelJobError> {
     let succeeded = results
         .iter()
         .filter(|item| item.state == "succeeded")
         .count() as u64;
+    let progress = json!({
+        "succeeded": succeeded,
+        "failed": completed - succeeded,
+    });
     queue
-        .report_progress(
-            lease,
-            completed,
-            total,
-            &json!({
-                "succeeded": succeeded,
-                "failed": completed - succeeded,
-            }),
-        )
+        .report_progress(lease, completed, total, &progress)
         .await?;
-    Ok(())
+    Ok(progress)
+}
+
+/// Checks the original worker identity only after the caller owns the writer.
+/// Keep this in the transaction that performs each worker-owned mutation.
+async fn ensure_job_lease(
+    connection: &mut SqliteConnection,
+    lease: &LeasedJob,
+) -> Result<String, ModelJobError> {
+    let now = now_rfc3339();
+    let owned: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_id=? AND state='running' \
+         AND worker_id=? AND fencing_token=? AND lease_until>?)",
+    )
+    .bind(&lease.job_id)
+    .bind(&lease.worker_id)
+    .bind(lease.fencing_token as i64)
+    .bind(&now)
+    .fetch_one(connection)
+    .await?;
+    if owned == 0 {
+        return Err(QueueError::InvalidRequest.into());
+    }
+    Ok(now)
 }
 
 async fn execute_run_item(
@@ -428,6 +477,7 @@ async fn execute_run_item(
     run_id: &str,
 ) -> Result<ItemResult, ModelJobError> {
     let mut tx = repository.begin_write().await?;
+    ensure_job_lease(tx.connection(), lease).await?;
     let record = runs::load_record(tx.connection(), run_id).await?;
     tx.commit().await?;
     let Some(record) = record else {
@@ -447,7 +497,7 @@ async fn execute_run_item(
     // A model job is single-attempt: if its lease expired mid-flight the call
     // may already be billed, so it is never resent automatically.
     if lease.attempt > 1 && record.state == RunState::Running {
-        mark_interrupted(repository, &record, "LEASE_EXPIRED_NO_RESEND").await?;
+        mark_interrupted(repository, lease, &record, "LEASE_EXPIRED_NO_RESEND").await?;
         return Ok(ItemResult {
             run_id: run_id.to_owned(),
             state: "interrupted",
@@ -455,13 +505,12 @@ async fn execute_run_item(
         });
     }
 
-    let now = now_rfc3339();
     if record.state == RunState::Queued {
         let applied = transition_run(
             repository,
+            lease,
             &record,
             RunState::Running,
-            &now,
             Some("unknown"),
         )
         .await?;
@@ -489,6 +538,7 @@ async fn execute_run_item(
     }
     {
         let mut tx = repository.begin_write().await?;
+        ensure_job_lease(tx.connection(), lease).await?;
         events::record(
             tx.connection(),
             run_id,
@@ -504,10 +554,11 @@ async fn execute_run_item(
         tx.commit().await?;
     }
 
-    let driver = build_driver(repository, record.clone()).await?;
+    let driver = build_driver(repository, record.clone(), lease).await?;
     let outcome = runner.execute(&driver).await;
 
     let mut tx = repository.begin_write().await?;
+    let now = ensure_job_lease(tx.connection(), lease).await?;
     let current = runs::load_record(tx.connection(), run_id)
         .await?
         .ok_or(ModelJobError::InvalidPayload)?;
@@ -524,7 +575,7 @@ async fn execute_run_item(
     if current.cancel_requested {
         runs::transition(current.state, RunState::Cancelled)?;
         sqlx::query("UPDATE model_runs SET state='cancelled',finished_at=? WHERE run_id=? AND state IN ('queued','running')")
-            .bind(now_rfc3339()).bind(run_id).execute(tx.connection()).await?;
+            .bind(&now).bind(run_id).execute(tx.connection()).await?;
         events::record(
             tx.connection(),
             run_id,
@@ -544,7 +595,6 @@ async fn execute_run_item(
             code: Some("RUN_CANCELLED"),
         });
     }
-    let now = now_rfc3339();
     match outcome {
         Ok(RunOutcome::Completed) => {
             runs::transition(RunState::Running, RunState::Succeeded)?;
@@ -607,11 +657,12 @@ async fn execute_run_item(
 
 async fn mark_interrupted(
     repository: &Repository,
+    lease: &LeasedJob,
     record: &RunRecord,
     code: &'static str,
 ) -> Result<(), ModelJobError> {
-    let now = now_rfc3339();
     let mut tx = repository.begin_write().await?;
+    let now = ensure_job_lease(tx.connection(), lease).await?;
     runs::transition(record.state, RunState::Interrupted)?;
     sqlx::query(
         "UPDATE model_runs SET state='interrupted', cost_display='unknown', finished_at=? \
@@ -644,13 +695,14 @@ async fn mark_interrupted(
 
 async fn transition_run(
     repository: &Repository,
+    lease: &LeasedJob,
     record: &RunRecord,
     to: RunState,
-    now: &str,
     cost_display: Option<&str>,
 ) -> Result<bool, ModelJobError> {
     runs::transition(record.state, to)?;
     let mut tx = repository.begin_write().await?;
+    let now = ensure_job_lease(tx.connection(), lease).await?;
     let updated = if let Some(cost) = cost_display {
         sqlx::query(
             "UPDATE model_runs SET state=?, started_at=?, cost_display=? WHERE run_id=? AND state=?",
@@ -685,8 +737,8 @@ async fn finish_job(
     if result_json.len() > MAX_JOB_RESULT_BYTES {
         return Err(ModelJobError::InvalidPayload);
     }
-    let now = now_rfc3339();
     let mut tx = repository.begin_write().await?;
+    let now = now_rfc3339();
     let updated = sqlx::query(
         "UPDATE jobs SET state=?, result_json=?, lease_until=NULL, updated_at=? \
          WHERE job_id=? AND state='running' AND worker_id=? AND fencing_token=? AND lease_until>?",
@@ -711,15 +763,17 @@ async fn finish_job(
     Ok(())
 }
 
-async fn build_driver(
+async fn build_driver<'lease>(
     repository: &Repository,
     record: RunRecord,
-) -> Result<RunDriver, ModelJobError> {
+    lease: &'lease LeasedJob,
+) -> Result<RunDriver<'lease>, ModelJobError> {
     let context: RunContext =
         serde_json::from_str(&record.context_json).map_err(|_| ModelJobError::InvalidPayload)?;
     let profile: ModelProfile = serde_json::from_str(&record.profile_snapshot_json)
         .map_err(|_| ModelJobError::InvalidPayload)?;
     let mut tx = repository.begin_write().await?;
+    ensure_job_lease(tx.connection(), lease).await?;
     let media_row = sqlx::query(
         "SELECT canonical_width, canonical_height FROM media_metadata WHERE asset_revision_id=?",
     )
@@ -751,6 +805,7 @@ async fn build_driver(
     tx.commit().await?;
     Ok(RunDriver {
         repository: repository.clone(),
+        lease,
         record,
         context,
         profile,
@@ -1053,7 +1108,7 @@ impl MockRunner {
         Self { scripts }
     }
 
-    async fn run_default(&self, driver: &RunDriver) -> Result<RunOutcome, RunnerError> {
+    async fn run_default(&self, driver: &RunDriver<'_>) -> Result<RunOutcome, RunnerError> {
         let (width, height) = driver.media_size();
         let raw = match driver.record.intent.as_str() {
             "detect" => default_detect_candidate(driver, width, height),
@@ -1073,7 +1128,7 @@ impl MockRunner {
 
     async fn run_script(
         &self,
-        driver: &RunDriver,
+        driver: &RunDriver<'_>,
         script: &[MockStep],
     ) -> Result<RunOutcome, RunnerError> {
         for step in script {

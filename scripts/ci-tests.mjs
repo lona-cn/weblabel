@@ -7,6 +7,12 @@ const args = options(process.argv.slice(2), ['--release-dir']);
 if (!args['--release-dir']) throw new Error('required_release_dir');
 const release = fs.realpathSync(path.resolve(args['--release-dir']));
 validateRelease(release);
+// Engineering preview hashing uses the same verified Rust-WASM built by this run.
+const wasmDirectory = path.join(root, 'crates/wasm-bridge/target/weblabel-web-public/wasm');
+fs.mkdirSync(wasmDirectory, { recursive: true });
+for (const file of ['wasm_bridge.js', 'wasm_bridge_bg.wasm']) {
+  fs.copyFileSync(path.join(release, 'web', 'wasm', file), path.join(wasmDirectory, file));
+}
 const python = process.env.PYTHON || command(['python', '-c', 'import sys; print(sys.executable)']).trim();
 Object.assign(process.env, { WEBLABEL_TEST_NODE: process.execPath, WEBLABEL_NODE_RUNTIME: process.execPath, WEBLABEL_T33_RELEASE: release, WEBLABEL_CARGO_CWD: root, PYTHON: python, UV_PYTHON: python });
 command([process.execPath, 'scripts/build-agent-host.mjs']);

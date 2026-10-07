@@ -1,11 +1,12 @@
 import { readFile } from 'node:fs/promises';
-import { expect, it } from 'vitest';
-import { bootstrap_admin_for_test, start_test_app, type ApiClient } from '../support/app';
+import { afterAll, beforeAll, expect, it } from 'vitest';
+import { bootstrap_admin_for_test, start_test_app, type ApiClient, type TestApp } from '../support/app';
 
 type Json = Record<string, any>;
 const ontology={guidelines_markdown:'T26 review ontology',labels:[{label_id:'label_person',name:'Person',color:'#0099ff',shortcut:null,allowed_geometry_types:['bbox_xyxy'],attributes:[]}]};
 function str(value:unknown,key:string):string {const result=(value as Json)?.[key];if(typeof result!=='string'||!result)throw new Error(`${key} missing`);return result;}
-async function addUser(admin:ApiClient,baseUrl:string,projectId:string,role:'annotator'|'reviewer'|'viewer') {
+interface TestUser { userId: string; client: ApiClient }
+async function addUser(admin:ApiClient,baseUrl:string,projectId:string,role:'annotator'|'reviewer'|'viewer'):Promise<TestUser> {
  const username=`t26-${role}-${crypto.randomUUID()}`;const password=`${crypto.randomUUID()}-T26-pass`;
  const user=await admin.request<Json>('POST','/api/users',{username,password});expect(user.status).toBe(201);
  const userId=str(user.json,'user_id');expect((await admin.request('POST',`/api/projects/${projectId}/members`,{user_id:userId,role})).status).toBe(200);
@@ -14,16 +15,36 @@ async function addUser(admin:ApiClient,baseUrl:string,projectId:string,role:'ann
  return {userId,client:{request:async<T=unknown>(method:string,path:string,body?:unknown)=>{const response=await fetch(new URL(path,baseUrl),{method,headers:{cookie,'x-csrf-token':csrf,origin:baseUrl,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});let json:unknown=null;try{json=await response.json();}catch{}return {status:response.status,json:json as T,headers:response.headers};},upload:async()=>{throw new Error('not used');}} as ApiClient};
 }
 
-it('fences real annotation PUTs and binds review decisions to submitted revisions',async()=>{
- const app=await start_test_app();
+let app: TestApp;
+let admin: ApiClient;
+let projectId: string;
+let ontologyId: string;
+let asset: string;
+let base: string;
+let document: Json;
+let annotator: TestUser;
+let reviewer: TestUser;
+let newAnnotator: TestUser;
+let viewer: TestUser;
+beforeAll(async()=>{
+ app=await start_test_app();
  try {
-  const admin=await bootstrap_admin_for_test(app);const project=await admin.request<Json>('POST','/api/projects',{name:`T26 ${crypto.randomUUID()}`,description:'workflow acceptance',allow_self_review:false});expect(project.status).toBe(201);const projectId=str(project.json,'project_id');
-  const ontologyResponse=await admin.request<Json>('POST',`/api/projects/${projectId}/ontologies`,ontology);expect(ontologyResponse.status).toBe(201);const ontologyId=str(ontologyResponse.json,'ontology_version_id');
+  admin=await bootstrap_admin_for_test(app);const project=await admin.request<Json>('POST','/api/projects',{name:`T26 ${crypto.randomUUID()}`,description:'workflow acceptance',allow_self_review:false});expect(project.status).toBe(201);projectId=str(project.json,'project_id');
+  const ontologyResponse=await admin.request<Json>('POST',`/api/projects/${projectId}/ontologies`,ontology);expect(ontologyResponse.status).toBe(201);ontologyId=str(ontologyResponse.json,'ontology_version_id');
   const bytes=new Uint8Array(await readFile(new URL('../fixtures/media/orientation-1.jpg',import.meta.url)));expect((await admin.upload(`/api/projects/${projectId}/assets`,bytes,'t26.jpg',undefined,'image/jpeg')).status).toBe(202);const drained=await admin.request<Json>('POST','/internal/test/jobs/drain',{});expect(drained.status).toBe(200);expect(drained.json.processed).toBe(1);
-  const media=await admin.request<Json>('GET',`/api/projects/${projectId}/assets`);const asset=str((media.json as Json).items[0],'asset_revision_id');const head=await admin.request<Json>('GET',`/api/assets/${asset}/annotation?ontology_version_id=${ontologyId}`);const base=str(head.json,'annotation_revision_id');const document=(head.json as Json).document as Json;
-  const annotator=await addUser(admin,app.base_url,projectId,'annotator');const reviewer=await addUser(admin,app.base_url,projectId,'reviewer');const task=await admin.request<Json>('POST',`/api/projects/${projectId}/tasks`,{asset_revision_id:asset,ontology_version_id:ontologyId,assignee_id:annotator.userId});expect(task.status).toBe(200);const taskId=str(task.json,'task_id');
+  const media=await admin.request<Json>('GET',`/api/projects/${projectId}/assets`);asset=str((media.json as Json).items[0],'asset_revision_id');const head=await admin.request<Json>('GET',`/api/assets/${asset}/annotation?ontology_version_id=${ontologyId}`);base=str(head.json,'annotation_revision_id');document=(head.json as Json).document as Json;
+  // Real password hashing/login and media preparation belong to the fixture,
+  // not the five-second lease/CAS/review behavior deadline.
+  annotator=await addUser(admin,app.base_url,projectId,'annotator');reviewer=await addUser(admin,app.base_url,projectId,'reviewer');
+  newAnnotator=await addUser(admin,app.base_url,projectId,'annotator');viewer=await addUser(admin,app.base_url,projectId,'viewer');
+ } catch(error) {await app.stop();throw error;}
+});
+afterAll(async()=>{await app?.stop();});
+
+it('fences real annotation PUTs and binds review decisions to submitted revisions',async()=>{
+  const task=await admin.request<Json>('POST',`/api/projects/${projectId}/tasks`,{asset_revision_id:asset,ontology_version_id:ontologyId,assignee_id:annotator.userId});expect(task.status).toBe(200);const taskId=str(task.json,'task_id');
   const lease=await annotator.client.request<Json>('POST',`/api/tasks/${taskId}/lease`,{action:'acquire'});expect(lease.status).toBe(200);const oldToken=lease.json.fencing_token as number;expect(lease.json.lease_seconds).toBe(60);expect(lease.json.heartbeat_seconds).toBe(20);
-  const newAnnotator=await addUser(admin,app.base_url,projectId,'annotator');const transfer=await admin.request<Json>('POST',`/api/tasks/${taskId}/lease`,{action:'transfer',holder_id:newAnnotator.userId});expect(transfer.status).toBe(200);const activeToken=transfer.json.fencing_token as number;expect(activeToken).toBeGreaterThan(oldToken);
+  const transfer=await admin.request<Json>('POST',`/api/tasks/${taskId}/lease`,{action:'transfer',holder_id:newAnnotator.userId});expect(transfer.status).toBe(200);const activeToken=transfer.json.fencing_token as number;expect(activeToken).toBeGreaterThan(oldToken);
   const acquired=await newAnnotator.client.request<Json>('POST',`/api/tasks/${taskId}/lease`,{action:'acquire'});expect(acquired.status).toBe(200);expect(acquired.json.fencing_token).toBe(activeToken);
   const saveBody=(token:number,completion:string)=>({operation_id:crypto.randomUUID(),base_revision_id:base,document:{...document,completion},lease:{task_id:taskId,fencing_token:token},suggestion_decisions:[]});
   const unprocessed=await newAnnotator.client.request<Json>('POST',`/api/tasks/${taskId}/submit`,{annotation_revision_ids:[base]});expect(unprocessed.status).toBe(422);expect(unprocessed.json.code).toBe('EMPTY_NOT_NEGATIVE');
@@ -34,7 +55,7 @@ it('fences real annotation PUTs and binds review decisions to submitted revision
   const selfReview=await admin.request<Json>('POST',`/api/reviews/${selfReviewId}/decision`,{decision:'approve',reason:'self check',revision_ids:[revision]});expect(selfReview.status).toBe(403);expect(selfReview.json.code).toBe('SELF_REVIEW_FORBIDDEN');
   const wrongRevision=await reviewer.client.request<Json>('POST',`/api/reviews/${reviewId}/decision`,{decision:'approve',reason:'wrong version',revision_ids:[base]});expect(wrongRevision.status).toBe(409);expect(wrongRevision.json.code).toBe('REVIEW_REVISION_MISMATCH');
   const approval=await reviewer.client.request<Json>('POST',`/api/reviews/${reviewId}/decision`,{decision:'approve',reason:'Reviewed submitted negative annotation',revision_ids:[revision]});expect(approval.status).toBe(200);expect(approval.json.revision_ids).toEqual([revision]);
-  const viewer=await addUser(admin,app.base_url,projectId,'viewer');const denied=await viewer.client.request<Json>('POST',`/api/reviews/${reviewId}/decision`,{decision:'approve',reason:'not allowed',revision_ids:[revision]});expect(denied.status).toBe(403);
+  const denied=await viewer.client.request<Json>('POST',`/api/reviews/${reviewId}/decision`,{decision:'approve',reason:'not allowed',revision_ids:[revision]});expect(denied.status).toBe(403);
   const createdIssue=await reviewer.client.request<Json>('POST',`/api/reviews/${reviewId}/issues`,{annotation_revision_id:revision,object_id:null,code:'verify-negative',message:'Confirmed empty annotation was reviewed',region:null});expect(createdIssue.status).toBe(200);
   const nextOntology=await admin.request<Json>('POST',`/api/projects/${projectId}/ontologies`,{...ontology,guidelines_markdown:'T26 revised ontology'});expect(nextOntology.status).toBe(201);
   const laterTask=await admin.request<Json>('POST',`/api/projects/${projectId}/tasks`,{asset_revision_id:asset,ontology_version_id:ontologyId,assignee_id:newAnnotator.userId});expect(laterTask.status).toBe(200);const laterTaskId=str(laterTask.json,'task_id');const laterLease=await newAnnotator.client.request<Json>('POST',`/api/tasks/${laterTaskId}/lease`,{action:'acquire'});expect(laterLease.status).toBe(200);
@@ -50,5 +71,4 @@ it('fences real annotation PUTs and binds review decisions to submitted revision
   const oldHistory=await reviewer.client.request<Json>('GET',`/api/annotation-revisions/${revision}`);expect(oldHistory.status).toBe(200);expect(oldHistory.json.annotation_revision_id).toBe(revision);
   const issueHistory=await reviewer.client.request<Json>('GET',`/api/reviews/${reviewId}/issues`);expect(issueHistory.status).toBe(200);expect(issueHistory.json.items[0].annotation_revision_id).toBe(revision);expect(issueHistory.json.items[0].ontology_version_id).toBe(ontologyId);
   const listed=await reviewer.client.request<Json>('GET',`/api/projects/${projectId}/tasks`);expect(listed.status).toBe(200);const rows=listed.json.items as Json[];expect(rows.find(x=>x.task_id===taskId)?.review_id).toBe(reviewId);expect(rows.find(x=>x.task_id===taskId)?.review_decision).toBe('approve');expect(rows.find(x=>x.task_id===laterTaskId)?.review_id).toBe(resubmittedReviewId);expect(rows.find(x=>x.task_id===laterTaskId)?.review_decision).toBeNull();expect(rows.find(x=>x.task_id===laterTaskId)?.state).toBe('submitted');expect(rows.find(x=>x.task_id===laterTaskId)?.revision_ids).toEqual([laterUnreviewedRevision]);
- } finally {await app.stop();}
 });

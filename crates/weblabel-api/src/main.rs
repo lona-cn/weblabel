@@ -12,8 +12,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         use weblabel_api::runtime::supervisor::linux_broker;
         let mut args = env::args_os().skip(1);
-        if args.next().is_some_and(|arg| arg == linux_broker::MODE) {
-            let code = match linux_broker::run(args) {
+        let mode = args.next();
+        if mode.as_deref().is_some_and(|mode| {
+            mode == linux_broker::MODE || mode == linux_broker::NODE_MODE
+        }) {
+            let result = if mode.as_deref() == Some(std::ffi::OsStr::new(linux_broker::NODE_MODE)) {
+                linux_broker::run_node(args)
+            } else {
+                linux_broker::run(args)
+            };
+            let code = match result {
                 Ok(code) => code,
                 Err(error) => {
                     eprintln!("runtime broker: {error}");

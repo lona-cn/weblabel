@@ -231,11 +231,11 @@ impl JobQueue {
         if progress_json.len() > MAX_JOB_RESULT_BYTES {
             return Err(QueueError::InvalidRequest);
         }
+        let mut tx = self.repository.begin_write().await?;
         let now = chrono::Utc::now();
         let now_text = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let extended_until = (now + chrono::Duration::seconds(MAX_JOB_LEASE_SECONDS as i64))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let mut tx = self.repository.begin_write().await?;
         let updated = sqlx::query("UPDATE jobs SET progress_completed=MAX(progress_completed,?), progress_total=?, progress_json=CASE WHEN progress_completed<=? THEN ? ELSE progress_json END, lease_until=?, updated_at=? WHERE job_id=? AND state='running' AND worker_id=? AND fencing_token=? AND lease_until>? AND (progress_total=0 OR progress_total=?)")
             .bind(completed as i64).bind(total as i64).bind(completed as i64).bind(progress_json)
             .bind(extended_until).bind(&now_text).bind(&lease.job_id).bind(&lease.worker_id)
@@ -260,8 +260,8 @@ impl JobQueue {
             return Err(QueueError::InvalidRequest);
         }
         let state = if succeeded { "succeeded" } else { "failed" };
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let mut tx = self.repository.begin_write().await?;
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let updated = sqlx::query("UPDATE jobs SET state=?, result_json=?, lease_until=NULL, updated_at=? WHERE job_id=? AND state='running' AND worker_id=? AND fencing_token=? AND lease_until>?")
             .bind(state).bind(result_json).bind(&now).bind(&lease.job_id).bind(&lease.worker_id)
             .bind(lease.fencing_token as i64).bind(&now).execute(tx.connection()).await?;

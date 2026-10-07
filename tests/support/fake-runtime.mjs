@@ -14,7 +14,7 @@
 // stdout carries protocol envelopes only. All logs go to stderr (and carry a
 // deliberate secret-looking line so host redaction can be proven).
 import { spawn } from 'node:child_process';
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 
 const VALID_SCENARIOS = ['normal', 'malformed', 'oversized', 'crash', 'slow', 'spawn_child'];
 const scenario = process.env.TEST_SCENARIO ?? 'normal';
@@ -78,9 +78,27 @@ const imageDataUrl = `data:image/png;base64,${'QUJDRUZHSElKS0xNTk9QUVJTVFVWV1hZW
 let eventSeq = 0;
 let startedRuns = 0;
 
-function handleStartRun(request) {
+async function handleStartRun(request) {
   startedRuns += 1;
   if (scenario === 'crash') {
+    if (grandchildPid !== null) {
+      // Let the genuine detached process run before crashing its parent. A
+      // correct fast broker reap must not race the test's readiness observation.
+      const target = pidFilePath ?? 't16-grandchild';
+      const deadline = Date.now() + 8000;
+      while (!existsSync(`${target}.grandchild`)
+        || readFileSync(`${target}.grandchild`, 'utf8') !== String(grandchildPid)
+        || !existsSync(`${target}.heartbeat`)
+        || statSync(`${target}.heartbeat`).size === 0) {
+        if (Date.now() >= deadline) {
+          log('detached grandchild did not become ready before crash');
+          process.exit(8);
+        }
+        const { promise, resolve } = Promise.withResolvers();
+        setTimeout(resolve, 20);
+        await promise;
+      }
+    }
     log('crashing on start_run');
     process.exit(7);
   }
@@ -173,7 +191,10 @@ process.stdin.on('data', (chunk) => {
         break;
       case 'start_run':
         sawStartRun = true;
-        handleStartRun(request);
+        void handleStartRun(request).catch((error) => {
+          log(`start_run fixture failed: ${error.message}`);
+          process.exit(2);
+        });
         break;
       case 'cancel_run':
         respond(request, { ok: true, status: 'cancelled' });

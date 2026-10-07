@@ -29,9 +29,13 @@ export function start_test_app(cookieSecure?: 'true' | 'false', modelWorker?: 'm
 
 每次启动独立临时目录/数据库，监听随机端口。生产代码提供启动 bootstrap 通道；测试捕获该管道，走真实登录/管理员创建用户接口，不插入万能绕过鉴权中间件。进程退出和测试失败也执行清理。只有 TEST build 允许 fault injection channel，release build不编译此入口。
 
-真实API helper在每个worker首次使用前从当前源代码构建，不以可执行文件已存在替代新源码。Vitest integration的prepare-api setup在行为测试计时外编译，保持原测试deadline；显式WEBLABEL_API_BINARY仍表示调用者选择的可执行文件，不能把任意override当新源码证据。
+真实API helper在每个worker首次使用前从当前源代码构建，不以可执行文件已存在替代新源码。Vitest integration的prepare-api setup在行为测试计时外编译，保持原测试deadline；显式WEBLABEL_API_BINARY仍表示调用者选择的可执行文件，不能把任意override当新源码证据。T26在beforeAll执行真实bootstrap、媒体准备和用户密码哈希/login；原5秒行为用例仍覆盖完整lease/fencing/CAS与不可变revision审核，不将冷setup计入该行为窗口。
 
 T25测试helper的manual模式仅在debug构建显式设置WEBLABEL_TEST_MANUAL_MODEL_WORKER=1，让故障/脚本fixture拥有排空顺序；background模式运行服务原生模型worker。release忽略该开关。database_path_for_test只返回该helper自己创建的临时数据库路径，不能访问真实项目库。
+
+后台seed用单次1000ms SQLite busy handler与BEGIN IMMEDIATE取得writer后插入测试profile，成功commit、失败close回滚，不做应用重试；一次drain后按upload的import_job_id只读等待原5秒内的真实succeeded/media_import/1-of-1，后台先claim时processed=0不冒充导入失败。仍校验唯一canonical资产、annotation版本及完整内容。T29源library/router与production扫描统一遵守CARGO_TARGET_DIR和调用者Cargo cwd，从repo数字pin选择真实host compiler，不用发行普通API替代安全fixture。
+
+T17 保持原30秒retention lease、2100事件生产、2000窗口与104..2103的真实API分页/replay断言；silent runner、持有writer的item与expiry/replacement-worker回调必须覆盖真实Queue/SQLite行为。权限丢失后立即提交新provider identity和合法candidate，校验event/prediction/suggestion计数及foreign authority不变，不靠等待下一个heartbeat拒绝输出。T16 的owned child在第二次spawn/setup之前进入清理作用域；Linux真实broker故障仍以private capability的单次5秒cached failure拒绝成功，不以裸PID或空killed列表假报SIGKILL。
 
 固定业务fixture由 T01 提供 `tests/fixtures/golden/{ontology,media,document,save,prediction}.json`；对象ID `object_person_001`，类别ID `label_person`，640×480，bbox[10,20,110,220]，helmet_state默认unknown。测试 fixture ID 不受UUID生成器限制：Id验证是非空受限字符串，生产新ID用UUID。
 

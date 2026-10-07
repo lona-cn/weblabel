@@ -18,6 +18,7 @@ import {
   superviseChild,
   type ChildSpec,
   type SpawnPolicy,
+  type SpawnedChild,
 } from '../src/security/spawn';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -186,6 +187,63 @@ it('reclaims detached descendants on cancel and leaves hand-edited state untouch
   await session.close();
 });
 
+it('keeps the Host usable after a Linux exec denial and cancels before provider launch', { timeout: 30000 }, async () => {
+  const workDir = makeWorkDir('immediate cancel 目录');
+  const ledger = join(workDir, 'billed-requests');
+  const pids = join(workDir, 'immediate-pids');
+  const session = new HostSession({
+    registry: new ProviderRegistry(),
+    input: new PassThrough(),
+    output: new LineCollector(),
+    logs: new LineCollector(),
+    spawnPolicy: policyFor(workDir),
+    childSpec: (runId) => fakeChildSpec(workDir, {
+      TEST_SCENARIO: runId === 'recovered' ? 'normal' : 'slow',
+      FAKE_RUNTIME_LEDGER: runId === 'recovered' ? join(workDir, 'recovered-requests') : ledger,
+      FAKE_RUNTIME_PID_FILE: runId === 'recovered' ? join(workDir, 'recovered-pids') : pids,
+      FAKE_RUNTIME_SPAWN_CHILD: runId === 'recovered' ? '0' : '1',
+    }),
+    runTimeoutMs: 20000,
+  });
+  try {
+    await session.handleParentLine(requestLine('immediate-probe', 'probe', {}));
+    if (process.platform === 'linux') {
+      const executableBroker = process.env.WEBLABEL_API_BINARY;
+      const deniedBroker = join(workDir, 'existing broker without execute permission');
+      writeFileSync(deniedBroker, 'must fail with real exec EACCES', { mode: 0o600 });
+      try {
+        process.env.WEBLABEL_API_BINARY = deniedBroker;
+        await session.handleParentLine(requestLine('denied-start', 'start_run', { run_id: 'denied' }));
+        // Node emits exec errors on nextTick. Yield through the check phase,
+        // rather than guessing how many milliseconds emission will take.
+        const emitted = Promise.withResolvers<void>();
+        setImmediate(emitted.resolve);
+        await emitted.promise;
+        expect(session.getRunState('denied')?.status).toBe('failed');
+        expect(session.getRunState('denied')?.error_code).toBe('spawn_failed');
+      } finally {
+        if (executableBroker === undefined) delete process.env.WEBLABEL_API_BINARY;
+        else process.env.WEBLABEL_API_BINARY = executableBroker;
+      }
+      await session.handleParentLine(requestLine('recovered-start', 'start_run', { run_id: 'recovered' }));
+      await session.waitForRuns();
+      expect(session.getRunState('recovered')?.status).toBe('succeeded');
+      expect(session.getRunState('recovered')?.error_code).toBeNull();
+    }
+    await session.handleParentLine(requestLine('immediate-start', 'start_run', { run_id: 'immediate' }));
+    await session.handleParentLine(requestLine('immediate-stop', 'cancel_run', { run_id: 'immediate' }));
+    await session.waitForRuns();
+    expect(session.getRunState('immediate')?.status).toBe('cancelled');
+    expect(session.getRunState('immediate')?.error_code).toBeNull();
+    if (process.platform === 'linux') {
+      expect(existsSync(pids)).toBe(false);
+      expect(readLedgerFile(ledger)).toEqual([]);
+    }
+  } finally {
+    await session.close();
+  }
+});
+
 it('reclaims detached descendants when a run times out', { timeout: 30000 }, async () => {
   const workDir = makeWorkDir('timeout 目录');
   const registry = new ProviderRegistry();
@@ -253,6 +311,99 @@ it('reclaims detached descendants left behind by a crashing child', { timeout: 3
   expect(state?.status).toBe('failed');
   expect(state?.error_code).toBe('child_crashed');
   await session.close();
+});
+
+it('stops a crash orphan heartbeat, preserves exit 7, and leaves another owned run alive', { timeout: 30000 }, async () => {
+  const workDir = makeWorkDir('owned crash 目录');
+  const crashedFile = join(workDir, 'crashed-pids');
+  const foreignFile = join(workDir, 'foreign-pids');
+  const policy = policyFor(workDir);
+  const crashed = spawnChild(fakeChildSpec(workDir, {
+    TEST_SCENARIO: 'crash', FAKE_RUNTIME_SPAWN_CHILD: '1', FAKE_RUNTIME_PID_FILE: crashedFile,
+  }), policy);
+  let foreign: SpawnedChild | undefined;
+  let reclaimed = false;
+  try {
+    crashed.stdout.resume();
+    crashed.stderr.resume();
+    foreign = spawnChild(fakeChildSpec(workDir, {
+      TEST_SCENARIO: 'slow', FAKE_RUNTIME_SPAWN_CHILD: '1', FAKE_RUNTIME_PID_FILE: foreignFile,
+    }), policy);
+    foreign.stdout.resume();
+    foreign.stderr.resume();
+    await waitFor('both live descendant heartbeats', () =>
+      readLedgerFile(`${crashedFile}.heartbeat`).length > 0 && readLedgerFile(`${foreignFile}.heartbeat`).length > 0);
+    const crashedPids = JSON.parse(readFileSync(crashedFile, 'utf8'));
+    const foreignPids = JSON.parse(readFileSync(foreignFile, 'utf8'));
+    const supervised = superviseChild(crashed, { timeoutMs: 20000 });
+    crashed.stdin.write(`${requestLine('owned-crash', 'start_run', { run_id: 'owned-crash' })}\n`);
+    const result = await supervised;
+    reclaimed = true;
+    expect(result.outcome).toBe('crashed');
+    expect(result.exit_code).toBe(7);
+    expect(await crashed.wait()).toEqual({ code: 7, signal: null });
+    expect(isProcessAlive(crashedPids.pid)).toBe(false);
+    expect(isProcessAlive(crashedPids.grandchild_pid)).toBe(false);
+    const stoppedHeartbeat = readFileSync(`${crashedFile}.heartbeat`, 'utf8');
+    const foreignHeartbeat = readLedgerFile(`${foreignFile}.heartbeat`).length;
+    await sleep(600);
+    expect(readFileSync(`${crashedFile}.heartbeat`, 'utf8')).toBe(stoppedHeartbeat);
+    expect(isProcessAlive(foreignPids.pid)).toBe(true);
+    expect(isProcessAlive(foreignPids.grandchild_pid)).toBe(true);
+    expect(readLedgerFile(`${foreignFile}.heartbeat`).length).toBeGreaterThan(foreignHeartbeat);
+  } finally {
+    await cleanupTestRuns(crashed, foreign, reclaimed);
+  }
+  if (process.platform === 'linux') {
+    const faultMarker = join(workDir, 'self exiting fault CLI');
+    const releaseFaultCli = join(workDir, 'release fault CLI');
+    // Hold the real CLI until cleanup's backstop releases it. Its broker cannot
+    // naturally exit/recycle before fault injection, even under a loaded runner.
+    // Fake timers cannot drive this external process's release-file observation.
+    const faulted = spawnChild({
+      executable: process.execPath,
+      argv: ['-e', `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(faultMarker)}, String(process.pid)); setInterval(() => { if (fs.existsSync(${JSON.stringify(releaseFaultCli)})) process.exit(7); }, 20)`],
+      cwd: workDir,
+    }, policy);
+    const faultForeignFile = join(workDir, 'fault foreign pids');
+    let faultForeign: SpawnedChild | undefined;
+    let faultInjected = false;
+    try {
+      faulted.stdout.resume();
+      faulted.stderr.resume();
+      faultForeign = spawnChild(fakeChildSpec(workDir, {
+        TEST_SCENARIO: 'slow', FAKE_RUNTIME_SPAWN_CHILD: '1', FAKE_RUNTIME_PID_FILE: faultForeignFile,
+      }), policy);
+      faultForeign.stdout.resume();
+      faultForeign.stderr.resume();
+      await waitFor('fault CLI and independent heartbeat', () =>
+        existsSync(faultMarker) && readLedgerFile(`${faultForeignFile}.heartbeat`).length > 0);
+      const foreignPids = JSON.parse(readFileSync(faultForeignFile, 'utf8'));
+      // Fault only this owned broker. The fixture CLI's backstop releases it;
+      // no stale PID or guessed lineage recovers the failed capability.
+      process.kill(faulted.pid, 'SIGKILL');
+      faultInjected = true;
+      await expect(faulted.wait()).rejects.toMatchObject({ code: 'reclaim_incomplete' });
+      const failedCleanup = faulted.killTree('initial fault cleanup');
+      await expect(failedCleanup).rejects.toMatchObject({ code: 'reclaim_incomplete' });
+      expect(faulted.killTree('same failed cleanup')).toBe(failedCleanup);
+      await expect(cleanupTestRuns(faulted, faultForeign, false)).rejects.toMatchObject({ code: 'reclaim_incomplete' });
+      expect(isProcessAlive(foreignPids.pid)).toBe(false);
+      expect(isProcessAlive(foreignPids.grandchild_pid)).toBe(false);
+      const stopped = readFileSync(`${faultForeignFile}.heartbeat`, 'utf8');
+      // A non-event in another OS process needs a real heartbeat observation
+      // window; test-process fake timers cannot prove its writes have stopped.
+      await sleep(300);
+      expect(readFileSync(`${faultForeignFile}.heartbeat`, 'utf8')).toBe(stopped);
+    } finally {
+      writeFileSync(releaseFaultCli, 'exit');
+      try {
+        if (!faultInjected) await faulted.killTree('fault setup backstop');
+      } finally {
+        if (faultForeign) await faultForeign.killTree('fault regression backstop');
+      }
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -577,6 +728,14 @@ it('never automatically resends a possibly billed run request after a protocol f
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+async function cleanupTestRuns(crashed: SpawnedChild, foreign: SpawnedChild | undefined, reclaimed: boolean): Promise<void> {
+  try {
+    if (!reclaimed) await crashed.killTree('failed crash test cleanup');
+  } finally {
+    if (foreign) await foreign.killTree('foreign run cleanup');
+  }
+}
 
 function requestLine(id: string, method: 'probe' | 'start_run' | 'cancel_run' | 'shutdown', payload: unknown): string {
   return serializeEnvelope({ protocol_version: PROTOCOL_VERSION, id, kind: 'request', method, payload });

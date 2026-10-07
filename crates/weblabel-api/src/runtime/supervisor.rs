@@ -388,6 +388,7 @@ pub mod linux_broker {
     use crate::runtime::host::SpawnError;
 
     pub const MODE: &str = "--weblabel-runtime-broker";
+    pub const NODE_MODE: &str = "--weblabel-node-runtime-broker";
     const SIGTERM: c_int = 15;
     const SIGKILL: c_int = 9;
     const WNOHANG: c_int = 1;
@@ -822,6 +823,51 @@ pub mod linux_broker {
         }
     }
 
+    /// Node has no pidfd syscall API. Pin its verified kernel parent here before
+    /// Ready; a dead/replaced parent must never authorize a runtime launch.
+    pub fn run_node(mut args: impl Iterator<Item = OsString>) -> io::Result<i32> {
+        let fd: c_int = args
+            .next()
+            .and_then(|value| value.to_str().and_then(|raw| raw.parse().ok()))
+            .filter(|fd| *fd >= 3)
+            .ok_or_else(|| io::Error::other("Node broker requires a private control descriptor"))?;
+        if unsafe { fcntl(fd, 2, 1 as c_int) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut completion = unsafe { UnixStream::from_raw_fd(fd) };
+        let parent_arg = args
+            .next()
+            .ok_or_else(|| io::Error::other("Node broker requires its parent PID"))?;
+        let parent: u32 = parent_arg
+            .to_str()
+            .and_then(|raw| raw.parse().ok())
+            .ok_or_else(|| io::Error::other("Node broker requires its parent PID"))?;
+        let start_ticks: u64 = args
+            .next()
+            .and_then(|value| value.to_str().and_then(|raw| raw.parse().ok()))
+            .ok_or_else(|| io::Error::other("Node broker requires its parent's start identity"))?;
+        let parent_matches = || {
+            (unsafe { getppid() }) as u32 == parent
+                && identity(parent).is_some_and(|record| {
+                    record.running && record.start_ticks == start_ticks
+                })
+        };
+        if !parent_matches() {
+            return Err(io::Error::other("Node broker parent identity changed before pidfd"));
+        }
+        let parent_fd = pidfd(parent)?;
+        send_signal(&parent_fd, 0)?;
+        if !parent_matches() {
+            return Err(io::Error::other("Node broker parent identity changed after pidfd"));
+        }
+        let result = run_child(
+            std::iter::once(parent_arg).chain(args),
+            &mut completion,
+            &parent_fd,
+        );
+        finish(result, &mut completion)
+    }
+
     /// Internal CLI dispatch, before constructing any threads, server or auth state.
     /// argv is passed as OS strings, not reconstructed into shell text.
     pub fn run(mut args: impl Iterator<Item = OsString>) -> io::Result<i32> {
@@ -856,7 +902,13 @@ pub mod linux_broker {
         }
         let parent_fd = unsafe { OwnedFd::from_raw_fd(parent_fd) };
         let result = run_child(args, &mut completion, &parent_fd);
-        let _ = completion.write_all(&[u8::from(result.is_err())]);
+        finish(result, &mut completion)
+    }
+    fn finish(
+        result: io::Result<std::process::ExitStatus>,
+        completion: &mut UnixStream,
+    ) -> io::Result<i32> {
+        completion.write_all(&[u8::from(result.is_err())])?;
         let status = result?;
         if let Some(number) = status.signal() {
             unsafe {
@@ -908,10 +960,17 @@ pub mod linux_broker {
         // Signal 0 verifies current support/permission, not future signal policy.
         let self_fd = pidfd(std::process::id())?;
         send_signal(&self_fd, 0)?;
+        send_signal(parent_fd, 0)?;
         completion.write_all(&[0])?;
         completion.set_read_timeout(Some(RECLAIM_DEADLINE))?;
         let mut go = [0_u8];
         completion.read_exact(&mut go)?;
+        if go[0] == 1 {
+            // Node cancellation may precede Ready. Stop without ever executing
+            // the runtime, but still confirm real ECHILD through normal cleanup.
+            cleanup()?;
+            return Ok(std::process::ExitStatus::from_raw(0));
+        }
         if go[0] != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

@@ -11,11 +11,15 @@
 //!      spawned in new process groups (detached);
 //!   3. `taskkill /pid <orphan> /F` per surviving descendant from the snapshot;
 //!   4. bounded liveness polling for the root and every known descendant.
-//! POSIX uses the same snapshot/kill algorithm with `ps` and signals.
+//! Linux reuses the API binary's private per-child subreaper broker. READY/GO
+//! gates launch; pinned parent identity and a private ECHILD acknowledgement
+//! gate completion. Other POSIX platforms retain the snapshot/signal sweep.
 
 import { spawn as spawnProcess, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import type { Duplex } from 'node:stream';
+import { redactText } from './redaction';
 
 export class SpawnPolicyError extends Error {
   readonly code: string;
@@ -248,6 +252,9 @@ function stillSameProcess(target: { pid: number; created_ms: number | null }, ta
 }
 
 export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Promise<ReclaimReport> {
+  if (process.platform === 'linux') {
+    throw new SpawnPolicyError('reclaim_requires_owned_broker', 'Linux reclamation requires the spawned child capability');
+  }
   const cutoffMs = Date.now();
   const table = snapshotProcessTable();
   const rootRecord = table.get(root.root_pid);
@@ -329,6 +336,123 @@ export function spawnChild(spec: ChildSpec, policy: SpawnPolicy): SpawnedChild {
     throw new SpawnPolicyError('cwd_untrusted', `${spec.cwd} is outside the restricted cwd root`);
   }
   const env = buildChildEnv(spec.env, policy);
+  if (process.platform === 'linux') {
+    const broker = canonicalExisting(process.env.WEBLABEL_API_BINARY ?? '', 'runtime_broker');
+    if (!statSync(broker).isFile()) throw new SpawnPolicyError('runtime_broker_untrusted');
+    const stat = readFileSync('/proc/self/stat', 'utf8');
+    const startTicks = stat.slice(stat.lastIndexOf(') ') + 2).split(/\s+/)[19];
+    if (!/^\d+$/.test(startTicks ?? '')) throw new SpawnPolicyError('runtime_broker_identity_unavailable');
+    const child = spawnProcess(broker, [
+      '--weblabel-node-runtime-broker', '3', String(process.pid), startTicks, executable, ...spec.argv,
+    ], { cwd, env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+    let spawnFailure: SpawnPolicyError | undefined;
+    let onSpawnError = (error: Error) => {
+      spawnFailure ??= new SpawnPolicyError('spawn_failed', `could not launch owned Linux broker ${broker}`);
+      spawnFailure.cause = error;
+      spawnFailure.message = `spawn_failed: ${error.message}`;
+      // The synchronous no-PID response has already been emitted by its caller.
+      // Preserve the later errno/cause as a redacted stderr diagnostic as well.
+      process.stderr.write(`[spawn] ${redactText(spawnFailure.message)}\n`);
+    };
+    child.once('error', (error: Error) => onSpawnError(error));
+    if (child.pid === undefined) {
+      spawnFailure = new SpawnPolicyError('spawn_failed', `could not launch owned Linux broker ${broker}`);
+      child.stdin?.destroy();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      (child.stdio[3] as Duplex | null)?.destroy();
+      throw spawnFailure;
+    }
+    const pid = child.pid;
+    const started_at_ms = Date.now();
+    const control = child.stdio[3] as Duplex;
+    const completion = Promise.withResolvers<void>();
+    // Adapters may not await wait() until after reading stdout. Keep the original
+    // rejection observable then, without an interim unhandled rejection.
+    void completion.promise.catch(() => {});
+    const exited = exitPromise(child);
+    let ready = false;
+    let acknowledged = false;
+    let stopping = false;
+    let reclaim: Promise<ReclaimReport> | undefined;
+    const fail = (detail: string) => {
+      completion.reject(new SpawnPolicyError('reclaim_incomplete', detail));
+      control.destroy();
+    };
+    const startupTimer = setTimeout(() => fail('Linux broker startup deadline exceeded'), RECLAIM_DEADLINE_MS);
+    control.on('data', (bytes: Buffer) => {
+      for (const status of bytes) {
+        if (!ready) {
+          if (status !== 0) { fail('Linux broker initialization failed'); return; }
+          ready = true;
+          clearTimeout(startupTimer);
+          control.write(Buffer.from([stopping ? 1 : 0]));
+          if (stopping) control.end();
+        } else if (!acknowledged) {
+          if (status !== 0) { fail('Linux broker did not confirm owned-child cleanup'); return; }
+          acknowledged = true;
+        } else {
+          fail('Linux broker sent an unexpected completion byte');
+          return;
+        }
+      }
+    });
+    control.on('error', (error: Error) => fail(`Linux broker control failed: ${error.message}`));
+    control.on('end', () => {
+      clearTimeout(startupTimer);
+      if (acknowledged) completion.resolve();
+      else fail('Linux broker closed without cleanup acknowledgement');
+    });
+    control.on('close', () => {
+      clearTimeout(startupTimer);
+      if (acknowledged) completion.resolve();
+      else fail('Linux broker closed without cleanup acknowledgement');
+    });
+    onSpawnError = (error: Error) => {
+      clearTimeout(startupTimer);
+      const failure = new SpawnPolicyError('spawn_failed', `Linux broker spawn failed: ${error.message}`);
+      failure.cause = error;
+      completion.reject(failure);
+      control.destroy();
+    };
+    const waited = Promise.all([exited, completion.promise]).then(([status]) => status);
+    void waited.catch(() => {});
+    return {
+      pid,
+      started_at_ms,
+      stdin: child.stdin!,
+      stdout: child.stdout!,
+      stderr: child.stderr!,
+      wait: () => waited,
+      killTree: (reason: string) => {
+        if (reclaim) return reclaim;
+        stopping = true;
+        clearTimeout(startupTimer);
+        // EOF on this private peer requests cleanup of this broker's kernel
+        // children only; never signal a bare PID or infer reparented ownership.
+        if (ready) control.end();
+        reclaim = (async () => {
+          const deadline = Promise.withResolvers<never>();
+          const timer = setTimeout(() => deadline.reject(
+            new SpawnPolicyError('reclaim_incomplete', `${reason}: Linux broker cleanup deadline exceeded`),
+          ), RECLAIM_DEADLINE_MS);
+          try {
+            await Promise.race([waited, deadline.promise]);
+            // ACK proves owned children stopped/reaped, not which PIDs received
+            // SIGKILL. The broker can exit voluntarily after a normal CLI exit.
+            return { root_pid: pid, mechanism: 'linux per-child subreaper broker + pidfd + ECHILD acknowledgement', descendants_found: [], killed: [] };
+          } catch (error) {
+            completion.reject(error);
+            throw error;
+          } finally {
+            clearTimeout(timer);
+            control.destroy();
+          }
+        })();
+        return reclaim;
+      },
+    };
+  }
   const child = spawnProcess(executable, spec.argv, {
     cwd,
     env,
@@ -370,16 +494,15 @@ export async function superviseChild(
       // died cannot belong to its tree (pid reuse) and must not be killed.
       const exited_at_ms = Date.now();
       const { code, signal } = await exited;
-      const reclaimed = await reclaimProcessTree(
-        { root_pid: child.pid, spawned_at_ms: child.started_at_ms, exited_at_ms },
-        'exit cleanup',
-      );
+      const reclaimed = process.platform === 'linux'
+        ? await child.killTree('exit cleanup')
+        : await reclaimProcessTree(
+            { root_pid: child.pid, spawned_at_ms: child.started_at_ms, exited_at_ms },
+            'exit cleanup',
+          );
       return { outcome: code === 0 && signal === null ? 'exited' : 'crashed', exit_code: code, reclaimed };
     }
-    const reclaimed = await reclaimProcessTree(
-      { root_pid: child.pid, spawned_at_ms: child.started_at_ms },
-      winner,
-    );
+    const reclaimed = await child.killTree(winner);
     await exited;
     return { outcome: winner, exit_code: null, reclaimed };
   } finally {

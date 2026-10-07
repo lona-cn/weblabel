@@ -2,12 +2,14 @@ import { randomUUID, createHash } from 'node:crypto';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { readdir, readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const targetDirectory = resolve(root, process.env.CARGO_TARGET_DIR ?? 'target');
+const cargoCwd = process.env.CARGO_CWD ?? process.env.WEBLABEL_CARGO_CWD ?? process.env.CARGO_HOME ?? root;
 const report = join(root, 'reports/T29');
 const sentinel = `T29-synthetic-build-secret-${randomUUID()}`;
 const compilerEnv = { ...process.env };
@@ -22,7 +24,7 @@ const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 
 if (revision.status !== 0) throw new Error('Cannot record production source commit');
 const sourceCommit = revision.stdout.trim();
 function run(argv, cwd = root) {
-  if (argv[0] === 'cargo') argv.push('--config', `build.build-dir=${JSON.stringify(join(root, 'target'))}`);
+  if (argv[0] === 'cargo') argv.push('--config', `build.build-dir=${JSON.stringify(targetDirectory)}`);
   const resolved = process.platform === 'win32' && argv[0] === 'pnpm' ? [process.execPath, resolve(dirname(process.execPath), 'node_modules/corepack/dist/pnpm.js'), ...argv.slice(1)] : argv;
   console.log('> ' + argv.join(' '));
   const result = spawnSync(resolved[0], resolved.slice(1), { cwd, env, stdio: 'pipe', encoding: 'utf8', shell: false });
@@ -43,23 +45,22 @@ async function files(path) {
 const outputs = [join(report, 'production-web'), join(report, 'production-host')];
 await mkdir(report, { recursive: true });
 try {
-  const safeCargoCwd = process.env.CARGO_HOME ?? root;
-  const cargoPaths = ['--manifest-path', join(root, 'Cargo.toml'), '--target-dir', join(root, 'target')];
-  run(['cargo', 'build', '--release', '--locked', ...cargoPaths, '-p', 'weblabel-api', '--bin', 'weblabel-api'], safeCargoCwd);
-  run(['cargo', 'build', '--release', '--locked', ...cargoPaths, '--target', 'wasm32-unknown-unknown', '-p', 'wasm-bridge'], safeCargoCwd);
-  run(['wasm-bindgen', join(root, 'target/wasm32-unknown-unknown/release/wasm_bridge.wasm'), '--target', 'web', '--out-dir', join(root, 'crates/wasm-bridge/target/weblabel-web-public/wasm'), '--out-name', 'wasm_bridge']);
+  const cargoPaths = ['--manifest-path', join(root, 'Cargo.toml'), '--target-dir', targetDirectory];
+  run(['cargo', 'build', '--release', '--locked', ...cargoPaths, '-p', 'weblabel-api', '--bin', 'weblabel-api'], cargoCwd);
+  run(['cargo', 'build', '--release', '--locked', ...cargoPaths, '--target', 'wasm32-unknown-unknown', '-p', 'wasm-bridge'], cargoCwd);
+  run(['wasm-bindgen', join(targetDirectory, 'wasm32-unknown-unknown/release/wasm_bridge.wasm'), '--target', 'web', '--out-dir', join(root, 'crates/wasm-bridge/target/weblabel-web-public/wasm'), '--out-name', 'wasm_bridge']);
   run(['pnpm', 'exec', 'vite', 'build', '--sourcemap', '--outDir', outputs[0]], join(root, 'apps/web'));
   run([process.execPath, 'scripts/build-agent-host.mjs']);
   const require = createRequire(join(root, 'apps/agent-host/package.json'));
   const { build } = require('esbuild');
   await build({ absWorkingDir: root, entryPoints: { runtime: 'apps/agent-host/src/runtime/main.ts', mcp: 'apps/agent-host/src/mcp/main.ts' }, bundle: true, platform: 'node', target: 'node24', format: 'esm', minify: true, sourcemap: 'external', outdir: outputs[1], outExtension: { '.js': '.mjs' }, logLevel: 'info' });
-  const executable = join(root, 'target/release', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
+  const executable = join(targetDirectory, 'release', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
   const productFiles = [executable, ...await files(outputs[0]), ...await files(outputs[1]), ...await files(join(root, 'target/agent-host'))];
   const evidence = [];
   for (const path of productFiles) {
     const bytes = await readFile(path);
     if (bytes.includes(Buffer.from(sentinel))) throw new Error(`Synthetic credential leaked in ${path}`);
-    evidence.push({ path: path.slice(root.length + 1).replaceAll('\\', '/'), bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+    evidence.push({ path: relative(root, path).replaceAll('\\', '/'), bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
   }
   const maps = productFiles.filter(path => path.endsWith('.map'));
   if (maps.length < 3) throw new Error('Production sourcemap outputs were not actually generated');

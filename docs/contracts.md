@@ -271,6 +271,10 @@ T32授权配置指纹：AiPreviewResponse必含execution_configuration_hash。AP
 
 `Create` 只允许 detector 或显式启用 bbox_output 的 profile；VLM 属性审校不允许改变 bbox、创建/删除正式对象。模型返回不在 allowed_ops 中的动作以 422 拒绝，不能偷偷照做。
 
+Model worker 在首个 item 前执行 fenced progress checkpoint；item 与周期为原 claim lease_for/3 的续租 future 必须并发 poll，成功续租后 reset 周期。续租失败即 drop item 及其 RuntimeLease；item/renewal 的作用域先结束，再写下一个 checkpoint 或终态，避免 item 持有 SQLite writer 时互等。续租沿用 JobQueue 现有 MAX_LEASE 规则，不改变 claim 的初始期限或测试 deadline。进度的 succeeded/failed owned Value 只在结果变化时重算，heartbeat 借用缓存，Queue 的 &Value/JSON 契约不变。
+
+所有 worker-owned 状态、started/interruption/terminal、RunDriver event 与 candidate 写入，必须在对应 SQLite writer 事务内用 fresh server now 验证原 job_id、running、worker_id、fencing_token 和未过期 lease，再进入持久化 funnel。RunDriver 私有借用原不可变 LeasedJob，不重载新 owner、不获得 claim/renew 权利；等待 writer 前的时钟不能证明等待后仍有权限。现有 AgentTools 的 run-token/授权通道保持独立，不把这个 RunDriver guard 描述为该通道的 worker epoch fencing。
+
 ## C5. ProviderAdapter 与私有 Host 协议
 
 ```ts
@@ -298,9 +302,11 @@ export interface RuntimeEnvelope {
 Unknown 在契约入口立即按 JSON Schema 验证，不能以 `any` 流遍业务。NDJSON 一行一消息，单行 ≤4 MiB，stdout 专用；stderr 日志脱敏。图片字节不塞入该行：API 创建运行暂存 grant，Host/Worker 只获得已批准映射。每个 request 必有 response；超时、重复 ID、未知 method、进程退出、截断/超长行必须被测试。协议错误终止本次运行，不重启后自动重发可能已计费调用。
 三个API适配器只在本run私有内存保存已解析credential；所有公开RunEvent的message、嵌套data值及键按该确切值脱敏，包括未校验工具名、合法工具call_id及上游错误正文。供应商协议内部保留原始call_id；错误分类、已观察usage和未知null用量不被脱敏改写。
 
-Linux 每个受管 Host 使用发行 API 二进制的私有、单线程 broker，只有它设置 process-local subreaper；原 CLI executable、argv、allowlisted env、cwd 和 stdio 原样转发，不增加 shell。启动必须经过 broker 初始化完成的 READY 和 API 根能力建立后的 GO；GO 前控制通道断开不得执行 CLI。API 在 spawn 前捕获自身 process pidfd；创建线程退出不能终止仍然存活的 API 所属运行。pidfd/subreaper 不可用或启动失败必须明确报错，不退回裸 PID、环境 marker 或已失效 PPID 链。控制 FD 只在 broker 内保留，CLI exec 前关闭继承。
+Linux 每个受管 Host 及 Node Host 创建的 provider child 都使用发行 API 二进制的私有、单线程 broker，只有各 broker 设置 process-local subreaper；原 CLI executable、argv、allowlisted env、cwd 和 stdio 原样转发，不增加 shell。API 在 spawn 前捕获自身 process pidfd；Node child broker 以 getppid 与 /proc start_ticks 在 pidfd_open 前后确认原 Node parent 身份。创建线程退出不能终止仍然存活的所属运行。pidfd/subreaper 不可用或启动失败必须明确报错，不退回裸 PID、环境 marker 或已失效 PPID 链。控制 FD 只在 broker 内保留，CLI exec 前关闭继承。
 
-Linux 清理由可克隆、私有的根能力持有目标 identity/pidfd/完成通道，Reader/Host 析构不能使异步 RuntimeLease 丢失该能力。正常退出、崩溃、deadline、cancel、API process death 或控制通道 EOF 都回收本 Host 后代（含 setsid/double-fork），不触碰其他运行或无关进程。只有 waitpid 确认 ECHILD 后才发送成功完成确认；missing ACK、EOF、信号失败或超过完整 5 秒预算保持清理失败。同一根缓存一次完整尝试结果，Drop 与显式清理不能另起预算或把失败重试成成功；真正 CLI 的退出码/信号保留。这是进程所有权与生命周期机制，不是第三方 CLI 的权限 sandbox，也不证明远端收费调用已取消。
+Node child 启动先通过既有 executable/cwd/env policy，再从受信父进程的 WEBLABEL_API_BINARY 定位 broker；API 仅为显式 WEBLABEL_HOST_CONFIG 的受管 Host 注入此内部 locator，并覆盖 provider 同名配置，普通 CLI 不额外获得该变量。READY 后私有 byte 0 为 GO、byte 1 为 STOP-before-exec；STOP 经实际 ECHILD 清理确认后完成，不执行 provider 或记入请求 ledger。GO 前 EOF/未知 byte 失败关闭。Node 在检查 child.pid 前注册 exec-error listener；无 PID 的 exec 拒绝返回 controlled spawn_failed、关闭自己的 stdio，并保留后到的 errno/cause 与脱敏诊断，不让 unhandled error 杀死 Host。
+
+Linux 清理由私有根能力持有目标 identity/pidfd/完成通道，Reader/Host 析构不能使异步 RuntimeLease 丢失该能力。正常退出、崩溃、deadline、cancel、父 API/Node process death 或控制通道 EOF 都回收本根后代（含 setsid/double-fork），不触碰其他运行或无关进程。只有 waitpid 确认 ECHILD 后才发送成功完成确认；wait 同时要求确认与真正 CLI 退出状态。missing ACK、EOF、信号失败或超过完整 5 秒预算保持清理失败，同一根缓存一次完整尝试结果，Drop 与显式清理不能另起预算或把失败重试成成功。ACK 不证明具体哪些 PID 收到 SIGKILL，Node reclaim report 不伪造 killed 列表；CLI 原退出码/信号仍保留。这是进程所有权与生命周期机制，不是第三方 CLI 权限 sandbox，也不证明远端收费调用已取消。
 
 MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装本项目 server 配置，不读取项目里任意第三方 MCP 配置。它通过 loopback `/internal/agent-tools/{tool}` 与 API 通信，使用专门生成的短期 run-scoped Bearer，不能使用管理员 session。该路由同样检查允许Host和已提供的Origin；私有非浏览器客户端可省略Origin，浏览器cookie不替代Bearer，也不触发浏览器CSRF规则。token只在子进程环境/私有通道传递，不在argv、工具参数或输出里传递；到期/取消后立即失效。
 

@@ -96,7 +96,11 @@ export async function seed(admin: ApiClient, app: TestApp): Promise<Seeded> {
   const baseUrl=app.base_url;
   const database=new DatabaseSync(database_path_for_test(app));
   try {
+    // The background API worker also acquires the SQLite writer. Wait once at
+    // the transaction boundary, before taking a read snapshot or inserting.
+    database.exec('PRAGMA busy_timeout=1000; BEGIN IMMEDIATE');
     database.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES(?,'mock','weblabel-mock-source-v1','none',?,'ready','mock_only','builtin-mock-1',NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(MOCK_PROFILE,JSON.stringify({image_input:true,tools:false,structured_output:true,bbox_output:true,attributes:true}));
+    database.exec('COMMIT');
   } finally { database.close(); }
   const project = await admin.request<JsonObject>('POST', '/api/projects', {
     name: 'T25 model jobs', description: 'isolated t25 integration project', allow_self_review: false,
@@ -111,7 +115,26 @@ export async function seed(admin: ApiClient, app: TestApp): Promise<Seeded> {
   const image = new Uint8Array(await readFile(new URL('../fixtures/media/orientation-1.jpg', import.meta.url)));
   const upload = await uploadImage(baseUrl, uploader, projectId, image, `t25-import-${crypto.randomUUID()}`);
   expect(upload.status).toBe(202);
-  expect(await drainJobs(admin)).toBe(1);
+  const importJobId = stringField(await upload.json(), 'import_job_id', 'upload');
+  await drainJobs(admin);
+  // A background fixture can already own this job. Read its completion rather
+  // than requiring the manual drain to win the worker lease.
+  let importJob: JsonObject = {};
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const response = await admin.request<JsonObject>('GET', `/api/jobs/${importJobId}`);
+    expect(response.status, JSON.stringify(response.json)).toBe(200);
+    importJob = response.json;
+    if (['failed', 'cancelled', 'interrupted'].includes(String(importJob.state))) {
+      throw new Error(`Fixture image import failed: ${JSON.stringify(importJob)}`);
+    }
+    if (importJob.state === 'succeeded') break;
+    const delay = Promise.withResolvers<void>();
+    setTimeout(delay.resolve, 50);
+    await delay.promise;
+  }
+  expect(importJob.state, JSON.stringify(importJob)).toBe('succeeded');
+  expect(importJob).toMatchObject({ job_id: importJobId, kind: 'media_import', progress_completed: 1, progress_total: 1 });
 
   const listed = await admin.request<JsonObject>('GET', `/api/projects/${projectId}/assets`);
   expect(listed.status).toBe(200);

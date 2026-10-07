@@ -274,10 +274,10 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
     #[cfg(not(target_os = "linux"))]
     let mut command = Command::new(&executable);
     #[cfg(target_os = "linux")]
-    let mut command = Command::new(
-        supervisor::linux_broker::executable()
-            .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?,
-    );
+    let broker_executable = supervisor::linux_broker::executable()
+        .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?;
+    #[cfg(target_os = "linux")]
+    let mut command = Command::new(&broker_executable);
     #[cfg(target_os = "linux")]
     let (completion, inherited_completion, inherited_parent) = {
         use std::os::fd::AsRawFd;
@@ -301,6 +301,14 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
         // parent environment out of the child entirely.
         .env_clear()
         .envs(config.build_env());
+    #[cfg(target_os = "linux")]
+    if config.allowed_env.iter().any(|key| key == "WEBLABEL_HOST_CONFIG")
+        && config.extra_env.contains_key("WEBLABEL_HOST_CONFIG")
+    {
+        // Internal operator locator, selected by this API, not provider extra_env.
+        // Only managed Node Hosts receive it; provider child allowlists remain intact.
+        command.env("WEBLABEL_API_BINARY", &broker_executable);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
