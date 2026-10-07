@@ -6,7 +6,9 @@ Windows 本地图片标注与 AI 审校工作台：React 业务 UI、Rust/WASM �
 
 ## 本地启动
 
-需要固定 Node **24.15.0**、pnpm **10.34.5**、Rust **1.96.0**（Windows MSVC 与 WASM target）、wasm-bindgen **0.2.128**、wasm-pack **0.15.0**，以及真实 WebGPU 的桌面 Chrome/Edge。
+需要固定 Node **24.16.0**、pnpm **10.34.5**、Rust **1.96.0**（Windows MSVC 与 WASM target）、wasm-bindgen **0.2.128**、wasm-pack **0.15.0**，以及真实 WebGPU 的桌面 Chrome/Edge。
+
+先按[当前终端选择 Node](docs/getting-started.md#当前终端选择-node)校验并选择官方独立 ZIP 中的 Node；以下命令须在该终端运行。只改当前进程的 PATH，不全局安装或改配置；仅用绝对路径启动父 Node 不足以切换子命令中的裸 `node`。结束后还原原 PATH。旧 Node 24.15.0 发行应保留，改用新目录构建，不能改写旧 manifest。
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -45,6 +47,8 @@ pnpm start:local
 这张表来自 T32 已提交报告，不读取私人凭证，不以 mock、配置型号或替代通道产生“supported”。Anthropic API 源码也不能替代 Claude 订阅关卡。模型只能产候选；接受必须明确、可撤销、事务保存；外发须项目策略、服务端 scope 与用户授权。
 
 ## 数据保护
+
+先在当前终端选择同一 Node 24.16.0，再执行：
 
 ```powershell
 node scripts/backup.mjs --data-dir "data" --backup-dir "backups/新的备份"

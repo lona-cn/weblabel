@@ -1,11 +1,19 @@
-# T00 Compatibility Matrix
+# Compatibility: current runtime pin and T00 evidence
+
+## Current local runtime pin
+
+The current exact Node.js pin is **24.16.0**; pnpm **10.34.5**, Rust **1.96.0**, wasm-bindgen CLI **0.2.128**, and wasm-pack **0.15.0** are unchanged. Use the [session-local Windows selection](getting-started.md#当前终端选择-node) before build/start/doctor/backup/restore. Keep global Node/configuration unchanged and build a new release directory: an old 24.15.0 release manifest does not match the current pin and must not be edited in place.
+
+Main's [official runtime receipt](../reports/T31/node-runtime-migration/official-runtime-verification.json) records the isolated Windows x64 Node 24.16.0 ZIP matching the official HTTPS SHA256 inventory, the extracted executable hash, Valid OpenJS Authenticode, an actual Node `v24.16.0` / libuv `1.52.1` probe, and global Node remaining 24.15.0. It does not claim PGP release-key verification, browser/GPU or backup/restore acceptance under 24.16.0, or a confirmed fix for the local worker crash. Tool/runtime identity is not product acceptance.
+
+## T00 historical matrix — 2026-09-25
 
 All versions below were queried or executed on this workstation on 2026-09-25. This records toolchain availability/build checks only, not product or GPU acceptance.
 
 | Component | Pinned value | Evidence / status |
 |---|---|---|
 | OS target | Windows x64, MSVC | Rust target `x86_64-pc-windows-msvc` is installed. |
-| Node.js | 24.15.0 | Exact version pinned in `.node-version`, `package.json` engines, and CI. |
+| Node.js | 24.15.0 | At T00, this exact version was pinned in `.node-version`, `package.json` engines, and CI; it is the historical observation, not the current pin. |
 | pnpm | 10.34.5 | Exact stable v10 release; Node engine `>=18.12`, verified on Node 24.15.0. `pnpm run doctor` executes the app diagnostic. Direct `pnpm doctor` is reserved by pnpm 12 and does not dispatch the package script under pnpm 10 either; use `pnpm run doctor`. |
 | Rust | 1.96.0 (`x86_64-pc-windows-msvc`) | `rustc --version`; stable toolchain installed and pinned in `rust-toolchain.toml`. |
 | Rust WASM target | `wasm32-unknown-unknown` | Installed for pinned Rust toolchain. |

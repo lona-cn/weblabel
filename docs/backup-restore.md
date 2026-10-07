@@ -2,13 +2,15 @@
 
 本指南面向有权管理本机业务数据的操作者。备份是**包含全部本地项目业务数据**的管理操作，不是某个成员的项目导出；仅向可信操作者提供本地文件访问权限。项目成员交付应使用鉴权快照导出。
 
+当前 CLI 要求精确 Node **24.16.0**。先按[当前终端选择 Node](getting-started.md#当前终端选择-node)选择经官方校验的独立 runtime，并让以下命令及其子进程继承该终端 PATH；完成或异常返回时还原原 PATH，不改全局安装/配置。恢复后启动还需要用当前 pin 构建的新发行，不能改写旧 Node 24.15.0 的 `release.json`；若新发行不在默认目录，将下文启动的 `--build-dir` 改为实际构建目录。
+
 ## 创建备份
 
 ```powershell
 node scripts/backup.mjs --data-dir "data" --backup-dir "backups/2026-10-06 中文 备份"
 ```
 
-`--backup-dir` 必须不存在，且不能位于源数据目录内部。不复制源目录整体，也不复制裸主 DB 忽略 WAL。固定 Node 24.15.0 的 **SQLite backup API** 从源 SQLite 连接生成事务一致的数据库快照，可以在 API 正常运行且 WAL 有提交时执行。源业务 DB 不被 scrub/修改。对象在快照取得后根据该 DB 的媒体/导出引用收集；不可变对象的存在和 SHA256 验证完成后才发布 `backup.json`。源不存在或 hash 不符会非零退出，不生成“成功”的清单。
+`--backup-dir` 必须不存在，且不能位于源数据目录内部。不复制源目录整体，也不复制裸主 DB 忽略 WAL。实现使用 **SQLite backup API** 从源 SQLite 连接生成事务一致的数据库快照，支持在 API 正常运行且 WAL 有提交时执行；当前 Node pin 是 24.16.0，这不把既有 T33 备份证据改记为该版本的实测（见[兼容性记录](compatibility.md)）。源业务 DB 不被 scrub/修改。对象在快照取得后根据该 DB 的媒体/导出引用收集；不可变对象的存在和 SHA256 验证完成后才发布 `backup.json`。源不存在或 hash 不符会非零退出，不生成“成功”的清单。
 
 备份内容只有：
 
@@ -31,8 +33,13 @@ node scripts/backup.mjs --data-dir "data" --backup-dir "backups/2026-10-06 中�
 保持旧目录不动，选择**完全不存在**的新目录，其父目录必须已存在：
 
 ```powershell
-node scripts/restore.mjs --backup-dir "backups/2026-10-06 中文 备份" --data-dir "data-restored"
-node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data-restored"
+try {
+  node scripts/restore.mjs --backup-dir "backups/2026-10-06 中文 备份" --data-dir "data-restored"
+  if ($LASTEXITCODE -ne 0) { throw "恢复失败；未启动新目录，请先处理终端错误" }
+  node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data-restored"
+} finally {
+  $env:PATH = $originalPath
+}
 ```
 
 只接受当前发行的精确 schema/迁移，先检查清单、每个文件长度/hash、SQLite 完整性与外键、实际 schema 和当前迁移重建的 schema、实际已应用版本清单、对象引用闭包和认证已清空，全部成功才独占创建新目标。schema SQL 仅将 CRLF 规范为 LF，不放宽字段/约束/trigger 比较。版本不兼容应先使用对应源码发行或另做受审查迁移；没有“忽略 schema”开关。

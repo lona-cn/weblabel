@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { resolveArgv } from './task.mjs';
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const pins = Object.freeze({ node: '24.15.0', pnpm: '10.34.5', rust: '1.96.0', wasm_bindgen: '0.2.128', wasm_pack: '0.15.0' });
+export const pins = Object.freeze({ node: '24.16.0', pnpm: '10.34.5', rust: '1.96.0', wasm_bindgen: '0.2.128', wasm_pack: '0.15.0' });
 export function options(argv, allowed) {
   const out = {};
   for (let i = 0; i < argv.length; i += 2) {

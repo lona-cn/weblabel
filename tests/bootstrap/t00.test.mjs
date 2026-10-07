@@ -24,7 +24,8 @@ test('doctor exits nonzero when required tools are missing', () => {
   try {
     const result = spawnSync(process.execPath, ['scripts/doctor.mjs'], { cwd: root, env, encoding: 'utf8' });
     assert.notEqual(result.status, 0);
-    assert.match(result.stdout, /node: unavailable/);
+    const diagnosis = JSON.parse(result.stdout);
+    assert.equal(diagnosis.tools.find(tool => tool.name === 'rustc')?.status, 'missing');
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

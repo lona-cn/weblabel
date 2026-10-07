@@ -5,31 +5,59 @@
 ## 前提
 
 - Windows x64，桌面 Chrome/Edge，真实可用的 WebGPU device。无 WebGPU 时只能使用诊断/只读入口，不能用 Canvas2D 冒充编辑。
-- Node **24.15.0**、pnpm **10.34.5**、Rust **1.96.0**（MSVC 工具链与 Windows C++ Build Tools）、Rust 的 `wasm32-unknown-unknown` target。
+- Node **24.16.0**、pnpm **10.34.5**、Rust **1.96.0**（MSVC 工具链与 Windows C++ Build Tools）、Rust 的 `wasm32-unknown-unknown` target。
 - wasm-bindgen CLI **0.2.128**、wasm-pack **0.15.0**。不要使用 `latest` 或浮动 `stable` 替代这些固定版本。
 - 首次获取锁定依赖需要网络；构建不会登录账号、调用收费模型或下载模型权重。源发行没有签名 exe、安装器或跨 OS 安装承诺。
 
-## 构建与启动
+## 当前终端选择 Node
 
-在仓库根目录的终端运行：
+从 [Node 官方发行目录](https://nodejs.org/download/release/v24.16.0/)获取 Windows x64 ZIP，用该目录的 `SHASUMS256.txt` 校验 SHA256 后，解压到自己选择的独立目录。保留完整 ZIP 内容，包括随附的 `node_modules/corepack/dist/pnpm.js`；现有 Windows 构建和 doctor 会使用 Node 旁的 Corepack，不能只复制 `node.exe`。这不需要全局安装 Node、启用全局 Corepack shim 或修改全局配置。
+
+在仓库根目录的 PowerShell 中选择该目录（示例路径须改为你实际解压的位置）：
 
 ```powershell
-pnpm install --frozen-lockfile
-pnpm build
-pnpm start:local
+$nodeDir = (Resolve-Path "C:/tools/node-v24.16.0-win-x64").Path
+$originalPath = $env:PATH
+$env:PATH = "$nodeDir;$originalPath"
+node --version       # 必须是 v24.16.0
+node -p "process.execPath" # 必须位于上面的独立目录
+pnpm --version       # 必须是 10.34.5
 ```
 
-根命令已注册真实入口；等价的直接入口是：
+只修改此终端进程的 PATH，后续裸 `node` 子命令才会继承选中的版本；仅以绝对路径调用父 `node.exe` 不够。版本不符时先停止，检查目录和实际命令，不降低校验。若没有可用的 `pnpm` 命令，下文 `pnpm <参数>` 可改为 `node "$nodeDir/node_modules/corepack/dist/pnpm.js" <参数>`，使用仓库固定的 pnpm 10.34.5；首次获取该版本可能需要网络，不运行全局安装或配置命令。
+
+下文构建、启动、doctor、备份及恢复均使用此终端选择。完成或命令异常返回后还原 `$env:PATH = $originalPath`；也可以在独立子 PowerShell 中执行，退出子终端不会改变父终端的 PATH。下面的主流程用 `finally` 自动还原；之后若要运行其他入口或在新终端操作，应重新执行上述选择步骤。
+
+## 构建与启动
+
+在仓库根目录的终端按顺序执行；任一步非零退出时先停止并处理终端错误，不继续启动：
+
+```powershell
+try {
+  pnpm install --frozen-lockfile
+  if ($LASTEXITCODE -ne 0) { throw "依赖安装失败，请先处理终端错误" }
+  pnpm build
+  if ($LASTEXITCODE -ne 0) { throw "构建失败，请先处理终端错误" }
+  pnpm run doctor
+  if ($LASTEXITCODE -ne 0) { throw "doctor 未通过，请先处理终端错误" }
+  pnpm start:local
+} finally {
+  $env:PATH = $originalPath
+}
+```
+
+根命令已注册真实入口；在已选择 Node 的终端中，等价的直接入口是：
 
 ```powershell
 node scripts/build.mjs
 node scripts/start-local.mjs
 ```
 
-默认发行目录是 `target/local-release`，默认数据目录是 `data`。重复构建**拒绝已有发行目录**，以免旧产物混入新发行。选择新的目录：
+默认发行目录是 `target/local-release`，默认数据目录是 `data`。重复构建**拒绝已有发行目录**，以免旧产物混入新发行。旧 Node 24.15.0 发行的工具 pin 不兼容当前启动器；保留旧目录与 `release.json`，不要手改清单，选择新的目录重新构建：
 
 ```powershell
 node scripts/build.mjs --build-dir "target/本地 release 2026-10-06"
+node scripts/doctor.mjs --build-dir "target/本地 release 2026-10-06"
 node scripts/start-local.mjs --build-dir "target/本地 release 2026-10-06" --data-dir "data/项目 数据"
 ```
 
@@ -46,6 +74,8 @@ node scripts/build.mjs --cargo-cwd "D:/cache/cargo/bin" --build-dir "target/新�
 ```
 
 以上 `D:` 路径是本次实测机器的示例，不是产品依赖；你的机器应使用自己的已安装路径。构建内部使用绝对 manifest/target 路径。
+
+doctor 是只读 JSON 诊断：工具版本须为 `pinned`，选定发行须为 `hashes_valid`；缺失、版本不符或发行损坏均非零退出。新目录的 `--build-dir` 必须在构建、doctor 与启动时保持一致。它不证明浏览器 WebGPU、模型账户或 Node 24.16.0 的备份恢复实测通过；[兼容性记录](compatibility.md)区分当前 pin 与历史观察。
 
 ## 首次登录与人工标注
 
