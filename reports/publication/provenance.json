@@ -1,0 +1,576 @@
+{
+  "schema_version": 1,
+  "mode": "user_authorized_sanitized_history_publication",
+  "originalHead": "8df1d5c78c0483108aa0aba67fee4bf38c5dc4c2",
+  "filteredHead": "04fffe142bd6b33c8b1b68d561ee19143d3eb5ce",
+  "filterRepo": {
+    "version": "2.47.0",
+    "officialCommit": "6f79afc8c90c592a3052e6cc53c2ca8907515bca",
+    "sha256": "67447413e273fc76809289111748870b6f6072f08b17efe94863a92d810b7d94"
+  },
+  "historyVerification": {
+    "originalHead": "8df1d5c78c0483108aa0aba67fee4bf38c5dc4c2",
+    "filteredHead": "04fffe142bd6b33c8b1b68d561ee19143d3eb5ce",
+    "commits": 186,
+    "preservedAllAuthorsDatesParents": true,
+    "identicalRetainedSourceTreeEntries": 89417,
+    "removedGeneratedEvidenceTreeEntries": 177003,
+    "reachableObjects": 2609,
+    "reachableBlobs": 1253,
+    "uncompressedBlobBytes": 14566863,
+    "largestBlobBytes": 152065,
+    "oversized": [],
+    "credentialCandidates": [],
+    "authScope": "All reachable retained text blobs checked for listed structured-runtime/session/provider patterns; source-tree policy removes all unapproved report data/archives; not proof of all possible secret formats"
+  },
+  "policy": "Withhold generated report evidence across all history; retain every committed application/tool/config source and required public baseline/provider receipt/synthetic fixtures. Original local repository, complete evidence and uncommitted files unchanged.",
+  "tasks": {
+    "T00": {
+      "status": "done",
+      "originalBaseCommit": null,
+      "originalIntegratedCommit": "13ba6c2a98eb9b43e22f6c0c71b30b6d85336a32",
+      "originalEvidence": [
+        "reports/T00/result.json",
+        "reports/T00/tests.log",
+        "reports/T00/review.md"
+      ],
+      "publicIntegratedCommit": "afd568a15ecd62f07f83c7956e0b6cefe4ac8c30"
+    },
+    "T01": {
+      "status": "done",
+      "originalBaseCommit": "c904909df94232dbda1f64ddf4221a09f9879222",
+      "originalIntegratedCommit": "b0531eaab0ff4924e0419d9053eda21bcbd477fb",
+      "originalEvidence": [
+        "reports/T01/result.json",
+        "reports/T01/tests.log",
+        "reports/T01/review.md"
+      ],
+      "publicIntegratedCommit": "db3cf5cb29ab0e907d587bdb9ff51f84746c7eb4"
+    },
+    "T02": {
+      "status": "done",
+      "originalBaseCommit": "c904909df94232dbda1f64ddf4221a09f9879222",
+      "originalIntegratedCommit": "ad69b1d4677c12eaa489b09ecd07a7669f0bc798",
+      "originalEvidence": [
+        "reports/T02/result.json",
+        "reports/T02/tests.log",
+        "reports/T02/review.md"
+      ],
+      "publicIntegratedCommit": "98cf1723bb25bafbc061f7fe477d8dd058135efa"
+    },
+    "T03": {
+      "status": "done",
+      "originalBaseCommit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "originalIntegratedCommit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "originalEvidence": [
+        "reports/T03/result.json",
+        "reports/T03/tests.log",
+        "reports/T03/review.md"
+      ],
+      "publicIntegratedCommit": "34d7f7e5bce71c8c0b9fb533aeefccdb21fd27de"
+    },
+    "T04": {
+      "status": "done",
+      "originalBaseCommit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "originalIntegratedCommit": "f3f066ba367d1a8d0a8c00342044a31a2d0f481f",
+      "originalEvidence": [
+        "reports/T04/"
+      ],
+      "publicIntegratedCommit": "734d5e24c1a5ecc54c2952b2e8cfaf412a924010"
+    },
+    "T05": {
+      "status": "done",
+      "originalBaseCommit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "originalIntegratedCommit": "6e7d67d0300c530a99de9e5be2a77fa237044c40",
+      "originalEvidence": [
+        "reports/T05/result.json",
+        "reports/T05/tests.log",
+        "reports/T05/review.md",
+        "reports/T05/gpu-adapter-recheck.md",
+        "reports/T05/renderer.png",
+        "reports/T05/zoom-scale2.png",
+        "reports/T05/zoom-scale4.png",
+        "reports/T05/loss-before.png",
+        "reports/T05/loss-after-recover.png"
+      ],
+      "publicIntegratedCommit": "6532cf2589e0cae092a2637571c6699469036a82"
+    },
+    "T06": {
+      "status": "done",
+      "originalBaseCommit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "originalIntegratedCommit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "originalEvidence": [
+        "reports/T06/result.json",
+        "reports/T06/tests.log",
+        "reports/T06/review.md"
+      ],
+      "publicIntegratedCommit": "34d7f7e5bce71c8c0b9fb533aeefccdb21fd27de"
+    },
+    "T07": {
+      "status": "done",
+      "originalBaseCommit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "originalIntegratedCommit": "bb6e9f81bfe301337291a8439e7d1dce91f5bdb9",
+      "originalEvidence": [
+        "reports/T07/result.json",
+        "reports/T07/tests.log",
+        "reports/T07/review.md"
+      ],
+      "publicIntegratedCommit": "edd7529c0ac2848b0fa6454d5c8428db6d90c8a1"
+    },
+    "T08": {
+      "status": "done",
+      "originalBaseCommit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "originalIntegratedCommit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "originalEvidence": [
+        "reports/T08/result.json",
+        "reports/T08/tests.log",
+        "reports/T08/review.md"
+      ],
+      "publicIntegratedCommit": "34d7f7e5bce71c8c0b9fb533aeefccdb21fd27de"
+    },
+    "T09": {
+      "status": "done",
+      "originalBaseCommit": "6e7d67d",
+      "originalIntegratedCommit": "ec85e2180d9356bf7bf32a545fd63b621d3ee96a",
+      "originalEvidence": [
+        "reports/T09/result.json",
+        "reports/T09/tests.log",
+        "reports/T09/review.md",
+        "reports/T09/canvas-render.png",
+        "reports/T09/integration.patch"
+      ],
+      "publicIntegratedCommit": "f890eff07277aec5bb3e7693b3c38846dd5b60a5"
+    },
+    "T10": {
+      "status": "done",
+      "originalBaseCommit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "originalIntegratedCommit": "8261e3590c1d462cdb001987ce9f34470e035ac6",
+      "originalEvidence": [
+        "reports/T10/result.json",
+        "reports/T10/tests.log",
+        "reports/T10/review.md"
+      ],
+      "publicIntegratedCommit": "42f00d3d20218501bcf3fa99fea512c5ea5dd9b3"
+    },
+    "T11": {
+      "status": "done",
+      "originalBaseCommit": "1f30860936fe1d1b868c0428ee89a23c79c06fa0",
+      "originalIntegratedCommit": "e26769d11c53be2f991ced3faae6d43b780a3e37",
+      "originalEvidence": [
+        "reports/T11/result.json",
+        "reports/T11/tests.log",
+        "reports/T11/review.md"
+      ],
+      "publicIntegratedCommit": "42273bd61fdde4e4ef8a1befbb7fd7c290a225da"
+    },
+    "T12": {
+      "status": "done",
+      "originalBaseCommit": "ec85e21",
+      "originalIntegratedCommit": "57245a4addf9dcc2afe6917195a4ad8b247d0fe8",
+      "originalEvidence": [
+        "reports/T12/result.json",
+        "reports/T12/tests.log",
+        "reports/T12/review.md"
+      ],
+      "publicIntegratedCommit": "9b4945f3851c475bd034a9d32d6b500d51cba41f"
+    },
+    "T13": {
+      "status": "done",
+      "originalBaseCommit": "ec85e21",
+      "originalIntegratedCommit": "0609e0ddc49962dd0da37c6a87d5bedd92b94370",
+      "originalEvidence": [
+        "reports/T13/result.json",
+        "reports/T13/tests.log",
+        "reports/T13/review.md"
+      ],
+      "publicIntegratedCommit": "3be67ac89785d05f884a907b8d9e097df3922583"
+    },
+    "T14": {
+      "status": "done",
+      "originalBaseCommit": "6723f4ec27be7c043680610f7bf89b04d8d0013d",
+      "originalIntegratedCommit": "52ac6e622bdff04d136be2198a4c5ae4f3ee2476",
+      "originalEvidence": [
+        "reports/T14/result.json",
+        "reports/T14/tests.log",
+        "reports/T14/review.md"
+      ],
+      "publicIntegratedCommit": "f2395f9f86bc10eb213bea67002dc9b86f9da7ee"
+    },
+    "T15": {
+      "status": "done",
+      "originalBaseCommit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
+      "originalIntegratedCommit": "02c0c523302a67f572692879763f591c7885c005",
+      "originalEvidence": [
+        "reports/T15/result.json",
+        "reports/T15/tests.log",
+        "reports/T15/review.md"
+      ],
+      "publicIntegratedCommit": "23ab0efacf1646d664895a90c2c3d1ee4a2d6e70"
+    },
+    "T16": {
+      "status": "done",
+      "originalBaseCommit": "5eebf38518f6418a6d4ee112f84043cc4eba03ab",
+      "originalIntegratedCommit": "85f2a48d5710906115a71ec88739ca00c48a2e67",
+      "originalEvidence": [
+        "reports/T16/result.json",
+        "reports/T16/tests.log",
+        "reports/T16/review.md"
+      ],
+      "publicIntegratedCommit": "356fbac6014993108a0a9ac5986ee6ac64a00398"
+    },
+    "T17": {
+      "status": "done",
+      "originalBaseCommit": "5eebf38518f6418a6d4ee112f84043cc4eba03ab",
+      "originalIntegratedCommit": "53e41ddc41ab423fdceeae8414784618a736a515",
+      "originalEvidence": [
+        "reports/T17/result.json",
+        "reports/T17/tests.log",
+        "reports/T17/review.md"
+      ],
+      "publicIntegratedCommit": "353abec8b4728de85d8be3f78f7c4f305efb83a6"
+    },
+    "T18": {
+      "status": "done",
+      "originalBaseCommit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
+      "originalIntegratedCommit": "00cc0ccc265e861095973a2273011e908be3460a",
+      "originalEvidence": [
+        "reports/T18/result.json",
+        "reports/T18/tests.log",
+        "reports/T18/review.md"
+      ],
+      "publicIntegratedCommit": "656df24afb31d26fde3436ec103b09a6d49df36c"
+    },
+    "T19": {
+      "status": "done",
+      "originalBaseCommit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
+      "originalIntegratedCommit": "523bbfdada50ada9520041e7248b968bc44afcaa",
+      "originalEvidence": [
+        "reports/T19/result.json",
+        "reports/T19/tests.log",
+        "reports/T19/review.md"
+      ],
+      "publicIntegratedCommit": "f11285edb475e748d3fd7848644ce50603051433"
+    },
+    "T20": {
+      "status": "done",
+      "originalBaseCommit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
+      "originalIntegratedCommit": "7a630af334120a39a6d2d561ff9292de1d79b70f",
+      "originalEvidence": [
+        "reports/T20/result.json",
+        "reports/T20/tests.log",
+        "reports/T20/review.md"
+      ],
+      "publicIntegratedCommit": "a8ec69c3f330fb7d614110b2f3fabbdf0e2d1527"
+    },
+    "T21": {
+      "status": "done",
+      "originalBaseCommit": "ab82532f1aa369aa655761226fb946c4d5a6da4c",
+      "originalIntegratedCommit": "e7eb8d21d233c0d7e2324c444f8193dc2be035f3",
+      "originalEvidence": [
+        "reports/T21/result.json",
+        "reports/T21/tests.log",
+        "reports/T21/review.md"
+      ],
+      "publicIntegratedCommit": "af1d03b7deb3dbf5ce13e704ddf5ec9fa28832ac"
+    },
+    "T22": {
+      "status": "done",
+      "originalBaseCommit": "1190d87",
+      "originalIntegratedCommit": "deeb2f70718bb8be514ada138933cfa55cbbc3ba",
+      "originalEvidence": [
+        "reports/T22/result.json",
+        "reports/T22/tests.log",
+        "reports/T22/review.md"
+      ],
+      "publicIntegratedCommit": "1ca6097fbdbf467ef9d5f8e77c6ef7ab8a07aa85"
+    },
+    "T23": {
+      "status": "done",
+      "originalBaseCommit": "bcac566",
+      "originalIntegratedCommit": "cad3ce8a4bd08217f35299c1b5e4e1ca4474d143",
+      "originalEvidence": [
+        "reports/T23/result.json",
+        "reports/T23/tests.log",
+        "reports/T23/review.md"
+      ],
+      "publicIntegratedCommit": "9a8f7d7f5f4eee5041172841092d7462be9107fe"
+    },
+    "T24": {
+      "status": "done",
+      "originalBaseCommit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
+      "originalIntegratedCommit": "aaeaefa56cfb6e707e4174e9a4d58e410ccc041d",
+      "originalEvidence": [
+        "reports/T24/result.json",
+        "reports/T24/tests.log",
+        "reports/T24/review.md"
+      ],
+      "publicIntegratedCommit": "d217f096e2ad35dfa042c300cc47a8f9147f6710"
+    },
+    "T25": {
+      "status": "done",
+      "originalBaseCommit": "985402f9296084059d22706e79c2bc8af1d555d6",
+      "originalIntegratedCommit": "c569fef4f88526aa49297255941b69d16e0cedd5",
+      "originalEvidence": [
+        "reports/T25/result.json",
+        "reports/T25/tests.log",
+        "reports/T25/review.md",
+        "reports/T25/independent-final-repair-review.json",
+        "reports/T25/main-canonical-registered-g2-green.log",
+        "reports/T25/main-canonical-http-revisions.json",
+        "reports/T25/main-final-authorization-runtime-green.log",
+        "reports/T25/main-adminrace-authorization-runtime-green.log",
+        "reports/T25/main-final-node-and-contract-green.log",
+        "reports/T25/integration-notes.md"
+      ],
+      "publicIntegratedCommit": "6fee034f4e3403c615c0405deb1edef07cd83821"
+    },
+    "T26": {
+      "status": "done",
+      "originalBaseCommit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
+      "originalIntegratedCommit": "2b37cb57305042a0a34017e10e5adf58d9e49cf7",
+      "originalEvidence": [
+        "reports/T26/result.json",
+        "reports/T26/tests.log",
+        "reports/T26/review.md"
+      ],
+      "publicIntegratedCommit": "c957b03758d76369fe97f904f62fe11a506f4c02"
+    },
+    "T27": {
+      "status": "done",
+      "originalBaseCommit": "e33819d887c2b4c1826831d56e3d52e8359778f5",
+      "originalIntegratedCommit": "51569b5e787845db6dc0aef6a847bfd8aab4913b",
+      "originalEvidence": [
+        "reports/T27/result.json",
+        "reports/T27/tests.log",
+        "reports/T27/review.md",
+        "reports/T27/ui-smoke.webp"
+      ],
+      "publicIntegratedCommit": "fc96082320f269a592a9c74447f1cab422e39ba8"
+    },
+    "T28": {
+      "status": "done",
+      "originalBaseCommit": "6c0b67d6b1e2218ab0fdf03b0612b0ac18c7b6f2",
+      "originalIntegratedCommit": "5ca36cf8a7cb69b74a0499565a24b4306feed439",
+      "originalEvidence": [
+        "reports/T28/result.json",
+        "reports/T28/tests.log",
+        "reports/T28/review.md",
+        "reports/T28/main-final-registered-complete.log",
+        "reports/T28/main-final-nonempty-flag-consumer.log",
+        "reports/T28/independent-final-integration-closure.json",
+        "reports/T28/main-final-metrics.json",
+        "reports/T28/main-release-browser-refusal.json"
+      ],
+      "publicIntegratedCommit": "f2011c32acbbb4ac1312ebe28bcc1c5bbb86a6f1"
+    },
+    "T29": {
+      "status": "done",
+      "originalBaseCommit": "732a2b48feaa8dcc0af8de1a88b47b5835e60dc3",
+      "originalIntegratedCommit": "efc611f61be0b0b8c6c5f1fd52b6ac6eb9adcfa0",
+      "originalEvidence": [
+        "reports/T29/result.json",
+        "reports/T29/tests.log",
+        "reports/T29/review.md",
+        "reports/T29/main-final-execution.json",
+        "reports/T29/main-pinned-final-registered.log",
+        "reports/T29/main-production-scan.json",
+        "reports/T29/independent-final-evidence-closure.json"
+      ],
+      "publicIntegratedCommit": "aff9f29105352edd3708b762bd5e5de04e379719"
+    },
+    "T30": {
+      "status": "done",
+      "originalBaseCommit": "4ae638360874e7e4c2ac1b9cca6ab54737e91f2a",
+      "originalIntegratedCommit": "ac722ee21724aa6e0f877f4168e8837f7fcfd0c7",
+      "originalEvidence": [
+        "reports/T30/result.json",
+        "reports/T30/main-final-registered-fresh-binary.log",
+        "reports/T30/main-t09-closed-browser.log",
+        "reports/T30/main-recovery-surface-ledger.json",
+        "reports/T30/main-parent-actual-recovery.json",
+        "reports/T30/independent-final-layout-source-review.json",
+        "reports/T32/independent-final-bounded-security-review.json"
+      ],
+      "publicIntegratedCommit": "c1c72082518b1000e9298e3b6a1fc5d1c4b8da8e"
+    },
+    "T31": {
+      "status": "done",
+      "originalBaseCommit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
+      "originalIntegratedCommit": "d156ffbe636881b91ab690aca620cbf639c613a5",
+      "originalEvidence": [
+        "reports/T31/result.json",
+        "reports/T31/runs/2026-10-06T16-36-24.410Z/result.json",
+        "reports/T31/runs/2026-10-06T16-36-24.410Z/source.json",
+        "reports/T31/runs/2026-10-06T13-33-09.159Z/result.json",
+        "reports/T31/runs/2026-10-06T13-33-09.159Z/source.json",
+        "reports/T31/main-full-hardware-combined-producers.log",
+        "reports/T31/pixels/2026-10-06T13-04-15.533Z/command.json",
+        "reports/T31/main-independent-core-and-activity-review.json",
+        "reports/T31/main-independent-producer-and-release-review.json",
+        "reports/T31/main-independent-cpu-attribution.json",
+        "reports/T31/cpu-attribution/attribution.json",
+        "reports/T31/main-immutable-producer-integration-closure.json",
+        "reports/T31/main-independent-immutable-producer-findings-closed.json",
+        "reports/T31/main-formal-attempt-executor-timeout.json",
+        "reports/T31/main-current-mirror-remaining-cpu-baseline.json",
+        "reports/T31/main-owned-row-optimization-smoke.json",
+        "reports/T31/main-independent-shared-object-row-review.json",
+        "reports/T31/main-current-row-production-ui-smoke.json",
+        "reports/T31/main-independent-current-row-production-ui-review.json",
+        "reports/T33/main-owned-mirror-full-native.log",
+        "reports/T33/main-owned-mirror-web-consumers-final.log",
+        "reports/T33/main-owned-row-release-build.log",
+        "reports/T31/main-native-cuts-integration-proof.json",
+        "reports/T31/main-independent-native-cuts-review.json",
+        "reports/T31/producer/dense-observation.json",
+        "reports/T31/main-native-cuts-production-partial.json",
+        "reports/T33/main-owned-native-cuts-product-build.log",
+        "reports/T31/main-independent-native-cuts-evidence-review.json",
+        "reports/T31/production-delete-investigation/result.json",
+        "reports/T31/main-production-keyboard-source-review.json",
+        "reports/T31/main-keyboard-browser-results.json",
+        "reports/T31/main-independent-production-keyboard-review.json",
+        "reports/T31/main-independent-keyboard-auth-closure.json",
+        "reports/T31/main-keyboard-archive-reader-smoke.json",
+        "reports/T31/main-production-keyboard-package-ui.json",
+        "reports/T31/main-production-keyboard-package-ui.webp",
+        "reports/T31/main-production-keyboard-package-ui-stop.json",
+        "reports/T33/main-owned-production-keyboard-product-build.log",
+        "reports/T31/runs/2026-10-06T19-08-43.511Z/result.json",
+        "reports/T31/runs/2026-10-06T19-08-43.511Z/source.json",
+        "reports/T31/runs/2026-10-06T19-08-43.511Z/auth-sanitization.json",
+        "reports/T31/node-worker-crash-investigation/main-system-evidence.json",
+        "reports/T31/node-worker-crash-investigation/main-import-probe.json",
+        "reports/T31/node-worker-crash-investigation/main-closed-loopback-probe.json",
+        "reports/T31/main-independent-keyboard-package-and-partial-hardware-review.json",
+        "reports/T31/node-worker-crash-investigation/source-research.json",
+        "reports/T31/node-worker-crash-investigation/findings.md",
+        "reports/T31/node-worker-crash-investigation/main-fork-phase-probe.json",
+        "reports/T31/node-worker-crash-investigation/main-diagnostic-disposition.json",
+        "reports/T31/node-worker-crash-investigation/main-own-api-process-inspection.json",
+        "reports/T31/main-current-partial-archive-reader-smoke.json",
+        "reports/T31/node-runtime-migration/main-source-integration.json",
+        "reports/T31/node-runtime-migration/independent-source-review.json",
+        "reports/T31/node-runtime-migration/independent-source-review-closure.json",
+        "reports/T31/node-runtime-migration/main-before-source-commit-verification.json",
+        "reports/T31/node-runtime-migration/main-fresh-package-ui.json",
+        "reports/T31/node-runtime-migration/main-fresh-package-ui.png",
+        "reports/T31/node-runtime-migration/main-fresh-package-ui-stop.json",
+        "reports/T33/main-owned-node2416-product-build.json",
+        "reports/T33/main-owned-node2416-product-doctor.json",
+        "reports/T33/main-owned-node2416-registered-t33.json",
+        "reports/T31/node-runtime-migration/main-original-formal-launch.json",
+        "reports/T31/node-runtime-migration/independent-product-evidence-review.json",
+        "reports/T31/runs/2026-10-07T04-29-50.974Z/result.json",
+        "reports/T31/runs/2026-10-07T04-29-50.974Z/source.json",
+        "reports/T31/node-runtime-migration/main-original-formal-8000-failed-summary.json",
+        "reports/T31/node-runtime-migration/main-original-formal-trace-auth-sanitization.json",
+        "reports/T31/committed-profile/main-diagnostic-launch.json",
+        "reports/T31/committed-profile/main-diagnostic.json",
+        "reports/T31/committed-profile/main-diagnostic.cpu-profile.json",
+        "reports/T31/committed-profile/main-diagnostic-analysis.json",
+        "reports/T31/committed-profile/core-map.json",
+        "reports/T31/committed-profile/render-map.json",
+        "reports/T31/committed-profile/web-map.json",
+        "reports/T31/node-runtime-migration/main-product-execution-attribution.json",
+        "reports/T31/node-runtime-migration/main-completed-formal-metadata-smoke.json",
+        "reports/T31/committed-profile/main-diagnostic-method.json",
+        "reports/T31/committed-profile/main-diagnostic-service-stop.json",
+        "reports/T31/committed-profile/main-canvas-label-fix-decision.json",
+        "reports/T31/committed-profile/idb-array-diagnostic.json",
+        "reports/T31/committed-profile/idb-array-diagnostic-summary.json",
+        "reports/T31/committed-profile/idb-array-diagnostic-run-command.json",
+        "reports/T31/committed-profile/idb-array-diagnostic-run.log",
+        "reports/T31/node-runtime-migration/independent-original-formal-review.json",
+        "reports/T31/node-runtime-migration/main-original-formal-archive-closure.json",
+        "reports/T31/committed-profile/main-react-attribution-correction.json",
+        "reports/T31/label-projection/independent-source-review.json",
+        "reports/T31/label-projection/main-integration-consumer-verification.json",
+        "reports/T31/label-projection/main-source-commit.json",
+        "reports/T31/label-projection/main-fresh-production-ui.json",
+        "reports/T31/label-projection/main-fresh-production-ui-stop.json",
+        "reports/T31/label-projection/main-fresh-production-execution-method.json",
+        "reports/T31/label-projection/main-original-formal-launch.json",
+        "reports/T31/runs/2026-10-07T05-41-36.521Z/result.json",
+        "reports/T31/runs/2026-10-07T05-41-36.521Z/source.json",
+        "reports/T31/runs/2026-10-07T05-41-36.521Z/environment.json",
+        "reports/T31/runs/2026-10-07T05-41-36.521Z/samples-2000.json",
+        "reports/T31/runs/2026-10-07T05-41-36.521Z/samples-10000.json",
+        "reports/T31/runs/2026-10-07T05-41-36.521Z/hardware.log",
+        "reports/T31/label-projection/main-original-formal-recomputed-summary.json",
+        "reports/T31/label-projection/main-original-formal-trace-auth-sanitization.json",
+        "reports/T31/label-projection/main-current-run-lifecycle-source-auth-audit.json",
+        "reports/T31/label-projection/independent-main-passing-closure-review.json",
+        "reports/T31/label-projection/main-final-acceptance-closure.json"
+      ],
+      "publicIntegratedCommit": "2e211306304d030b6e837e185eb050b691cbc56a"
+    },
+    "T32": {
+      "status": "blocked",
+      "originalBaseCommit": "66166686147199be75f4a392c3314c24dc36ec3c",
+      "originalIntegratedCommit": "2cf8e45425527635935a1f66d062b4b0b3119a5e",
+      "originalEvidence": [
+        "reports/T32/result.json",
+        "reports/T32/main-final-registered-closure.log",
+        "reports/T32/main-final-hash-evidence-consumers-after-apply.log",
+        "reports/T32/main-execution-ledger.json",
+        "reports/T32/independent-final-bounded-security-review.json"
+      ],
+      "publicIntegratedCommit": "1a37f1632f6c6bc6c9bf3b9569fdfb0c0e2874b1"
+    },
+    "T33": {
+      "status": "done",
+      "originalBaseCommit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
+      "originalIntegratedCommit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+      "originalEvidence": [
+        "reports/T33/result.json",
+        "reports/T33/main-final-closure.json",
+        "reports/T33/main-registered-t33-business-final.log",
+        "reports/T33/main-current-combined-release-build.log",
+        "reports/T33/main-project-scalar-red.json",
+        "reports/T33/main-project-scalar-green.json",
+        "reports/T33/main-terminal-public-bootstrap-green.log",
+        "reports/T33/main-terminal-bootstrap-password-login.json",
+        "reports/T33/main-independent-final-surface-evidence-review.json",
+        "reports/T33/main-current-native-cpu-contracts-single-job.log",
+        "reports/T33/main-current-native-strict-clippy.log",
+        "reports/T33/main-current-native-release-strict-clippy.log"
+      ],
+      "publicIntegratedCommit": "1f8ae24c49d2527dff1797ddce3348e1fabd08f1"
+    },
+    "T34": {
+      "status": "done",
+      "originalBaseCommit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
+      "originalIntegratedCommit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+      "originalEvidence": [
+        "reports/T34/result.json",
+        "reports/T34/main-final-closure.json",
+        "reports/T33/main-registered-t34-combined.log",
+        "reports/T33/main-web-combined-final.log",
+        "reports/T34/main-current-release-ui-smoke.json",
+        "reports/T34/main-current-release-workbench.png",
+        "reports/T34/keyboard-closure/result.json",
+        "reports/T34/main-zero.json",
+        "reports/T34/main-demo.json",
+        "reports/T34/main-demo.csv",
+        "reports/T33/main-pilot-public-pixel-inventory-green.log",
+        "reports/T33/main-independent-final-surface-evidence-review.json"
+      ],
+      "publicIntegratedCommit": "1f8ae24c49d2527dff1797ddce3348e1fabd08f1"
+    },
+    "T35": {
+      "status": "pending",
+      "originalBaseCommit": null,
+      "originalIntegratedCommit": null,
+      "originalEvidence": [],
+      "publicIntegratedCommit": null
+    }
+  },
+  "limits": [
+    "Original task acceptance is inherited provenance, not a new public-copy product/hardware/model test",
+    "Raw logs/traces/screenshots/profiles/run JSON and old evidence-reassembly inputs are not distributed",
+    "Original commit IDs in historical source/docs remain original provenance; use commit-map for current public ancestors; private absolute historical-worktree commands are not portable",
+    "No official account/model/paid call or deployment performed; T32 blocked/T35 pending/global release not started",
+    "Reachable retained-text credential pattern audit is bounded to named patterns, not all possible secret formats"
+  ]
+}

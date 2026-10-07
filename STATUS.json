@@ -1,67 +1,109 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "d156ffbe636881b91ab690aca620cbf639c613a5",
+  "application_commit": "2e211306304d030b6e837e185eb050b691cbc56a",
   "last_updated_at": "2026-10-07T06:12:59.300Z",
   "tasks": {
     "T00": {
       "status": "done",
       "base_commit": null,
-      "integrated_commit": "13ba6c2a98eb9b43e22f6c0c71b30b6d85336a32",
+      "integrated_commit": "afd568a15ecd62f07f83c7956e0b6cefe4ac8c30",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": null,
+      "original_integrated_commit": "13ba6c2a98eb9b43e22f6c0c71b30b6d85336a32",
+      "archived_original_evidence": [
         "reports/T00/result.json",
         "reports/T00/tests.log",
         "reports/T00/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T01": {
       "status": "done",
-      "base_commit": "c904909df94232dbda1f64ddf4221a09f9879222",
-      "integrated_commit": "b0531eaab0ff4924e0419d9053eda21bcbd477fb",
+      "base_commit": "ade28d1ca2809e58517159b97883533b7c5a8d26",
+      "integrated_commit": "db3cf5cb29ab0e907d587bdb9ff51f84746c7eb4",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "c904909df94232dbda1f64ddf4221a09f9879222",
+      "original_integrated_commit": "b0531eaab0ff4924e0419d9053eda21bcbd477fb",
+      "archived_original_evidence": [
         "reports/T01/result.json",
         "reports/T01/tests.log",
         "reports/T01/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T02": {
       "status": "done",
-      "base_commit": "c904909df94232dbda1f64ddf4221a09f9879222",
-      "integrated_commit": "ad69b1d4677c12eaa489b09ecd07a7669f0bc798",
+      "base_commit": "ade28d1ca2809e58517159b97883533b7c5a8d26",
+      "integrated_commit": "98cf1723bb25bafbc061f7fe477d8dd058135efa",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "c904909df94232dbda1f64ddf4221a09f9879222",
+      "original_integrated_commit": "ad69b1d4677c12eaa489b09ecd07a7669f0bc798",
+      "archived_original_evidence": [
         "reports/T02/result.json",
         "reports/T02/tests.log",
         "reports/T02/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T03": {
       "status": "done",
-      "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
-      "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "base_commit": "021a8d3313699766d6b4ef3719e380792fd3b1ef",
+      "integrated_commit": "34d7f7e5bce71c8c0b9fb533aeefccdb21fd27de",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "original_integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "archived_original_evidence": [
         "reports/T03/result.json",
         "reports/T03/tests.log",
         "reports/T03/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T04": {
       "status": "done",
-      "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
-      "integrated_commit": "f3f066ba367d1a8d0a8c00342044a31a2d0f481f",
+      "base_commit": "0c9d14f528169d01f5fa5a9d95b33043779415c7",
+      "integrated_commit": "734d5e24c1a5ecc54c2952b2e8cfaf412a924010",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "original_integrated_commit": "f3f066ba367d1a8d0a8c00342044a31a2d0f481f",
+      "archived_original_evidence": [
         "reports/T04/"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T05": {
       "status": "done",
-      "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
-      "integrated_commit": "6e7d67d0300c530a99de9e5be2a77fa237044c40",
+      "base_commit": "0c9d14f528169d01f5fa5a9d95b33043779415c7",
+      "integrated_commit": "6532cf2589e0cae092a2637571c6699469036a82",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "notes": [
+        "原 blocked 判定(无 WebGPU adapter)已证伪:是 Playwright headless shell 启动伪象,RTX 5060 Ti 可用(见 gpu-adapter-recheck.md);真实 gate 曾因捕获顺序、linear→非 sRGB surface、bbox 描边仅内半像素 3 个真缺陷失败。",
+        "wl-renderer 修复: surface view_formats sRGB 重解释 + *Srgb render view(硬件 sRGB 编码/线性混合)、bbox quad 外扩 + |sdf|<=0.75 带宽、截图在 dispose 前捕获;5 张真实截图留存。",
+        "wl-reviewer 独立审查 Adequate:逐字节解码 5 张截图复核像素证据,14 个既有断言逐字保留/新增 47 个无放松,3 个根因经 diff 与 wgpu 30.0.1 源码证实;F1(58 计数不可复现→更正为 78)/F2(软件适配器黑名单扩宽)/F3(共享 boot 强制 gate)/F4(integration_note)已全部修复。",
+        "主Agent复跑 pnpm test:task T05 全绿(11 unit + 3 真实适配器视觉),vitest 158/158、weblabel-api 78、contracts 3/3、fmt 干净;注册关卡含 wasm 重建,陈旧 wasm/软件 GPU 不能通过。"
+      ],
+      "original_base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "original_integrated_commit": "6e7d67d0300c530a99de9e5be2a77fa237044c40",
+      "archived_original_evidence": [
         "reports/T05/result.json",
         "reports/T05/tests.log",
         "reports/T05/review.md",
@@ -72,235 +114,349 @@
         "reports/T05/loss-before.png",
         "reports/T05/loss-after-recover.png"
       ],
-      "blockers": [],
-      "notes": [
-        "原 blocked 判定(无 WebGPU adapter)已证伪:是 Playwright headless shell 启动伪象,RTX 5060 Ti 可用(见 gpu-adapter-recheck.md);真实 gate 曾因捕获顺序、linear→非 sRGB surface、bbox 描边仅内半像素 3 个真缺陷失败。",
-        "wl-renderer 修复: surface view_formats sRGB 重解释 + *Srgb render view(硬件 sRGB 编码/线性混合)、bbox quad 外扩 + |sdf|<=0.75 带宽、截图在 dispose 前捕获;5 张真实截图留存。",
-        "wl-reviewer 独立审查 Adequate:逐字节解码 5 张截图复核像素证据,14 个既有断言逐字保留/新增 47 个无放松,3 个根因经 diff 与 wgpu 30.0.1 源码证实;F1(58 计数不可复现→更正为 78)/F2(软件适配器黑名单扩宽)/F3(共享 boot 强制 gate)/F4(integration_note)已全部修复。",
-        "主Agent复跑 pnpm test:task T05 全绿(11 unit + 3 真实适配器视觉),vitest 158/158、weblabel-api 78、contracts 3/3、fmt 干净;注册关卡含 wasm 重建,陈旧 wasm/软件 GPU 不能通过。"
-      ]
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T06": {
       "status": "done",
-      "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
-      "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "base_commit": "021a8d3313699766d6b4ef3719e380792fd3b1ef",
+      "integrated_commit": "34d7f7e5bce71c8c0b9fb533aeefccdb21fd27de",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "original_integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "archived_original_evidence": [
         "reports/T06/result.json",
         "reports/T06/tests.log",
         "reports/T06/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T07": {
       "status": "done",
-      "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
-      "integrated_commit": "bb6e9f81bfe301337291a8439e7d1dce91f5bdb9",
+      "base_commit": "0c9d14f528169d01f5fa5a9d95b33043779415c7",
+      "integrated_commit": "edd7529c0ac2848b0fa6454d5c8428db6d90c8a1",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "original_integrated_commit": "bb6e9f81bfe301337291a8439e7d1dce91f5bdb9",
+      "archived_original_evidence": [
         "reports/T07/result.json",
         "reports/T07/tests.log",
         "reports/T07/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T08": {
       "status": "done",
-      "base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
-      "integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "base_commit": "021a8d3313699766d6b4ef3719e380792fd3b1ef",
+      "integrated_commit": "34d7f7e5bce71c8c0b9fb533aeefccdb21fd27de",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "c59271e24a634e1be75a01e707ad23dfedf2aa06",
+      "original_integrated_commit": "4653630f213849b74d961d14880d6e34c84e5ddb",
+      "archived_original_evidence": [
         "reports/T08/result.json",
         "reports/T08/tests.log",
         "reports/T08/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T09": {
       "status": "done",
-      "base_commit": "6e7d67d",
-      "integrated_commit": "ec85e2180d9356bf7bf32a545fd63b621d3ee96a",
+      "base_commit": null,
+      "integrated_commit": "f890eff07277aec5bb3e7693b3c38846dd5b60a5",
       "evidence": [
-        "reports/T09/result.json",
-        "reports/T09/tests.log",
-        "reports/T09/review.md",
-        "reports/T09/canvas-render.png",
-        "reports/T09/integration.patch"
+        "reports/publication/provenance.json"
       ],
       "blockers": [],
       "notes": [
         "wl-renderer 实现;wl-reviewer 判定 adequate-with-fixes 无阻断;F1-F5 全部修复(hash 61字符更正、provenance 对齐、get_viewport 并入 guard、错误通道定性、序数更正)。",
         "主Agent接受附加只读 get_viewport(): Viewport(最小 Rust 视图读回,不改 C3 冻结语义,无需 ADR);后续任务可依赖。",
         "主Agent复跑全绿:pnpm test:task T09 18/18、vitest 176/176、cargo 47/47、typecheck、contracts 3/3、fmt 干净、真实GPU e2e 5/5(nvidia blackwell, BrowserWebGpu)。"
-      ]
+      ],
+      "original_base_commit": "6e7d67d",
+      "original_integrated_commit": "ec85e2180d9356bf7bf32a545fd63b621d3ee96a",
+      "archived_original_evidence": [
+        "reports/T09/result.json",
+        "reports/T09/tests.log",
+        "reports/T09/review.md",
+        "reports/T09/canvas-render.png",
+        "reports/T09/integration.patch"
+      ],
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T10": {
       "status": "done",
-      "base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
-      "integrated_commit": "8261e3590c1d462cdb001987ce9f34470e035ac6",
+      "base_commit": "0c9d14f528169d01f5fa5a9d95b33043779415c7",
+      "integrated_commit": "42f00d3d20218501bcf3fa99fea512c5ea5dd9b3",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "70dbc02463da4edfafe6e5bc4b43c15f8b1e9b19",
+      "original_integrated_commit": "8261e3590c1d462cdb001987ce9f34470e035ac6",
+      "archived_original_evidence": [
         "reports/T10/result.json",
         "reports/T10/tests.log",
         "reports/T10/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T11": {
       "status": "done",
-      "base_commit": "1f30860936fe1d1b868c0428ee89a23c79c06fa0",
-      "integrated_commit": "e26769d11c53be2f991ced3faae6d43b780a3e37",
+      "base_commit": "c0381bd3163915837975bc84f43262a16d5d0ab9",
+      "integrated_commit": "42273bd61fdde4e4ef8a1befbb7fd7c290a225da",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "1f30860936fe1d1b868c0428ee89a23c79c06fa0",
+      "original_integrated_commit": "e26769d11c53be2f991ced3faae6d43b780a3e37",
+      "archived_original_evidence": [
         "reports/T11/result.json",
         "reports/T11/tests.log",
         "reports/T11/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T12": {
       "status": "done",
-      "base_commit": "ec85e21",
-      "integrated_commit": "57245a4addf9dcc2afe6917195a4ad8b247d0fe8",
+      "base_commit": null,
+      "integrated_commit": "9b4945f3851c475bd034a9d32d6b500d51cba41f",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "ec85e21",
+      "original_integrated_commit": "57245a4addf9dcc2afe6917195a4ad8b247d0fe8",
+      "archived_original_evidence": [
         "reports/T12/result.json",
         "reports/T12/tests.log",
         "reports/T12/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T13": {
       "status": "done",
-      "base_commit": "ec85e21",
-      "integrated_commit": "0609e0ddc49962dd0da37c6a87d5bedd92b94370",
+      "base_commit": null,
+      "integrated_commit": "3be67ac89785d05f884a907b8d9e097df3922583",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "ec85e21",
+      "original_integrated_commit": "0609e0ddc49962dd0da37c6a87d5bedd92b94370",
+      "archived_original_evidence": [
         "reports/T13/result.json",
         "reports/T13/tests.log",
         "reports/T13/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T14": {
       "status": "done",
-      "base_commit": "6723f4ec27be7c043680610f7bf89b04d8d0013d",
-      "integrated_commit": "52ac6e622bdff04d136be2198a4c5ae4f3ee2476",
+      "base_commit": "763987eb976f01a0a344059a481716dfb9e35b03",
+      "integrated_commit": "f2395f9f86bc10eb213bea67002dc9b86f9da7ee",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "6723f4ec27be7c043680610f7bf89b04d8d0013d",
+      "original_integrated_commit": "52ac6e622bdff04d136be2198a4c5ae4f3ee2476",
+      "archived_original_evidence": [
         "reports/T14/result.json",
         "reports/T14/tests.log",
         "reports/T14/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T15": {
       "status": "done",
-      "base_commit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
-      "integrated_commit": "02c0c523302a67f572692879763f591c7885c005",
+      "base_commit": "90683d00cea436bd3e1307d6a518b41d24cab216",
+      "integrated_commit": "23ab0efacf1646d664895a90c2c3d1ee4a2d6e70",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
+      "original_integrated_commit": "02c0c523302a67f572692879763f591c7885c005",
+      "archived_original_evidence": [
         "reports/T15/result.json",
         "reports/T15/tests.log",
         "reports/T15/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T16": {
       "status": "done",
-      "base_commit": "5eebf38518f6418a6d4ee112f84043cc4eba03ab",
-      "integrated_commit": "85f2a48d5710906115a71ec88739ca00c48a2e67",
+      "base_commit": "d86378bb23756c81964c59258605ccbc9f4cbbc0",
+      "integrated_commit": "356fbac6014993108a0a9ac5986ee6ac64a00398",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "5eebf38518f6418a6d4ee112f84043cc4eba03ab",
+      "original_integrated_commit": "85f2a48d5710906115a71ec88739ca00c48a2e67",
+      "archived_original_evidence": [
         "reports/T16/result.json",
         "reports/T16/tests.log",
         "reports/T16/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T17": {
       "status": "done",
-      "base_commit": "5eebf38518f6418a6d4ee112f84043cc4eba03ab",
-      "integrated_commit": "53e41ddc41ab423fdceeae8414784618a736a515",
+      "base_commit": "d86378bb23756c81964c59258605ccbc9f4cbbc0",
+      "integrated_commit": "353abec8b4728de85d8be3f78f7c4f305efb83a6",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "5eebf38518f6418a6d4ee112f84043cc4eba03ab",
+      "original_integrated_commit": "53e41ddc41ab423fdceeae8414784618a736a515",
+      "archived_original_evidence": [
         "reports/T17/result.json",
         "reports/T17/tests.log",
         "reports/T17/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T18": {
       "status": "done",
-      "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
-      "integrated_commit": "00cc0ccc265e861095973a2273011e908be3460a",
+      "base_commit": "e9a01e6275a884cd283869fbdd0671ab444cba25",
+      "integrated_commit": "656df24afb31d26fde3436ec103b09a6d49df36c",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
+      "original_integrated_commit": "00cc0ccc265e861095973a2273011e908be3460a",
+      "archived_original_evidence": [
         "reports/T18/result.json",
         "reports/T18/tests.log",
         "reports/T18/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T19": {
       "status": "done",
-      "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
-      "integrated_commit": "523bbfdada50ada9520041e7248b968bc44afcaa",
+      "base_commit": "e9a01e6275a884cd283869fbdd0671ab444cba25",
+      "integrated_commit": "f11285edb475e748d3fd7848644ce50603051433",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
+      "original_integrated_commit": "523bbfdada50ada9520041e7248b968bc44afcaa",
+      "archived_original_evidence": [
         "reports/T19/result.json",
         "reports/T19/tests.log",
         "reports/T19/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T20": {
       "status": "done",
-      "base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
-      "integrated_commit": "7a630af334120a39a6d2d561ff9292de1d79b70f",
+      "base_commit": "e9a01e6275a884cd283869fbdd0671ab444cba25",
+      "integrated_commit": "a8ec69c3f330fb7d614110b2f3fabbdf0e2d1527",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "32012a49f41e0eb603d224fd0329ccc0c82d7b57",
+      "original_integrated_commit": "7a630af334120a39a6d2d561ff9292de1d79b70f",
+      "archived_original_evidence": [
         "reports/T20/result.json",
         "reports/T20/tests.log",
         "reports/T20/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T21": {
       "status": "done",
-      "base_commit": "ab82532f1aa369aa655761226fb946c4d5a6da4c",
-      "integrated_commit": "e7eb8d21d233c0d7e2324c444f8193dc2be035f3",
+      "base_commit": "d55023c7de10a6b5112bcf0f936c44b8d0a4cf7d",
+      "integrated_commit": "af1d03b7deb3dbf5ce13e704ddf5ec9fa28832ac",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "ab82532f1aa369aa655761226fb946c4d5a6da4c",
+      "original_integrated_commit": "e7eb8d21d233c0d7e2324c444f8193dc2be035f3",
+      "archived_original_evidence": [
         "reports/T21/result.json",
         "reports/T21/tests.log",
         "reports/T21/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T22": {
       "status": "done",
-      "base_commit": "1190d87",
-      "integrated_commit": "deeb2f70718bb8be514ada138933cfa55cbbc3ba",
+      "base_commit": null,
+      "integrated_commit": "1ca6097fbdbf467ef9d5f8e77c6ef7ab8a07aa85",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "1190d87",
+      "original_integrated_commit": "deeb2f70718bb8be514ada138933cfa55cbbc3ba",
+      "archived_original_evidence": [
         "reports/T22/result.json",
         "reports/T22/tests.log",
         "reports/T22/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T23": {
       "status": "done",
-      "base_commit": "bcac566",
-      "integrated_commit": "cad3ce8a4bd08217f35299c1b5e4e1ca4474d143",
+      "base_commit": null,
+      "integrated_commit": "9a8f7d7f5f4eee5041172841092d7462be9107fe",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "bcac566",
+      "original_integrated_commit": "cad3ce8a4bd08217f35299c1b5e4e1ca4474d143",
+      "archived_original_evidence": [
         "reports/T23/result.json",
         "reports/T23/tests.log",
         "reports/T23/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T24": {
       "status": "done",
-      "base_commit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
-      "integrated_commit": "aaeaefa56cfb6e707e4174e9a4d58e410ccc041d",
+      "base_commit": "90683d00cea436bd3e1307d6a518b41d24cab216",
+      "integrated_commit": "d217f096e2ad35dfa042c300cc47a8f9147f6710",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "0b8a7526db58b7a296ead5f98d1d13a5c10b86ff",
+      "original_integrated_commit": "aaeaefa56cfb6e707e4174e9a4d58e410ccc041d",
+      "archived_original_evidence": [
         "reports/T24/result.json",
         "reports/T24/tests.log",
         "reports/T24/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T25": {
       "status": "done",
-      "base_commit": "985402f9296084059d22706e79c2bc8af1d555d6",
-      "integrated_commit": "c569fef4f88526aa49297255941b69d16e0cedd5",
+      "base_commit": "494d2faf8d591712fcc06544277c4e3ef976b613",
+      "integrated_commit": "6fee034f4e3403c615c0405deb1edef07cd83821",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "985402f9296084059d22706e79c2bc8af1d555d6",
+      "original_integrated_commit": "c569fef4f88526aa49297255941b69d16e0cedd5",
+      "archived_original_evidence": [
         "reports/T25/result.json",
         "reports/T25/tests.log",
         "reports/T25/review.md",
@@ -312,36 +468,54 @@
         "reports/T25/main-final-node-and-contract-green.log",
         "reports/T25/integration-notes.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T26": {
       "status": "done",
-      "base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
-      "integrated_commit": "2b37cb57305042a0a34017e10e5adf58d9e49cf7",
+      "base_commit": "3aa13f657d5c731ce9d124176413a46fd7b560ca",
+      "integrated_commit": "c957b03758d76369fe97f904f62fe11a506f4c02",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "e1c2f2e06249fb1a3ada268936c9eb29a3f5b36c",
+      "original_integrated_commit": "2b37cb57305042a0a34017e10e5adf58d9e49cf7",
+      "archived_original_evidence": [
         "reports/T26/result.json",
         "reports/T26/tests.log",
         "reports/T26/review.md"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T27": {
       "status": "done",
-      "base_commit": "e33819d887c2b4c1826831d56e3d52e8359778f5",
-      "integrated_commit": "51569b5e787845db6dc0aef6a847bfd8aab4913b",
+      "base_commit": "595a21dd376d22da078bb524d7e9d32f8aedc43b",
+      "integrated_commit": "fc96082320f269a592a9c74447f1cab422e39ba8",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "e33819d887c2b4c1826831d56e3d52e8359778f5",
+      "original_integrated_commit": "51569b5e787845db6dc0aef6a847bfd8aab4913b",
+      "archived_original_evidence": [
         "reports/T27/result.json",
         "reports/T27/tests.log",
         "reports/T27/review.md",
         "reports/T27/ui-smoke.webp"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T28": {
       "status": "done",
-      "base_commit": "6c0b67d6b1e2218ab0fdf03b0612b0ac18c7b6f2",
-      "integrated_commit": "5ca36cf8a7cb69b74a0499565a24b4306feed439",
+      "base_commit": "61305a307821e56f28c77bfb33a89a54c2759c42",
+      "integrated_commit": "f2011c32acbbb4ac1312ebe28bcc1c5bbb86a6f1",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "6c0b67d6b1e2218ab0fdf03b0612b0ac18c7b6f2",
+      "original_integrated_commit": "5ca36cf8a7cb69b74a0499565a24b4306feed439",
+      "archived_original_evidence": [
         "reports/T28/result.json",
         "reports/T28/tests.log",
         "reports/T28/review.md",
@@ -351,13 +525,19 @@
         "reports/T28/main-final-metrics.json",
         "reports/T28/main-release-browser-refusal.json"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T29": {
       "status": "done",
-      "base_commit": "732a2b48feaa8dcc0af8de1a88b47b5835e60dc3",
-      "integrated_commit": "efc611f61be0b0b8c6c5f1fd52b6ac6eb9adcfa0",
+      "base_commit": "033463ba93e874c8768796d0405370578c4ecd1b",
+      "integrated_commit": "aff9f29105352edd3708b762bd5e5de04e379719",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "732a2b48feaa8dcc0af8de1a88b47b5835e60dc3",
+      "original_integrated_commit": "efc611f61be0b0b8c6c5f1fd52b6ac6eb9adcfa0",
+      "archived_original_evidence": [
         "reports/T29/result.json",
         "reports/T29/tests.log",
         "reports/T29/review.md",
@@ -366,13 +546,19 @@
         "reports/T29/main-production-scan.json",
         "reports/T29/independent-final-evidence-closure.json"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T30": {
       "status": "done",
-      "base_commit": "4ae638360874e7e4c2ac1b9cca6ab54737e91f2a",
-      "integrated_commit": "ac722ee21724aa6e0f877f4168e8837f7fcfd0c7",
+      "base_commit": "8aeae9adb7c307f9c2c5fdb7123faca880081f09",
+      "integrated_commit": "c1c72082518b1000e9298e3b6a1fc5d1c4b8da8e",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "4ae638360874e7e4c2ac1b9cca6ab54737e91f2a",
+      "original_integrated_commit": "ac722ee21724aa6e0f877f4168e8837f7fcfd0c7",
+      "archived_original_evidence": [
         "reports/T30/result.json",
         "reports/T30/main-final-registered-fresh-binary.log",
         "reports/T30/main-t09-closed-browser.log",
@@ -381,13 +567,19 @@
         "reports/T30/independent-final-layout-source-review.json",
         "reports/T32/independent-final-bounded-security-review.json"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T31": {
       "status": "done",
-      "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": "d156ffbe636881b91ab690aca620cbf639c613a5",
+      "base_commit": "36b11eddb2cdee3adc3b4a0ce4f3e1f7ebab00a5",
+      "integrated_commit": "2e211306304d030b6e837e185eb050b691cbc56a",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
+      "original_integrated_commit": "d156ffbe636881b91ab690aca620cbf639c613a5",
+      "archived_original_evidence": [
         "reports/T31/result.json",
         "reports/T31/runs/2026-10-06T16-36-24.410Z/result.json",
         "reports/T31/runs/2026-10-06T16-36-24.410Z/source.json",
@@ -493,28 +685,38 @@
         "reports/T31/label-projection/independent-main-passing-closure-review.json",
         "reports/T31/label-projection/main-final-acceptance-closure.json"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T32": {
       "status": "blocked",
-      "base_commit": "66166686147199be75f4a392c3314c24dc36ec3c",
-      "integrated_commit": "2cf8e45425527635935a1f66d062b4b0b3119a5e",
-      "evidence": [
+      "base_commit": "8c59d672584713a12261899c7c14d83acf073b72",
+      "integrated_commit": "1a37f1632f6c6bc6c9bf3b9569fdfb0c0e2874b1",
+      "evidence": [],
+      "blockers": [
+        "G4五渠道真实运行未授权/未满足：官方账号与完整型号/运行时边界、付费和generated-image预算授权、公开锁定权重及真实forward/human review；35项工程闭环和真实诊断不能替代live"
+      ],
+      "original_base_commit": "66166686147199be75f4a392c3314c24dc36ec3c",
+      "original_integrated_commit": "2cf8e45425527635935a1f66d062b4b0b3119a5e",
+      "archived_original_evidence": [
         "reports/T32/result.json",
         "reports/T32/main-final-registered-closure.log",
         "reports/T32/main-final-hash-evidence-consumers-after-apply.log",
         "reports/T32/main-execution-ledger.json",
         "reports/T32/independent-final-bounded-security-review.json"
       ],
-      "blockers": [
-        "G4五渠道真实运行未授权/未满足：官方账号与完整型号/运行时边界、付费和generated-image预算授权、公开锁定权重及真实forward/human review；35项工程闭环和真实诊断不能替代live"
-      ]
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T33": {
       "status": "done",
-      "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+      "base_commit": "36b11eddb2cdee3adc3b4a0ce4f3e1f7ebab00a5",
+      "integrated_commit": "1f8ae24c49d2527dff1797ddce3348e1fabd08f1",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
+      "original_integrated_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+      "archived_original_evidence": [
         "reports/T33/result.json",
         "reports/T33/main-final-closure.json",
         "reports/T33/main-registered-t33-business-final.log",
@@ -528,13 +730,19 @@
         "reports/T33/main-current-native-strict-clippy.log",
         "reports/T33/main-current-native-release-strict-clippy.log"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T34": {
       "status": "done",
-      "base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
-      "integrated_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+      "base_commit": "36b11eddb2cdee3adc3b4a0ce4f3e1f7ebab00a5",
+      "integrated_commit": "1f8ae24c49d2527dff1797ddce3348e1fabd08f1",
       "evidence": [
+        "reports/publication/provenance.json"
+      ],
+      "blockers": [],
+      "original_base_commit": "05cc4ce7f14a715b99ebb7fb435a38fe86542064",
+      "original_integrated_commit": "1effefb7994750fbe5f7253da676ef0a58d68966",
+      "archived_original_evidence": [
         "reports/T34/result.json",
         "reports/T34/main-final-closure.json",
         "reports/T33/main-registered-t34-combined.log",
@@ -548,14 +756,18 @@
         "reports/T33/main-pilot-public-pixel-inventory-green.log",
         "reports/T33/main-independent-final-surface-evidence-review.json"
       ],
-      "blockers": []
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     },
     "T35": {
       "status": "pending",
       "base_commit": null,
       "integrated_commit": null,
       "evidence": [],
-      "blockers": []
+      "blockers": [],
+      "original_base_commit": null,
+      "original_integrated_commit": null,
+      "archived_original_evidence": [],
+      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
     }
   },
   "release": {
@@ -568,5 +780,15 @@
       "G4": "not_run",
       "G5": "not_run"
     }
+  },
+  "original_application_commit": "d156ffbe636881b91ab690aca620cbf639c613a5",
+  "publication": {
+    "mode": "sanitized_development_history",
+    "originalHead": "8df1d5c78c0483108aa0aba67fee4bf38c5dc4c2",
+    "filteredHead": "04fffe142bd6b33c8b1b68d561ee19143d3eb5ce",
+    "commitMap": "reports/publication/commit-map.json",
+    "provenance": "reports/publication/provenance.json",
+    "originalLocalRepositoryUnchanged": true,
+    "globalReleaseStatusUnchanged": true
   }
 }

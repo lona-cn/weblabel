@@ -4,6 +4,8 @@ Windows 本地图片标注与 AI 审校工作台：React 业务 UI、Rust/WASM �
 
 **发行边界：可重复源码构建与 loopback 启动；未提供签名 exe/安装器。五种必需真实模型渠道仍 blocked，不能宣称完整 G4 发布。**
 
+**公开历史说明：** 此仓库是保留186项开发提交的独立净化副本，认证实测产物与大型trace不公开；原本地源码、完整证据和未提交文件未改。应用／构建／测试源码及必要公开fixture保留。原始SHA、任务状态与实际净化验证见[公开来源索引](reports/index.md)和[提交映射](reports/publication/commit-map.json)。历史报告链接指向本地私有归档，不代表公开文件或在新SHA上复跑；历史证据复组脚本也不保证脱离私有归档可执行。
+
 ## 本地启动
 
 需要固定 Node **24.16.0**、pnpm **10.34.5**、Rust **1.96.0**（Windows MSVC 与 WASM target）、wasm-bindgen **0.2.128**、wasm-pack **0.15.0**，以及真实 WebGPU 的桌面 Chrome/Edge。
@@ -28,10 +30,10 @@ pnpm start:local
 | 范围 | 实际证据 | 结论边界 |
 |---|---|---|
 | 保存/审核/快照/权限 | T27/T29 已集成报告 | 不可变版本与鉴权导出工程验收，不是公网部署 |
-| 崩溃/设备恢复 | [T30 result](reports/T30/result.json)：注册 integration 7 + 真实硬件 browser 9；受影响 T09 5 | 实际源码与浏览器交互证据；不是模型调用或 T31 所有性能阈值 |
-| 真实模型诊断 | [T32 result](reports/T32/result.json)：注册 exit 2，工程 consumer 35 passed，五渠道 blocked，外发 0 | 实际 loopback API/Host/worker 工程 proof，不是官方账户/型号支持 |
-| 本地发行/备份恢复 | [T33 Main closure](reports/T33/main-final-closure.json)：Root全产品构建、注册16/16、真实PowerShell首次bootstrap与浏览器密码登录；实际active Host物理Ctrl+C及新目录数据恢复 | manifest源码与最终解释型CLI源码分别记录；已闭合受管子孙退出、portable DB及已配置密钥在业务TEXT/JSON碰撞时拒绝备份；不是签名安装包/live证明 |
-| 自愿工时/试点分析 | [T34 Main closure](reports/T34/main-final-closure.json)：API7/7、受影响Web75/75、真实Workbench显式PUT200、20张完整GT合成图JSON/CSV | 默认关闭/无后台外传；费用未知=null；实际人工试点0，ROI/结论null，30%仅目标 |
+| 崩溃/设备恢复 | 原始私有T30归档：注册integration7 + 真实硬件browser9；受影响T09为5项 | 继承原始验收，不是在公开SHA上重跑，不是模型调用或全部T31阈值 |
+| 真实模型诊断 | 原始私有T32归档：注册exit2，工程consumer35passed，五渠道blocked，外发0 | 不是官方账户/型号支持，公开推送不解除阻塞 |
+| 本地发行/备份恢复 | 原始私有T33归档：产品构建、注册16/16、真实首次bootstrap、浏览器登录和受管退出／数据恢复 | 非签名安装包或live证明；公开副本保留实际构建／恢复源码 |
+| 自愿工时/试点分析 | 原始私有T34归档：API7/7、Web75/75、真实Workbench保存及20张完整GT合成fixture | 合成fixture保留；人工试点0、费用unknown=null、ROI/结论null，30%仅目标 |
 | 最终发布 | 主 Agent T35 | 仍需 G4 独立真实条件，不能由 pnpm build/doctor 替代 |
 
 ### 五个必需 live 渠道

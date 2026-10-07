@@ -13,6 +13,19 @@ __pycache__/
 .pytest_cache/
 /services/detector/.venv/
 *.egg-info/
-# Owned disposable Chromium profiles; raw measurements/screenshots remain tracked.
+# Owned disposable Chromium profiles and private runtime data.
 /reports/T31/runs/*/runtime/
 /reports/T31/pixels/*/runtime/
+
+# Public history: generated auth-bearing evidence must stay local.
+/reports/**
+!/reports/**/
+!/reports/**/*.mjs
+!/reports/**/*.js
+!/reports/**/*.ts
+!/reports/**/*.mts
+!/reports/**/*.py
+!/reports/**/*.ps1
+!/reports/**/*.rs
+!/reports/index.md
+!/reports/publication/**
