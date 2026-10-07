@@ -108,6 +108,7 @@ export interface MediaRevision {
 ```
 
 发布 ontology 创建新 ID；已有任务和文档继续引用旧版。v0.1 禁止后台直接原位删除已使用类别。新规范迁移为显式复制文档并生成新版本，需要显示变更报告。
+发布时先拒绝非项目 Admin，再以 `BEGIN IMMEDIATE` 获取 SQLite writer lock；在同一事务内重新确认当前 membership 为 Admin、读取 `MAX(version_no)`、插入新版本并提交。等待锁期间被降权或移除的请求分别返回 `403 PROJECT_ADMIN_REQUIRED` / `404 PROJECT_NOT_FOUND`，不分配或写入版本；后台 writer 与并发发布不能使旧 WAL read snapshot 升级失败或产生重复 version_no。
 
 ## C3. 编辑 facade 与 Rust 核心
 

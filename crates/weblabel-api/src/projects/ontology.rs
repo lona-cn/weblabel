@@ -125,9 +125,51 @@ pub(super) async fn publish(
             "Guidelines are too long",
         );
     }
+    // The early role check rejects unauthorized requests without a writer lock.
+    // Recheck after acquiring it: a waiting writer may have revoked that role.
+    let mut tx = match state.pool.begin_with("BEGIN IMMEDIATE").await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ONTOLOGY_PUBLISH_FAILED",
+                "Could not publish ontology",
+            )
+        }
+    };
+    let actor_role = sqlx::query_scalar::<_, String>(
+        "SELECT role FROM memberships WHERE user_id=? AND project_id=?",
+    )
+    .bind(&principal.user_id)
+    .bind(&project_id)
+    .fetch_optional(&mut *tx)
+    .await;
+    match actor_role {
+        Ok(Some(value)) if Role::parse(&value) == Some(Role::Admin) => {}
+        Ok(Some(_)) => {
+            return error(
+                StatusCode::FORBIDDEN,
+                "PROJECT_ADMIN_REQUIRED",
+                "Project administrator required",
+            )
+        }
+        Ok(None) => {
+            return error(
+                StatusCode::NOT_FOUND,
+                "PROJECT_NOT_FOUND",
+                "Project not found",
+            )
+        }
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ONTOLOGY_PUBLISH_FAILED",
+                "Could not publish ontology",
+            )
+        }
+    }
     let ontology_id = uuid::Uuid::new_v4().to_string();
     let transaction = async {
-        let mut tx = state.pool.begin().await?;
         let row = sqlx::query("SELECT COALESCE(MAX(version_no),0) AS version_no FROM ontology_versions WHERE project_id=?").bind(&project_id).fetch_one(&mut *tx).await?;
         let version_no: i64 = row.get("version_no");
         let version_no = version_no + 1;

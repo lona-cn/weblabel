@@ -23,6 +23,7 @@ const ORIGIN: &str = "http://127.0.0.1:48100";
 
 struct Fixture {
     app: Router,
+    state: AppState,
     repository: weblabel_api::storage::Repository,
     _directory: tempfile::TempDir,
     cookie: String,
@@ -226,7 +227,8 @@ async fn fixture() -> Fixture {
     .unwrap();
     Fixture {
         app,
-        repository: state.repository,
+        repository: state.repository.clone(),
+        state,
         _directory: directory,
         cookie,
         csrf,
@@ -234,6 +236,195 @@ async fn fixture() -> Fixture {
         ontology_id,
         asset_revision_id: imported.asset_revision_id,
         initial_revision_id: imported.annotation_revision_id,
+    }
+}
+
+async fn setup_route_pool_and_acquisition(
+    fixture: &Fixture,
+) -> (
+    Router,
+    sqlx::SqlitePool,
+    tokio::sync::mpsc::UnboundedReceiver<usize>,
+) {
+    let database = fixture._directory.path().join("api.sqlite");
+    let acquisitions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = acquisitions.clone();
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&database)
+        .foreign_keys(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(2));
+    // Observe the transaction acquisition after the two authentication reads
+    // and project-role read. No production hooks or timing-only start signal.
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .test_before_acquire(false)
+        .before_acquire(move |_, _| {
+            let count = count.clone();
+            let sender = sender.clone();
+            Box::pin(async move {
+                let number = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                sender.send(number).unwrap();
+                Ok(true)
+            })
+        })
+        .connect_with(options)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while pool.num_idle() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    acquisitions.store(0, std::sync::atomic::Ordering::SeqCst);
+    while receiver.try_recv().is_ok() {}
+    let mut state = fixture.state.clone();
+    state.auth.pool = pool.clone();
+    let app = router(state);
+    (app, pool, receiver)
+}
+
+#[tokio::test]
+async fn ontology_publish_waits_for_writer_before_allocating_next_version() {
+    let fixture = fixture().await;
+    let (app, pool, mut receiver) = setup_route_pool_and_acquisition(&fixture).await;
+    let path = format!("/api/projects/{}/ontologies", fixture.project_id);
+    let competing_ontology = json!({
+        "ontology_version_id": "competing-ontology",
+        "project_id": fixture.project_id,
+        "version_no": 2,
+        "labels": [],
+        "guidelines_markdown": "Committed by the competing writer.",
+        "allow_out_of_bounds": false
+    });
+    let mut competitor = fixture.repository.begin_write().await.unwrap();
+    sqlx::query("INSERT INTO ontology_versions(ontology_version_id,project_id,version_no,body_json,created_at) VALUES(?,?,?,?,?)")
+        .bind("competing-ontology")
+        .bind(&fixture.project_id)
+        .bind(2_i64)
+        .bind(competing_ontology.to_string())
+        .bind("2026-10-08T00:00:00Z")
+        .execute(competitor.connection())
+        .await
+        .unwrap();
+    let request_app = app.clone();
+    let request_path = path.clone();
+    let cookie = fixture.cookie.clone();
+    let csrf = fixture.csrf.clone();
+    let mut request = tokio::spawn(async move {
+        send(
+            &request_app,
+            "POST",
+            &request_path,
+            Some(json!({"labels": [], "guidelines_markdown": "Published after the writer."})),
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while receiver.recv().await.unwrap() != 4 {}
+    })
+    .await
+    .expect("authenticated ontology request did not reach transaction acquisition");
+    let blocked = tokio::time::timeout(Duration::from_millis(200), &mut request).await;
+    assert!(
+        blocked.is_err(),
+        "ontology publish must wait for the held writer, not return: {blocked:?}"
+    );
+    assert_eq!(
+        pool.size() - pool.num_idle() as u32,
+        1,
+        "pending publish must occupy its transaction connection"
+    );
+    competitor.commit().await.unwrap();
+    let (status, published) = tokio::time::timeout(Duration::from_secs(5), request)
+        .await
+        .expect("ontology publish did not finish after writer release")
+        .unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{published}");
+    assert_eq!(published["version_no"], 3);
+    let (status, listed) = fixture.request("GET", &path, None).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let items = listed["items"].as_array().unwrap();
+    assert_eq!(
+        items.iter().map(|item| item["version_no"].as_i64().unwrap()).collect::<Vec<_>>(),
+        vec![3, 2, 1]
+    );
+    assert_eq!(items[0], published);
+    assert_eq!(items[1], competing_ontology);
+    assert_eq!(items[2]["ontology_version_id"], fixture.ontology_id);
+}
+
+#[tokio::test]
+async fn ontology_publish_rechecks_admin_after_waiting_for_membership_revocation() {
+    for (revoke_sql, expected_status, expected_code) in [
+        (
+            "UPDATE memberships SET role='viewer' WHERE project_id=?",
+            StatusCode::FORBIDDEN,
+            "PROJECT_ADMIN_REQUIRED",
+        ),
+        (
+            "DELETE FROM memberships WHERE project_id=?",
+            StatusCode::NOT_FOUND,
+            "PROJECT_NOT_FOUND",
+        ),
+    ] {
+        let fixture = fixture().await;
+        let (app, pool, mut receiver) = setup_route_pool_and_acquisition(&fixture).await;
+        let path = format!("/api/projects/{}/ontologies", fixture.project_id);
+        let mut competitor = fixture.repository.begin_write().await.unwrap();
+        let revoked = sqlx::query(revoke_sql)
+            .bind(&fixture.project_id)
+            .execute(competitor.connection())
+            .await
+            .unwrap();
+        assert_eq!(revoked.rows_affected(), 1);
+        let cookie = fixture.cookie.clone();
+        let csrf = fixture.csrf.clone();
+        let mut request = tokio::spawn(async move {
+            send(
+                &app,
+                "POST",
+                &path,
+                Some(json!({"labels": [], "guidelines_markdown": "Must not be published."})),
+                Some(&cookie),
+                Some(&csrf),
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while receiver.recv().await.unwrap() != 4 {}
+        })
+        .await
+        .expect("authenticated ontology request did not reach transaction acquisition");
+        let blocked = tokio::time::timeout(Duration::from_millis(200), &mut request).await;
+        assert!(
+            blocked.is_err(),
+            "ontology publish must wait for the revoking writer, not return: {blocked:?}"
+        );
+        assert_eq!(
+            pool.size() - pool.num_idle() as u32,
+            1,
+            "pending publish must occupy its transaction connection"
+        );
+        competitor.commit().await.unwrap();
+        let (status, rejected) = tokio::time::timeout(Duration::from_secs(5), request)
+            .await
+            .expect("ontology publish did not finish after revocation committed")
+            .unwrap();
+        assert_eq!(status, expected_status, "{rejected}");
+        assert_eq!(rejected["code"], expected_code);
+        let versions = sqlx::query_as::<_, (i64, String)>(
+            "SELECT version_no,ontology_version_id FROM ontology_versions ORDER BY version_no",
+        )
+        .fetch_all(&fixture.state.auth.pool)
+        .await
+        .unwrap();
+        assert_eq!(versions, vec![(1, fixture.ontology_id.clone())]);
     }
 }
 

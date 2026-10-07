@@ -1,14 +1,13 @@
 //! T23 — official Claude subscription runtime adapter (`claude_local`).
 //!
 //! SYNTHETIC TRANSCRIPT NOTICE: every protocol transcript below is hand-written
-//! against the project-pinned schema of docs/providers/claude.md (derived from
-//! the T02-verified documentation boundaries in docs/provider-compatibility.md
-//! and the captured `claude --help` / `claude --version` output of the installed
-//! 2.1.183 runtime, saved verbatim in reports/T23/). Synthetic transcripts only
-//! exercise parsing, run-loop, boundary and error paths; they are NOT live
-//! evidence and NOT runtime-schema evidence. Real subscription login and real
-//! image runs are T32 prerequisites and are never claimed here. This suite
-//! performs zero external calls: no `claude -p` invocation, no login, no
+//! against the project-pinned schema of docs/providers/claude.md and the
+//! documentation boundaries in docs/provider-compatibility.md. This suite does
+//! not depend on private CLI-help captures: help wording cannot prove runtime
+//! compatibility. Synthetic transcripts only exercise parsing, run-loop,
+//! boundary and error paths; they are NOT live or runtime-schema evidence.
+//! Real subscription login and real image runs remain T32 prerequisites.
+//! This suite performs zero external calls: no `claude -p` invocation, no login, no
 //! network. The only real subprocesses are `node <fake-cli>` scripts.
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -46,7 +45,6 @@ import {
   MCP_SERVER_NAME,
   PERMITTED_TOOLS,
   buildClaudeLaunchPlan,
-  buildVersionProbePlan,
   resolveRunCwd,
   validateClaudeToolPolicy,
   type ClaudeLaunchPlan,
@@ -508,33 +506,8 @@ it('rejects tool calls outside the frozen MCP surface as policy violations', asy
 });
 
 // ---------------------------------------------------------------------------
-// launch plan: verified flags only, tool surface, injection and isolation
+// launch plan: tool surface, injection and isolation; not official CLI compatibility evidence
 // ---------------------------------------------------------------------------
-
-// Flag authenticity is checked against the REAL capture of `claude --help` from
-// the installed Claude Code 2.1.183 on this workstation (exit 0; committed at
-// reports/T23/claude-help.txt). Every flag the launch plan uses MUST appear
-// there: no invented flags.
-const CLAUDE_HELP_2_1_183 = readFileSync(
-  join(repoRoot, 'reports', 'T23', 'claude-help.txt'),
-  'utf8',
-);
-
-it('builds argv only from flags confirmed by the installed CLI help', () => {
-  const plan = buildClaudeLaunchPlan(permissionsConfig(), {
-    run_id: 'run_t23_001',
-    runToken: RUN_TOKEN,
-    apiBase: 'http://127.0.0.1:48100',
-  });
-  const flags = plan.command.argv.filter((part) => /^-{1,2}[A-Za-z]/.test(part));
-  expect(flags.length).toBeGreaterThan(5);
-  for (const flag of flags) {
-    expect(CLAUDE_HELP_2_1_183.includes(flag), `flag ${flag} must exist in claude --help`).toBe(true);
-  }
-  // The version probe uses only the verified version flag.
-  const probe = buildVersionProbePlan(permissionsConfig(), { run_id: 'claude-probe' });
-  expect(probe.command.argv).toEqual(['--version']);
-});
 
 it('attaches only this project MCP server and the five permitted tools', () => {
   const config = permissionsConfig();

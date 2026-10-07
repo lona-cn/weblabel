@@ -7,14 +7,14 @@ export default defineConfig({
       name: 't05-render',
       testDir: './tests/render',
       // Override the global software adapter argument for the real-device probe.
-      use: { channel: 'chromium', launchOptions: { args: ['--enable-unsafe-webgpu'] } },
+      use: { launchOptions: { args: ['--enable-unsafe-webgpu'] } },
     },
     {
       name: 'chromium-webgpu',
       testDir: './tests',
       testMatch: ['e2e/**/*.spec.ts', 'perf/**/*.spec.ts'],
       // T15 and downstream integration gates require an actual Chromium WebGPU device.
-      use: { channel: 'chromium', launchOptions: { args: ['--enable-unsafe-webgpu'] } },
+      use: { launchOptions: { args: ['--enable-unsafe-webgpu'] } },
     },
   ],
 
@@ -38,8 +38,10 @@ export default defineConfig({
   ],
   use: {
     baseURL: 'http://127.0.0.1:5173',
+    channel: 'chromium',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    launchOptions: { args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader'] },
+    // Dawn/WebGPU SwiftShader requires new headless Chromium; SwANGLE forces WebGPU disabled on Windows.
+    launchOptions: { args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'] },
   },
 });

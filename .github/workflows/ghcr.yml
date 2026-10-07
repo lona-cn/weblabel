@@ -1,0 +1,126 @@
+name: GHCR verified runtime
+on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      version:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  validate:
+    name: Real Linux container lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.16.0'
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-linux-x64
+          path: target/artifacts
+      - run: node scripts/unpack-release.mjs --artifact-dir target/artifacts --output-dir target/image-context --expected-commit ${{ github.sha }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: target/image-context
+          file: Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: weblabel:ci-${{ github.sha }}
+          provenance: false
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Real nonroot/health/auth/save/restart/integrity smoke
+        run: node scripts/container-smoke.mjs --image weblabel:ci-${{ github.sha }} --expected-commit ${{ github.sha }}
+  publish:
+    name: Publish and pull GHCR digest
+    needs: validate
+    if: inputs.publish && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: ghcr-writer-${{ github.repository }}
+      cancel-in-progress: false
+    outputs:
+      digest: ${{ steps.existing.outputs.digest || steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.16.0'
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-linux-x64
+          path: target/artifacts
+      - run: node scripts/unpack-release.mjs --artifact-dir target/artifacts --output-dir target/image-context --expected-commit ${{ github.sha }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve immutable existing source distribution
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/image-registry.mjs --lookup
+      - name: Unique run-scoped staging image names
+        id: names
+        env:
+          IMAGE_REPOSITORY: ${{ github.repository }}
+          IMAGE_VERSION: ${{ inputs.version }}
+        run: node scripts/image-tags.mjs
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: image
+        if: steps.existing.outputs.digest == ''
+        with:
+          context: target/image-context
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.names.outputs.tags }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Pull registry artifact by immutable digest
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}@${{ steps.existing.outputs.digest || steps.image.outputs.digest }}
+        run: docker pull "$IMAGE"
+      - name: Exercise the actual GHCR digest, not the local build
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}@${{ steps.existing.outputs.digest || steps.image.outputs.digest }}
+        run: node scripts/container-smoke.mjs --image "$IMAGE" --expected-commit ${{ github.sha }}
+      - name: Promote only the actually tested digest without overwriting tags
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}@${{ steps.existing.outputs.digest || steps.image.outputs.digest }}
+          VERSION: ${{ inputs.version }}
+        run: node scripts/image-registry.mjs --promote
+      - name: Record immutable distribution identity
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}@${{ steps.existing.outputs.digest || steps.image.outputs.digest }}
+          VERSION: ${{ inputs.version }}
+        run: node scripts/image-tags.mjs --record
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ghcr-distribution
+          path: target/ghcr-distribution.json
+          if-no-files-found: error
+          retention-days: 14

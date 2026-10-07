@@ -1,0 +1,70 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { root, pins, options, requireNode, checkedPath, files, entries, sha, mainGuard } from './build.mjs';
+import { validateRelease } from './start-local.mjs';
+
+export function packageRelease(argv = process.argv.slice(2)) {
+  const args = options(argv, ['--build-dir', '--output-dir', '--version']);
+  requireNode();
+  if (!args['--build-dir'] || !args['--output-dir'] || !args['--version']) throw new Error('required: --build-dir --output-dir --version <semver>');
+  const semver = /^((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$/;
+  const version = semver.exec(args['--version']);
+  if (!version) throw new Error('release_version_invalid: strict SemVer without build metadata required');
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  const packageBase = typeof packageVersion === 'string' ? packageVersion.split(/[+-]/, 1)[0] : '';
+  if (!semver.test(packageBase) || version[1] !== packageBase) throw new Error('release_version_base_mismatch: must match package.json major.minor.patch');
+  if (!['win32', 'linux'].includes(process.platform)) throw new Error('package_platform_unsupported');
+  const build = fs.realpathSync(path.resolve(args['--build-dir']));
+  const output = path.resolve(args['--output-dir']);
+  if (fs.existsSync(output)) throw new Error('output_directory_exists: choose a NEW output directory');
+  const actualOutput = path.join(fs.realpathSync(path.dirname(output)), path.basename(output));
+  if (actualOutput.startsWith(build + path.sep)) throw new Error('output_inside_build_refused');
+  const scriptNames = ['start-local.mjs', 'build.mjs', 'task.mjs', 'backup.mjs', 'restore.mjs', 'doctor.mjs'];
+  for (const name of scriptNames) checkedPath(path.join(root, 'scripts'), name);
+  const { manifest } = validateRelease(build);
+  if (!/^[0-9a-f]{40}$/.test(manifest.source_commit)) throw new Error('release_source_commit_invalid');
+  const expected = new Set(['release.json', ...manifest.files.map(item => item.path)]);
+  if (files(build).some(name => !expected.has(name))) throw new Error('release_unmanifested_file');
+  const node = fs.realpathSync(process.execPath);
+  const license = path.join(process.platform === 'win32' ? path.dirname(node) : path.dirname(path.dirname(node)), 'LICENSE');
+  const licenseText = fs.readFileSync(license, 'utf8');
+  if (!licenseText.includes('Node.js') || !licenseText.includes('Permission is hereby granted, free of charge') || !licenseText.includes('Copyright')) throw new Error('node_distribution_license_invalid');
+  // Atomic reservation: never merge into or remove a pre-existing destination.
+  fs.mkdirSync(output);
+  const bundle = path.join(output, 'bundle');
+  fs.mkdirSync(bundle);
+  const copy = (source, relative) => {
+    const destination = path.join(bundle, relative);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+  };
+  for (const name of expected) copy(checkedPath(build, name), `release/${name}`);
+  for (const name of scriptNames) copy(checkedPath(path.join(root, 'scripts'), name), `scripts/${name}`);
+  // Restore's default schema comparison consumes this existing source-relative path.
+  for (const item of manifest.files.filter(item => /^migrations\/\d+_.+\.sql$/.test(item.path))) copy(checkedPath(build, item.path), `crates/weblabel-api/${item.path}`);
+  const nodeName = process.platform === 'win32' ? 'node.exe' : 'node';
+  copy(node, `bin/${nodeName}`);
+  copy(license, 'bin/NodeLICENSE');
+  if (sha(path.join(bundle, 'bin', nodeName)) !== sha(node)) throw new Error('node_copy_hash_mismatch');
+  fs.writeFileSync(path.join(bundle, 'launch.sh'), '#!/bin/sh\nset -eu\nbundle=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nhas_data=false\nfor arg do\n  if [ "$arg" = "--data-dir" ]; then has_data=true; fi\ndone\nif [ "$has_data" = true ]; then\n  exec "$bundle/bin/node" "$bundle/scripts/start-local.mjs" --build-dir "$bundle/release" "$@"\nelse\n  exec "$bundle/bin/node" "$bundle/scripts/start-local.mjs" --build-dir "$bundle/release" --data-dir "$PWD/data" "$@"\nfi\n', { flag: 'wx' });
+  fs.writeFileSync(path.join(bundle, 'launch.cmd'), '@echo off\r\nsetlocal\r\nset "bundle=%~dp0"\r\nset "has_data="\r\n:scan\r\nif "%~1"=="" goto run\r\nif "%~1"=="--data-dir" set "has_data=1"\r\nshift\r\ngoto scan\r\n:run\r\nif defined has_data goto explicit\r\n"%bundle%bin\\node.exe" "%bundle%scripts\\start-local.mjs" --build-dir "%bundle%release" --data-dir "%CD%\\data" %*\r\nexit /b %errorlevel%\r\n:explicit\r\n"%bundle%bin\\node.exe" "%bundle%scripts\\start-local.mjs" --build-dir "%bundle%release" %*\r\nexit /b %errorlevel%\r\n', { flag: 'wx' });
+  for (const name of ['launch.sh', 'bin/node', 'release/api/weblabel-api']) if (fs.existsSync(path.join(bundle, name))) fs.chmodSync(path.join(bundle, name), 0o755);
+  fs.writeFileSync(path.join(bundle, 'BUNDLE.md'), `# WebLabel ${args['--version']} engineering prerelease\n\nThis native ${process.platform}/${process.arch} bundle includes the exact Node ${pins.node} runtime, its official distribution license, the immutable build release and operational scripts. It does not certify real AI providers, accounts, G4 quality or hardware WebGPU. Browser editing requires a real compatible WebGPU device. No pnpm, Rust, Python or provider CLI is needed to start the manual service. Linux requires compatible native system libraries; Windows requires System32/taskkill.exe for owned process shutdown.\n\nExtract the complete archive. From a writable working directory run the absolute bundle launch.cmd (Windows) or launch.sh (Linux). The launcher locates itself, pins its release and forwards arguments, for example --port 48100 --api-port 48101 --data-dir "/writable/中文 data". Without --data-dir it stores data in the caller's CURRENT working directory/data, not the installation directory. Keep release/ immutable and never remove runtime.lock while a service is running. Use Ctrl+C to stop. The local bootstrap code is a secret; never publish terminal logs containing it.\n\nOperational commands use the bundled bin/${nodeName} followed by scripts/backup.mjs --data-dir <data> --backup-dir <new-directory>, scripts/restore.mjs --backup-dir <backup> --data-dir <new-directory>, or scripts/doctor.mjs --build-dir <bundle>/release. Restore includes shipped schema dependencies. Backups scrub authentication and require fresh bootstrap; follow the command's existing safety refusals. Doctor retains its full developer-tool diagnostics and may exit nonzero because pnpm/Rust are intentionally absent; that is not a startup requirement. build/task retain their source-development semantics and are included as operational script dependencies, not as a promise this runtime bundle contains a development checkout.\n\nIntegrity: verify the archive against its adjacent .sha256. bundle.json covers runtime, license, launchers, scripts and release copies; release/release.json remains byte-for-byte the original build manifest. The source-checkout verifier node scripts/release-smoke.mjs --bundle-dir <absolute-bundle-directory> runs the bundled Node and operational scripts from a disposable non-source working directory with no developer tools on PATH. The verifier is a CI tool, not a runtime dependency. It exercises synthetic API data and persistence and prints only a JSON summary; it does not test a browser GPU or real model.\n`, { flag: 'wx' });
+  validateRelease(path.join(bundle, 'release'));
+  if (sha(path.join(build, 'release.json')) !== sha(path.join(bundle, 'release/release.json'))) throw new Error('release_manifest_changed');
+  const metadata = { format: 'weblabel-portable-bundle', version: 1, release_version: args['--version'], maturity: 'engineering-prerelease', source_commit: manifest.source_commit, platform: process.platform, arch: process.arch, node_version: pins.node, node_sha256: sha(node), node_license_sha256: sha(license), release_manifest_sha256: sha(path.join(build, 'release.json')), capabilities: { real_ai: 'not-verified', g4: 'not-verified', webgpu: 'real-browser-device-required' }, files: entries(bundle) };
+  fs.writeFileSync(path.join(bundle, 'bundle.json'), JSON.stringify(metadata, null, 2), { flag: 'wx' });
+  const archiveName = `weblabel-${args['--version']}-${process.platform}-${process.arch}.tar.gz`;
+  const archive = path.join(output, archiveName);
+  const tar = spawnSync('tar', ['-czf', archive, '-C', output, 'bundle'], { shell: false, windowsHide: true, encoding: 'utf8' });
+  if (tar.status !== 0) throw new Error(`archive_failed: exit=${tar.status ?? 'spawn-error'}`);
+  const archiveHash = sha(archive);
+  const checksum = `${archiveHash}  ${archiveName}\n`;
+  fs.writeFileSync(archive + '.sha256', checksum, { flag: 'wx' });
+  if (fs.readFileSync(archive + '.sha256', 'utf8') !== checksum || sha(archive) !== archiveHash) throw new Error('archive_checksum_verification_failed');
+  const summary = { format: metadata.format, release_version: metadata.release_version, source_commit: metadata.source_commit, platform: metadata.platform, arch: metadata.arch, archive: archiveName, checks: ['release-hashes', 'immutable-release-manifest', 'exact-node-runtime', 'official-node-license', 'archive-sha256'] };
+  console.log(JSON.stringify(summary));
+  return { bundle, archive, metadata };
+}
+mainGuard(import.meta.url, () => packageRelease());

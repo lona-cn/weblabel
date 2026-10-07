@@ -42,7 +42,7 @@ async function waitFor(what: string, predicate: () => boolean, timeoutMs = 8000)
 function makeWorkDir(prefix: string): string {
   const dir = join(tmpdir(), `t16-${prefix}-${randomUUID().slice(0, 8)}`);
   mkdirSync(dir, { recursive: true });
-  return realpathSync(dir).replace(/\//g, '\\');
+  return realpathSync(dir);
 }
 
 function samePath(a: string, b: string): boolean {
@@ -277,34 +277,59 @@ it('rejects shell usage, string argv, untrusted paths and non-allowlisted env ke
 it('spawns with an env allowlist only and round-trips spaces and CJK in cwd and argv', { timeout: 20000 }, async () => {
   const workDir = makeWorkDir('env 目录 with space');
   const argvEcho = ['参数 with space', 'plain', '值 值'];
-  const sourceEnv = { ...process.env, T16_CANARY_SECRET: 'canary-must-not-appear', T16_CHILD_VISIBLE: 'visible-value' };
+  const sourceEnv: Record<string, string | undefined> = {
+    ...process.env,
+    T16_CANARY_SECRET: 'canary-must-not-appear',
+    T16_CHILD_VISIBLE: 'visible-value',
+    NODE_OPTIONS: '--require=t16-canary-must-not-load',
+    NODE_PATH: 't16-canary-module-path',
+    LD_PRELOAD: 't16-canary-must-not-load',
+    DYLD_INSERT_LIBRARIES: 't16-canary-must-not-load',
+  };
+  const policy = policyFor(workDir, [], sourceEnv);
+  const childProbe = `
+    console.log(JSON.stringify({
+      env_keys: Object.keys(process.env).sort(),
+      system_root: process.env.SystemRoot ?? null,
+      visible_value: process.env.T16_CHILD_VISIBLE,
+      argv: process.argv.slice(1),
+      cwd: process.cwd(),
+    }));
+  `;
   const child = spawnChild(
-    { executable: process.execPath, argv: [fakeRuntime, ...argvEcho], cwd: workDir, env: { TEST_SCENARIO: 'normal' } },
-    policyFor(workDir, [], sourceEnv),
+    { executable: process.execPath, argv: ['-e', childProbe, '--', ...argvEcho], cwd: workDir, env: { TEST_SCENARIO: 'normal' } },
+    policy,
   );
   try {
     const stdout = new LineCollector();
-    const stderr = new LineCollector();
     stdout.attach(child.stdout);
-    stderr.attach(child.stderr);
-    const request: RuntimeEnvelope = { protocol_version: PROTOCOL_VERSION, id: 'probe-1', kind: 'request', method: 'probe', payload: {} };
-    child.stdin.write(`${serializeEnvelope(request)}\n`);
-    await waitFor('probe response', () => stdout.readAll().length > 0);
-    const response = parseEnvelope(stdout.readAll()[0]);
-    const payload = response.payload;
+    await waitFor('child process state', () => stdout.readAll().length > 0);
+    const payload: unknown = JSON.parse(stdout.readAll()[0]);
     if (typeof payload !== 'object' || payload === null || !('env_keys' in payload) || !('argv' in payload) || !('cwd' in payload)) {
       throw new Error('probe response payload is missing env_keys/argv/cwd');
     }
     const envKeys: string[] = Array.isArray(payload.env_keys) ? payload.env_keys : [];
     const echoedArgv: string[] = Array.isArray(payload.argv) ? payload.argv : [];
-    expect(envKeys).not.toContain('T16_CANARY_SECRET');
+    for (const key of ['T16_CANARY_SECRET', 'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES']) {
+      expect(envKeys.map((candidate) => candidate.toUpperCase())).not.toContain(key);
+    }
     expect(envKeys).toContain('T16_CHILD_VISIBLE');
-    expect(envKeys).toContain('SystemRoot');
-    // Windows itself injects a small mandatory baseline (SystemRoot/PATH/...) even into a
-    // minimal environment block; anything beyond the allowlist or that baseline would be a leak.
-    const platformBaseline = ['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR'];
-    const expectedAllowed = policyFor(workDir, [], sourceEnv).allowed_env.filter(
-      (key) => key === 'TEST_SCENARIO' || Object.keys(sourceEnv).some((candidate) => candidate.toLowerCase() === key.toLowerCase()),
+    expect('visible_value' in payload ? payload.visible_value : undefined).toBe('visible-value');
+    const sourceValues = new Map(Object.entries(sourceEnv).map(([key, value]) => [key.toLowerCase(), value]));
+    const sourceSystemRoot = sourceValues.get('systemroot');
+    if (process.platform === 'win32') expect(sourceSystemRoot).toEqual(expect.any(String));
+    if (sourceSystemRoot !== undefined) {
+      expect(envKeys).toContain('SystemRoot');
+    } else {
+      expect(envKeys).not.toContain('SystemRoot');
+    }
+    expect('system_root' in payload ? payload.system_root : undefined).toBe(sourceSystemRoot ?? null);
+    // Only Windows injects this mandatory baseline into a minimal environment block.
+    const platformBaseline = process.platform === 'win32'
+      ? ['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR']
+      : [];
+    const expectedAllowed = policy.allowed_env.filter(
+      (key) => key === 'TEST_SCENARIO' || typeof sourceValues.get(key.toLowerCase()) === 'string',
     );
     for (const key of expectedAllowed) expect(envKeys).toContain(key);
     expect(envKeys.every((key) => expectedAllowed.includes(key) || platformBaseline.includes(key))).toBe(true);
@@ -488,7 +513,7 @@ it('binds grants to run, project and media hash and contains canonicalized paths
   expect(() => store.resolve(grant.grant_id, { ...request, relative_path: 'missing.png' })).toThrow(/grant_path_missing/);
 
   symlinkSync(outsideDir, join(workDir, 'junction 逃逸'), process.platform === 'win32' ? 'junction' : 'dir');
-  expect(() => store.resolve(grant.grant_id, { ...request, relative_path: 'junction 逃逸\\secret.txt' })).toThrow(/escape/);
+  expect(() => store.resolve(grant.grant_id, { ...request, relative_path: join('junction 逃逸', 'secret.txt') })).toThrow(/grant_path_escape/);
 });
 
 // ---------------------------------------------------------------------------

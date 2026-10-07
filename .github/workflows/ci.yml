@@ -1,59 +1,36 @@
 name: CI
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: 0.1.0-ci
+      publish-image:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.version || 'push' }}
+  cancel-in-progress: true
 jobs:
-  rust:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.96.0
-          targets: wasm32-unknown-unknown
-      - run: cargo test --workspace --locked
-  typescript:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.34.5
-          run_install: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.16.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:unit
-  wasm:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.96.0
-          targets: wasm32-unknown-unknown
-      - run: cargo build -p renderer-wgpu --target wasm32-unknown-unknown --locked
-      - run: cargo build -p wasm-bridge --target wasm32-unknown-unknown --locked
-  software-gpu:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.96.0
-          targets: wasm32-unknown-unknown
-      - run: cargo install wasm-pack --version 0.15.0 --locked
-      - run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.34.5
-          run_install: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.16.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install chromium
-      - run: pnpm test:gpu:software
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ inputs.version || '0.1.0-ci' }}
+  test:
+    needs: build
+    uses: ./.github/workflows/test.yml
+  container:
+    needs: [build, test]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ghcr.yml
+    with:
+      publish: ${{ inputs.publish-image || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      version: ${{ inputs.publish-image && inputs.version || '' }}

@@ -1,0 +1,13 @@
+# The supported context is the expanded release bundle. COPY is deliberately
+# restricted to these two runtime directories; source/cache/data never belong.
+**
+!release/
+!release/**
+!scripts/
+!scripts/**
+**/.git
+**/.git/**
+**/node_modules
+**/node_modules/**
+**/.env*
+**/*.log

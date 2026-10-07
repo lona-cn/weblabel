@@ -2,7 +2,7 @@
 
 Windows 本地图片标注与 AI 审校工作台：React 业务 UI、Rust/WASM 编辑内核与真实 wgpu 画布、Axum API、SQLite WAL 和不可变内容寻址媒体。人工编辑不需要 Python、模型权重、API key 或官方订阅 CLI。
 
-**发行边界：可重复源码构建与 loopback 启动；未提供签名 exe/安装器。五种必需真实模型渠道仍 blocked，不能宣称完整 G4 发布。**
+**发行边界：可重复源码构建、含固定运行时的工程便携归档与原生Linux loopback镜像；未提供签名 exe/安装器。五种必需真实模型渠道仍 blocked，不能宣称完整 G4/T35 发布。**
 
 **公开历史说明：** 此仓库是保留186项开发提交的独立净化副本，认证实测产物与大型trace不公开；原本地源码、完整证据和未提交文件未改。应用／构建／测试源码及必要公开fixture保留。原始SHA、任务状态与实际净化验证见[公开来源索引](reports/index.md)和[提交映射](reports/publication/commit-map.json)。历史报告链接指向本地私有归档，不代表公开文件或在新SHA上复跑；历史证据复组脚本也不保证脱离私有归档可执行。
 
@@ -58,6 +58,63 @@ node scripts/restore.mjs --backup-dir "backups/新的备份" --data-dir "新的�
 ```
 
 备份使用真实 SQLite backup API 包含 WAL 提交，并验证引用对象 hash。认证、私有 provider 配置、官方登录凭证不搬运；历史业务用户/审计身份保留，恢复后创建新的授权本地管理员。恢复只接受完整、hash/schema 兼容的备份并拒绝已有目录，无清空/覆盖开关。备份包含敏感业务数据且不加密，请参照操作指南设置本地 ACL 和保管策略。
+
+## CI 与工程发行
+
+面向下载发行包的用户和 CI 维护者：先辨明工程 prerelease 与产品验收，再启动本地服务。
+
+- 主分支推送、PR 和手动 CI：Windows 2025 / Ubuntu 24.04 完整构建，下载并校验同一提交的便携归档，再运行 Rust workspace、Node 契约/计划、TypeScript、完整平台支持的 Vitest 与离线 detector pytest。Vitest 使用 2 个 file workers，不放宽现有断言或 deadline；Linux 仅不运行 Windows 物理 ConPTY Ctrl+C 测试，该测试仍由 Windows lane 执行。
+- Windows Chromium 的软件 GPU lane 必须实际取得 wgpu device；它不是硬件性能/恢复/G4 证明。真实模型、官方账号、付费 API 和大权重不在托管 CI 中调用。
+- PR 不发布 Release 或镜像。正常主分支 CI 在测试通过后验证 Linux 容器，再发布 GHCR SHA 分发。只有镜像写 job 获得 packages:write；只有最终 Release job 获得 contents:write。所有外部 Actions 固定官方完整 commit SHA；语言与工具版本、锁文件固定。
+- 推送合法 v 前缀的版本 tag，或从 main 手动运行 Release，可发布工程 prerelease，例如 v0.1.0-rc.1。版本 base 必须与项目一致；稳定 Release/镜像要求真实 T35 完成及 G0–G5 全 pass。已有 Release 不覆盖；已有 SHA 镜像复用原 digest 并重新实际验证，版本标签只提升到通过 registry pull/运行检查的 digest，冲突拒绝，不发布 latest。
+- Release 包含 Windows/Linux x64 tar.gz、各自 SHA256 sidecar 和记录源码提交/已验证镜像 digest 的分发 JSON。SHA256 是完整性检查，不是代码签名；不提供签名安装器。
+
+维护者在已授权官方 gh CLI 的终端中触发：
+
+~~~powershell
+node scripts/ci_monitor.cjs dispatch release.yml --ref main -f tag=v0.1.0-rc.1
+node scripts/ci_monitor.cjs runs --branch main
+node scripts/ci_monitor.cjs watch <上一步的运行ID>
+node scripts/ci_monitor.cjs test-summary <运行ID>
+~~~
+
+完整结果以[GitHub Actions](https://github.com/lona-cn/weblabel/actions)和[Releases](https://github.com/lona-cn/weblabel/releases)为准。工程发布不会将 T32、T35 或原始私有硬件证据自动变为新提交的通过记录。
+
+### 下载包启动
+
+选择系统对应的归档，核对其 SHA256 sidecar，然后解压。包内包含固定 Node 24.16.0、API、WASM/Web、Host 及启动/备份/恢复工具；人工编辑不要求安装编译器或 Python。
+
+Windows PowerShell 示例（替换实际下载的版本）：
+
+~~~powershell
+Get-FileHash .\weblabel-0.1.0-rc.1-win32-x64.tar.gz -Algorithm SHA256
+tar -xzf .\weblabel-0.1.0-rc.1-win32-x64.tar.gz
+& .\bundle\launch.cmd --data-dir "$env:LOCALAPPDATA\WebLabel\data"
+~~~
+
+Linux x64：
+
+~~~sh
+sha256sum -c weblabel-0.1.0-rc.1-linux-x64.tar.gz.sha256
+tar -xzf weblabel-0.1.0-rc.1-linux-x64.tar.gz
+./bundle/launch.sh --data-dir "$HOME/.local/share/weblabel"
+~~~
+
+在本地终端使用首次启动码设置自己的密码，浏览器打开 http://127.0.0.1:48100。只有真实桌面 WebGPU 才支持编辑；无 WebGPU 不用 Canvas2D 假替代。显式指定数据目录，避免把数据放进下载包或随当前工作目录变化。备份/恢复使用包内 Node 执行对应运维工具，遵守上文新目录与认证 scrub 约束。最小运行包健康检查不等同完整开发工具 doctor。
+
+### GHCR Linux 镜像
+
+仅支持原生 Linux x64 Docker host networking；不是 Docker Desktop 端口转发方案。必须保留 loopback，不使用 -p、不增加公网监听。若 registry 要求授权，使用 GitHub 官方 GHCR 登录方式，不向 WebLabel 提交 token。
+
+~~~sh
+docker volume create weblabel-data
+docker run --name weblabel --network host --read-only --mount source=weblabel-data,target=/data ghcr.io/lona-cn/weblabel:0.1.0-rc.1
+# 使用本地终端的首次启动码；停止时保留 volume
+docker stop --time 30 weblabel
+~~~
+
+推荐从 Release 分发 JSON 选择 ghcr.io/lona-cn/weblabel@sha256:… 的确切 digest。镜像以非 root 用户运行，PID1 为 tini，程序/静态资源只读，SQLite/对象/临时目录在 /data。SIGTERM 必须回收 API/Host 并移除自有 lock，受管退出码为 130；数据保留供重启。被 SIGKILL/主机断电后不会自动删 stale lock，先按运维文档核实所有者与无运行进程，不能随意删除 lock 或用户 volume。
+
 
 ## 维护与验收
 
