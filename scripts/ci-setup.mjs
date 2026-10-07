@@ -16,6 +16,6 @@ const python = command(['python', '-c', 'import sys; print(sys.executable)']).tr
 const pythonVersion = command([python, '-c', 'import platform; print(platform.python_version())']).trim();
 if (pythonVersion !== '3.13.16') throw new Error('python_pin_mismatch');
 const uvVersion = command(['uv', '--version']).trim();
-if (uvVersion !== 'uv 0.12.17') throw new Error('uv_pin_mismatch');
+if (!/^uv 0\.12\.17(?: \([^()\r\n]+\))?$/.test(uvVersion)) throw new Error('uv_pin_mismatch');
 fs.appendFileSync(process.env.GITHUB_ENV, ['WEBLABEL_TEST_NODE=' + process.execPath, 'WEBLABEL_NODE_RUNTIME=' + process.execPath, 'PYTHON=' + python, 'UV_PYTHON=' + python, ''].join(String.fromCharCode(10)));
 console.log(JSON.stringify({ node: process.version, python, python_version: pythonVersion, uv_version: uvVersion, wasm_bindgen: pins.wasm_bindgen, wasm_pack: pins.wasm_pack }));
