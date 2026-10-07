@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactElement } from 'react';
 import { EditorHost } from '../../lib/editor/EditorHost';
 import { toApiError } from '../../lib/editor/loader';
 import type { ApiError, CanvasLabel, EditorAssetRequest, EditorHostOptions, EditorTool } from '../../lib/editor/types';
@@ -30,7 +31,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
   const [error, setError] = useState<ApiError | null>(null);
   const [deviceState, setDeviceState] = useState<'loading' | 'ready' | 'unsupported' | 'lost' | 'recovering'>('loading');
   const [adapter, setAdapter] = useState<'hardware' | 'software' | 'unknown'>('unknown');
-  const [labels, setLabels] = useState<CanvasLabel[]>([]);
+  const [labels, setLabels] = useState<readonly ReactElement[]>([]);
   requestRef.current = request;
   optionsRef.current = hostOptions;
   deltaRef.current = onDelta;
@@ -42,6 +43,10 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
     let host: EditorHost | null = null;
     let unsubscribe: (() => void) | undefined;
     let unsubscribeStatus: (() => void) | undefined;
+    // Native CSS projection only; this cache lives for one asset/host effect.
+    const labelCache = new Map<string, Readonly<CanvasLabel> & { readonly element: ReactElement }>();
+    let renderedLabels: readonly ReactElement[] = [];
+    setLabels(renderedLabels);
     queueMicrotask(() => {
       const canvas = canvasRef.current;
       if (!active || !canvas) return;
@@ -49,7 +54,26 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
         if (host !== null) deltaRef.current(host, delta);
       } });
       hostRef.current = host;
-      unsubscribe = host.subscribeRendered(() => { if (active && host) setLabels(host.getCanvasLabels()); });
+      unsubscribe = host.subscribeRendered(() => {
+        if (!active || !host) return;
+        const nativeLabels = host.getCanvasLabels();
+        const present = new Set<string>();
+        const nextLabels: ReactElement[] = [];
+        for (const label of nativeLabels) {
+          present.add(label.object_id);
+          let cached = labelCache.get(label.object_id);
+          if (!cached || cached.x_css !== label.x_css || cached.y_css !== label.y_css || cached.selected !== label.selected) {
+            const element = <span key={label.object_id} data-testid="canvas-label" data-object-id={label.object_id} data-selected={label.selected} style={{ position: 'absolute', transform: 'translate('+label.x_css+'px, '+label.y_css+'px)', fontSize: 11, color: label.selected ? '#fff' : '#f1d68a', background: '#17212be6', padding: '1px 3px' }}>{label.object_id}</span>;
+            cached = { ...label, element };
+            labelCache.set(label.object_id, cached);
+          }
+          nextLabels.push(cached.element);
+        }
+        for (const id of labelCache.keys()) if (!present.has(id)) labelCache.delete(id);
+        if (nextLabels.length === renderedLabels.length && nextLabels.every((element, index) => element === renderedLabels[index])) return;
+        renderedLabels = nextLabels;
+        setLabels(renderedLabels);
+      });
       unsubscribeStatus = host.subscribeStatus(() => {
         if (!active || !host) return;
         const status = host.status;
@@ -101,7 +125,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
     <div className="canvas-surface">
       <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
-        {labels.map((label) => <span key={label.object_id} data-testid="canvas-label" data-object-id={label.object_id} data-selected={label.selected} style={{ position: 'absolute', transform: 'translate('+label.x_css+'px, '+label.y_css+'px)', fontSize: 11, color: label.selected ? '#fff' : '#f1d68a', background: '#17212be6', padding: '1px 3px' }}>{label.object_id}</span>)}
+        {labels}
       </div>
     </div>
     {error || deviceState === 'lost' ? <div className="canvas-state error">
