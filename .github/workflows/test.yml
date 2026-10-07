@@ -6,6 +6,7 @@ permissions:
 env:
   RUSTUP_TOOLCHAIN: '1.96.0'
   CARGO_INCREMENTAL: '0'
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target/cargo-ci
 jobs:
   suite:
     name: Tests ${{ matrix.platform }} x64

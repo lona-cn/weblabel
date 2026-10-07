@@ -761,7 +761,7 @@ async fn build_driver(
     })
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 #[path = "model_jobs_shutdown_tests.rs"]
 mod shutdown_tests;
 

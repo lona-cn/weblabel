@@ -7,8 +7,29 @@ use weblabel_api::{
     router, AppState,
 };
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    {
+        use weblabel_api::runtime::supervisor::linux_broker;
+        let mut args = env::args_os().skip(1);
+        if args.next().is_some_and(|arg| arg == linux_broker::MODE) {
+            let code = match linux_broker::run(args) {
+                Ok(code) => code,
+                Err(error) => {
+                    eprintln!("runtime broker: {error}");
+                    125
+                }
+            };
+            std::process::exit(code);
+        }
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),

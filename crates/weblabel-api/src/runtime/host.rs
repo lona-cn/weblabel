@@ -172,11 +172,23 @@ pub struct HostProcess {
     pub started_at_ms: i64,
     reader: BufReader<Box<dyn std::io::Read + Send>>,
     tracker: crate::runtime::RequestTracker,
+    #[cfg(target_os = "linux")]
+    root_owner: std::sync::Arc<supervisor::linux_broker::ReclaimHandle>,
 }
 
 impl HostProcess {
     pub fn pid(&self) -> u32 {
         self.child.id()
+    }
+
+    pub fn reclaim_root(&self) -> ReclaimRoot {
+        ReclaimRoot {
+            root_pid: self.pid(),
+            spawned_at_ms: self.started_at_ms,
+            exited_at_ms: None,
+            #[cfg(target_os = "linux")]
+            owner: std::sync::Arc::clone(&self.root_owner),
+        }
     }
 
     /// One NDJSON message to the child, verbatim and line-delimited.
@@ -234,14 +246,18 @@ impl HostProcess {
     }
 
     pub fn kill_tree(&mut self) -> Result<ReclaimReport, SpawnError> {
-        let root = ReclaimRoot {
-            root_pid: self.pid(),
-            spawned_at_ms: self.started_at_ms,
-            exited_at_ms: None,
-        };
-        let report = supervisor::reclaim_process_tree(root)?;
+        let report = supervisor::reclaim_process_tree(self.reclaim_root())?;
         let _ = self.child.wait();
         Ok(report)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for HostProcess {
+    fn drop(&mut self) {
+        if let Err(error) = self.kill_tree() {
+            tracing::error!(%error, "Linux host cleanup failed during drop");
+        }
     }
 }
 
@@ -255,7 +271,26 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
         .cwd
         .canonicalize()
         .map_err(|_| SpawnError::CwdMissing(config.cwd.display().to_string()))?;
+    #[cfg(not(target_os = "linux"))]
     let mut command = Command::new(&executable);
+    #[cfg(target_os = "linux")]
+    let mut command = Command::new(
+        supervisor::linux_broker::executable()
+            .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?,
+    );
+    #[cfg(target_os = "linux")]
+    let (completion, inherited_completion, inherited_parent) = {
+        use std::os::fd::AsRawFd;
+        let channels = supervisor::linux_broker::control(&mut command)
+            .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?;
+        command
+            .arg(supervisor::linux_broker::MODE)
+            .arg(channels.1.as_raw_fd().to_string())
+            .arg(channels.2.as_raw_fd().to_string())
+            .arg(std::process::id().to_string())
+            .arg(&executable);
+        channels
+    };
     command
         .args(&config.argv)
         .current_dir(cwd)
@@ -272,10 +307,35 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
+    #[cfg(target_os = "linux")]
+    let startup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut child = command
         .spawn()
         .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
+    #[cfg(target_os = "linux")]
+    let root_owner = {
+        drop(inherited_completion);
+        drop(inherited_parent);
+        match supervisor::linux_broker::capture(
+            child.id(),
+            started_at_ms,
+            completion,
+            startup_deadline,
+        ) {
+            Ok(owner) => owner,
+            Err(error) => {
+                // Closing the control peer aborts before Go; never give this
+                // failure path a fresh startup deadline or launch a runtime.
+                while child.try_wait().ok().flatten().is_none()
+                    && std::time::Instant::now() < startup_deadline
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                return Err(error);
+            }
+        }
+    };
     let stdout = child
         .stdout
         .take()
@@ -286,6 +346,8 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
         started_at_ms,
         reader,
         tracker: crate::runtime::RequestTracker::default(),
+        #[cfg(target_os = "linux")]
+        root_owner,
     })
 }
 

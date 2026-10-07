@@ -65,7 +65,7 @@ node scripts/restore.mjs --backup-dir "backups/新的备份" --data-dir "新的�
 
 - 主分支推送、PR 和手动 CI：Windows 2025 / Ubuntu 24.04 完整构建，下载并校验同一提交的便携归档，再运行 Rust workspace、Node 契约/计划、TypeScript、完整平台支持的 Vitest 与离线 detector pytest。Vitest 使用 2 个 file workers，不放宽现有断言或 deadline；Linux 仅不运行 Windows 物理 ConPTY Ctrl+C 测试，该测试仍由 Windows lane 执行。
 - Windows Chromium 的软件 GPU lane 必须实际取得 wgpu device；它不是硬件性能/恢复/G4 证明。真实模型、官方账号、付费 API 和大权重不在托管 CI 中调用。
-- PR 不发布 Release 或镜像。正常主分支 CI 在测试通过后验证 Linux 容器，再发布 GHCR SHA 分发。只有镜像写 job 获得 packages:write；只有最终 Release job 获得 contents:write。所有外部 Actions 固定官方完整 commit SHA；语言与工具版本、锁文件固定。Python 精确为 3.13.16，uv 精确为 0.12.17；uv 的官方 parenthesized 平台/build metadata 不参与数字版本比较，其他版本仍拒绝。
+- PR 不发布 Release 或镜像。正常主分支 CI 在测试通过后验证 Linux 容器，再发布 GHCR SHA 分发。只有镜像写 job 获得 packages:write；只有最终 Release job 获得 contents:write。所有外部 Actions 固定官方完整 commit SHA；语言与工具版本、锁文件固定。Python 精确为 3.13.16，uv 精确为 0.12.17；uv 的官方 parenthesized 平台/build metadata 不参与数字版本比较，其他版本仍拒绝。Cargo cache 只缓存 target/cargo-ci、工具和 registry，不缓存发行归档/unpack 目录，恢复后仍须下载并严格校验本次提交的全新归档。
 - 推送合法 v 前缀的版本 tag，或从 main 手动运行 Release，可发布工程 prerelease，例如 v0.1.0-rc.1。版本 base 必须与项目一致；稳定 Release/镜像要求真实 T35 完成及 G0–G5 全 pass。已有 Release 不覆盖；已有 SHA 镜像复用原 digest 并重新实际验证，版本标签只提升到通过 registry pull/运行检查的 digest，冲突拒绝，不发布 latest。
 - Release 包含 Windows/Linux x64 tar.gz、各自 SHA256 sidecar 和记录源码提交/已验证镜像 digest 的分发 JSON。SHA256 是完整性检查，不是代码签名；不提供签名安装器。
 

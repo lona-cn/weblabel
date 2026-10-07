@@ -10,6 +10,7 @@ permissions:
 env:
   RUSTUP_TOOLCHAIN: '1.96.0'
   CARGO_INCREMENTAL: '0'
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target/cargo-ci
 jobs:
   native:
     name: Build ${{ matrix.platform }} x64
@@ -29,7 +30,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - name: Build API, canonical Rust Core WASM, React and Host
-        run: node scripts/build.mjs --build-dir target/ci-release
+        run: node scripts/build.mjs --build-dir target/ci-release --target-dir target/cargo-ci
       - name: Package pinned runtime and startup/backup/restore CLI
         env:
           RELEASE_VERSION: ${{ inputs.version }}

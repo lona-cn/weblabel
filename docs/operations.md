@@ -14,6 +14,10 @@ node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data
 
 数据目录中的 `runtime.lock` 保留启动器 PID 和端口；重复启动同一目录会非零退出。Ctrl+C 关闭 Web listener、完整受管 API/Host 树，再移除锁。Windows 为按树强制终止，SQLite WAL 保留完整已提交事务。正在运行/中断的收费模型调用成本可能未知，必须由用户检查后显式重试，不能自动重发。
 
+Linux 的每 Host 私有 broker 只设置自身 subreaper，不修改 API/global subreaper、cgroup 或机器配置；需要内核 pidfd/subreaper 支持，不支持即明确启动失败。API process pidfd 和私有完成通道负责 API 退出、控制通道断开及 detached/double-fork 后代的回收；创建 Host 的线程退出不等于 API 退出。成功确认要求全部受管后代已停止并回收，缺失确认/清理失败不能写成正常完成；这些能力不构成 CLI 权限 sandbox。私有 broker 模式只由 Host 启动逻辑调用，操作员不应直接运行它。
+
+开发者运行真实 Host 单元测试前，先执行 `cargo build --locked -p weblabel-api --bin weblabel-api`，再执行 `cargo test --locked -p weblabel-api --lib`；测试调用同次构建的相邻 API 二进制，而不是把 lib 测试 harness 伪装成 broker。CI 的测试步骤按此顺序构建；shutdown consumer 在 Windows/Linux 都参与收集。
+
 如果机器断电留下锁：先在任务管理器按锁中的 PID、可执行路径和端口核对所有受管进程已停止，然后**仅移除该锁文件**再启动。不要删除 `api.sqlite`、`-wal`、`-shm` 或对象目录以“修复启动”。CLI 不自动清理未知锁，也不重置已有数据。
 
 ## 只读 doctor

@@ -298,6 +298,10 @@ export interface RuntimeEnvelope {
 Unknown 在契约入口立即按 JSON Schema 验证，不能以 `any` 流遍业务。NDJSON 一行一消息，单行 ≤4 MiB，stdout 专用；stderr 日志脱敏。图片字节不塞入该行：API 创建运行暂存 grant，Host/Worker 只获得已批准映射。每个 request 必有 response；超时、重复 ID、未知 method、进程退出、截断/超长行必须被测试。协议错误终止本次运行，不重启后自动重发可能已计费调用。
 三个API适配器只在本run私有内存保存已解析credential；所有公开RunEvent的message、嵌套data值及键按该确切值脱敏，包括未校验工具名、合法工具call_id及上游错误正文。供应商协议内部保留原始call_id；错误分类、已观察usage和未知null用量不被脱敏改写。
 
+Linux 每个受管 Host 使用发行 API 二进制的私有、单线程 broker，只有它设置 process-local subreaper；原 CLI executable、argv、allowlisted env、cwd 和 stdio 原样转发，不增加 shell。启动必须经过 broker 初始化完成的 READY 和 API 根能力建立后的 GO；GO 前控制通道断开不得执行 CLI。API 在 spawn 前捕获自身 process pidfd；创建线程退出不能终止仍然存活的 API 所属运行。pidfd/subreaper 不可用或启动失败必须明确报错，不退回裸 PID、环境 marker 或已失效 PPID 链。控制 FD 只在 broker 内保留，CLI exec 前关闭继承。
+
+Linux 清理由可克隆、私有的根能力持有目标 identity/pidfd/完成通道，Reader/Host 析构不能使异步 RuntimeLease 丢失该能力。正常退出、崩溃、deadline、cancel、API process death 或控制通道 EOF 都回收本 Host 后代（含 setsid/double-fork），不触碰其他运行或无关进程。只有 waitpid 确认 ECHILD 后才发送成功完成确认；missing ACK、EOF、信号失败或超过完整 5 秒预算保持清理失败。同一根缓存一次完整尝试结果，Drop 与显式清理不能另起预算或把失败重试成成功；真正 CLI 的退出码/信号保留。这是进程所有权与生命周期机制，不是第三方 CLI 的权限 sandbox，也不证明远端收费调用已取消。
+
 MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装本项目 server 配置，不读取项目里任意第三方 MCP 配置。它通过 loopback `/internal/agent-tools/{tool}` 与 API 通信，使用专门生成的短期 run-scoped Bearer，不能使用管理员 session。该路由同样检查允许Host和已提供的Origin；私有非浏览器客户端可省略Origin，浏览器cookie不替代Bearer，也不触发浏览器CSRF规则。token只在子进程环境/私有通道传递，不在argv、工具参数或输出里传递；到期/取消后立即失效。
 
 检测器locked file先解析真实target并限定在显式配置的resolved weights root，再stat/hash/read；大小和SHA256使用同一打开FD，processor/model loader各自前重新校验。operator显式配置的公开外部模型根仍可供独立worker使用；verify-live文件检查授权限repository内，不能把仓库默认weights的hash称为外部worker实际权重证明。路径复核拒绝已观察的verify/load间escape，不承诺第三方loader打开前的OS级原子TOCTOU消除；默认diagnostic不hash大文件、不启动Python探针、不登录/调用模型。

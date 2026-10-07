@@ -24,7 +24,8 @@ runs:
       run: rustup toolchain install 1.96.0 --profile minimal --target wasm32-unknown-unknown
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
-        shared-key: pinned-1.96.0-bindgen-0.2.128-pack-0.15.0
+        shared-key: cargo-only-pinned-1.96.0-bindgen-0.2.128-pack-0.15.0
+        workspaces: . -> target/cargo-ci
         cache-bin: true
     - name: Prepare exact CLI pins and selected runtime paths
       shell: bash
