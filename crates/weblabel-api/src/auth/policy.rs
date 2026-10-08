@@ -29,6 +29,7 @@ pub struct AuthConfig {
 pub struct AuthState {
     pub pool: SqlitePool,
     pub config: AuthConfig,
+    pub(crate) write_timeout: Duration,
     pub(crate) bootstrap_consumed: Arc<AtomicBool>,
     pub(crate) restore_bootstrap_enabled: Arc<AtomicBool>,
     pub(crate) login_limiter: Arc<tokio::sync::Mutex<LoginLimiter>>,
@@ -95,10 +96,15 @@ impl LoginLimiter {
 }
 
 impl AuthState {
-    pub fn new(pool: SqlitePool, config: AuthConfig) -> Result<Self, argon2::password_hash::Error> {
+    pub fn new(
+        pool: SqlitePool,
+        config: AuthConfig,
+        write_timeout: Duration,
+    ) -> Result<Self, argon2::password_hash::Error> {
         Ok(Self {
             pool,
             config,
+            write_timeout,
             bootstrap_consumed: Arc::new(AtomicBool::new(false)),
             restore_bootstrap_enabled: Arc::new(AtomicBool::new(false)),
             login_limiter: Arc::new(tokio::sync::Mutex::new(LoginLimiter::default())),

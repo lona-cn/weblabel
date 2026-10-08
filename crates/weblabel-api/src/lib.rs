@@ -77,7 +77,7 @@ impl AppState {
             .max_connections(5)
             .connect_with(options)
             .await?;
-        let auth = AuthState::new(pool, auth_config)
+        let auth = AuthState::new(pool, auth_config, config.write_timeout)
             .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
         // Restart recovery: model runs left in flight are interrupted with
         // unknown cost and are never resent automatically.

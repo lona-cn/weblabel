@@ -38,6 +38,8 @@ T25测试helper的manual模式仅在debug构建显式设置WEBLABEL_TEST_MANUAL_
 T17 保持原30秒retention lease、2100事件生产、2000窗口与104..2103的真实API分页/replay断言；silent runner、持有writer的item与expiry/replacement-worker回调必须覆盖真实Queue/SQLite行为。权限丢失后立即提交新provider identity和合法candidate，校验event/prediction/suggestion计数及foreign authority不变，不靠等待下一个heartbeat拒绝输出。T16 的owned child在第二次spawn/setup之前进入清理作用域；Linux真实broker故障仍以private capability的单次5秒cached failure拒绝成功，不以裸PID或空killed列表假报SIGKILL。
 
 T06 的原120ms写锁冲突预算、2秒上界及解锁后recovery断言不变；首次冷迁移不是放宽预算的理由。新增真实SQLite消费者回归由独立Repository确认abandon/task-abort写入均回滚，恢复writer提交后精确读回，不断言连接identity。临时native smoke另覆盖timeout/取消pending BEGIN及deferred-FK COMMIT失败后无残留行/锁；成功归池、失败关闭的源码审查不以SQLx库名字代替取消安全证明。
+T10 bootstrap竞争验证使用真实新数据库/API、后台export worker和独立SQLite writer，不把一次无竞争200或归档能启动当作竞争闭环。临时native smoke覆盖保留空writer及提交页变更的writer、原配置预算耗尽后无半写入、解锁后的显式新请求、session/CSRF和one-use replay，以及恢复资格拒绝/成功；自然相位复现只比较每个fresh app的首次请求，不自动重试或移除失败样本。单Tokio worker仅用于复现实验，非CI/生产配置修复；诊断仅记录静态阶段和SQLite数字码，收证后删除instrumentation。不添加依赖任意sleep/内部trace callback的永久测试或生产test hook；保留真实before/after日志，完整双平台源码CI和当次归档消费仍为发布gate。
+CI完整Rust workspace明确使用--test-threads=2，Vitest使用--maxWorkers=2，以限制同机SQLite、Tokio runtime、Node/CIM消费者并发；不删除用例、不改变原2秒Host timeout/30秒lease/120ms锁预算/5秒行为期限或原请求次数断言。这是已实测的资源政策，不将单次未保留终态事件的0调用失败归因到CPU/冷文件系统，也不保证任意外部过载下必定在provider启动前完成。
 
 固定业务fixture由 T01 提供 `tests/fixtures/golden/{ontology,media,document,save,prediction}.json`；对象ID `object_person_001`，类别ID `label_person`，640×480，bbox[10,20,110,220]，helmet_state默认unknown。测试 fixture ID 不受UUID生成器限制：Id验证是非空受限字符串，生产新ID用UUID。
 

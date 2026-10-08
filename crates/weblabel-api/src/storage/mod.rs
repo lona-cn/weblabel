@@ -1,6 +1,6 @@
 mod db;
 mod objects;
-mod transactions;
+pub(crate) mod transactions;
 
 pub use db::Repository;
 pub use objects::{ObjectStore, StagedObject, StoredObject};

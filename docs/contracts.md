@@ -386,6 +386,7 @@ POST /api/users 与 GET /api/users 的管理员接口由 testing-contracts.md §
 ## C7. SQLite 表与不可变对象
 
 写事务在原有限期限内先取得 PoolConnection 并同步建立 ownership guard，再执行 BEGIN IMMEDIATE；COMMIT/ROLLBACK await 全程保留该 guard，只有 SQL 明确成功后才归池复用。BEGIN/COMMIT/ROLLBACK 失败、超时、future 取消或未提交事务被放弃时 detach-close，不把可能仍执行后台 SQLite SQL 的连接借给另一个 writer。成功迁移/写入不再每笔关闭并冷建连接；busy_timeout 与外层 PoolTimedOut 映射不变。不能在 await 前 take 所有权，也不采用尚未构造 guard 的 custom-BEGIN validation await 路径。
+bootstrap在auth pool读取users/恢复资格之前取得同一BEGIN IMMEDIATE guard，管理员、恢复项目成员和session仍在单笔事务提交。AuthState::new(pool, config, write_timeout)的唯一AppState caller传入原ServerConfig.write_timeout；密码hash在SQL事务外，不把该预算冒充完整HTTP请求期限。空队列export worker仍运行，不以禁用worker、重试或扩大预算掩盖deferred read-to-write升级的SQLITE_BUSY。事务取消的回滚/连接关闭不意味着外层handler取消后会重新开放launch code；其既有one-use行为未变。
 
 T06预留migrations 0001_core：users/sessions/projects/memberships/ontology_versions/media_assets/media_revisions/annotation_revisions/annotation_heads/idempotency_keys/jobs/job_items。T17增加0008_ai（主Agent按仓库实际序号分配，覆盖草案中的0002_ai）：model_profiles/model_runs/predictions/suggestion_sets/suggestion_decisions/run_events/consents。T26增加0009_workflow：review_tasks/task_leases/review_submissions/review_decisions/review_issues。T27迁移编号由主Agent在依赖落地后按仓库实际序号分配。禁止多个Agent同时分配migration编号。
 T14 migration 0007增加不可变annotation_import_batches与annotation_exports，preview记录base head及loss report；commit与revision同一事务。

@@ -18,7 +18,7 @@ Object.assign(process.env, { WEBLABEL_TEST_NODE: process.execPath, WEBLABEL_NODE
 command([process.execPath, 'scripts/build-agent-host.mjs']);
 command(['cargo', 'build', '--locked', '-p', 'weblabel-api', '--bin', 'weblabel-api']);
 process.env.WEBLABEL_API_BINARY = path.join(path.resolve(root, process.env.CARGO_TARGET_DIR ?? 'target'), 'debug', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
-command(['cargo', 'test', '--workspace', '--locked']);
+command(['cargo', 'test', '--workspace', '--locked', '--', '--test-threads=2']);
 command([process.execPath, '--test', 'tests/bootstrap/t00.test.mjs', 'tests/contracts-validation.test.mjs', 'tools/check-plan.test.mjs']);
 command([process.execPath, 'scripts/verify-plan.mjs']);
 command(['cargo', 'run', '--locked', '-p', 'xtask', '--', 'contracts-check']);

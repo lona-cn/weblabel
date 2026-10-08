@@ -86,9 +86,10 @@ async fn bootstrap(
         let password_hash = password::hash(password_value).map_err(|_| ())?;
         let token = random_token();
         let csrf = random_token();
-        let mut tx = state.pool.begin().await.map_err(|_| ())?;
+        let mut tx = crate::storage::transactions::begin_immediate(&state.pool, state.write_timeout)
+            .await.map_err(|_| ())?;
         let existing_user = sqlx::query_as::<_, (i64,)>("SELECT EXISTS(SELECT 1 FROM users)")
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.connection())
             .await
             .map_err(|_| ())?
             .0;
@@ -96,7 +97,7 @@ async fn bootstrap(
             if !state.restore_bootstrap_enabled.load(Ordering::Acquire) { return Err(()); }
             // Recheck inside the write transaction: startup eligibility is not a reset capability.
             let eligible: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM users WHERE password_hash != '') AND NOT EXISTS(SELECT 1 FROM sessions)")
-                .fetch_one(&mut *tx).await.map_err(|_| ())?;
+                .fetch_one(tx.connection()).await.map_err(|_| ())?;
             if !eligible { return Err(()); }
             std::borrow::Cow::Owned(format!("restore-admin-{admin_id}"))
         } else { std::borrow::Cow::Borrowed("local-admin") };
@@ -105,12 +106,12 @@ async fn bootstrap(
             .bind(username.as_ref())
             .bind(password_hash)
             .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-            .execute(&mut *tx)
+            .execute(tx.connection())
             .await
             .map_err(|_| ())?;
         if existing_user != 0 {
             sqlx::query("INSERT INTO memberships(project_id, user_id, role) SELECT project_id, ?, 'admin' FROM projects")
-                .bind(&admin_id).execute(&mut *tx).await.map_err(|_| ())?;
+                .bind(&admin_id).execute(tx.connection()).await.map_err(|_| ())?;
         }
         sqlx::query("INSERT INTO sessions(session_id, user_id, expires_at, created_at, csrf_hash) VALUES(?, ?, ?, ?, ?)")
             .bind(digest(&token))
@@ -118,7 +119,7 @@ async fn bootstrap(
             .bind((now() + duration().as_secs() as i64).to_string())
             .bind(now().to_string())
             .bind(csrf_hash(&csrf))
-            .execute(&mut *tx)
+            .execute(tx.connection())
             .await
             .map_err(|_| ())?;
         tx.commit().await.map_err(|_| ())?;
