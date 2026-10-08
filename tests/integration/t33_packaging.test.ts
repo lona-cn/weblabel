@@ -142,6 +142,7 @@ it('refuses public project name and description credentials, preserving exact pr
   const { running, admin, projectId, ontologyId, assetId, revision } = await approvedReview(data, 'ordinary project image.jpg', { name: `  项目 ${nameSecret}  `, description: `description "${descriptionSecret}"\noriginal whitespace  ` });
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
   try {
+    db.exec('PRAGMA busy_timeout=1000');
     const tables = ['projects', 'review_tasks', 'review_submissions', 'review_decisions', 'annotation_revisions'];
     const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
     const identities = db.prepare('SELECT user_id,username,created_at,platform_admin FROM users ORDER BY user_id').all();
@@ -192,6 +193,7 @@ it('refuses a public user username credential without rewriting identity and res
   expect(created.status).toBe(201);
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
   try {
+    db.exec('PRAGMA busy_timeout=1000');
     const before = db.prepare('SELECT user_id,username,created_at,platform_admin FROM users ORDER BY user_id').all();
     expect(before.find(row => row.username === username)?.user_id).toBe(created.body.user_id);
     db.prepare("INSERT INTO model_profiles VALUES('username-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,?,NULL,?)").run(JSON.stringify({ api_key: secret }), new Date().toISOString());
@@ -224,6 +226,7 @@ it('fails closed on immutable approval bindings and audit reasons before any sna
   const data = path.join(scratch, 'approved without snapshot');
   const { running, admin, projectId, ontologyId, assetId, revision } = await approvedReview(data);
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
+  db.exec('PRAGMA busy_timeout=1000');
   const before = {
     submissions: db.prepare('SELECT * FROM review_submissions ORDER BY review_id').all(),
     decisions: db.prepare('SELECT * FROM review_decisions ORDER BY review_id').all(),
@@ -276,6 +279,7 @@ it('refuses an authenticated scalar issue-code credential collision before snaps
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
   const tables = ['review_issues', 'review_submissions', 'review_decisions', 'annotation_revisions', 'media_revisions', 'media_metadata'];
   try {
+    db.exec('PRAGMA busy_timeout=1000');
     expect(db.prepare('SELECT COUNT(*) AS n FROM dataset_versions').get()!.n).toBe(0);
     db.prepare("INSERT INTO model_profiles VALUES('scalar-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,?,NULL,?)").run(JSON.stringify({ api_key: secret }), new Date().toISOString());
     const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
@@ -318,6 +322,7 @@ it('refuses a credential in immutable media original_name even when mutable inge
   const { running, admin, projectId, ontologyId, assetId, revision } = await approvedReview(data, `${secret}.jpg`);
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
   try {
+    db.exec('PRAGMA busy_timeout=1000');
     expect(db.prepare('SELECT COUNT(*) AS n FROM dataset_versions').get()!.n).toBe(0);
     db.prepare("INSERT INTO model_profiles VALUES('media-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,?,NULL,?)").run(JSON.stringify({ api_key: secret }), new Date().toISOString());
     const tables = ['media_revisions', 'media_metadata', 'media_object_refs', 'annotation_revisions', 'review_decisions'];
@@ -344,6 +349,8 @@ it('refuses credential collisions in immutable review, prediction, event and exp
   expect(snapshot.status).toBe(201);
   const db = new DatabaseSync(path.join(data, 'api.sqlite')), now = new Date().toISOString();
   try {
+    // The live export worker owns an independent writer; bound fixture contention once per connection.
+    db.exec('PRAGMA busy_timeout=1000');
     db.prepare("INSERT INTO model_profiles VALUES('audit-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,'{}',NULL,?)").run(now);
     db.prepare("INSERT INTO jobs(job_id,project_id,kind,state,payload_json,created_at,updated_at) VALUES('audit-job',?,'model','succeeded','{}',?,?)").run(projectId, now, now);
     db.prepare("INSERT INTO model_runs(run_id,operation_id,project_id,asset_revision_id,annotation_revision_id,ontology_version_id,actor_id,job_id,profile_id,profile_snapshot_json,provider_id,source,intent,prompt,context_json,input_fingerprint,request_hash,state,cost_display,created_at) VALUES('audit-run','audit-operation',?,?,?,?,?,'audit-job','audit-profile','{}','openai_api','manual','find_issues','pinned-prompt-collision',?,'audit-fingerprint',?,'succeeded','none',?)").run(projectId, assetId, revision.annotation_revision_id, ontologyId, admin.userId, JSON.stringify({ actor_id: 'pinned-context-actor-collision' }), '1'.repeat(64), now);
@@ -404,6 +411,7 @@ it('fails closed on decoded keys and raw-only credential encodings in mutable pr
   const db = new DatabaseSync(path.join(data, 'api.sqlite')), now = new Date().toISOString();
   const keySecret = 'owned-progress-key-雪"', valueSecret = 'owned-progress-value-雪"';
   try {
+    db.exec('PRAGMA busy_timeout=1000');
     // JobQueue accepts arbitrary JSON progress. This private persisted fixture
     // exercises its real public status consumer, not a fake Tool/provider run.
     db.prepare("INSERT INTO jobs(job_id,project_id,kind,state,payload_json,progress_json,created_at,updated_at) VALUES('progress-fixture',?,'media_import','succeeded','{}',?,?,?)").run(project.body.project_id, JSON.stringify({ succeeded: 1, failed: 0, detail: { [keySecret]: valueSecret } }, null, 2).replaceAll('雪', '\\u96ea'), now, now);
@@ -451,6 +459,7 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   const { running, admin, projectId, ontologyId, asset, assetId, revision } = await approvedReview(data);
   const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null }); expect(snapshot.status).toBe(201);
   const sourceDb = new DatabaseSync(path.join(data, 'api.sqlite'));
+  sourceDb.exec('PRAGMA busy_timeout=1000');
   sourceDb.prepare("INSERT INTO model_profiles VALUES(?, 'openai_api', 'synthetic-not-live', 'api_key', ?, 'needs_configuration', 'not_run', NULL, NULL, ?, ?, ?)").run('t33-profile', JSON.stringify({ image_input: true, tools: true, structured_output: true, bbox_output: false, attributes: true }), JSON.stringify({ api_key: 'T33-secret-config-value', endpoint: 'http://invalid.example' }), 'T33-secret-ref', new Date().toISOString());
   const originalPassword = sourceDb.prepare('SELECT password_hash FROM users WHERE user_id=?').get(admin.userId)!.password_hash as string;
   const originalSessions = sourceDb.prepare('SELECT session_id,csrf_hash FROM sessions').all().flatMap(row => [row.session_id as string, row.csrf_hash as string]);
@@ -467,6 +476,7 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   expect(sha(path.join(backupDir, 'api.sqlite'))).toBe(JSON.parse(fs.readFileSync(path.join(backupDir, 'backup.json'), 'utf8')).files.find((entry: Value) => entry.path === 'api.sqlite').sha256);
   for (const suffix of ['-wal', '-shm', '-journal']) expect(fs.existsSync(path.join(backupDir, `api.sqlite${suffix}`))).toBe(false);
   const collisionDb = new DatabaseSync(path.join(data, 'api.sqlite'));
+  collisionDb.exec('PRAGMA busy_timeout=1000');
   expect(collisionDb.prepare('PRAGMA journal_mode').get()!.journal_mode).toBe(originalJournalMode);
   collisionDb.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: 't33-object' }), 't33-profile'); collisionDb.close();
   const collisionTarget = path.join(scratch, 'no-immutable-corruption');

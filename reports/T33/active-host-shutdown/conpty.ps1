@@ -53,6 +53,7 @@ public static class T33Terminal {
   CloseHandle(ir); CloseHandle(ow);
   IntPtr size=IntPtr.Zero; InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref size);
   IntPtr attrs=Marshal.AllocHGlobal(size); PI pi=new PI(); IntPtr api=IntPtr.Zero,root=IntPtr.Zero,desc=IntPtr.Zero;
+  long signal=0;
   using(var output=new FileStream(new SafeFileHandle(or,true),FileAccess.Read))
   using(var writer=new FileStream(new SafeFileHandle(iw,true),FileAccess.Write)) {
    var reader=Task.Run(()=> { byte[] b=new byte[8192]; int n; bool first=true; while((n=output.Read(b,0,b.Length))>0) { if(first) { first=false; Phase("first_output_byte"); } Console.Write(Encoding.UTF8.GetString(b,0,n)); } });
@@ -71,7 +72,7 @@ public static class T33Terminal {
     if(api==IntPtr.Zero || root==IntPtr.Zero || desc==IntPtr.Zero) throw new Exception("owned handles unavailable");
     long ac=Creation(api),rc=Creation(root),dc=Creation(desc);
     if(Exit(api)!=259 || Exit(root)!=259 || Exit(desc)!=259) throw new Exception("owned process not live immediately before physical Ctrl+C");
-    long signal=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    signal=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     if(keyboard) { writer.WriteByte(3); writer.Flush(); }
     else {
      // Actual Windows Ctrl+C console event, scoped to this owned PTY only.
@@ -90,7 +91,7 @@ public static class T33Terminal {
     IntPtr closing=pc; pc=IntPtr.Zero; Task.Run(()=>ClosePseudoConsole(closing)).Wait(2000); reader.Wait(2000);
     return (int)launcher;
    } catch(Exception error) {
-    File.WriteAllText(result,"{\"harness_error\":\""+error.Message.Replace("\\","\\\\").Replace("\"","\\\"")+"\"}");
+    File.WriteAllText(result,"{\"harness_error\":\""+error.Message.Replace("\\","\\\\").Replace("\"","\\\"")+"\",\"signal_at_ms\":"+signal+",\"error_observed_at_ms\":"+DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()+",\"api_shutdown_budget_ms\":30000,\"api_exit_at_error\":"+(api!=IntPtr.Zero?Exit(api).ToString():"null")+",\"root_exit_at_error\":"+(root!=IntPtr.Zero?Exit(root).ToString():"null")+",\"descendant_exit_at_error\":"+(desc!=IntPtr.Zero?Exit(desc).ToString():"null")+"}");
     throw;
    } finally { if(pc!=IntPtr.Zero) { IntPtr closing=pc; pc=IntPtr.Zero; Task.Run(()=>ClosePseudoConsole(closing)).Wait(2000); } foreach(IntPtr h in new[]{api,root,desc,pi.thread,pi.process}) if(h!=IntPtr.Zero) CloseHandle(h); DeleteProcThreadAttributeList(attrs); Marshal.FreeHGlobal(attrs); }
   }

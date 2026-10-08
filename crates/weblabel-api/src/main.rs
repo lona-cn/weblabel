@@ -290,9 +290,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let serving = axum::serve(listener, router(state)).with_graceful_shutdown(async {
         let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutdown phase: ctrl_c observed");
     });
     let server_result = serving.await;
+    tracing::info!("shutdown phase: server_returned");
     let _ = shutdown_tx.send(true);
+    tracing::info!("shutdown phase: watch_sent");
     if let Err(error) = export_worker.await {
         tracing::error!(%error, "dataset export worker did not stop cleanly");
     }
@@ -302,6 +305,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(error) = model_worker.await {
         tracing::error!(%error, "model worker did not stop cleanly");
     }
+    tracing::info!("shutdown phase: workers_joined");
     server_result?;
     Ok(())
 }

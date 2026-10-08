@@ -147,7 +147,7 @@ export async function activeHostShutdown(mode, preparedTerminal, release = path.
     fs.writeFileSync(readyFile + '.tmp', [apiPid, host.root_pid, host.descendant_pid].join('\n')); fs.renameSync(readyFile + '.tmp', readyFile);
     const physical = await until(() => fs.existsSync(resultFile) && JSON.parse(fs.readFileSync(resultFile, 'utf8')), 'physical harness result missing: ' + clean(output), 65000);
     evidence.physical = physical;
-    assert.equal(physical.harness_error, undefined, physical.harness_error);
+    assert.equal(physical.harness_error, undefined, physical.harness_error === undefined ? undefined : clean(JSON.stringify(physical) + "\n" + output + diagnostics));
     for (const key of ['api_exit_code', 'terminal_exit_code', 'root_exit_at_api', 'descendant_exit_at_api', 'root_exit_at_terminal', 'descendant_exit_at_terminal']) assert.equal(typeof physical[key], 'number', key);
     evidence.harness_exit = await terminated;
     assert.equal(physical.signal_count, 1); assert.notEqual(physical.root_exit_at_api, 259, 'Host root alive at API termination'); assert.notEqual(physical.descendant_exit_at_api, 259, 'descendant alive at API termination');

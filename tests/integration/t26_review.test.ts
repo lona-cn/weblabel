@@ -37,6 +37,30 @@ beforeAll(async()=>{
   // not the five-second lease/CAS/review behavior deadline.
   annotator=await addUser(admin,app.base_url,projectId,'annotator');reviewer=await addUser(admin,app.base_url,projectId,'reviewer');
   newAnnotator=await addUser(admin,app.base_url,projectId,'annotator');viewer=await addUser(admin,app.base_url,projectId,'viewer');
+  // Temporary request-boundary evidence; never log payloads or live route values.
+  let requestOrdinal=0;
+  function observeRequests(client:ApiClient):void {
+   const request=client.request.bind(client);
+   client.request=async<T=unknown>(method:string,path:string,body?:unknown)=>{
+    const ordinal=++requestOrdinal;
+    const verb=['GET','POST','PUT'].includes(method)?method:'OTHER';
+    let route='unclassified';
+    if(path==='/api/session')route='/api/session';
+    else if(path.startsWith('/api/projects/')&&path.endsWith('/tasks'))route='/api/projects/:project_id/tasks';
+    else if(path.startsWith('/api/projects/')&&path.endsWith('/ontologies'))route='/api/projects/:project_id/ontologies';
+    else if(path.startsWith('/api/tasks/')&&path.endsWith('/lease'))route='/api/tasks/:task_id/lease';
+    else if(path.startsWith('/api/tasks/')&&path.endsWith('/submit'))route='/api/tasks/:task_id/submit';
+    else if(path.startsWith('/api/reviews/')&&path.endsWith('/decision'))route='/api/reviews/:review_id/decision';
+    else if(path.startsWith('/api/reviews/')&&path.endsWith('/issues'))route='/api/reviews/:review_id/issues';
+    else if(path.startsWith('/api/assets/')&&path.endsWith('/annotation'))route='/api/assets/:asset_revision_id/annotation';
+    else if(path.startsWith('/api/annotation-revisions/'))route='/api/annotation-revisions/:annotation_revision_id';
+    console.log(`T26_REQUEST START ordinal=${ordinal} at_ms=${Date.now()} method=${verb} route=${route}`);
+    let status:number|'error'='error';
+    try {const response=await request<T>(method,path,body);status=response.status;return response;}
+    finally {console.log(`T26_REQUEST END ordinal=${ordinal} at_ms=${Date.now()} method=${verb} route=${route} status=${status}`);}
+   };
+  }
+  for(const client of [admin,annotator.client,reviewer.client,newAnnotator.client,viewer.client])observeRequests(client);
  } catch(error) {await app.stop();throw error;}
 });
 afterAll(async()=>{await app?.stop();});
