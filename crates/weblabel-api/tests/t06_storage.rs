@@ -206,6 +206,64 @@ async fn write_lock_conflict_is_bounded_and_work_happens_outside_the_lock() {
     transaction.rollback().await.unwrap();
 }
 
+#[tokio::test]
+async fn abandoned_and_cancelled_writes_roll_back_before_the_next_writer_commits() {
+    let temp = tempdir().unwrap();
+    let config = test_config(temp.path(), Duration::from_millis(500));
+    let state = AppState::open(&config).await.unwrap();
+    let observer = AppState::open(&config).await.unwrap();
+    let insert = "INSERT INTO projects(project_id, name, description, created_at) \
+                  VALUES (?, 'rollback test', '', '2026-10-08T00:00:00Z')";
+
+    let mut abandoned = state.repository.begin_write().await.unwrap();
+    sqlx::query(insert)
+        .bind("abandoned")
+        .execute(abandoned.connection())
+        .await
+        .unwrap();
+    drop(abandoned);
+
+    let repository = state.repository.clone();
+    let (written_tx, written_rx) = tokio::sync::oneshot::channel();
+    let cancelled = tokio::spawn(async move {
+        let mut transaction = repository.begin_write().await.unwrap();
+        sqlx::query(insert)
+            .bind("cancelled")
+            .execute(transaction.connection())
+            .await
+            .unwrap();
+        written_tx.send(()).unwrap();
+        std::future::pending::<()>().await;
+        transaction.commit().await.unwrap();
+    });
+    written_rx.await.unwrap();
+    cancelled.abort();
+    assert!(cancelled.await.unwrap_err().is_cancelled());
+
+    let mut recovered = observer.repository.begin_write().await.unwrap();
+    let abandoned_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projects WHERE project_id IN ('abandoned', 'cancelled')",
+    )
+    .fetch_one(recovered.connection())
+    .await
+    .unwrap();
+    assert_eq!(abandoned_count, 0);
+    sqlx::query(insert)
+        .bind("committed")
+        .execute(recovered.connection())
+        .await
+        .unwrap();
+    recovered.commit().await.unwrap();
+
+    let mut next = state.repository.begin_write().await.unwrap();
+    let ids: Vec<String> = sqlx::query_scalar("SELECT project_id FROM projects ORDER BY project_id")
+        .fetch_all(next.connection())
+        .await
+        .unwrap();
+    assert_eq!(ids, vec!["committed"]);
+    next.rollback().await.unwrap();
+}
+
 #[cfg(windows)]
 #[test]
 fn open_staging_handle_blocks_atomic_publish_without_creating_a_reference_target() {

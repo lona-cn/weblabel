@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::{pool::PoolConnection, Sqlite, SqliteConnection, SqlitePool};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ObjectWriteError {
@@ -11,7 +11,7 @@ pub enum ObjectWriteError {
 }
 
 pub struct WriteTransaction {
-    connection: Option<SqliteConnection>,
+    connection: Option<PoolConnection<Sqlite>>,
 }
 
 impl WriteTransaction {
@@ -22,21 +22,25 @@ impl WriteTransaction {
     }
 
     pub async fn commit(mut self) -> Result<(), sqlx::Error> {
-        let mut connection = self
-            .connection
-            .take()
-            .expect("transaction already finalized");
-        sqlx::query("COMMIT").execute(&mut connection).await?;
+        sqlx::query("COMMIT").execute(self.connection()).await?;
+        self.connection.take();
         Ok(())
     }
 
     pub async fn rollback(mut self) -> Result<(), sqlx::Error> {
-        let mut connection = self
-            .connection
-            .take()
-            .expect("transaction already finalized");
-        sqlx::query("ROLLBACK").execute(&mut connection).await?;
+        sqlx::query("ROLLBACK").execute(self.connection()).await?;
+        self.connection.take();
         Ok(())
+    }
+}
+
+impl Drop for WriteTransaction {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.take() {
+            // An abandoned or cancelled SQL operation may still be running on
+            // SQLite's worker. Never return that connection to another writer.
+            drop(connection.detach());
+        }
     }
 }
 
@@ -45,13 +49,13 @@ pub(crate) async fn begin_immediate(
     timeout: Duration,
 ) -> Result<WriteTransaction, sqlx::Error> {
     tokio::time::timeout(timeout, async {
-        let mut connection = pool.acquire().await?.detach();
+        let mut transaction = WriteTransaction {
+            connection: Some(pool.acquire().await?),
+        };
         sqlx::query("BEGIN IMMEDIATE")
-            .execute(&mut connection)
+            .execute(transaction.connection())
             .await?;
-        Ok(WriteTransaction {
-            connection: Some(connection),
-        })
+        Ok(transaction)
     })
     .await
     .map_err(|_| sqlx::Error::PoolTimedOut)?
