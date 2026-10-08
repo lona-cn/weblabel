@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
-import { expect, it } from 'vitest';
-import { bootstrap_admin_for_test, relogin_bootstrap_admin_for_test, replay_bootstrap_code_for_test, start_test_app, type ApiClient } from '../support/app';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { bootstrap_admin_for_test, relogin_bootstrap_admin_for_test, replay_bootstrap_code_for_test, start_test_app, type ApiClient, type TestApp } from '../support/app';
 
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): JsonObject {
@@ -125,11 +125,32 @@ it('authorizes media routes and replays an import idempotently', async () => {
   } finally { await app.stop(); }
 });
 
-it('returns no password hashes from administrator user listing and revokes logout sessions', async () => {
-  const app = await start_test_app();
-  try {
-    const platformAdmin = await bootstrap_admin_for_test(app);
-    const admin = await app.as_user('admin');
+describe('isolated administrator user listing fixture', () => {
+  let app: TestApp | undefined;
+  let platformAdmin: ApiClient;
+  let admin: ApiClient;
+
+  beforeEach(async () => {
+    const fresh = await start_test_app();
+    try {
+      // Cold bootstrap is a precondition; users/list/logout remain in the case.
+      platformAdmin = await bootstrap_admin_for_test(fresh);
+    } catch (error) {
+      await fresh.stop();
+      throw error;
+    }
+    // as_user owns cleanup if its real user/project/login preparation fails.
+    admin = await fresh.as_user('admin');
+    app = fresh;
+  });
+  afterEach(async () => {
+    const finished = app;
+    app = undefined;
+    await finished?.stop();
+  });
+
+  it('returns no password hashes from administrator user listing and revokes logout sessions', async () => {
+    if (!app) throw new Error('Administrator user listing fixture was not prepared');
     const created = await platformAdmin.request<JsonObject>('POST', '/api/users', {
       username: `t10-${crypto.randomUUID()}`, password: crypto.randomUUID() + crypto.randomUUID(),
     });
@@ -159,8 +180,7 @@ it('returns no password hashes from administrator user listing and revokes logou
     expect(clearCookie).not.toContain('Secure');
     const afterLogout = await admin.request('GET', '/api/projects');
     expect(afterLogout.status).toBe(401);
- 
-  } finally { await app.stop(); }
+  });
 });
 
 it('sets Secure on session cookies when explicitly configured', async () => {

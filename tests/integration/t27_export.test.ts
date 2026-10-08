@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { expect, it } from 'vitest';
-import { bootstrap_admin_for_test, start_test_app, type ApiClient } from '../support/app';
+import { afterEach, beforeEach, expect, it } from 'vitest';
+import { bootstrap_admin_for_test, start_test_app, type ApiClient, type TestApp } from '../support/app';
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown, label: string): RecordValue {
@@ -145,12 +145,42 @@ async function setupSecondApprovedAsset(admin: ApiClient, projectId: string, ont
   return { assetId, revisionId };
 }
 
-it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and scopes downloads', async () => {
-  const app = await start_test_app();
-  const scratch = await mkdtemp(resolve(tmpdir(), 'weblabel-t27-export-'));
+let app: TestApp | undefined;
+let scratch: string | undefined;
+let fixture: { app: TestApp; scratch: string; admin: ApiClient; approved: Awaited<ReturnType<typeof setupApprovedRevision>> };
+
+async function cleanupFixture(): Promise<void> {
+  const finishedApp = app;
+  const finishedScratch = scratch;
+  app = undefined;
+  scratch = undefined;
   try {
+    if (finishedScratch) await rm(finishedScratch, { recursive: true, force: true });
+  } finally {
+    await finishedApp?.stop();
+  }
+}
+
+beforeEach(async () => {
+  try {
+    app = await start_test_app();
+    scratch = await mkdtemp(resolve(tmpdir(), 'weblabel-t27-export-'));
+    // Bootstrap and the initial approved revision are fresh fixture preconditions.
+    // Snapshot/readiness and every export behavior remain in the original case.
     const admin = await bootstrap_admin_for_test(app);
-    const { projectId, ontologyId, assetId, revision0, revisionId, nextTaskId, fencingToken, changedDocument } = await setupApprovedRevision(admin);
+    const approved = await setupApprovedRevision(admin);
+    fixture = { app, scratch, admin, approved };
+  } catch (error) {
+    await cleanupFixture();
+    throw error;
+  }
+});
+afterEach(cleanupFixture);
+
+it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and scopes downloads', async () => {
+  const { app, scratch, admin, approved } = fixture;
+  const { projectId, ontologyId, assetId, revision0, revisionId, nextTaskId, fencingToken, changedDocument } = approved;
+  try {
     const unready = await admin.request<RecordValue>('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision0, split: 'train' }], excluded: [] });
     expect(unready.status).toBe(422);
     expect(record(unready.json, 'unready snapshot').code).toBe('SNAPSHOT_NOT_READY');
@@ -346,7 +376,6 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
     ]);
     expect(requiredString(snapshot.json, 'manifest_sha256', 'snapshot manifest')).toMatch(/^[0-9a-f]{64}$/);
   } finally {
-    await rm(scratch, { recursive: true, force: true });
-    await app.stop();
+    await cleanupFixture();
   }
 });

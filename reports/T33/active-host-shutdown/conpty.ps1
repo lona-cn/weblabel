@@ -101,6 +101,6 @@ public static class T33Terminal {
  exit 0
 }
 [Console]::Error.WriteLine("T33_PHASE=assembly_load_begin at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-Add-Type -LiteralPath $AssemblyPath
+$null = [System.Reflection.Assembly]::LoadFrom($AssemblyPath)
 [Console]::Error.WriteLine("T33_PHASE=assembly_load_end at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 exit [T33Terminal]::Run($CommandLine, $ReadyFile, $ResultFile, $Keyboard.IsPresent)
