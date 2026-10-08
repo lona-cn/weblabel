@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { buildRelease, root } from '../../scripts/build.mjs';
-import { activeHostShutdown } from '../../reports/T33/active-host-shutdown/smoke.mjs';
+import { activeHostShutdown, prepareTerminalAssembly, type PreparedTerminalAssembly } from '../../reports/T33/active-host-shutdown/smoke.mjs';
 
 let release: string;
+let preparedTerminal: PreparedTerminalAssembly;
 beforeAll(async () => {
   if (process.platform !== 'win32') throw new Error('T33 physical console acceptance requires Windows ConPTY; not a POSIX/mocked signal substitute');
   release = process.env.WEBLABEL_T33_RELEASE ?? path.join(root, 'reports/T33/active-host-shutdown/private', `release-${crypto.randomUUID()}`);
@@ -19,10 +20,11 @@ beforeAll(async () => {
     finally { if (original === undefined) delete process.env.RUSTC; else process.env.RUSTC = original; }
   }
   expect(fs.existsSync(path.join(release, 'api/weblabel-api.exe'))).toBe(true);
+  preparedTerminal = await prepareTerminalAssembly();
 }, 600000);
 
 it.each(['direct-api', 'packaged'])('physical Ctrl+C during an authorized %s run reclaims the stubborn owned tree before API termination', async mode => {
-  const observed = await activeHostShutdown(mode, release);
+  const observed = await activeHostShutdown(mode, preparedTerminal, release);
   expect(observed.pre_signal.model_state).toBe('running');
   expect(observed.host_marker.actual_run_token_context_status).toBe(200);
   expect(observed.physical.signal_count).toBe(1);

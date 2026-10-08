@@ -3,7 +3,7 @@ import { readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { inflateRawSync } from 'node:zlib';
-import { beforeAll, afterAll, expect, it } from 'vitest';
+import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
 import { authorize, type Seeded } from '../support/t25-ai';
 import { startSecurityApp, raw, session, text, object, type SecurityApp, type Login } from '../fixtures/security/harness';
 import { hostileZip, highRatioZip, imageBomb } from '../fixtures/security/attacks';
@@ -140,10 +140,31 @@ it('run tokens cannot replace sessions, override project, expire, or survive can
   expect(revoked.status).toBe(401); expect(revoked.json.code).toBe('RUN_TOKEN_REVOKED');
 });
 
-it.each(['content', 'provider'] as const)('F22 approval becomes invalid when approved %s changes and fresh approval is required', async mutation => {
-  const isolated = await startSecurityApp();
-  try {
-    const pins = await seedSecurity(isolated.admin.client, isolated);
+describe('F22 isolated approval fixtures', () => {
+  let isolated: SecurityApp | undefined;
+  let pins: Seeded;
+  beforeEach(async () => {
+    isolated = undefined;
+    isolated = await startSecurityApp();
+    try {
+      // Cold bootstrap and media/pins are fixture work, not approval behavior.
+      // Each mutation still owns a fresh backend, database and object storage.
+      pins = await seedSecurity(isolated.admin.client, isolated);
+    } catch (error) {
+      const failed = isolated;
+      isolated = undefined;
+      await failed.stop();
+      throw error;
+    }
+  });
+  afterEach(async () => {
+    const finished = isolated;
+    isolated = undefined;
+    await finished?.stop();
+  });
+
+  it.each(['content', 'provider'] as const)('F22 approval becomes invalid when approved %s changes and fresh approval is required', async mutation => {
+    if (!isolated) throw new Error('F22 fixture was not prepared');
     const fixed = await authorize(isolated.admin.client, startRunBody(pins, randomUUID(), 'T29 F22 approval'));
     if (mutation === 'content') {
       const head = await isolated.admin.client.request('GET', `/api/assets/${pins.assetRevisionId}/annotation?ontology_version_id=${pins.ontologyId}`);
@@ -166,7 +187,7 @@ it.each(['content', 'provider'] as const)('F22 approval becomes invalid when app
     const queued = await isolated.admin.client.request('POST', '/api/ai/runs', fresh);
     expect(queued.status).toBe(202);
     expect((await isolated.admin.client.request('POST', `/api/ai/runs/${text(queued.json, 'run_id')}/cancel`, {})).status).toBe(200);
-  } finally { await isolated.stop(); }
+  });
 });
 
 const archiveAttacks = [

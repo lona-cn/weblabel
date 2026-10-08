@@ -21,4 +21,10 @@ export interface ShutdownEvidence {
     backstop_used_before_observation: boolean;
   };
 }
-export function activeHostShutdown(mode: string, release?: string): Promise<ShutdownEvidence>;
+export interface PreparedTerminalAssembly {
+  assembly_path: string;
+  sha256: string;
+  preparation_directory: string;
+}
+export function prepareTerminalAssembly(): Promise<PreparedTerminalAssembly>;
+export function activeHostShutdown(mode: string, preparedTerminal: PreparedTerminalAssembly, release?: string): Promise<ShutdownEvidence>;

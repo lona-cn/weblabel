@@ -1,8 +1,17 @@
-param([string]$CommandLine, [string]$ReadyFile, [string]$ResultFile, [switch]$Keyboard)
+param(
+ [Parameter(Mandatory=$true, ParameterSetName='Prepare')][switch]$Prepare,
+ [Parameter(Mandatory=$true)][string]$AssemblyPath,
+ [Parameter(Mandatory=$true, ParameterSetName='Run')][string]$CommandLine,
+ [Parameter(Mandatory=$true, ParameterSetName='Run')][string]$ReadyFile,
+ [Parameter(Mandatory=$true, ParameterSetName='Run')][string]$ResultFile,
+ [Parameter(ParameterSetName='Run')][switch]$Keyboard
+)
 $ErrorActionPreference = 'Stop'
 # Adapted from reports/T32/interactive-closure/conpty.ps1; never attaches a user's console.
-[Console]::Error.WriteLine("T33_PHASE=add_type_begin at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-Add-Type -TypeDefinition @'
+if ($Prepare) {
+ if (Test-Path -LiteralPath $AssemblyPath) { throw 'Preparation requires a fresh assembly path' }
+ [Console]::Error.WriteLine("T33_PHASE=add_type_begin at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+ Add-Type -OutputAssembly $AssemblyPath -OutputType Library -TypeDefinition @'
 using System;
 using System.IO;
 using System.Text;
@@ -89,4 +98,9 @@ public static class T33Terminal {
 }
 '@
 [Console]::Error.WriteLine("T33_PHASE=add_type_end at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+ exit 0
+}
+[Console]::Error.WriteLine("T33_PHASE=assembly_load_begin at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+Add-Type -LiteralPath $AssemblyPath
+[Console]::Error.WriteLine("T33_PHASE=assembly_load_end at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 exit [T33Terminal]::Run($CommandLine, $ReadyFile, $ResultFile, $Keyboard.IsPresent)

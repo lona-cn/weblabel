@@ -24,9 +24,28 @@ async function until(check, label, milliseconds = 20000) {
 function jsonFile(file, value) { fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n'); }
 function clean(text) { return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/WEBLABEL_BOOTSTRAP_CODE=[a-f0-9]+/g, 'WEBLABEL_BOOTSTRAP_CODE=[REDACTED]'); }
 async function closedPort(port) { try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) }); return false; } catch { return true; } }
-export async function activeHostShutdown(mode, release = path.join(privateRoot, 'release')) {
+// Compilation is fixture preparation, not part of the physical/API bootstrap clock.
+export async function prepareTerminalAssembly() {
+  assert.equal(process.platform, 'win32', 'Terminal interop preparation requires Windows PowerShell 5.1');
+  const directory = path.join(privateRoot, 'terminal-assembly-' + crypto.randomUUID());
+  fs.mkdirSync(directory, { recursive: true });
+  const assemblyPath = path.join(directory, 'T33Terminal.dll');
+  const compilerEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|PRIVATE_KEY|BOOTSTRAP_CODE)/i.test(key)));
+  const compiler = spawn(powershell, ['-NoProfile', '-NonInteractive', '-File', path.join(report, 'conpty.ps1'), '-Prepare', '-AssemblyPath', assemblyPath], { cwd: root, env: compilerEnv, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  compiler.stdout.on('data', chunk => output += String(chunk));
+  compiler.stderr.on('data', chunk => output += String(chunk));
+  try {
+    const [code, signal] = await once(compiler, 'close');
+    assert.equal(code, 0, 'Terminal assembly compilation failed (' + signal + '): ' + clean(output));
+    assert.ok(fs.statSync(assemblyPath).isFile(), 'Compiler did not produce the owned assembly');
+    return { assembly_path: assemblyPath, sha256: sha(assemblyPath), preparation_directory: directory };
+  } finally { fs.writeFileSync(path.join(directory, 'compile.log'), clean(output)); }
+}
+export async function activeHostShutdown(mode, preparedTerminal, release = path.join(privateRoot, 'release')) {
   assert.equal(process.platform, 'win32', 'This actual physical console regression requires Windows ConPTY');
   assert.ok(['packaged', 'direct-api'].includes(mode));
+  assert.equal(sha(preparedTerminal.assembly_path), preparedTerminal.sha256, 'Prepared terminal assembly changed');
   release = path.resolve(release);
   validateRelease(release);
   const runDirectory = path.join(privateRoot, `${mode}-${crypto.randomUUID()}`); fs.mkdirSync(runDirectory, { recursive: true });
@@ -51,7 +70,7 @@ export async function activeHostShutdown(mode, release = path.join(privateRoot, 
   Object.assign(env, { WEBLABEL_HOST_CONFIG: configFile, WEBLABEL_ENV: 'production', WEBLABEL_BIND: `127.0.0.1:${apiPort}`, WEBLABEL_DATABASE_URL: `sqlite:${path.join(data, 'api.sqlite')}`, WEBLABEL_OBJECT_ROOT: path.join(data, 'objects'), WEBLABEL_COOKIE_SECURE: 'false' });
   if (mode === 'direct-api') Object.assign(env, { WEBLABEL_HOST_EXECUTABLE: process.execPath, WEBLABEL_HOST_SCRIPT: path.join(report, 'controlled-host.mjs'), WEBLABEL_HOST_CWD: data });
   const readyFile = path.join(runDirectory, 'signal-ready.txt'), resultFile = path.join(runDirectory, 'physical-result.json');
-  const ptyArgv = [powershell, '-NoProfile', '-File', path.join(report, 'conpty.ps1'), '-CommandLine', argv.map(arg => '"' + arg + '"').join(' '), '-ReadyFile', readyFile, '-ResultFile', resultFile];
+  const ptyArgv = [powershell, '-NoProfile', '-File', path.join(report, 'conpty.ps1'), '-AssemblyPath', preparedTerminal.assembly_path, '-CommandLine', argv.map(arg => '"' + arg + '"').join(' '), '-ReadyFile', readyFile, '-ResultFile', resultFile];
   if (mode === 'packaged') ptyArgv.push('-Keyboard');
   const terminal = spawn(ptyArgv[0], ptyArgv.slice(1), { cwd: root, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const terminated = new Promise(resolve => terminal.once('exit', (code, signal) => resolve({ code, signal })));
@@ -169,6 +188,7 @@ export async function activeHostShutdown(mode, release = path.join(privateRoot, 
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const mode = process.argv[2] ?? 'packaged';
-  await activeHostShutdown(mode);
+  const preparedTerminal = await prepareTerminalAssembly();
+  await activeHostShutdown(mode, preparedTerminal, process.env.WEBLABEL_T33_RELEASE);
   console.log(`T33 ${mode}: actual physical Ctrl+C acceptance passed; see ${mode}.json`);
 }
