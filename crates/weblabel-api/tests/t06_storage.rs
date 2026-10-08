@@ -264,6 +264,274 @@ async fn abandoned_and_cancelled_writes_roll_back_before_the_next_writer_commits
     next.rollback().await.unwrap();
 }
 
+#[tokio::test]
+async fn finite_writer_producer_cannot_starve_a_waiting_heartbeat() {
+    let temp = tempdir().unwrap();
+    let config = test_config(temp.path(), Duration::from_secs(2));
+    let state = AppState::open(&config).await.unwrap();
+    let queue = weblabel_api::jobs::queue::JobQueue::new(state.repository.clone());
+    queue
+        .enqueue(None, "probe", "fair-heartbeat", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let lease = queue
+        .lease_next("worker", Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut initial = state.repository.begin_write().await.unwrap();
+    let initial_total: i64 = sqlx::query_scalar("SELECT progress_total FROM jobs WHERE job_id=?")
+        .bind(&lease.job_id)
+        .fetch_one(initial.connection())
+        .await
+        .unwrap();
+    assert_eq!(initial_total, 0);
+    initial.rollback().await.unwrap();
+    let producer = async {
+        for _ in 0..70 {
+            let mut tx = state.repository.begin_write().await.unwrap();
+            sqlx::query("UPDATE jobs SET updated_at=updated_at WHERE job_id=?")
+                .bind(&lease.job_id)
+                .execute(tx.connection())
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx.commit().await.unwrap();
+        }
+    };
+    let heartbeat = async {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        queue
+            .report_progress(&lease, 0, 1, &serde_json::json!({"items":[]}))
+            .await
+    };
+    let (_, result) = tokio::join!(producer, heartbeat);
+    assert!(
+        result.is_ok(),
+        "finite internal producer starved heartbeat: {result:?}"
+    );
+    let mut tx = state.repository.begin_write().await.unwrap();
+    let (status, completed, total, worker, fence, attempt, progress): (String, i64, i64, String, i64, i64, String) =
+        sqlx::query_as("SELECT state,progress_completed,progress_total,worker_id,fencing_token,attempt,progress_json FROM jobs WHERE job_id=?")
+            .bind(&lease.job_id).fetch_one(tx.connection()).await.unwrap();
+    assert_eq!(status, "running");
+    assert_eq!(
+        (completed, total),
+        (0, 1),
+        "heartbeat progress must be durable"
+    );
+    assert_eq!(worker, lease.worker_id);
+    assert_eq!(fence as u64, lease.fencing_token);
+    assert_eq!(attempt as u64, lease.attempt);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&progress).unwrap(),
+        serde_json::json!({"items":[]})
+    );
+    tx.rollback().await.unwrap();
+}
+
+// Poll each waiter once while the writer is held: registration order, not sleep
+// timing, determines the next turn. Public transactions then prove durable order.
+async fn poll_pending<F: std::future::Future>(future: std::pin::Pin<&mut F>) {
+    let mut future = future;
+    std::future::poll_fn(|cx| {
+        assert!(future.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn waiting_writers_are_fifo_and_cancellation_does_not_lose_a_turn() {
+    let temp = tempdir().unwrap();
+    let config = test_config(temp.path(), Duration::from_millis(120));
+    let state = AppState::open(&config).await.unwrap();
+    let held = state.repository.begin_write().await.unwrap();
+    let cancelled_repo = state.repository.clone();
+    let mut cancelled = Box::pin(cancelled_repo.begin_write());
+    poll_pending(cancelled.as_mut()).await;
+    drop(cancelled);
+    // Admission is part of the existing overall budget, not an unbounded wait.
+    let started = Instant::now();
+    assert!(matches!(
+        state.repository.begin_write().await,
+        Err(sqlx::Error::PoolTimedOut)
+    ));
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let first_repo = state.repository.clone();
+    let second_repo = state.repository.clone();
+    let mut first = Box::pin(first_repo.begin_write());
+    let mut second = Box::pin(second_repo.begin_write());
+    poll_pending(first.as_mut()).await;
+    poll_pending(second.as_mut()).await;
+    held.rollback().await.unwrap();
+    let insert = "INSERT INTO projects(project_id,name,description,created_at) VALUES (?, 'fifo', '', 'now')";
+    let first_writer = async {
+        let mut tx = first.await.unwrap();
+        sqlx::query(insert)
+            .bind("first")
+            .execute(tx.connection())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    };
+    let second_writer = async {
+        let mut tx = second.await.unwrap();
+        let predecessor: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE project_id='first'")
+                .fetch_one(tx.connection())
+                .await
+                .unwrap();
+        assert_eq!(predecessor, 1, "later writer overtook registered writer");
+        sqlx::query(insert)
+            .bind("second")
+            .execute(tx.connection())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    };
+    tokio::join!(second_writer, first_writer);
+    let mut tx = state.repository.begin_write().await.unwrap();
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT project_id FROM projects ORDER BY project_id")
+            .fetch_all(tx.connection())
+            .await
+            .unwrap();
+    assert_eq!(ids, ["first", "second"]);
+    tx.rollback().await.unwrap();
+}
+
+async fn prove_recovered_writer(
+    mut tx: weblabel_api::storage::WriteTransaction,
+    repository: &weblabel_api::storage::Repository,
+    project_id: &str,
+) {
+    sqlx::query("INSERT INTO projects(project_id,name,description,created_at) VALUES (?, 'recovered', '', 'now')")
+        .bind(project_id).execute(tx.connection()).await.unwrap();
+    tx.commit().await.unwrap();
+    let mut readback = repository.begin_write().await.unwrap();
+    let name: String = sqlx::query_scalar("SELECT name FROM projects WHERE project_id=?")
+        .bind(project_id)
+        .fetch_one(readback.connection())
+        .await
+        .unwrap();
+    assert_eq!(name, "recovered");
+    readback.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_pending_begin_and_failed_finalization_leave_a_fresh_writer_usable() {
+    let temp = tempdir().unwrap();
+    let config = test_config(temp.path(), Duration::from_secs(2));
+    let state = AppState::open(&config).await.unwrap();
+    let external = AppState::open(&config).await.unwrap();
+    let held = external.repository.begin_write().await.unwrap();
+    let repo = state.repository.clone();
+    let pending = tokio::spawn(async move { repo.begin_write().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    pending.abort();
+    assert!(matches!(pending.await, Err(error) if error.is_cancelled()));
+    held.rollback().await.unwrap();
+    let mut tx = state.repository.begin_write().await.unwrap();
+    sqlx::query("PRAGMA defer_foreign_keys=ON")
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO media_object_refs(asset_revision_id,sha256) VALUES ('missing',?)")
+        .bind("a".repeat(64))
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    assert!(tx.commit().await.is_err());
+    let mut next = state.repository.begin_write().await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_object_refs")
+        .fetch_one(next.connection())
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "failed COMMIT leaked uncommitted writes");
+    sqlx::query("ROLLBACK")
+        .execute(next.connection())
+        .await
+        .unwrap();
+    assert!(next.rollback().await.is_err());
+    let fresh = state.repository.begin_write().await.unwrap();
+    prove_recovered_writer(fresh, &state.repository, "after-failed-finalization").await;
+}
+
+#[tokio::test]
+async fn cancelled_finalization_discards_failed_commit_and_pending_rollback_connections() {
+    let temp = tempdir().unwrap();
+    let config = test_config(temp.path(), Duration::from_secs(2));
+    let state = AppState::open(&config).await.unwrap();
+    for commit in [true, false] {
+        let mut tx = state.repository.begin_write().await.unwrap();
+        sqlx::query("PRAGMA defer_foreign_keys=ON")
+            .execute(tx.connection())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO media_object_refs(asset_revision_id,sha256) VALUES ('missing',?)")
+            .bind("b".repeat(64))
+            .execute(tx.connection())
+            .await
+            .unwrap();
+        // Queue real SQLite work before finalization so cancellation can leave
+        // commands in flight, rather than merely dropping an unpolled future.
+        let mut work = Box::pin(sqlx::query("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<500000) SELECT sum(x) FROM n")
+            .execute(tx.connection()));
+        poll_pending(work.as_mut()).await;
+        drop(work);
+        if commit {
+            // This COMMIT cannot succeed: deferred FK validation must fail.
+            // A cancelled successful COMMIT may already be durable; cancellation
+            // cannot promise to undo an acknowledged database commit.
+            let mut finish = Box::pin(tx.commit());
+            poll_pending(finish.as_mut()).await;
+            drop(finish);
+        } else {
+            let mut finish = Box::pin(tx.rollback());
+            poll_pending(finish.as_mut()).await;
+            drop(finish);
+        }
+        let mut fresh = state.repository.begin_write().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_object_refs")
+            .fetch_one(fresh.connection())
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "cancelled finalization left writes or an uncertain pooled connection"
+        );
+        let project_id = if commit {
+            "after-cancelled-commit"
+        } else {
+            "after-cancelled-rollback"
+        };
+        prove_recovered_writer(fresh, &state.repository, project_id).await;
+    }
+}
+
+#[test]
+fn abandoned_writer_closes_without_a_tokio_runtime() {
+    let temp = tempdir().unwrap();
+    let config = test_config(temp.path(), Duration::from_secs(2));
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let state = runtime.block_on(AppState::open(&config)).unwrap();
+    let mut tx = runtime.block_on(state.repository.begin_write()).unwrap();
+    runtime.block_on(sqlx::query("INSERT INTO projects(project_id,name,description,created_at) VALUES ('abandoned', 'no runtime', '', 'now')")
+        .execute(tx.connection())).unwrap();
+    drop(runtime);
+    drop(tx);
+    let replacement = tokio::runtime::Runtime::new().unwrap();
+    replacement.block_on(async {
+        let mut fresh = state.repository.begin_write().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects")
+            .fetch_one(fresh.connection())
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        prove_recovered_writer(fresh, &state.repository, "after-runtime-shutdown").await;
+    });
+}
 #[cfg(windows)]
 #[test]
 fn open_staging_handle_blocks_atomic_publish_without_creating_a_reference_target() {

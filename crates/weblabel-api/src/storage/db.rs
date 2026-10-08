@@ -1,6 +1,7 @@
-use std::{path::Path, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use tokio::sync::Mutex;
 
 use super::{transactions::begin_immediate, ObjectStore, ObjectWriteError, WriteTransaction};
 
@@ -9,6 +10,7 @@ pub struct Repository {
     pool: SqlitePool,
     objects: ObjectStore,
     write_timeout: Duration,
+    writer_admission: Arc<Mutex<()>>,
 }
 
 impl Repository {
@@ -28,6 +30,7 @@ impl Repository {
             .max_connections(5)
             .connect_with(options)
             .await?;
+        let writer_admission = Arc::new(Mutex::new(()));
         sqlx::raw_sql(include_str!("../../migrations/0001_core.sql"))
             .execute(&pool)
             .await?;
@@ -70,7 +73,7 @@ impl Repository {
                 include_str!("../../migrations/0013_activity_sessions.sql"),
             ),
         ] {
-            let mut tx = begin_immediate(&pool, write_timeout).await?;
+            let mut tx = begin_immediate(&pool, write_timeout, Some(&writer_admission)).await?;
             let applied: i64 = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)",
             )
@@ -92,6 +95,7 @@ impl Repository {
             pool,
             objects,
             write_timeout,
+            writer_admission,
         })
     }
 
@@ -100,7 +104,15 @@ impl Repository {
     }
 
     pub async fn begin_write(&self) -> Result<WriteTransaction, sqlx::Error> {
-        begin_immediate(&self.pool, self.write_timeout).await
+        begin_immediate(&self.pool, self.write_timeout, Some(&self.writer_admission)).await
+    }
+
+    /// Short read-only borrow; release it before waiting for background work.
+    #[cfg(debug_assertions)]
+    pub(crate) async fn read_connection(
+        &self,
+    ) -> Result<sqlx::pool::PoolConnection<sqlx::Sqlite>, sqlx::Error> {
+        self.pool.acquire().await
     }
 
     pub async fn connection_pragmas(&self) -> Result<Vec<(i64, String)>, sqlx::Error> {
@@ -147,14 +159,16 @@ impl Repository {
         bytes: &[u8],
     ) -> Result<String, ObjectWriteError> {
         let object = self.objects.put_bytes(filename, bytes)?;
+        let mut tx = self.begin_write().await?;
         sqlx::query(
             "INSERT INTO media_object_refs(asset_revision_id, sha256) VALUES (?, ?) \
              ON CONFLICT(asset_revision_id, sha256) DO NOTHING",
         )
         .bind(asset_revision_id)
         .bind(&object.sha256)
-        .execute(&self.pool)
+        .execute(tx.connection())
         .await?;
+        tx.commit().await?;
         Ok(object.sha256)
     }
 }

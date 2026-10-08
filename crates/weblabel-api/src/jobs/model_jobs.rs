@@ -1322,6 +1322,14 @@ pub(crate) async fn drain(
             "Platform administrator role required",
         );
     }
+    let cohort = match tokio::time::timeout(Duration::from_secs(2), async {
+        let mut connection = state.repository.read_connection().await?;
+        sqlx::query_scalar::<_, String>("SELECT job_id FROM jobs WHERE state IN ('queued','running') ORDER BY created_at, job_id LIMIT ?")
+            .bind(DRAIN_MAX_JOBS as i64).fetch_all(&mut *connection).await
+    }).await {
+        Ok(Ok(cohort)) => cohort,
+        _ => return failure_response(StatusCode::INTERNAL_SERVER_ERROR, "JOB_DRAIN_FAILED", "Could not read outstanding jobs"),
+    };
     let queue = JobQueue::new(state.repository.clone());
     let mut processed = Vec::new();
     for _ in 0..DRAIN_MAX_JOBS {
@@ -1346,10 +1354,64 @@ pub(crate) async fn drain(
             }
         }
     }
-    let mut jobs = Vec::with_capacity(processed.len());
-    let mut tx = match state.repository.begin_write().await {
-        Ok(tx) => tx,
-        Err(_) => {
+    // This closed entry cohort never includes arrivals during dispatch or waiting.
+    // The timeout applies only to waiting for other owners, not our dispatch budget.
+    if !cohort.is_empty() {
+        let mut completion_sql = String::from("SELECT COUNT(*), COALESCE(SUM(CASE WHEN state IN ('succeeded','failed','cancelled','interrupted') THEN 0 ELSE 1 END),0) FROM jobs WHERE job_id IN (");
+        for index in 0..cohort.len() {
+            if index != 0 {
+                completion_sql.push(',');
+            }
+            completion_sql.push('?');
+        }
+        completion_sql.push(')');
+        let completion = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let mut query = sqlx::query_as::<_, (i64, i64)>(&completion_sql);
+                for id in &cohort {
+                    query = query.bind(id);
+                }
+                let (present, pending) = {
+                    let mut connection = state.repository.read_connection().await?;
+                    query.fetch_one(&mut *connection).await?
+                };
+                if present != cohort.len() as i64 {
+                    return Err(sqlx::Error::RowNotFound);
+                }
+                if pending == 0 {
+                    return Ok(());
+                }
+                // Release the pooled read connection before waiting for other owners.
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        match completion {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                return failure_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "JOB_DRAIN_FAILED",
+                    "Could not read outstanding jobs",
+                )
+            }
+            Err(_) => {
+                return failure_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "JOB_DRAIN_TIMEOUT",
+                    "Outstanding jobs did not complete before the drain deadline",
+                )
+            }
+        }
+    }
+    let mut rows = match tokio::time::timeout(
+        Duration::from_secs(2),
+        drain_job_rows(&state.repository, &processed),
+    )
+    .await
+    {
+        Ok(Ok(rows)) => rows,
+        _ => {
             return failure_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "JOB_DRAIN_FAILED",
@@ -1357,23 +1419,42 @@ pub(crate) async fn drain(
             )
         }
     };
-    for job_id in &processed {
-        let row = sqlx::query("SELECT job_id, kind, state FROM jobs WHERE job_id=?")
-            .bind(job_id)
-            .fetch_optional(tx.connection())
-            .await;
-        if let Ok(Some(row)) = row {
-            jobs.push(json!({
-                "job_id": row.try_get::<String, _>("job_id").unwrap_or_default(),
-                "kind": row.try_get::<String, _>("kind").unwrap_or_default(),
-                "state": row.try_get::<String, _>("state").unwrap_or_default(),
-            }));
-        }
-    }
-    tx.commit().await.ok();
+    rows.sort_unstable_by_key(|(id, _, _)| {
+        processed.iter().position(|processed_id| processed_id == id)
+    });
+    let jobs: Vec<_> = rows
+        .into_iter()
+        .map(|(job_id, kind, state)| json!({"job_id":job_id,"kind":kind,"state":state}))
+        .collect();
     (
         StatusCode::OK,
         Json(json!({"processed": processed.len(), "jobs": jobs})),
     )
         .into_response()
+}
+#[cfg(debug_assertions)]
+async fn drain_job_rows(
+    repository: &Repository,
+    ids: &[String],
+) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT job_id, kind, state FROM jobs WHERE job_id IN (",
+    );
+    let mut separated = query.separated(",");
+    for id in ids {
+        separated.push_bind(id);
+    }
+    separated.push_unseparated(")");
+    let mut connection = repository.read_connection().await?;
+    let rows = query
+        .build_query_as::<(String, String, String)>()
+        .fetch_all(&mut *connection)
+        .await?;
+    if rows.len() != ids.len() {
+        return Err(sqlx::Error::RowNotFound);
+    }
+    Ok(rows)
 }

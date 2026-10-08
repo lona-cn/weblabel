@@ -86,7 +86,7 @@ async fn bootstrap(
         let password_hash = password::hash(password_value).map_err(|_| ())?;
         let token = random_token();
         let csrf = random_token();
-        let mut tx = crate::storage::transactions::begin_immediate(&state.pool, state.write_timeout)
+        let mut tx = crate::storage::transactions::begin_immediate(&state.pool, state.write_timeout, None)
             .await.map_err(|_| ())?;
         let existing_user = sqlx::query_as::<_, (i64,)>("SELECT EXISTS(SELECT 1 FROM users)")
             .fetch_one(tx.connection())

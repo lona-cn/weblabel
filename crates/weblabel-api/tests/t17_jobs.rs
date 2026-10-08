@@ -2886,3 +2886,201 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
     assert_eq!(last["type"], "failed");
     assert_eq!(last["data"]["code"], "INVALID_CHANGE_KIND");
 }
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn debug_drain_completes_reclaimed_interrupted_model_job_without_resend() {
+    struct ParkRunner {
+        started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    }
+    impl RunRunner for ParkRunner {
+        fn execute<'a>(
+            &'a self,
+            _driver: &'a model_jobs::RunDriver,
+        ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
+        {
+            Box::pin(async move {
+                self.started
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+                    .send(())
+                    .unwrap();
+                std::future::pending().await
+            })
+        }
+    }
+
+    let fixture = fixture().await;
+    let (status, created) = fixture
+        .create_run(
+            "t17-op-drain-interrupted",
+            "do not resend after lease expiry",
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+    let run_id = created["run_id"].as_str().unwrap();
+    let job_id = created["job_id"].as_str().unwrap();
+    let annotation_before = fixture
+        .db_text(
+            "SELECT content_hash FROM annotation_revisions WHERE annotation_revision_id=?",
+            &[&fixture.asset().annotation_revision_id],
+        )
+        .await;
+    let queue = JobQueue::new(fixture.repository.clone());
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let execution = tokio::spawn({
+        let repository = fixture.repository.clone();
+        let queue = queue.clone();
+        async move {
+            model_jobs::process_next(
+                &repository,
+                &queue,
+                "t17-crashed-drain-worker",
+                Duration::from_secs(30),
+                &ParkRunner {
+                    started: std::sync::Mutex::new(Some(started_tx)),
+                },
+            )
+            .await
+        }
+    });
+    started_rx.await.unwrap();
+    execution.abort();
+    assert!(execution.await.unwrap_err().is_cancelled());
+
+    // The real first attempt reached its provider. Expire only its lease, as in
+    // the authority-loss cases; the drain must reclaim attempt 2 without resend.
+    assert_eq!(
+        fixture
+            .db_text("SELECT state FROM model_runs WHERE run_id=?", &[run_id])
+            .await,
+        Some("running".to_owned())
+    );
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    sqlx::query("UPDATE jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE job_id=?")
+        .bind(job_id)
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        fixture
+            .db_scalar("SELECT attempt FROM jobs WHERE job_id=?", &[job_id])
+            .await,
+        1
+    );
+
+    let (drain_status, drained) = fixture
+        .request("POST", "/internal/test/jobs/drain", Some(json!({})))
+        .await;
+    // Check durable side effects before the HTTP assertion, so RED proves an
+    // actually completed interrupted job, not a runner or setup failure.
+    let (status, events) = fixture
+        .request(
+            "GET",
+            &format!("/api/ai/runs/{run_id}/events?after=0"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    assert_eq!(events["run"]["state"], "interrupted");
+    assert_eq!(events["run"]["cost_display"], "unknown");
+    let items = events["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["queued", "started", "failed"],
+        "no second provider startup or mock output"
+    );
+    assert_eq!(items[2]["data"]["code"], "LEASE_EXPIRED_NO_RESEND");
+    assert_eq!(items[2]["data"]["interrupted"], true);
+    assert_eq!(items[2]["data"]["cost_display"], "unknown");
+    assert_eq!(
+        fixture
+            .db_text("SELECT state FROM model_runs WHERE run_id=?", &[run_id])
+            .await,
+        Some("interrupted".to_owned())
+    );
+    assert_eq!(
+        fixture
+            .db_text(
+                "SELECT cost_display FROM model_runs WHERE run_id=?",
+                &[run_id]
+            )
+            .await,
+        Some("unknown".to_owned())
+    );
+    assert_eq!(
+        fixture
+            .db_text(
+                "SELECT usage_json FROM model_runs WHERE run_id=?",
+                &[run_id]
+            )
+            .await,
+        None
+    );
+    let job = queue
+        .status(&fixture.project_id, job_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.state, "interrupted");
+    assert_eq!(
+        job.result.as_ref().unwrap()["items"][0]["code"],
+        "LEASE_EXPIRED_NO_RESEND"
+    );
+    assert_eq!(
+        fixture
+            .db_scalar("SELECT attempt FROM jobs WHERE job_id=?", &[job_id])
+            .await,
+        2
+    );
+    assert_eq!(
+        fixture
+            .db_scalar("SELECT COUNT(*) FROM predictions WHERE run_id=?", &[run_id])
+            .await,
+        0
+    );
+    assert_eq!(
+        fixture
+            .db_scalar(
+                "SELECT COUNT(*) FROM suggestion_sets WHERE run_id=?",
+                &[run_id]
+            )
+            .await,
+        0
+    );
+    assert_eq!(
+        fixture
+            .db_scalar(
+                "SELECT COUNT(*) FROM prediction_audit WHERE run_id=?",
+                &[run_id]
+            )
+            .await,
+        0
+    );
+    assert_eq!(
+        fixture
+            .db_text(
+                "SELECT content_hash FROM annotation_revisions WHERE annotation_revision_id=?",
+                &[&fixture.asset().annotation_revision_id]
+            )
+            .await,
+        annotation_before
+    );
+    assert_eq!(
+        fixture
+            .db_scalar("SELECT COUNT(*) FROM jobs WHERE kind='model_run'", &[])
+            .await,
+        1
+    );
+    assert_eq!(drain_status, StatusCode::OK, "{drained}");
+    assert_eq!(
+        drained,
+        json!({"processed": 1, "jobs": [{"job_id": job_id, "kind": "model_run", "state": "interrupted"}]})
+    );
+}

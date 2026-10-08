@@ -225,3 +225,218 @@ async fn guessed_dataset_export_id_is_non_disclosing() {
         .to_string()
         .contains(&project["project_id"].as_str().unwrap_or_default()));
 }
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn drain_waits_for_live_owner_without_blocking_writes_or_changing_ownership() {
+    let directory = tempdir().unwrap();
+    let config = ServerConfig {
+        bind: HOST.parse().unwrap(),
+        database_url: format!("sqlite:{}", directory.path().join("drain.sqlite").display()),
+        object_root: directory.path().join("objects"),
+        write_timeout: Duration::from_secs(2),
+        production: true,
+    };
+    let state = AppState::open_with_auth(
+        &config,
+        AuthConfig {
+            bind: config.bind,
+            cookie_secure: false,
+            allowed_origins: vec![ORIGIN.to_owned()],
+            allowed_hosts: vec![HOST.to_owned()],
+            launch_code: hash_launch_code("drain-launch"),
+            launch_code_expires_at: chrono::Utc::now().timestamp() + 3600,
+        },
+    )
+    .await
+    .unwrap();
+    let repository = state.repository.clone();
+    let queue = weblabel_api::jobs::queue::JobQueue::new(repository.clone());
+    let app = router(state);
+    let (status, bootstrap, cookie) = send(
+        &app,
+        "POST",
+        "/api/session/bootstrap",
+        Some(json!({"launch_code":"drain-launch","password":"drain-bootstrap-password"})),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let cookie = cookie.unwrap();
+    let csrf = bootstrap["csrf_token"].as_str().unwrap();
+    for succeeded in [true, false] {
+        let enqueued = queue
+            .enqueue(
+                None,
+                "owner-controlled",
+                &uuid::Uuid::new_v4().to_string(),
+                &json!({}),
+            )
+            .await
+            .unwrap();
+        let lease = queue
+            .lease_next("background-owner", Duration::from_secs(30))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.job_id, enqueued.job_id);
+        let drain = send(
+            &app,
+            "POST",
+            "/internal/test/jobs/drain",
+            Some(json!({})),
+            Some(&cookie),
+            Some(csrf),
+        );
+        tokio::pin!(drain);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut drain)
+                .await
+                .is_err(),
+            "drain completed before live owner"
+        );
+        let (status, _, _) = tokio::time::timeout(Duration::from_millis(500), send(&app, "POST", "/api/projects",
+            Some(json!({"name":"Concurrent write","description":"drain must release writer","allow_self_review":true})), Some(&cookie), Some(csrf))).await.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        let later = queue
+            .enqueue(
+                None,
+                "later-owner-controlled",
+                &uuid::Uuid::new_v4().to_string(),
+                &json!({}),
+            )
+            .await
+            .unwrap();
+        let later_lease = queue
+            .lease_next("later-owner", Duration::from_secs(30))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(later_lease.job_id, later.job_id);
+        let result = json!({"owner_result": if succeeded { "success" } else { "failure" }});
+        queue.finish(&lease, succeeded, &result).await.unwrap();
+        let (status, body, _) = tokio::time::timeout(Duration::from_millis(500), &mut drain)
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({"processed":0,"jobs":[]}));
+        let mut tx = repository.begin_write().await.unwrap();
+        let row: (String, String, i64, i64, String) = sqlx::query_as(
+            "SELECT state, worker_id, fencing_token, attempt, result_json FROM jobs WHERE job_id=?",
+        )
+        .bind(&lease.job_id)
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            row,
+            (
+                if succeeded { "succeeded" } else { "failed" }.to_owned(),
+                "background-owner".to_owned(),
+                1,
+                1,
+                result.to_string()
+            )
+        );
+        queue.finish(&later_lease, true, &json!({})).await.unwrap();
+    }
+    let held = queue
+        .enqueue(
+            None,
+            "timeout-owner",
+            &uuid::Uuid::new_v4().to_string(),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let held_lease = queue
+        .lease_next("timeout-owner", Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    let (status, body, _) = tokio::time::timeout(
+        Duration::from_secs(3),
+        send(
+            &app,
+            "POST",
+            "/internal/test/jobs/drain",
+            Some(json!({})),
+            Some(&cookie),
+            Some(csrf),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["code"], "JOB_DRAIN_TIMEOUT");
+    assert_eq!(held.job_id, held_lease.job_id);
+    queue.finish(&held_lease, true, &json!({})).await.unwrap();
+    let missing = queue
+        .enqueue(
+            None,
+            "missing-owner",
+            &uuid::Uuid::new_v4().to_string(),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let missing_lease = queue
+        .lease_next("missing-owner", Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(missing.job_id, missing_lease.job_id);
+    let drain = send(
+        &app,
+        "POST",
+        "/internal/test/jobs/drain",
+        Some(json!({})),
+        Some(&cookie),
+        Some(csrf),
+    );
+    tokio::pin!(drain);
+    assert!(tokio::time::timeout(Duration::from_millis(100), &mut drain)
+        .await
+        .is_err());
+    let mut tx = repository.begin_write().await.unwrap();
+    sqlx::query("DELETE FROM job_idempotency WHERE job_id=?")
+        .bind(&missing.job_id)
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM jobs WHERE job_id=?")
+        .bind(&missing.job_id)
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (status, body, _) = tokio::time::timeout(Duration::from_millis(500), &mut drain)
+        .await
+        .unwrap();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["code"], "JOB_DRAIN_FAILED");
+    let queued = queue
+        .enqueue(
+            None,
+            "unsupported",
+            &uuid::Uuid::new_v4().to_string(),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let (status, body, _) = send(
+        &app,
+        "POST",
+        "/internal/test/jobs/drain",
+        Some(json!({})),
+        Some(&cookie),
+        Some(csrf),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({"processed":1,"jobs":[{"job_id":queued.job_id,"kind":"unsupported","state":"failed"}]})
+    );
+}
