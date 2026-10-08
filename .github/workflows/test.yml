@@ -53,3 +53,13 @@ jobs:
       - name: Actual wgpu software device function tests (not hardware/G4)
         if: runner.os == 'Windows'
         run: pnpm test:gpu:software
+      - name: Preserve this run's T00-only WebGPU capability observations
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: software-wgpu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/**/t00-webgpu-capability.json
+            test-results/**/t00-webgpu-capability.png
+          if-no-files-found: ignore
+          retention-days: 7

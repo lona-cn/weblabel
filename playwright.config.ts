@@ -41,7 +41,12 @@ export default defineConfig({
     channel: 'chromium',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    // Dawn/WebGPU SwiftShader requires new headless Chromium; SwANGLE forces WebGPU disabled on Windows.
-    launchOptions: { args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'] },
+    // Windows CPU ANGLE uses WARP; Dawn WebGPU explicitly uses SwiftShader.
+    // Software engineering only: hardware projects override this argument list.
+    launchOptions: { args: [
+      '--enable-unsafe-webgpu',
+      '--use-webgpu-adapter=swiftshader',
+      ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
+    ] },
   },
 });

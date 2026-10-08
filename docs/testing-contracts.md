@@ -85,6 +85,8 @@ CI11原direct-native case的首个PowerShell/CIM snapshot实际等待30038.317ms
 
 gpu-status 暴露文本/可测试属性 actual_backend=webgpu、adapter_kind=hardware/software/unknown、device_state=loading/ready/lost/recovering/unsupported；不以浏览器支持检查代替真实 device 创建。设备重建中显示recovering且Canvas只读，成功才恢复ready；失败保持lost和GPU_RECOVERY_FAILED诊断，gpu-retry显式重试renderer-only恢复。GPUDevice.destroy必须通过真实device.lost观测并自动触发重建，不调用simulate_device_loss。
 
+T00 软件工程 gate 使用实际 Rust WASM 创建 BrowserWebGpu device，并严格要求 ready 与 Cpu；Windows 的 inherited e2e 参数为 `--enable-unsafe-webgpu --use-webgpu-adapter=swiftshader --use-angle=d3d11-warp`，以 CPU WARP ANGLE compositor 配合 Dawn SwiftShader，而非依赖本机硬件 compositor。其他平台不加入 WARP；t05-render/chromium-webgpu 硬件项目继续覆盖完整 launch argument list，不继承软件 adapter/WARP。实际 Chromium 153 本地 WARP renderer 为 Microsoft Basic Render Driver，device 创建及真实 GPU pixel readback 已成功；这不反推历史 CI15 blocked 的未捕获原因，也不证明硬件/G4。CDP 的 unavailable_software 是硬件加速元数据，不能替代实际 device/pixel 结果判断。原 ready/backend/Cpu 断言、期限与重试设置不变。T00 在 strict ready 断言前写出 state/backend/device_type/error 四字段 JSON 和仅 gpu-status 的截图；CI always 仅上传当次 run/attempt 的这两个固定 T00 basename，保留7天，不上传整个 trace/test-results、业务库、T32或authority。
+
 测试中需要获取文档时调用正常的 GET annotation API或 Editor 测试 facade；测试 facade只在测试构建可用，不能让生产页面暴露任意内部命令绕过权限。截图只用于可视效果；几何、标签和保存必须用原始数值断言。
 
 ## 4. Provider fake-process 契约：T16建立
