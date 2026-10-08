@@ -246,16 +246,8 @@ impl HostProcess {
     }
 
     pub fn kill_tree(&mut self) -> Result<ReclaimReport, SpawnError> {
-        #[cfg(windows)]
-        tracing::info!("shutdown lifecycle: Host kill_tree reclaim begin");
         let report = supervisor::reclaim_process_tree(self.reclaim_root())?;
-        #[cfg(windows)]
-        tracing::info!("shutdown lifecycle: Host kill_tree reclaim returned");
-        #[cfg(windows)]
-        tracing::info!("shutdown lifecycle: Host Child.wait begin");
         let _ = self.child.wait();
-        #[cfg(windows)]
-        tracing::info!("shutdown lifecycle: Host Child.wait returned");
         Ok(report)
     }
 }

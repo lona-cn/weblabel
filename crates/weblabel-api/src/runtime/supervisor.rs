@@ -18,6 +18,8 @@
 use std::collections::HashMap;
 #[cfg(any(not(target_os = "linux"), test))]
 use std::collections::HashSet;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 #[cfg(any(not(target_os = "linux"), test))]
 use std::process::Command;
 #[cfg(not(target_os = "linux"))]
@@ -85,16 +87,19 @@ fn system_tool(name: &str) -> String {
 
 #[cfg(not(target_os = "linux"))]
 fn run_tool(executable: &str, args: &[&str]) {
+    let mut command = Command::new(executable);
     #[cfg(windows)]
-    tracing::info!("shutdown lifecycle: taskkill command begin");
-    let _ = Command::new(executable)
+    {
+        // Noninteractive reclamation must not attach to the shutting-down console.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let _ = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-    #[cfg(windows)]
-    tracing::info!("shutdown lifecycle: taskkill command returned");
 }
 
 #[cfg(all(target_os = "linux", test))]
@@ -105,16 +110,20 @@ pub(crate) fn snapshot_records() -> HashMap<u32, ProcessRecord> {
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn snapshot_records() -> HashMap<u32, ProcessRecord> {
     let output = if cfg!(windows) {
-        tracing::info!("shutdown lifecycle: snapshot command begin");
-        let output = Command::new(system_tool("powershell.exe"))
+        let mut command = Command::new(system_tool("powershell.exe"));
+        #[cfg(windows)]
+        {
+            // Keep the noninteractive snapshot independent of console teardown.
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        command
             .args([
                 "-NoProfile",
                 "-Command",
                 "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.ToUniversalTime().ToString('o'))\" }",
             ])
-            .output();
-        tracing::info!("shutdown lifecycle: snapshot command returned");
-        output
+            .output()
     } else {
         Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output()
     };
@@ -186,8 +195,6 @@ pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnErr
 
 #[cfg(not(target_os = "linux"))]
 pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnError> {
-    #[cfg(windows)]
-    tracing::info!("shutdown lifecycle: reclaim begin");
     let cutoff_ms = now_ms();
     let table = snapshot_records();
     let root_is_ours = table.get(&root.root_pid).is_none_or(|record| {
@@ -264,8 +271,6 @@ pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnErr
         }
         thread::sleep(Duration::from_millis(250));
     }
-    #[cfg(windows)]
-    tracing::info!("shutdown lifecycle: reclaim verified");
     Ok(ReclaimReport {
         root_pid: root.root_pid,
         mechanism,
@@ -370,11 +375,7 @@ impl Supervisor {
 
 impl Drop for Supervisor {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        tracing::info!("shutdown lifecycle: Supervisor Drop begin");
         self.shutdown();
-        #[cfg(windows)]
-        tracing::info!("shutdown lifecycle: Supervisor Drop end");
     }
 }
 #[cfg(target_os = "linux")]
