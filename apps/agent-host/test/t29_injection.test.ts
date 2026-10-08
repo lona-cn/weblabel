@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { readFile, mkdtemp, mkdir, symlink, rm, writeFile, realpath } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, symlink, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -173,14 +173,16 @@ it('production Codex dispatch stays UNSUPPORTED_RUNTIME without launching a fake
 it('grant filesystem containment rejects real junction/symlink escape and portable path bypasses', async () => {
   const directory = await mkdtemp(join(tmpdir(), 't29-grant-')); const stage = join(directory, 'stage'); const outside = join(directory, 'other-project');
   await mkdir(stage); await mkdir(outside); const secret = `T29-synthetic-${randomUUID()}`;
-  await writeFile(join(outside, '.secret'), secret); await writeFile(join(stage, 'approved.png'), await injectionImage());
+  const approvedImage = await injectionImage();
+  await writeFile(join(outside, '.secret'), secret); await writeFile(join(stage, 'approved.png'), approvedImage);
   try {
     // Windows junction does not need symlink privilege. POSIX creates a real
     // symlink; neither is replaced by a mock or skipped on permission failure.
     await symlink(outside, join(stage, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
     const grants = new GrantStore(); const grant = grants.issue({ run_id: 'T29-run', project_id: 'T29-project', media_hash: 'T29-media-hash', root: stage });
     const binding = { run_id: grant.run_id, project_id: grant.project_id, media_hash: grant.media_hash };
-    expect(grants.resolve(grant.grant_id, { ...binding, relative_path: 'approved.png' })).toBe(await realpath(join(stage, 'approved.png')));
+    const approvedBytes = await readFile(grants.resolve(grant.grant_id, { ...binding, relative_path: 'approved.png' }));
+    expect(approvedBytes).toEqual(approvedImage);
     expect(() => grants.resolve(grant.grant_id, { ...binding, relative_path: 'escape/.secret' })).toThrow(/grant_path_escape/);
     for (const path of ['../other-project/.secret', '..\\other-project\\.secret', 'C:outside.secret', 'C:\\outside.secret', '\\\\synthetic-server\\share\\.secret', '/other-project/.secret']) {
       expect(() => grants.resolve(grant.grant_id, { ...binding, relative_path: path })).toThrow(/grant_path_(traversal|absolute)/);

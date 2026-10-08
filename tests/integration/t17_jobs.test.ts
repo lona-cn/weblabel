@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 
-import { expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { bootstrap_admin_for_test, database_path_for_test, start_test_app, type ApiClient, type TestApp } from '../support/app';
 
@@ -162,11 +162,24 @@ function startRunBody(seeded: Seeded, operationId: string, prompt: string, overr
   };
 }
 
-it('creates model runs idempotently and rejects operation_id payload reuse', async () => {
-  const app = await start_test_app();
+let app: TestApp;
+let admin: ApiClient;
+let seeded: Seeded;
+beforeEach(async () => {
+  app = await start_test_app();
   try {
-    const admin = await bootstrap_admin_for_test(app);
-    const seeded = await seed(admin, app);
+    // Real bootstrap, password hashing/login and media preparation are fixture
+    // work; every behavior case still owns a fresh backend and database.
+    admin = await bootstrap_admin_for_test(app);
+    seeded = await seed(admin, app);
+  } catch (error) {
+    await app.stop();
+    throw error;
+  }
+});
+afterEach(async () => { await app?.stop(); });
+
+it('creates model runs idempotently and rejects operation_id payload reuse', async () => {
     const body = await authorize(admin,startRunBody(seeded, 't17-ts-op-1', 'review the helmet attribute'));
 
     const created = await admin.request<JsonObject>('POST', '/api/ai/runs', body);
@@ -193,16 +206,9 @@ it('creates model runs idempotently and rejects operation_id payload reuse', asy
     expect(job.status).toBe(200);
     expect(object(job.json, 'job').state).toBe('queued');
     expect(object(job.json, 'job').kind).toBe('model_run');
-  } finally {
-    await app.stop();
-  }
 });
 
 it('streams monotonic run events and pages them by after', async () => {
-  const app = await start_test_app();
-  try {
-    const admin = await bootstrap_admin_for_test(app);
-    const seeded = await seed(admin, app);
     const created = await admin.request<JsonObject>('POST', '/api/ai/runs',
       await authorize(admin,startRunBody(seeded, 't17-ts-op-events', 'stream events')));
     expect(created.status).toBe(202);
@@ -244,16 +250,9 @@ it('streams monotonic run events and pages them by after', async () => {
 
     const bad = await admin.request<ApiError>('GET', `/api/ai/runs/${runId}/events?after=-1`);
     expect(bad.status).toBe(400);
-  } finally {
-    await app.stop();
-  }
 });
 
 it('cancels runs idempotently and never resumes cancelled work', async () => {
-  const app = await start_test_app();
-  try {
-    const admin = await bootstrap_admin_for_test(app);
-    const seeded = await seed(admin, app);
     const created = await admin.request<JsonObject>('POST', '/api/ai/runs',
       await authorize(admin,startRunBody(seeded, 't17-ts-op-cancel', 'cancel me')));
     expect(created.status).toBe(202);
@@ -277,16 +276,9 @@ it('cancels runs idempotently and never resumes cancelled work', async () => {
     expect(suggestions.status).toBe(200);
     expect(object(suggestions.json, 'suggestions').items).toEqual([]);
     expect(object(object(suggestions.json, 'suggestions').run, 'run').state).toBe('cancelled');
-  } finally {
-    await app.stop();
-  }
 });
 
 it('labels mock runs explicitly and keeps suggestion content stable', async () => {
-  const app = await start_test_app();
-  try {
-    const admin = await bootstrap_admin_for_test(app);
-    const seeded = await seed(admin, app);
     const created = await admin.request<JsonObject>('POST', '/api/ai/runs',
       await authorize(admin,startRunBody(seeded, 't17-ts-op-mock', 'mock labeling')));
     expect(created.status).toBe(202);
@@ -312,16 +304,27 @@ it('labels mock runs explicitly and keeps suggestion content stable', async () =
     const second = await admin.request<JsonObject>('GET', `/api/ai/runs/${runId}/suggestions`);
     expect(second.json).toEqual(first.json);
     expect(stringField((object(second.json, 'suggestions').items as JsonObject[])[0]!, 'prediction_id', 'set')).toBe(predictionId);
-  } finally {
-    await app.stop();
-  }
 });
 
+describe('project authorization', () => {
+  let outsider: ApiClient;
+  let viewer: ApiClient;
+  beforeEach(async () => {
+    try {
+      outsider = await app.as_user('annotator');
+      viewer = await app.as_user('viewer');
+      const viewerSession = await viewer.request<JsonObject>('GET', '/api/session');
+      expect(viewerSession.status).toBe(200);
+      const viewerId = stringField(viewerSession.json, 'user_id', 'session');
+      const membership = await admin.request('POST', `/api/projects/${seeded.projectId}/members`, { user_id: viewerId, role: 'viewer' });
+      expect(membership.status).toBe(200);
+    } catch (error) {
+      await app.stop();
+      throw error;
+    }
+  });
+
 it('enforces project membership and write roles on every run route', async () => {
-  const app = await start_test_app();
-  try {
-    const admin = await bootstrap_admin_for_test(app);
-    const seeded = await seed(admin, app);
     const created = await admin.request<JsonObject>('POST', '/api/ai/runs',
       await authorize(admin,startRunBody(seeded, 't17-ts-op-authz', 'authorization')));
     expect(created.status).toBe(202);
@@ -329,7 +332,6 @@ it('enforces project membership and write roles on every run route', async () =>
     const jobId = stringField(created.json, 'job_id', 'create');
 
     // A user without membership cannot see or touch anything on these routes.
-    const outsider = await app.as_user('annotator');
     for (const [method, path] of [
       ['GET', `/api/ai/runs/${runId}/events?after=0`],
       ['GET', `/api/ai/runs/${runId}/suggestions`],
@@ -341,12 +343,6 @@ it('enforces project membership and write roles on every run route', async () =>
     }
 
     // A project viewer may read but never start or cancel runs.
-    const viewer = await app.as_user('viewer');
-    const viewerSession = await viewer.request<JsonObject>('GET', '/api/session');
-    expect(viewerSession.status).toBe(200);
-    const viewerId = stringField(viewerSession.json, 'user_id', 'session');
-    const membership = await admin.request('POST', `/api/projects/${seeded.projectId}/members`, { user_id: viewerId, role: 'viewer' });
-    expect(membership.status).toBe(200);
     const read = await viewer.request<JsonObject>('GET', `/api/ai/runs/${runId}/events?after=0`);
     expect(read.status).toBe(200);
     const deniedStart = await viewer.request<ApiError>('POST', '/api/ai/runs', startRunBody(seeded, 't17-ts-op-viewer', 'viewer start'));
@@ -365,7 +361,5 @@ it('enforces project membership and write roles on every run route', async () =>
     const longPrompt = await admin.request<ApiError>('POST', '/api/ai/runs',
       startRunBody(seeded, 't17-ts-op-long', 'x', { prompt: 'p'.repeat(9000) }));
     expect(longPrompt.status).toBe(413);
-  } finally {
-    await app.stop();
-  }
+});
 });

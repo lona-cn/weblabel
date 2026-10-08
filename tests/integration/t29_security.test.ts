@@ -14,15 +14,34 @@ let admin: Login;
 let seeded: Seeded;
 let runId: string;
 let validToken: string;
+let recovery: { username: string; password: string; userId: string; expired: Login };
+let setupStopped = false;
 beforeAll(async () => {
   app = await startSecurityApp(); admin = app.admin;
+  try {
   seeded = await seedSecurity(admin.client, app);
   const request = await authorize(admin.client, startRunBody(seeded, randomUUID(), 'T29 isolated scope'));
   const started = await admin.client.request('POST', '/api/ai/runs', request);
   expect(started.status).toBe(202); runId = text(started.json, 'run_id');
   validToken = await app.issue(runId, seeded.projectId);
+  const username = `t29-recovery-${randomUUID()}`; const password = 'T29-recovery-password';
+  const created = await admin.client.request('POST', '/api/users', { username, password });
+  expect(created.status).toBe(201);
+  const initial = await raw(app.base_url, 'POST', '/api/session/login', { username, password });
+  expect(initial.status).toBe(200);
+  const expired = session(app.base_url, initial);
+  const token = expired.cookie.slice('weblabel_session='.length);
+  const database = new DatabaseSync(join(app.directory, 'api.sqlite'));
+  try { expect(database.prepare('UPDATE sessions SET expires_at=? WHERE session_id=?').run('1', createHash('sha256').update(token).digest('hex')).changes).toBe(1); }
+  finally { database.close(); }
+  recovery = { username, password, userId: text(created.json, 'user_id'), expired };
+  } catch (error) {
+    setupStopped = true;
+    await app.stop();
+    throw error;
+  }
 }, 120_000);
-afterAll(async () => { if (app) await app.stop(); });
+afterAll(async () => { if (app && !setupStopped) await app.stop(); });
 
 it.each([
   ['Origin', { origin: 'https://evil.invalid' }, 'ORIGIN_NOT_ALLOWED'],
@@ -66,16 +85,7 @@ it('actualRouter preserves active-session CSRF and Origin on login and writes', 
 // Before-state is user-observed ground truth, not rerun: invalid cookie GET=401
 // without deletion; login with that cookie and no CSRF=403 CSRF_REQUIRED.
 it('stale or expired cookies recover through GET expiry and fresh authenticated login', async () => {
-  const username = `t29-recovery-${randomUUID()}`; const password = 'T29-recovery-password';
-  const created = await admin.client.request('POST', '/api/users', { username, password });
-  expect(created.status).toBe(201);
-  const initial = await raw(app.base_url, 'POST', '/api/session/login', { username, password });
-  expect(initial.status).toBe(200);
-  const expired = session(app.base_url, initial);
-  const token = expired.cookie.slice('weblabel_session='.length);
-  const database = new DatabaseSync(join(app.directory, 'api.sqlite'));
-  try { expect(database.prepare('UPDATE sessions SET expires_at=? WHERE session_id=?').run('1', createHash('sha256').update(token).digest('hex')).changes).toBe(1); }
-  finally { database.close(); }
+  const { username, password, userId, expired } = recovery;
   for (const cookie of ['weblabel_session=T29-nonexistent-credential', expired.cookie]) {
     const current = await raw(app.base_url, 'GET', '/api/session', undefined, { cookie });
     expect(current.status).toBe(401); expect(current.json.code).toBe('UNAUTHENTICATED');
@@ -92,7 +102,7 @@ it('stale or expired cookies recover through GET expiry and fresh authenticated 
     expect(recovered.status).toBe(200);
     const fresh = session(app.base_url, recovered);
     const principal = await fresh.client.request('GET', '/api/session');
-    expect(principal.status).toBe(200); expect(text(principal.json, 'user_id')).toBe(text(created.json, 'user_id'));
+    expect(principal.status).toBe(200); expect(text(principal.json, 'user_id')).toBe(userId);
     const noCsrf = await raw(app.base_url, 'POST', '/api/projects', { name: 'not permitted' }, { cookie: fresh.cookie });
     expect(noCsrf.status).toBe(403); expect(noCsrf.json.code).toBe('CSRF_REQUIRED');
   }

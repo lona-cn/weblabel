@@ -19,7 +19,7 @@ async function freePort() {
 async function until(check, label, milliseconds = 20000) {
   const deadline = Date.now() + milliseconds;
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await delay(50); }
-  throw new Error(label);
+  throw new Error(typeof label === 'function' ? label() : label);
 }
 function jsonFile(file, value) { fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n'); }
 function clean(text) { return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/WEBLABEL_BOOTSTRAP_CODE=[a-f0-9]+/g, 'WEBLABEL_BOOTSTRAP_CODE=[REDACTED]'); }
@@ -27,6 +27,7 @@ async function closedPort(port) { try { await fetch(`http://127.0.0.1:${port}/`,
 export async function activeHostShutdown(mode, release = path.join(privateRoot, 'release')) {
   assert.equal(process.platform, 'win32', 'This actual physical console regression requires Windows ConPTY');
   assert.ok(['packaged', 'direct-api'].includes(mode));
+  release = path.resolve(release);
   validateRelease(release);
   const runDirectory = path.join(privateRoot, `${mode}-${crypto.randomUUID()}`); fs.mkdirSync(runDirectory, { recursive: true });
   const data = path.join(runDirectory, '中文 owned data'); fs.mkdirSync(data);
@@ -54,7 +55,7 @@ export async function activeHostShutdown(mode, release = path.join(privateRoot, 
   if (mode === 'packaged') ptyArgv.push('-Keyboard');
   const terminal = spawn(ptyArgv[0], ptyArgv.slice(1), { cwd: root, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const terminated = new Promise(resolve => terminal.once('exit', (code, signal) => resolve({ code, signal })));
-  let output = ''; terminal.stdout.on('data', chunk => output += String(chunk)); terminal.stderr.on('data', chunk => output += String(chunk));
+  let output = '', diagnostics = ''; terminal.stdout.on('data', chunk => output += String(chunk)); terminal.stderr.on('data', chunk => diagnostics += String(chunk));
   const evidence = { evidence_kind: 'real_release_api_physical_ctrl_c_engineering_host_fixture_not_model_inference', mode, source_commit: JSON.parse(fs.readFileSync(path.join(release, 'release.json'), 'utf8')).source_commit, argv, pty_argv: ptyArgv, run_directory: runDirectory, api_sha256: sha(path.join(release, 'api/weblabel-api.exe')), requests: [], cleanup: {} };
   let host;
   const identities = new Map();
@@ -63,13 +64,20 @@ export async function activeHostShutdown(mode, release = path.join(privateRoot, 
     const probe = spawnSync(powershell, ['-NoProfile', '-Command', `Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object ProcessId,CommandLine,@{Name='creation_filetime';Expression={$_.CreationDate.ToFileTimeUtc().ToString()}} | ConvertTo-Json -Compress`], { shell: false, encoding: 'utf8' });
     return probe.status === 0 && probe.stdout.trim() ? JSON.parse(probe.stdout) : null;
   };
+  const bootstrapCondition = { started_at_ms: Date.now(), token_observed_at_ms: null, normalized_token_detected: false, endpoint_status: null, endpoint_error: null };
+  evidence.bootstrap_condition = bootstrapCondition;
+  const bootstrapDiagnostic = () => JSON.stringify({ ...bootstrapCondition, elapsed_ms: Date.now() - bootstrapCondition.started_at_ms, terminal_exit_code: terminal.exitCode, vt_controls: [...output.matchAll(/\x1b\[[0-9;?]*[ -/]*[@-~]/g)].slice(0, 32).map(match => match[0]), terminal_output: clean(output + diagnostics) });
   try {
     const code = await until(async () => {
-      if (terminal.exitCode !== null) throw new Error('PTY exited before bootstrap: ' + clean(output));
+      const pid = Number(output.match(/T33_PTY_PID=(\d+)/)?.[1]);
+      if (pid > 0 && !identities.has(pid)) { identities.set(pid, identity(pid)); evidence.owned_cleanup_identities = [...identities.values()]; }
+      if (terminal.exitCode !== null) throw new Error('PTY exited before bootstrap: ' + bootstrapDiagnostic());
       const found = output.match(/WEBLABEL_BOOTSTRAP_CODE=([a-f0-9]+)/)?.[1];
+      bootstrapCondition.normalized_token_detected = /WEBLABEL_BOOTSTRAP_CODE=\[REDACTED\]/.test(clean(output));
       if (!found) return false;
-      try { return (await fetch(base + '/api/session')).status === 401 && found; } catch { return false; }
-    }, 'actual bootstrap missing');
+      bootstrapCondition.token_observed_at_ms ??= Date.now();
+      try { bootstrapCondition.endpoint_status = (await fetch(base + '/api/session')).status; bootstrapCondition.endpoint_error = null; return bootstrapCondition.endpoint_status === 401 && found; } catch (error) { bootstrapCondition.endpoint_error = error.name; return false; }
+    }, () => 'actual bootstrap missing: ' + bootstrapDiagnostic());
     const initialTerminalPid = Number(output.match(/T33_PTY_PID=(\d+)/)?.[1]);
     identities.set(initialTerminalPid, identity(initialTerminalPid));
     const bootstrap = await fetch(base + '/api/session/bootstrap', { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ launch_code: code, password: 'T33-engineering-owned-password' }) });
@@ -137,7 +145,7 @@ export async function activeHostShutdown(mode, release = path.join(privateRoot, 
     return evidence;
   } catch (error) { evidence.result = 'failed'; evidence.error = error.stack; throw error; }
   finally {
-    fs.writeFileSync(path.join(report, `${mode}.log`), clean(output));
+    fs.writeFileSync(path.join(report, `${mode}.log`), clean(output + diagnostics));
     // Successful observations need no backstop; never taskkill an already-dead PID.
     evidence.emergency_cleanup = [];
     if (evidence.result !== 'passed') {

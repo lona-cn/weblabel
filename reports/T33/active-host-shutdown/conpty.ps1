@@ -1,6 +1,7 @@
 param([string]$CommandLine, [string]$ReadyFile, [string]$ResultFile, [switch]$Keyboard)
 $ErrorActionPreference = 'Stop'
 # Adapted from reports/T32/interactive-closure/conpty.ps1; never attaches a user's console.
+[Console]::Error.WriteLine("T33_PHASE=add_type_begin at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -32,23 +33,28 @@ public static class T33Terminal {
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GenerateConsoleCtrlEvent(uint type,uint group);
  static uint Exit(IntPtr handle) { uint code; if(!GetExitCodeProcess(handle,out code)) throw new Exception("GetExitCodeProcess failed"); return code; }
  static long Creation(IntPtr handle) { long c,e,k,u; if(!GetProcessTimes(handle,out c,out e,out k,out u)) throw new Exception("GetProcessTimes failed"); return c; }
+ static void Phase(string name) { Console.Error.WriteLine("T33_PHASE="+name+" at_ms="+DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()); }
  public static int Run(string command,string ready,string result,bool keyboard) {
   IntPtr ir,iw,or,ow,pc;
   if(!CreatePipe(out ir,out iw,IntPtr.Zero,0) || !CreatePipe(out or,out ow,IntPtr.Zero,0)) throw new Exception("CreatePipe failed");
+  Phase("conpty_begin");
   int hr=CreatePseudoConsole(new COORD{X=2000,Y=60},ir,ow,0,out pc);
   if(hr!=0) throw new Exception("CreatePseudoConsole: "+hr);
+  Phase("conpty_created");
   CloseHandle(ir); CloseHandle(ow);
   IntPtr size=IntPtr.Zero; InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref size);
   IntPtr attrs=Marshal.AllocHGlobal(size); PI pi=new PI(); IntPtr api=IntPtr.Zero,root=IntPtr.Zero,desc=IntPtr.Zero;
   using(var output=new FileStream(new SafeFileHandle(or,true),FileAccess.Read))
   using(var writer=new FileStream(new SafeFileHandle(iw,true),FileAccess.Write)) {
-   var reader=Task.Run(()=> { byte[] b=new byte[8192]; int n; while((n=output.Read(b,0,b.Length))>0) Console.Write(Encoding.UTF8.GetString(b,0,n)); });
+   var reader=Task.Run(()=> { byte[] b=new byte[8192]; int n; bool first=true; while((n=output.Read(b,0,b.Length))>0) { if(first) { first=false; Phase("first_output_byte"); } Console.Write(Encoding.UTF8.GetString(b,0,n)); } });
    try {
     if(!InitializeProcThreadAttributeList(attrs,1,0,ref size) || !UpdateProcThreadAttribute(attrs,0,new IntPtr(0x00020016),pc,new IntPtr(IntPtr.Size),IntPtr.Zero,IntPtr.Zero)) throw new Exception("attribute failed");
     SIX si=new SIX{si=new SI{cb=Marshal.SizeOf(typeof(SIX))},attributes=attrs};
     // PowerShell may inherit Ctrl+C-ignore; reproduce a normal interactive CLI child instead.
     if(!SetConsoleCtrlHandler(IntPtr.Zero,false)) throw new Exception("Clear inherited Ctrl+C-ignore: "+Marshal.GetLastWin32Error());
+    Phase("create_process_begin");
     if(!CreateProcess(null,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x00080400,IntPtr.Zero,Environment.CurrentDirectory,ref si,out pi)) throw new Exception("CreateProcess: "+Marshal.GetLastWin32Error());
+    Phase("create_process_created");
     Console.WriteLine("T33_PTY_PID="+pi.pid);
     var deadline=DateTime.UtcNow.AddSeconds(100);
     while(!File.Exists(ready)) { if(WaitForSingleObject(pi.process,0)==0) throw new Exception("CLI exited before active fixture"); if(DateTime.UtcNow>deadline) throw new Exception("active fixture deadline"); Thread.Sleep(20); }
@@ -82,4 +88,5 @@ public static class T33Terminal {
  }
 }
 '@
+[Console]::Error.WriteLine("T33_PHASE=add_type_end at_ms=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 exit [T33Terminal]::Run($CommandLine, $ReadyFile, $ResultFile, $Keyboard.IsPresent)
