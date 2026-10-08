@@ -183,13 +183,26 @@ describe('isolated administrator user listing fixture', () => {
   });
 });
 
-it('sets Secure on session cookies when explicitly configured', async () => {
-  const app = await start_test_app('true');
-  try {
-    const user = await app.as_user('viewer');
+describe('isolated Secure session cookie fixture', () => {
+  let app: TestApp | undefined;
+  let user: ApiClient;
+
+  beforeEach(async () => {
+    const fresh = await start_test_app('true');
+    // as_user owns cleanup if its real user/project/login preparation fails.
+    user = await fresh.as_user('viewer');
+    app = fresh;
+  });
+  afterEach(async () => {
+    const finished = app;
+    app = undefined;
+    await finished?.stop();
+  });
+
+  it('sets Secure on session cookies when explicitly configured', async () => {
     const session = await user.request('GET', '/api/session');
     expect(session.status).toBe(200);
-  } finally { await app.stop(); }
+  });
 });
 
 it('rate-limits repeated failed local login attempts without case-folding identities', async () => {

@@ -877,10 +877,16 @@ impl Drop for RuntimeLease {
         if let Some(root) = self.root.take() {
             // The Tokio runtime joins blocking tasks before the API process exits;
             // a detached std thread could be terminated before reclaiming the Host.
+            #[cfg(windows)]
+            tracing::info!("shutdown lifecycle: RuntimeLease reclaim scheduled");
             tokio::task::spawn_blocking(move || {
+                #[cfg(windows)]
+                tracing::info!("shutdown lifecycle: RuntimeLease reclaim closure begin");
                 if let Err(error) = crate::runtime::supervisor::reclaim_process_tree(root) {
                     tracing::error!(%error, "cancelled Host process tree reclamation failed");
                 }
+                #[cfg(windows)]
+                tracing::info!("shutdown lifecycle: RuntimeLease reclaim closure end");
             });
         }
     }
@@ -994,6 +1000,8 @@ impl RunRunner for ProductionRunner {
             let payload = json!({"run_id": run_id, "request": request, "profile": driver.profile, "execution_profile_config": execution_profile_config, "profile_configuration_hash": profile_configuration_hash});
             let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
             let reader = tokio::task::spawn_blocking(move || {
+                #[cfg(windows)]
+                tracing::info!("shutdown lifecycle: reader closure begin");
                 let result = (|| {
                     supervisor
                         .send(
@@ -1033,9 +1041,13 @@ impl RunRunner for ProductionRunner {
                     }
                     Err("HOST_OUTPUT_BUDGET")
                 })();
+                #[cfg(windows)]
+                tracing::info!("shutdown lifecycle: reader result returned");
                 if let Err(code) = result {
                     let _ = sender.blocking_send(Err(code));
                 }
+                #[cfg(windows)]
+                tracing::info!("shutdown lifecycle: reader closure end before Supervisor Drop");
             });
             let deadline = tokio::time::sleep_until(deadline_at);
             tokio::pin!(deadline);

@@ -31,10 +31,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(code);
         }
     }
-    tokio::runtime::Builder::new_multi_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?
-        .block_on(run())
+        .build()?;
+    let result = runtime.block_on(run());
+    #[cfg(windows)]
+    tracing::info!("shutdown lifecycle: block_on returned");
+    #[cfg(windows)]
+    tracing::info!("shutdown lifecycle: runtime Drop begin");
+    drop(runtime);
+    #[cfg(windows)]
+    tracing::info!("shutdown lifecycle: runtime Drop end");
+    result
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {

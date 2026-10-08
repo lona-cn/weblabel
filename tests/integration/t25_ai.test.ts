@@ -1,13 +1,31 @@
 import { DatabaseSync } from 'node:sqlite';
-import { expect, it } from 'vitest';
-import { bootstrap_admin_for_test, database_path_for_test, start_test_app } from '../support/app';
-import { authorize, MOCK_PROFILE, object, seed, startRunBody, type JsonObject } from '../support/t25-ai';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { bootstrap_admin_for_test, database_path_for_test, start_test_app, type ApiClient, type TestApp } from '../support/app';
+import { authorize, MOCK_PROFILE, object, seed, startRunBody, type JsonObject, type Seeded } from '../support/t25-ai';
 
-it('returns an actual configured public profile without private credential configuration', async () => {
-  const app = await start_test_app();
-  try {
-    const admin = await bootstrap_admin_for_test(app);
-    await seed(admin, app);
+describe('isolated public profile fixture', () => {
+  let app: TestApp | undefined;
+  let admin: ApiClient;
+
+  beforeEach(async () => {
+    const fresh = await start_test_app();
+    try {
+      admin = await bootstrap_admin_for_test(fresh);
+      await seed(admin, fresh);
+      app = fresh;
+    } catch (error) {
+      await fresh.stop();
+      throw error;
+    }
+  });
+  afterEach(async () => {
+    const finished = app;
+    app = undefined;
+    await finished?.stop();
+  });
+
+  it('returns an actual configured public profile without private credential configuration', async () => {
+    if (!app) throw new Error('Public profile fixture was not prepared');
     const db = new DatabaseSync(database_path_for_test(app));
     try { db.prepare('UPDATE model_profiles SET secret_ref=?, config_json=? WHERE profile_id=?').run('test-only-secret-reference', JSON.stringify({ api_key: 'test-only-not-a-key', endpoint: 'https://example.invalid' }), MOCK_PROFILE); } finally { db.close(); }
     const response = await admin.request<{ items: JsonObject[] }>('GET', '/api/model-profiles');
@@ -17,14 +35,33 @@ it('returns an actual configured public profile without private credential confi
     expect(profile).toMatchObject({ profile_id: MOCK_PROFILE, provider_id: 'mock', verification: 'mock_only' });
     for (const key of ['config_json', 'config', 'secret_ref', 'api_key', 'token']) expect(profile).not.toHaveProperty(key);
     expect(JSON.stringify(response.json)).not.toContain('test-only');
-  } finally { await app.stop(); }
+  });
 });
 
-it('binds actual HTTP preview approval to media, profile and crop and never runs before consent', async () => {
-  const app = await start_test_app();
-  try {
-    const admin = await bootstrap_admin_for_test(app);
-    const pins = await seed(admin, app);
+describe('isolated preview approval fixture', () => {
+  let app: TestApp | undefined;
+  let admin: ApiClient;
+  let pins: Seeded;
+
+  beforeEach(async () => {
+    const fresh = await start_test_app();
+    try {
+      admin = await bootstrap_admin_for_test(fresh);
+      pins = await seed(admin, fresh);
+      app = fresh;
+    } catch (error) {
+      await fresh.stop();
+      throw error;
+    }
+  });
+  afterEach(async () => {
+    const finished = app;
+    app = undefined;
+    await finished?.stop();
+  });
+
+  it('binds actual HTTP preview approval to media, profile and crop and never runs before consent', async () => {
+    if (!app) throw new Error('Preview approval fixture was not prepared');
     const body = startRunBody(pins, crypto.randomUUID(), 'Engineering Mock authorization', { intent: 'detect' });
     const beforeConsent = await admin.request('POST', '/api/ai/runs', body);
     expect(beforeConsent.status).toBe(403);
@@ -56,7 +93,7 @@ it('binds actual HTTP preview approval to media, profile and crop and never runs
     const queued = await admin.request<JsonObject>('POST', '/api/ai/runs', authorized);
     expect(queued.status, JSON.stringify(queued.json)).toBe(202);
     expect(queued.json).toMatchObject({ source: 'mock', verification: 'mock_only' });
-  } finally { await app.stop(); }
+  });
 });
 
 it('root background worker produces isolated predictions without a debug model drain', async () => {
