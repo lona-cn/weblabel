@@ -302,7 +302,9 @@ export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Pro
   }
   const deadline = Date.now() + RECLAIM_DEADLINE_MS;
   for (;;) {
-    const alive = targets.filter((target) => stillSameProcess(target, snapshotProcessTable()));
+    if (targets.length === 0) break;
+    const verificationTable = snapshotProcessTable();
+    const alive = targets.filter((target) => stillSameProcess(target, verificationTable));
     if (alive.length === 0) break;
     if (Date.now() >= deadline) {
       throw new SpawnPolicyError('reclaim_incomplete', `${reason}: pids still alive after reclaim: ${alive.map((t) => t.pid).join(',')}`);

@@ -709,20 +709,23 @@ it('never automatically resends a possibly billed run request after a protocol f
     childSpec: () => fakeChildSpec(workDir, { TEST_SCENARIO: 'malformed', FAKE_RUNTIME_LEDGER: ledgerFile }),
     runTimeoutMs: 20000,
   });
-  await session.handleParentLine(requestLine('req-h', 'probe', {}));
-  await session.handleParentLine(requestLine('req-1', 'start_run', { run_id: 'run-billed' }));
-  await session.waitForRuns();
-  const state = session.getRunState('run-billed');
-  expect(state?.status).toBe('failed');
-  expect(state?.error_code).toBe('invalid_json');
-  // Real wall-clock settle window: proving a *non-event* (no automatic resend) against a
-  // live child process cannot use fake timers; we observe the child's own ledger.
-  await sleep(800);
-  const ledger = readLedgerFile(ledgerFile);
-  expect(ledger.length).toBe(1);
-  expect(JSON.parse(ledger[0]).method).toBe('start_run');
-  expect(state?.attempts).toBe(1);
-  await session.close();
+  try {
+    await session.handleParentLine(requestLine('req-h', 'probe', {}));
+    await session.handleParentLine(requestLine('req-1', 'start_run', { run_id: 'run-billed' }));
+    await session.waitForRuns();
+    const state = session.getRunState('run-billed');
+    expect(state?.status).toBe('failed');
+    expect(state?.error_code).toBe('invalid_json');
+    // Real wall-clock settle window: proving a *non-event* (no automatic resend) against a
+    // live child process cannot use fake timers; we observe the child's own ledger.
+    await sleep(800);
+    const ledger = readLedgerFile(ledgerFile);
+    expect(ledger.length).toBe(1);
+    expect(JSON.parse(ledger[0]).method).toBe('start_run');
+    expect(state?.attempts).toBe(1);
+  } finally {
+    await session.close();
+  }
 });
 
 // ---------------------------------------------------------------------------

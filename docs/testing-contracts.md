@@ -39,6 +39,8 @@ T33九个连接到live API库的writable DatabaseSync fixture各设置一次PRAG
 
 T17 保持原30秒retention lease、2100事件生产、2000窗口与104..2103的真实API分页/replay断言；silent runner、持有writer的item与expiry/replacement-worker回调必须覆盖真实Queue/SQLite行为。权限丢失后立即提交新provider identity和合法candidate，校验event/prediction/suggestion计数及foreign authority不变，不靠等待下一个heartbeat拒绝输出。T16 的owned child在第二次spawn/setup之前进入清理作用域；Linux真实broker故障仍以private capability的单次5秒cached failure拒绝成功，不以裸PID或空killed列表假报SIGKILL。
 
+T16 Node Host 的回收验证每轮只取一份 fresh process table，用同一份表检查该轮所有原 owned targets；空 targets 不新增查询，不跨轮或 await 缓存。Windows 原 initial CIM、每个 descendant taskkill 前的 fresh creation-identity 查询、root/lineage guards、taskkill argv、实际 child exit、5秒 polling期限与250ms间隔全部保留；这不是新的端到端5秒保证，initial snapshot/tool仍在原 polling计时外。no-resend 原 case 以 finally await session.close 清理请求或断言失败，原20秒 case/run、800ms真实观察、2 parent requests与5断言不变。本机真实 malformed child 的改前/后观察为4/3次CIM、总查询4723.5897/3661.1614ms、killTree5085.7418/4053.5802ms；改后验证 targets=2/alive=0、真实child退出、failed/invalid_json、ledger恰好1个start_run/attempts=1且无backstop。它证明消除重复扫描与真实消费行为，不证明历史CI17最后await或未知Windows descendant身份；完整原17case通过，无硬件/G4/T32/T35认证。
+
 T06 的原120ms写锁冲突预算、2秒上界及解锁后recovery断言不变；首次冷迁移不是放宽预算的理由。新增真实SQLite消费者回归由独立Repository确认abandon/task-abort写入均回滚，恢复writer提交后精确读回，不断言连接identity。临时native smoke另覆盖timeout/取消pending BEGIN及deferred-FK COMMIT失败后无残留行/锁；成功归池、失败关闭的源码审查不以SQLx库名字代替取消安全证明。
 Repository clones共享一个FIFO写入准入；等待准入、获取连接与BEGIN IMMEDIATE仍合用调用者原始预算，准入持有到COMMIT/ROLLBACK确认完成。放弃、取消、pending BEGIN、失败/取消COMMIT或ROLLBACK先detach可疑连接，再在异常路径独立线程等待真实SQLite worker关闭确认后释放准入；runtime关闭后也不得把仍持writer的连接归池。迁移循环事务、媒体metadata和所有Repository事务走同一准入，独立auth pool不新增此gate/close线程，外部writer仍受原预算约束。T06新增消费者回归覆盖有限短事务洪流下的真实heartbeat durable写入、FIFO/取消/期限、deferred-FK失败回滚、in-flight取消和无runtime恢复；不固定连接identity或生产重试。
 
