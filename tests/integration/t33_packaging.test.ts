@@ -66,6 +66,30 @@ beforeAll(async () => {
 }, 600000);
 afterAll(async () => { await Promise.all(children.map(stop)); fs.rmSync(scratch, { recursive: true, force: true }); }, 30000);
 
+if (taskkillPath) it('propagates a real disconnected IPC error while stopping its owned child without an unhandled rejection', () => {
+  const script = `
+    import { spawn } from 'node:child_process';
+    import { once } from 'node:events';
+    import { stopTree } from ${JSON.stringify(new URL('../../scripts/start-local.mjs', import.meta.url).href)};
+    const unhandled = []; process.on('unhandledRejection', error => unhandled.push(error.code));
+    const child = spawn(process.execPath, ['-e', 'process.disconnect();setTimeout(()=>{},10000)'], { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const closed = new Promise(resolve => child.once('close', resolve));
+    try {
+      await once(child, 'disconnect');
+      const stopping = stopTree(child);
+      child.send('real-disconnected-ipc-failure');
+      let error; try { await stopping; } catch (failure) { error = failure; }
+      await closed; await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ error_code: error?.code, original_child_alive: child.kill(0), unhandled }));
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await closed; }
+    }
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: root, encoding: 'utf8', shell: false, timeout: 15000 });
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ error_code: 'ERR_IPC_CHANNEL_CLOSED', original_child_alive: false, unhandled: [] });
+}, 30000);
+
 it('start-local fails honestly when release composition is missing', () => {
   const r = cli('start-local.mjs', ['--build-dir', path.join(scratch, '不存在 release & no-build')]);
   expect(r.status).not.toBe(0); expect(r.stdout + r.stderr).toMatch(/build_missing/);
@@ -99,21 +123,34 @@ it('accepts Chinese/space paths, serves complete current products, enforces orig
   expect(cli('start-local.mjs', ['--build-dir', build, '--data-dir', data, '--port', String(await port()), '--api-port', String(await port())]).stderr).toMatch(/data_in_use/);
   await authenticated(running.base, running.code);
   await stop(running.child); expect(fs.existsSync(path.join(data, 'runtime.lock'))).toBe(false);
+  await expect(fetch(running.base + '/api/session')).rejects.toThrow();
   await expect(fetch(`http://127.0.0.1:${running.apiPort}/api/session`)).rejects.toThrow();
   const db = new DatabaseSync(path.join(data, 'api.sqlite'), { readOnly: true });
   expect(db.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok'); db.close();
+  const restarted = await launch(data, false);
+  expect((await fetch(restarted.base + '/api/session')).status).toBe(401);
+  await stop(restarted.child);
+  expect(fs.existsSync(path.join(data, 'runtime.lock'))).toBe(false);
 }, 60000);
-it('terminates a real owned child and grandchild tree, not just its parent PID', async () => {
-  const descendantPort = await port();
+it('terminates a real owned child and grandchild tree without killing an unrelated service', async () => {
+  const descendantPort = await port(), unrelatedPort = await port();
   const leaf = `require('node:http').createServer((q,r)=>r.end('owned-grandchild')).listen(${descendantPort},'127.0.0.1',()=>console.log('LISTENING'));`;
   const parent = `const {spawn}=require('node:child_process');spawn(process.execPath,['-e',${JSON.stringify(leaf)}],{shell:false,stdio:['ignore','inherit','inherit']});setInterval(()=>{},1000);`;
-  const child = spawn(process.execPath, ['-e', parent], { shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+  const unrelated = spawn(process.execPath, ['-e', `require('node:http').createServer((q,r)=>r.end('unrelated-service')).listen(${unrelatedPort},'127.0.0.1',()=>console.log('LISTENING'));`], { shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+  let child: ChildProcess | undefined;
   try {
+    await once(unrelated.stdout!, 'data', { signal: AbortSignal.timeout(15000) });
+    child = spawn(process.execPath, ['-e', parent], { shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     await once(child.stdout!, 'data', { signal: AbortSignal.timeout(15000) });
     expect(await (await fetch(`http://127.0.0.1:${descendantPort}`)).text()).toBe('owned-grandchild');
     await stopTree(child);
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
     await expect(fetch(`http://127.0.0.1:${descendantPort}`)).rejects.toThrow();
-  } finally { await stopTree(child); }
+    expect(await (await fetch(`http://127.0.0.1:${unrelatedPort}`)).text()).toBe('unrelated-service');
+  } finally {
+    try { if (child) await stopTree(child); }
+    finally { await stopTree(unrelated); }
+  }
 }, 30000);
 async function approvedReview(data: string, originalName = '测试 image.jpg', projectText = { name: 'T33 business', description: 'keep audit identity' }) {
   const running = await launch(data); const admin = await authenticated(running.base, running.code);

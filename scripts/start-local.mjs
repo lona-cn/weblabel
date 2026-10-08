@@ -24,9 +24,20 @@ export async function stopTree(child) {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
   const closed = once(child, 'close');
   if (process.platform === 'win32') {
+    // Own concurrent rejection now; awaiting the original promise still propagates it.
+    void closed.catch(() => {});
     const killer = spawn(taskkillPath, ['/PID', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true, stdio: 'ignore' });
     const [code] = await once(killer, 'close');
-    if (code !== 0 && child.exitCode === null && child.signalCode === null) throw new Error('owned_tree_stop_failed');
+    if (code !== 0 && child.exitCode === null && child.signalCode === null) {
+      // Windows exit notification can lag the original owned process HANDLE.
+      // A failed probe is not proof of death: kill(0) can emit an error as well as throw.
+      let probeError;
+      const onProbeError = error => { probeError = error; };
+      child.on('error', onProbeError);
+      let alive;
+      try { alive = child.kill(0); } finally { child.removeListener('error', onProbeError); }
+      if (alive || probeError) throw new Error('owned_tree_stop_failed', { cause: probeError });
+    }
   } else {
     try { process.kill(-child.pid, 'SIGINT'); } catch { child.kill('SIGINT'); }
     const timer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 5000);
