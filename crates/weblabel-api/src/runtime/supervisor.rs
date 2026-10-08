@@ -1,21 +1,20 @@
 //! Run supervision and process-tree reclamation.
 //!
-//! Windows mechanism (exercised for real on this workstation):
-//!   1. a PowerShell `Get-CimInstance Win32_Process` snapshot (pid, ppid,
-//!      creation time); orphaned children keep their stale parent pid, so
-//!      descendants of a crashed child are still discovered;
-//!   2. pid-reuse guard: a root pid whose creation time is newer than our
-//!      spawn record is a recycled pid and is never touched;
-//!   3. `taskkill /pid <root> /T /F` reclaims the live tree, including children
-//!      created in new process groups (detached);
-//!   4. `taskkill /pid <orphan> /F` for each surviving descendant, identity
-//!      re-checked right before the kill;
-//!   5. a bounded resnapshot proves that no same-identity target pid remains.
+//! Windows uses checked Toolhelp snapshots for parent relationships and retained
+//! process handles with exact GetProcessTimes FILETIME identities for owned
+//! candidates only. taskkill /T /F and each orphan kill are immediately preceded
+//! by a fresh identity check; one checked table per sweep plus signaled retained
+//! handles proves physical exit. A newer root refuses all descendant attribution;
+//! only an absent root allows the old orphan window. Observation failures fail
+//! closed. Reclaim callers remain independent; this removes CIM cost, not calls.
 //!
 //! Linux uses a per-host subreaper broker and pidfds. Other POSIX platforms
 //! retain the `ps`/signal mechanism; Linux never attributes an orphan by stale PPID.
 
 use std::collections::HashMap;
+#[cfg(windows)]
+#[path = "windows_processes.rs"]
+mod windows_processes;
 #[cfg(any(not(target_os = "linux"), test))]
 use std::collections::HashSet;
 #[cfg(windows)]
@@ -107,26 +106,14 @@ pub(crate) fn snapshot_records() -> HashMap<u32, ProcessRecord> {
     linux_broker::snapshot_records()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+pub(crate) fn snapshot_records() -> std::io::Result<HashMap<u32, ProcessRecord>> {
+    windows_processes::snapshot()
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub(crate) fn snapshot_records() -> HashMap<u32, ProcessRecord> {
-    let output = if cfg!(windows) {
-        let mut command = Command::new(system_tool("powershell.exe"));
-        #[cfg(windows)]
-        {
-            // Keep the noninteractive snapshot independent of console teardown.
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
-        command
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.ToUniversalTime().ToString('o'))\" }",
-            ])
-            .output()
-    } else {
-        Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output()
-    };
+    let output = Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output();
     let stdout = match output {
         Ok(result) => result.stdout,
         Err(_) => return HashMap::new(),
@@ -152,7 +139,11 @@ pub(crate) fn snapshot_records() -> HashMap<u32, ProcessRecord> {
 
 #[cfg(test)]
 pub(crate) fn snapshot_pids() -> HashSet<u32> {
-    snapshot_records().into_keys().collect()
+    #[cfg(windows)]
+    let table = snapshot_records().expect("Windows process enumeration failed");
+    #[cfg(not(windows))]
+    let table = snapshot_records();
+    table.into_keys().collect()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -173,7 +164,7 @@ fn find_descendants(root: u32, table: &HashMap<u32, ProcessRecord>) -> Vec<u32> 
 }
 
 /// A target counts as reclaimed when its pid is gone or now names a different process.
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 fn still_same_process(
     target_pid: u32,
     target_created: Option<i64>,
@@ -193,7 +184,85 @@ pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnErr
     linux_broker::reclaim(root)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnError> {
+    let checked =
+        |error: std::io::Error| SpawnError::Io(format!("Windows reclaim observation: {error}"));
+    let cutoff_ms = root.exited_at_ms.unwrap_or_else(now_ms);
+    let table = snapshot_records().map_err(checked)?;
+    let mut targets = Vec::new();
+    // A current newer root invalidates the whole stale-PPID attribution, not
+    // merely the root target. Only a truly absent root permits orphan recovery.
+    if let Some(target) = windows_processes::Target::open(root.root_pid).map_err(checked)? {
+        if target.created_ms().map_err(checked)? > root.spawned_at_ms {
+            return Err(SpawnError::SpawnFailed(
+                "Windows root generation changed; refusing descendant attribution".into(),
+            ));
+        }
+        targets.push(target);
+    }
+    let mut descendants = Vec::new();
+    for pid in find_descendants(root.root_pid, &table) {
+        if let Some(target) = windows_processes::Target::open(pid).map_err(checked)? {
+            let created = target.created_ms().map_err(checked)?;
+            if created >= root.spawned_at_ms && created <= cutoff_ms {
+                descendants.push(pid);
+                targets.push(target);
+            }
+        }
+    }
+    // All candidate identities were captured before any kill. Retained handles
+    // prevent PID reuse until taskkill and physical-exit verification complete.
+    let taskkill = system_tool("taskkill.exe");
+    for target in &targets {
+        if target.still_current().map_err(checked)? {
+            let pid = target.pid.to_string();
+            let args: &[&str] = if target.pid == root.root_pid {
+                &["/pid", &pid, "/T", "/F"]
+            } else {
+                &["/pid", &pid, "/F"]
+            };
+            run_tool(&taskkill, args);
+        }
+    }
+    let deadline = Instant::now() + RECLAIM_DEADLINE;
+    let mut alive = Vec::with_capacity(targets.len());
+    loop {
+        // One successful table per sweep, not a process enumeration per target.
+        let table = snapshot_records().map_err(checked)?;
+        alive.clear();
+        for target in &targets {
+            // A vanished table row alone is not proof of physical process exit.
+            if target.alive().map_err(checked)? {
+                if !table.contains_key(&target.pid) {
+                    return Err(SpawnError::Io(format!(
+                        "Windows live target missing from snapshot: {}",
+                        target.pid
+                    )));
+                }
+                alive.push(target.pid);
+            }
+        }
+        if alive.is_empty() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(SpawnError::SpawnFailed(format!(
+                "reclaim incomplete: pids still alive: {alive:?}"
+            )));
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+    Ok(ReclaimReport {
+        root_pid: root.root_pid,
+        mechanism:
+            "windows taskkill /T + Toolhelp descendant sweep (retained exact creation identity)",
+        descendants_found: descendants,
+        killed: targets.into_iter().map(|target| target.pid).collect(),
+    })
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnError> {
     let cutoff_ms = now_ms();
     let table = snapshot_records();
@@ -226,33 +295,9 @@ pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnErr
     for pid in &descendants {
         targets.push((*pid, table.get(pid).and_then(|record| record.created_ms)));
     }
-    let mechanism = if cfg!(windows) {
-        "windows taskkill /T + CIM descendant sweep (creation-time identity checked)"
-    } else {
-        "posix kill -9 + ps snapshot sweep (ps exposes no creation time, so creation identity is unavailable on POSIX)"
-    };
-    if cfg!(windows) {
-        if root_is_ours {
-            run_tool(
-                &system_tool("taskkill.exe"),
-                &["/pid", &root.root_pid.to_string(), "/T", "/F"],
-            );
-        }
-        for (pid, created) in &targets {
-            if *pid == root.root_pid {
-                continue;
-            }
-            if still_same_process(*pid, *created, &snapshot_records()) {
-                run_tool(
-                    &system_tool("taskkill.exe"),
-                    &["/pid", &pid.to_string(), "/F"],
-                );
-            }
-        }
-    } else {
-        for (pid, _) in &targets {
-            run_tool("/bin/kill", &["-9", &pid.to_string()]);
-        }
+    let mechanism = "posix kill -9 + ps snapshot sweep (ps exposes no creation time, so creation identity is unavailable on POSIX)";
+    for (pid, _) in &targets {
+        run_tool("/bin/kill", &["-9", &pid.to_string()]);
     }
     let deadline = Instant::now() + RECLAIM_DEADLINE;
     loop {
@@ -1279,6 +1324,93 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn recycled_root_generation_does_not_authorize_its_descendants() {
+        // Real OS tree with stale-owner metadata: a deterministic surrogate for
+        // root PID recycling, not a claim that natural PID reuse was forced.
+        struct Fixture {
+            child: std::process::Child,
+            targets: Vec<windows_processes::Target>,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                for target in &self.targets {
+                    if target.still_current().expect("fixture cleanup identity") {
+                        let pid = target.pid.to_string();
+                        run_tool(&system_tool("taskkill.exe"), &["/pid", &pid, "/T", "/F"]);
+                    }
+                }
+                self.child.wait().expect("fixture root reaped");
+                for target in &self.targets {
+                    assert!(!target.alive().expect("fixture exit observation"));
+                }
+                eprintln!("fixture cleanup: retained owned root/leaf handles signaled");
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root_marker = temp.path().join("root.json");
+        let leaf_marker = temp.path().join("leaf.json");
+        let server = r#"
+            const fs = require('node:fs');
+            const http = require('node:http');
+            const marker = process.argv[1];
+            const server = http.createServer((req, res) => res.end(String(process.pid)));
+            server.listen(0, '127.0.0.1', () => {
+                fs.writeFileSync(marker + '.tmp',
+                    JSON.stringify({pid: process.pid, port: server.address().port}));
+                fs.renameSync(marker + '.tmp', marker);
+            });
+        "#;
+        let script = format!(
+            "require('node:child_process').spawn(process.execPath, ['-e', {}, process.argv[2]], {{detached:true, stdio:'ignore'}}).unref(); {}",
+            serde_json::to_string(server).unwrap(), server
+        );
+        let child = Command::new(node_executable())
+            .args(["-e", &script])
+            .arg(&root_marker)
+            .arg(&leaf_marker)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .creation_flags(0x0800_0000)
+            .spawn().unwrap();
+        let root_target = windows_processes::Target::open(child.id()).unwrap().unwrap();
+        let stale_spawn = root_target.created_ms().unwrap() - 1;
+        let mut fixture = Fixture { child, targets: vec![root_target] };
+        wait_for_file(&root_marker);
+        wait_for_file(&leaf_marker);
+        let read_marker = |path: &std::path::Path| -> serde_json::Value {
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+        };
+        let root_info = read_marker(&root_marker);
+        let leaf_info = read_marker(&leaf_marker);
+        let leaf_pid = leaf_info["pid"].as_u64().unwrap() as u32;
+        fixture.targets.push(windows_processes::Target::open(leaf_pid).unwrap().unwrap());
+        assert_eq!(snapshot_records().unwrap()[&leaf_pid].ppid, fixture.child.id());
+        let usable = |info: &serde_json::Value| -> bool {
+            use std::io::{Read, Write};
+            let address = format!("127.0.0.1:{}", info["port"].as_u64().unwrap());
+            let Ok(mut stream) = std::net::TcpStream::connect(address) else { return false; };
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            stream.write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n").unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).is_ok()
+                && response.ends_with(&info["pid"].as_u64().unwrap().to_string())
+        };
+        assert!(usable(&root_info) && usable(&leaf_info));
+        let result = reclaim_process_tree(ReclaimRoot {
+            root_pid: fixture.child.id(), spawned_at_ms: stale_spawn, exited_at_ms: None,
+        });
+        let root_alive = fixture.targets[0].alive().unwrap();
+        let leaf_alive = fixture.targets[1].alive().unwrap();
+        let root_usable = usable(&root_info);
+        let leaf_usable = usable(&leaf_info);
+        eprintln!("stale-owner reclaim: result={result:?}; root_alive={root_alive}; leaf_alive={leaf_alive}; root_usable={root_usable}; leaf_usable={leaf_usable}");
+        assert!(root_alive && leaf_alive && root_usable && leaf_usable,
+            "stale root generation cannot authorize killing the foreign tree");
+        assert!(result.is_err(), "recycled root attribution must fail closed");
+    }
     #[test]
     fn reclaims_detached_orphans_left_by_a_crashed_child() {
         let temp = tempfile::tempdir().expect("tempdir");

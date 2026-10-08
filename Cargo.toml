@@ -20,3 +20,7 @@ version = "0.1.0"
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# Preserve the full production KDF work without unoptimized development cost.
+[profile.dev.package.argon2]
+opt-level = 3

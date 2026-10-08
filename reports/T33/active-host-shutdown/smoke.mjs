@@ -23,6 +23,30 @@ async function until(check, label, milliseconds = 20000) {
 }
 function jsonFile(file, value) { fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n'); }
 function clean(text) { return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/WEBLABEL_BOOTSTRAP_CODE=[a-f0-9]+/g, 'WEBLABEL_BOOTSTRAP_CODE=[REDACTED]'); }
+// The optional sink receives only this attempt's JSON/log, never checkout evidence.
+const sensitiveField = /credential|token|password|cookie|authorization|api[-_]?key|bootstrap|launch_code|secret/i;
+function safeCredentialScrub(text, secrets = []) {
+  let result = clean(text);
+  for (const value of [...secrets].sort((a, b) => b.length - a.length)) if (value) result = result.split(value).join('[REDACTED]');
+  return result.replace(/((?:authorization|cookie|password|credential|token|api[-_]?key|bootstrap(?:_code)?|launch_code)["']?\s*[=:]\s*)(?:Bearer\s+[^\s,;}]+|"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)/gi, '$1[REDACTED]');
+}
+function diagnosticCopy(value, secrets) {
+  if (typeof value === 'string') return safeCredentialScrub(value, secrets);
+  if (Array.isArray(value)) return value.map(item => diagnosticCopy(item, secrets));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sensitiveField.test(key) ? '[REDACTED]' : diagnosticCopy(item, secrets)]));
+  return value;
+}
+function collectCredentialValues(value, secrets, sensitive = false) {
+  if (typeof value === 'string' && sensitive && value) secrets.add(value);
+  else if (Array.isArray(value)) for (const item of value) collectCredentialValues(item, secrets, sensitive);
+  else if (value && typeof value === 'object') for (const [key, item] of Object.entries(value)) collectCredentialValues(item, secrets, sensitive || sensitiveField.test(key));
+}
+function diagnosticsDirectory() {
+  const directory = process.env.WEBLABEL_T33_DIAGNOSTICS_DIR;
+  if (directory === undefined) return null;
+  assert.ok(directory && path.isAbsolute(directory), 'WEBLABEL_T33_DIAGNOSTICS_DIR must be an explicit absolute owned directory');
+  return directory;
+}
 async function closedPort(port) { try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) }); return false; } catch { return true; } }
 // Compilation is fixture preparation, not part of the physical/API bootstrap clock.
 export async function prepareTerminalAssembly() {
@@ -48,6 +72,8 @@ export async function activeHostShutdown(mode, preparedTerminal, release = path.
   assert.equal(sha(preparedTerminal.assembly_path), preparedTerminal.sha256, 'Prepared terminal assembly changed');
   release = path.resolve(release);
   validateRelease(release);
+  const diagnosticsSink = diagnosticsDirectory();
+  const credentialValues = new Set(['T33-engineering-owned-password']);
   const runDirectory = path.join(privateRoot, `${mode}-${crypto.randomUUID()}`); fs.mkdirSync(runDirectory, { recursive: true });
   const data = path.join(runDirectory, '中文 owned data'); fs.mkdirSync(data);
   const marker = path.join(runDirectory, 'owned-host'), configFile = path.join(runDirectory, 'host.json');
@@ -95,6 +121,7 @@ export async function activeHostShutdown(mode, preparedTerminal, release = path.
       bootstrapCondition.normalized_token_detected = /WEBLABEL_BOOTSTRAP_CODE=\[REDACTED\]/.test(clean(output));
       if (!found) return false;
       bootstrapCondition.token_observed_at_ms ??= Date.now();
+      credentialValues.add(found);
       try { bootstrapCondition.endpoint_status = (await fetch(base + '/api/session')).status; bootstrapCondition.endpoint_error = null; return bootstrapCondition.endpoint_status === 401 && found; } catch (error) { bootstrapCondition.endpoint_error = error.name; return false; }
     }, () => 'actual bootstrap missing: ' + bootstrapDiagnostic());
     const initialTerminalPid = Number(output.match(/T33_PTY_PID=(\d+)/)?.[1]);
@@ -102,6 +129,7 @@ export async function activeHostShutdown(mode, preparedTerminal, release = path.
     const bootstrap = await fetch(base + '/api/session/bootstrap', { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ launch_code: code, password: 'T33-engineering-owned-password' }) });
     const auth = await bootstrap.json(); assert.equal(bootstrap.status, 200, JSON.stringify(auth));
     const cookie = bootstrap.headers.get('set-cookie').split(';')[0];
+    credentialValues.add(cookie); credentialValues.add(cookie.slice(cookie.indexOf('=') + 1)); collectCredentialValues(auth, credentialValues);
     async function request(method, route, body, expected = 200) {
       const response = await fetch(base + route, { method, headers: { origin: base, cookie, 'x-csrf-token': auth.csrf_token, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
       const result = await response.json(); evidence.requests.push({ method, route, status: response.status, response: result }); assert.equal(response.status, expected, JSON.stringify(result)); return result;
@@ -164,6 +192,10 @@ export async function activeHostShutdown(mode, preparedTerminal, release = path.
     return evidence;
   } catch (error) { evidence.result = 'failed'; evidence.error = error.stack; throw error; }
   finally {
+    if (!evidence.physical && fs.existsSync(resultFile)) {
+      try { evidence.physical = JSON.parse(fs.readFileSync(resultFile, 'utf8')); }
+      catch (error) { evidence.physical_read_error = clean(String(error)); }
+    }
     fs.writeFileSync(path.join(report, `${mode}.log`), clean(output + diagnostics));
     // Successful observations need no backstop; never taskkill an already-dead PID.
     evidence.emergency_cleanup = [];
@@ -184,6 +216,18 @@ export async function activeHostShutdown(mode, preparedTerminal, release = path.
     }
     terminal.stdout.destroy(); terminal.stderr.destroy();
     jsonFile(path.join(report, `${mode}.json`), evidence);
+    if (diagnosticsSink) {
+      try {
+        collectCredentialValues(evidence, credentialValues);
+        const ownedSink = path.join(diagnosticsSink, path.basename(runDirectory));
+        fs.mkdirSync(ownedSink, { recursive: true });
+        jsonFile(path.join(ownedSink, `${mode}.json`), diagnosticCopy(evidence, credentialValues));
+        fs.writeFileSync(path.join(ownedSink, `${mode}.log`), safeCredentialScrub(output + diagnostics, credentialValues));
+      } catch (error) {
+        if (evidence.result === 'passed') throw error;
+        console.error('T33 diagnostics copy failed: ' + safeCredentialScrub(String(error), credentialValues));
+      }
+    }
   }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
