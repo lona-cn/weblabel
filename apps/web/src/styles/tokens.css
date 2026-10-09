@@ -139,7 +139,8 @@ button:disabled { cursor: not-allowed; }
   --tk-font-mono: 'Cascadia Code', Consolas, monospace;
   color: var(--tk-text);
 }
-body:has(.login-page) { min-width: 320px; }
+body:has(.login-page), body:has(.bootstrap-account) { min-width: 320px; }
+.projects-page:has(.bootstrap-account) .project-create input { min-width: 0; width: 100%; }
 .login-page { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px 16px; background: var(--tk-bg); color-scheme: dark; }
 .login-introduction, .login-card { width: min(380px, 100%); min-width: 0; flex-shrink: 0; }
 .login-introduction h2 { margin: 0; color: var(--tk-accent); font-family: Bahnschrift, 'Segoe UI', sans-serif; font-size: 24px; line-height: 1.5; }
