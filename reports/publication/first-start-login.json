@@ -1,0 +1,46 @@
+{
+  "request": "first_start_login",
+  "status": "done",
+  "actualcommit": "e39d3203efd645fd11357780d1ed1940c9cf042c",
+  "remote_base": "e832edd3bb1cb987a1d31e308477a24b04f4887a",
+  "original_local_implementation": "f27c34dc95ccc80e9f9e31759498ba7e6e6a4795",
+  "integration": "Preserved public main history and its BEGIN IMMEDIATE/write_timeout, Host/platform/CI/portable/container behavior. Only the 28 feature paths were integrated; no private report history or earlier whole-workbench UI rewrite imported.",
+  "checks": [
+    {
+      "command": "cargo test -p weblabel-api --test t10_auth --test t10_bootstrap_status --test t33_restore_auth --locked",
+      "result": "10 passed; 0 failed; 0 ignored"
+    },
+    {
+      "command": "cargo test -p weblabel-api --lib status_never_releases_an_in_flight_bootstrap_reservation --locked",
+      "result": "1 passed; 0 failed; 0 ignored"
+    },
+    {
+      "command": "pnpm exec vitest run apps/web/src/features/projects/t10_first_login.test.tsx apps/web/src/features/workbench/t08_shell.test.tsx",
+      "result": "2 files; 38 passed (32 first-login + 6 existing shell)"
+    },
+    {
+      "command": "pnpm --filter @weblabel/web typecheck",
+      "result": "exit 0"
+    },
+    {
+      "command": "node --test tests/contracts-validation.test.mjs",
+      "result": "3 passed; 0 failed; 0 skipped"
+    },
+    {
+      "command": "pnpm contracts:check",
+      "result": "exit 0"
+    },
+    {
+      "command": "pnpm test:e2e tests/e2e/t10_first_login.spec.ts --project=e2e",
+      "result": "1 passed (43.8s)",
+      "scope": "Real uninitialized app, wrong/right code, returned identity/CSRF, project 201, logout 204, password relogin and actual project; no trace/video/automatic failed screenshots."
+    }
+  ],
+  "review": "reports/publication/first-start-login-review.json",
+  "private_run_artifacts": "Detailed local stdout and original lifecycle evidence remain in the project-local archive; no credentials or large private reports published.",
+  "scope_limits": [
+    "Local login-specific dark/yellow surface; remote global UI and project defaults retained.",
+    "No real business image, external model/account/paid call, weight download or hardware-G4 claim.",
+    "T32 blocked and T35 pending remain unchanged; release is engineering prerelease only."
+  ]
+}

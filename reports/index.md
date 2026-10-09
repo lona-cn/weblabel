@@ -5,3 +5,7 @@
 [来源与真实检查](publication/provenance.json)记录原始任务状态、原始证据路径及实际历史验证；[提交映射](publication/commit-map.json)区分原始与公开SHA。STATUS中的done继承原始验收，不表示在改写后SHA上重新执行了产品、硬件或模型测试。历史文档中的旧报告路径和复组工具依赖私有归档，不是公开仓库现有文件；不可用占位日志重建成功结果。
 
 当前34/36项原始任务done，T32真实五渠道blocked、T35pending。全局发布未开始，G0–G5未运行。公开副本的实际烟测另记录在publication目录，不替代原始8000硬件证据或最终发布验收。
+
+## 浏览器首次登录增量
+
+首次空库和合格恢复库现在直接通过浏览器启动码、密码与确认表单进入项目页，显示实际用户名；会话待核实只重查、不重复初始化。保留公开 main 历史与现有事务、Host、跨平台打包及 CI。实际本地集成检查为 Rust 11、前端 38、Node 契约 3、真实首次登录 E2E 1，以及类型和生成契约检查；详见[本轮公开结果](publication/first-start-login.json)和[只读审查](publication/first-start-login-review.json)。细粒度私有运行产物未上传，测试不是模型、硬件 G4 或 T35 正式验收。

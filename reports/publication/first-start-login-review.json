@@ -1,0 +1,55 @@
+{
+  "actualcommit": "e39d3203efd645fd11357780d1ed1940c9cf042c",
+  "gates": {
+    "spec": {
+      "status": "pass_static_review",
+      "blocking_findings": 0,
+      "summary": "本次28路径源代码delta覆盖首次设置、恢复设置、普通登录、未知写结果与已创建会话恢复；相对原f27c34dc未发现首登功能遗漏。"
+    },
+    "quality_security": {
+      "status": "pass_static_review",
+      "blocking_findings": 0,
+      "summary": "未发现本轮引入的可具体证明的鉴权绕过、凭证泄漏、恢复资格竞态或远端事务/平台优化回退。"
+    },
+    "release": {
+      "status": "not_evaluated",
+      "summary": "静态审查不等于运行验收或发布成功；当前发行同源浏览器、重启/真实恢复、完整Windows/Linux CI和发布终态由主会话确认。"
+    }
+  },
+  "findings": [],
+  "coverage": {
+    "native": [
+      "session.rs:27-77：GET bootstrap状态一次SELECT三个EXISTS；明确恢复flag/任意session/非空密码资格；占用或过期不可用；DB错误固定500；最外层no_store覆盖Host/Origin短路。",
+      "session.rs:101-176：保留常量时间验码、原子占用、begin_immediate(&state.pool,state.write_timeout,None)、tx.connection()、事务内恢复资格复核与身份/membership/session原子提交。相对远端diff没有修改POST事务。",
+      "policy.rs:29-37,98-122：远端AuthState签名/write_timeout/恢复启用检查保留；Host/Origin/CSRF实现未在本轮delta修改。",
+      "t10_bootstrap_status、t33_restore_auth与session模块测试静态检查覆盖错码不消费、过期、数据库错误/no-store、唯一管理员、幸存/并发新增密码或session拒绝、原审计身份及membership保留、占用状态GET不释放。"
+    ],
+    "frontend": [
+      "api.ts新增DTO/schema校验、单次POST bootstrap及loginInScope代际栅栏；原cookie/CSRF request协议保留。",
+      "providers.tsx判别联合、仅明确401查询状态、读失败不假装登录、成功ack先已创建再安装CSRF/存储/读取身份、未知或缺字段结果仅只读核实、401实际用户名提示、退出单飞与storage失败撤销认证。",
+      "grep确认全部生产useSession消费者为routes/Login/Workbench，均迁移，无旧session/loading兼容字段。",
+      "Login最终三字段、UTF-8 12/1024边界、只trim启动码、确认全等、首错误聚焦、同步单飞/禁用、Enter提交、available=false、已创建/错误仅重查均保留。",
+      "Projects仅增createdUsername与真实username role=status提示；保留远端Object默认、原创建/ontology流程及accessible项目名。",
+      "Workbench相对远端只改认证entry投影，未带入私有历史的compact/drawer/collapse整套UI。",
+      "CSS差异仅登录/成功提示局部dark/yellow tokens、320px登录限定body、44px/focus/短屏滚动/次级重查；拆分混合选择器后保留其它控件原样式，全局浅色及Workbench规则未覆盖。"
+    ],
+    "helpers_contracts_docs": [
+      "launch_code_for_test使用私有WeakMap返回helper自建app stdout码，不兑换或调用管理员helper。",
+      "forward_api_for_test仅抽出既有转发，保留path/query/body/method/cookie与Host/content-length删除/Origin替换；未覆盖远端seed实现。",
+      "Rust DTO/export、xtask生成登记、3个生成文件和Node/browser AJV registry闭环，无新增依赖。",
+      "README公共净化历史、CI/发布边界保留；C6/ADR/首次与恢复指南和helper契约新增内容与实现一致，未迁移先前全局Workbench说明。",
+      "原f27主要行为文件/新增测试与生成产物的diff blob一致；Projects/CSS/文档按远端整合；E2E最后断言改按实际项目名定位仍检查密码重登后真实项目consumer。"
+    ],
+    "public_boundary": [
+      "integration-paths.log仅28个本轮源码/契约/测试/文档路径，没有reports、CI、Docker、Host/runtime/storage全局替换。",
+      "没有带入ffc794c4整套private报告或先前全局UI文件；public provenance/commit-map历史文件未出现在本轮delta。",
+      "README保留T32五渠道blocked和T35完整发布未通过边界。"
+    ]
+  },
+  "limits": [
+    "严格只读：未运行shell、应用、测试、构建、格式化或浏览器，未写工作树文件，未递归派工。所有运行成功数字来自主会话通知，不作为本审查独立执行证据。",
+    "本次边界结论针对提供的integration.diff及当时最终源文件；主会话之后维护STATUS/index/public receipt的新增delta不在本次已读取差异中，应单独核对公开脱敏与状态不提升。",
+    "未独立审计未变更的整个Host/跨平台/CI系统；通过完整差异路径及关键认证源码确认本轮没有回退这些远端实现。",
+    "静态CSS检查不冒充320px/短屏真实视觉、Tab/Enter或发行同源行为验证；这些由主会话实际smoke证明。"
+  ]
+}
