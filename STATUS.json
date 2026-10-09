@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "e39d3203efd645fd11357780d1ed1940c9cf042c",
-  "last_updated_at": "2026-10-09T10:34:51.818Z",
+  "application_commit": "1391abc3ef9c1561983a31b98e898444c9fabc47",
+  "last_updated_at": "2026-10-09T11:05:05.277Z",
   "user_requests": {
     "first_start_login": {
       "status": "done",
       "base_commit": "e832edd3bb1cb987a1d31e308477a24b04f4887a",
-      "integrated_commit": "e39d3203efd645fd11357780d1ed1940c9cf042c",
+      "integrated_commit": "1391abc3ef9c1561983a31b98e898444c9fabc47",
       "contract_version": "v1",
       "evidence": ["reports/publication/first-start-login.json", "reports/publication/first-start-login-review.json"],
       "blockers": [],

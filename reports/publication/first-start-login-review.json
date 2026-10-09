@@ -1,5 +1,12 @@
 {
   "actualcommit": "e39d3203efd645fd11357780d1ed1940c9cf042c",
+  "layout_followup": {
+    "actualcommit": "1391abc3ef9c1561983a31b98e898444c9fabc47",
+    "status": "pass_static_review",
+    "findings": [],
+    "scope": "Only body:has(.bootstrap-account) and its project-create input gain the 320px success minimum; existing long-username wrapping retained, ordinary Projects and Workbench unchanged.",
+    "limit": "Read-only CSS review, not runtime proof. Main independently rebuilt and observed both actual fresh and restored success viewport/scrollWidth 320/320."
+  },
   "gates": {
     "spec": {
       "status": "pass_static_review",

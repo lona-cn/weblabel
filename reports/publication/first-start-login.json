@@ -36,6 +36,29 @@
       "scope": "Real uninitialized app, wrong/right code, returned identity/CSRF, project 201, logout 204, password relogin and actual project; no trace/video/automatic failed screenshots."
     }
   ],
+  "layout_followup": {
+    "actualcommit": "1391abc3ef9c1561983a31b98e898444c9fabc47",
+    "change": "Only bootstrap-account success surfaces inherit 320px body minimum and zero-minimum form inputs; ordinary Projects and Workbench retain existing styles.",
+    "before": {
+      "restored_success_viewport": 320,
+      "document_scroll_width": 360
+    },
+    "after": {
+      "fresh_success": {
+        "viewport": 320,
+        "document_scroll_width": 320,
+        "actual_username": "local-admin"
+      },
+      "restored_success": {
+        "viewport": 320,
+        "document_scroll_width": 320,
+        "long_actual_username_fully_wrapped": true,
+        "overflowing_elements": 0
+      }
+    },
+    "smoke": "Actual rebuilt production release with real native initial bootstrap and CLI backup restore; screenshots visually inspected after secret fields unmounted. Build stamped the pre-commit 487ff51a head and included the two-line CSS working-tree patch later committed unchanged as actualcommit.",
+    "review": "Independent read-only scoped CSS review: pass_static_review, no findings; static review is not runtime evidence."
+  },
   "review": "reports/publication/first-start-login-review.json",
   "private_run_artifacts": "Detailed local stdout and original lifecycle evidence remain in the project-local archive; no credentials or large private reports published.",
   "scope_limits": [
