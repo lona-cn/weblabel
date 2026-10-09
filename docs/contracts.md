@@ -330,6 +330,7 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 
 | 方法/路径 | 请求与返回 | 所属任务 |
 |---|---|---|
+| GET /api/session/bootstrap | BootstrapStatus：initial/restore/login + bootstrap_available；只读提示，no-store，不返回凭证/身份/计数 | T10 |
 | POST /api/session/bootstrap | {launch_code,password} → session cookie + csrf_token + identity；空DB为local-admin，合格本机恢复为restore-admin-UUID；密码由用户选择且不回显 | T10/T33 |
 | POST /api/session/login | {username,password} → session + csrf_token；Host/Origin总校验，已失效credential可重新登录，有效session仍须CSRF | T10/T29 |
 | POST /api/session/logout | 清除服务端 session | T10 |
@@ -367,6 +368,8 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Codex/Claude 只安装�
 | GET/PUT /api/projects/{id}/external-processing-policy | {allow_external_processing:boolean}；成员读、项目admin写、既有及新项目默认false；无图像的外部运行也受门控 | T25主会话 |
 | PUT /api/projects/{id}/activity-sessions/{session_id} | {expected_version,intervals}；本人累计不可改前缀checkpoint，精确intervals重放，冲突409；所有项目角色自愿显式保存 | T34 |
 | GET /api/projects/{id}/activity-sessions | 只读本人的有界分页；无自动上传或远端遥测 | T34 |
+
+初始化状态使用一次 SQL SELECT 的三个 EXISTS 读取 users、非空 password_hash 和任意 sessions。无 users 为 initial；有 users 且本机明确启用恢复、无非空密码且无任何 session 为 restore；其余为 login。仅非 login、启动码未过期（now <= expires_at）且未被占用/消费时 bootstrap_available=true；GET 不释放、不消费启动码，POST 仍原子消费并事务复核资格。SQL 错误返回 500/BOOTSTRAP_STATUS_FAILED，message 固定 Bootstrap status could not be read，不猜模式。状态与 session router 所有响应 Cache-Control: no-store，包含 Host/Origin 拒绝。GET 继承精确 Host/Origin 校验，无 Origin 的 GET 沿用既有允许规则。详见 [浏览器首次登录 ADR](adr/0003-browser-first-login.md)。
 
 `/api/jobs` 由 T07 临时实现通用 schema 的 media job，T17 扩展同一 job engine，不能另外做两种互不兼容的 job。T07 不提前增加模型队列逻辑。
 生产media_import、dataset_export、model worker分别按kind租用同一持久队列，不能互相抢走job；停机接收watch并join worker。debug集成fixture显式manual drain不用于真实release验收。Host进程树清理完成须独立运行时证据，不能由worker join推断。

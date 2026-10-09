@@ -203,24 +203,28 @@ async function seed(app: TestApp, api: ApiClient, demoDir: string): Promise<Seed
   };
 }
 
+export async function forward_api_for_test(page: Page, baseUrl: string): Promise<void> {
+  await page.route('http://127.0.0.1:5173/api/**', async (route) => {
+    const request = route.request();
+    const incoming = new URL(request.url());
+    const target = new URL(`${incoming.pathname}${incoming.search}`, baseUrl);
+    const headers: Record<string, string> = { ...request.headers(), origin: baseUrl };
+    delete headers.host;
+    delete headers['content-length'];
+    const postData = request.postDataBuffer();
+    await route.fulfill({
+      response: await route.fetch({ url: target.href, headers, method: request.method(), postData: postData ?? undefined }),
+    });
+  });
+}
+
 export const test = base.extend<Fixtures>({
   app: async ({}, use) => {
     const app = await start_test_app();
     try { await use(app); } finally { await app.stop(); }
   },
   adminPage: async ({ page, seededProject }, use) => {
-    await page.route('http://127.0.0.1:5173/api/**', async (route) => {
-      const request = route.request();
-      const incoming = new URL(request.url());
-      const target = new URL(`${incoming.pathname}${incoming.search}`, seededProject.apiBaseUrl);
-      const headers: Record<string, string> = { ...request.headers(), origin: seededProject.apiBaseUrl };
-      delete headers.host;
-      delete headers['content-length'];
-      const postData = request.postDataBuffer();
-      await route.fulfill({
-        response: await route.fetch({ url: target.href, headers, method: request.method(), postData: postData ?? undefined }),
-      });
-    });
+    await forward_api_for_test(page, seededProject.apiBaseUrl);
     await page.goto('http://127.0.0.1:5173/');
     await page.getByTestId('login-username').fill(seededProject.login.username);
     await page.getByTestId('login-password').fill(seededProject.login.password);

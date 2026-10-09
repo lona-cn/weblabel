@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, type Project } from '../../lib/t15/api';
 
-type Props = { onOpen: (project: Project) => void };
+type Props = { onOpen: (project: Project) => void; createdUsername: string | null };
 
-export function Projects({ onOpen }: Props) {
+export function Projects({ onOpen, createdUsername }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [name, setName] = useState('');
   const [labelName, setLabelName] = useState('Object');
@@ -35,6 +35,7 @@ export function Projects({ onOpen }: Props) {
       <label htmlFor="new-label-name">首个类别</label><input id="new-label-name" value={labelName} onChange={(event) => setLabelName(event.target.value)} maxLength={128} required />
       <button data-testid="project-submit" type="submit" disabled={busy}>{busy ? '创建中…' : '创建项目'}</button>
     </form>
+    {createdUsername !== null ? <p className="bootstrap-account" data-testid="bootstrap-account" role="status">本地账户已创建：<span>{createdUsername}</span>。请保存用户名，之后使用设置的密码登录。</p> : null}
     {error ? <p role="alert" className="api-error">{error}</p> : null}
     <ul className="project-cards">{projects.map((project) => <li key={project.project_id}>
       <button className="project-card" type="button" onClick={() => onOpen(project)} aria-label={`打开项目 ${project.name}`}>

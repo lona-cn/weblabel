@@ -25,6 +25,7 @@ export interface TestApp {
   stop(): Promise<void>;
 }
 export function start_test_app(cookieSecure?: 'true' | 'false', modelWorker?: 'manual' | 'background'): Promise<TestApp>;
+export function launch_code_for_test(app: TestApp): Promise<string>;
 ```
 
 每次启动独立临时目录/数据库，监听随机端口。生产代码提供启动 bootstrap 通道；测试捕获该管道，走真实登录/管理员创建用户接口，不插入万能绕过鉴权中间件。进程退出和测试失败也执行清理。只有 TEST build 允许 fault injection channel，release build不编译此入口。
@@ -66,12 +67,16 @@ Windows Rust Host生产进程观察只用checked Toolhelp32枚举；只对owned�
 Windows launcher在taskkill非零且JS exitCode/signalCode仍为null时，只用成功spawn的原owned ChildProcess.kill(0)查询Node 24.16.0/libuv 1.52.1保留的process HANDLE，不重开裸PID。仅false且无同步throw/emitted error可以继续等待原close后解锁；alive或未知error仍失败并保留lock，不追加kill、重试、Windows grace或finally强删。killed字段不是退出证据，zero probe不是物理Ctrl+C，也不证明全部descendants已灭。真实OS probe观察原held HANDLE exit23、JS flags null/null及空事件队列，zero返回false/无error，随后原close23；live zero返回true后HTTP/IPC仍可用。CI14稍后的API/tree exit1不证明更早nonzero-taskkill分支时已dead；一次同次诊断只观察code0，历史分支即时状态仍未知，最终完整新SHA CI是gate。永久消费者保留原期限并检查launcher/API endpoints关闭、相同data立即重启无stale lock、owned child实际退出且无关真实服务仍可访问。 Windows原close promise的并行rejection立即被持有，原await或kill/probe错误仍向调用者传播；真实断开IPC send在pending close时返回ERR_IPC_CHANNEL_CLOSED且无unhandled rejection，owned child已物理close，不声称制造了native权限错误。无关fixture的清理使用nested finally，即使owned child stop失败也执行。
 
 CI11原direct-native case的首个PowerShell/CIM snapshot实际等待30038.317ms；原30000ms观察点API/root/descendant仍live且taskkill未开始，snapshot在harness到期清理后约31.8ms返回。该证据定位阻塞调用，不证明console/WMI更深机制、CPU或杀毒原因。临时关闭/lifecycle日志、数字失败字段、扩展断言消息及Windows-test身份观测均在收证后移除，不成为消费者或发布依赖。一次本地原Rust期限回收断言失败未保留目标birth/cancel结果，历史类型无法追溯；随后Main原workspace前置语境的新观测257项通过、该次原身份root/child exit1只证明新执行成功，不冒充旧失败原因或进一步修复。原300ms lease、500ms sleep、bare-PID断言和双线程政策均未修改；最终无观测源码的完整双平台CI、当次归档和实际Release/GHCR消费仍是发布gate。
+`launch_code_for_test` 仅读取当前 helper 自建 app 的 stdout 启动码，不调用管理员 helper、不兑换、不记录 code；未知 app 拒绝。首次登录浏览器回归只用 app + 原生 page，不依赖会先初始化的 seededProject/adminPage/as_user。
 固定业务fixture由 T01 提供 `tests/fixtures/golden/{ontology,media,document,save,prediction}.json`；对象ID `object_person_001`，类别ID `label_person`，640×480，bbox[10,20,110,220]，helmet_state默认unknown。测试 fixture ID 不受UUID生成器限制：Id验证是非空受限字符串，生产新ID用UUID。
 
 ## 3. Playwright fixture：T15建立
 
 `tests/e2e/fixtures.ts` 导出扩展后的 `test` 和 `expect`，提供 app、adminPage、seededProject 三个 fixture。seededProject 通过真实 API 导入程序化图像，包含 project_id、asset_revision_id、base_revision_id；adminPage已真实登录，指向该项目工作台。
 
+`forward_api_for_test(page: Page, baseUrl: string): Promise<void>` 抽取原 adminPage 的真实 route.fetch/route.fulfill 转发，只匹配开发入口 `http://127.0.0.1:5173/api/**`，保留 path/query/body/method/cookie，去掉 Host/content-length 并将 Origin 改为实际 API base。它不是正式发行同源门控的证据；后者必须在当前发行实际验证。认证 spec 显式关闭 trace/video/自动失败截图，仅保留字段为空或遮蔽后的截图及脱敏结果。
+
+媒体就绪以该项目全部 canonical 资产实际生成作为条件，不以一次 manual drain 的处理数量代替；后台 worker 可能已经完成部分导入。
 主 data-testid：
 
 | ID | 定义 |

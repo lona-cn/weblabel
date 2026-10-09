@@ -24,6 +24,7 @@ pnpm start:local
 - [只读 doctor 与本地运维](docs/operations.md)
 - [一致性备份、认证 scrub 与新目录恢复](docs/backup-restore.md)
 - [已知限制与模型证据矩阵](docs/known-limitations.md)
+默认地址是 `http://127.0.0.1:48100`。首次使用空数据库时，从本地终端复制一次性启动码，在浏览器设置并确认新密码，成功直接进入项目页；以后使用显示的实际用户名和该密码登录。媒体、标注版本和导出都需要登录及项目权限。按 Ctrl+C 会关闭受管进程树，SQLite 已提交的数据会保留。
 
 ## 已提交证据，不等同于完整发布
 

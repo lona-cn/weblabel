@@ -37,7 +37,8 @@ type LoadedAsset = { media: ApiMedia; ontology: OntologyVersion; document: Annot
 function reportError(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
 
 export function Workbench({ projectId = '', onProjects = () => {}, onDatasets = () => {} }: Props) {
-  const { session, logout } = useSession();
+  const { entry, logout } = useSession();
+  const session = entry.kind === 'authenticated' ? entry.session : null;
   const activitySurfaceRef = useRef<HTMLElement>(null);
   const activity = useMemo(() => new ActivityCollector(projectId, session?.user_id ?? '', undefined, () => window.localStorage), [projectId, session?.user_id]);
   const recordActivity = useCallback((kind: Parameters<ActivityCollector['interact']>[0]) => activity.interact(kind), [activity]);

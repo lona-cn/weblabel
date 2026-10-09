@@ -18,7 +18,7 @@ export function RouteView() {
 }
 
 function StandardRoutes() {
-  const { session, loading } = useSession();
+  const { entry } = useSession();
   const [projectId, setProjectId] = useState(() => new URLSearchParams(location.search).get('project_id'));
   const [datasetView, setDatasetView] = useState(() => new URLSearchParams(location.search).get('dataset_view') === '1');
   useEffect(() => {
@@ -30,8 +30,8 @@ function StandardRoutes() {
     window.addEventListener('popstate', restore);
     return () => window.removeEventListener('popstate', restore);
   }, []);
-  if (loading) return <main className="session-loading" role="status">正在检查登录状态…</main>;
-  if (!session) return <Login />;
+  if (entry.kind === 'checking') return <main className="session-loading" role="status">正在检查登录状态…</main>;
+  if (entry.kind !== 'authenticated') return <Login key={entry.kind === 'bootstrap' ? `bootstrap-${entry.mode}` : entry.kind} />;
   const open = (project: Project) => {
     setProjectId(project.project_id);
     setDatasetView(false);
@@ -63,7 +63,7 @@ function StandardRoutes() {
     url.searchParams.delete('dataset_view');
     history.pushState(null, '', url);
   };
-  if (!projectId) return <Projects onOpen={open} />;
+  if (!projectId) return <Projects onOpen={open} createdUsername={entry.createdUsername} />;
   if (datasetView) return <Datasets projectId={projectId} onWorkbench={openWorkbench} />;
   return <Workbench projectId={projectId} onProjects={goProjects} onDatasets={openDatasets} />;
 }

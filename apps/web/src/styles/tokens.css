@@ -118,13 +118,63 @@ button:disabled { cursor: not-allowed; }
 .projects-inline { padding: 20px; }
 @media (max-width: 1000px) { .workbench-grid { flex-wrap: wrap; } .sidebar-resize { width: 270px; } .ai-placeholder { flex: 1 0 100%; min-height: 100px; } }
 @media (max-width: 680px) { .topbar { padding: 0 12px; gap: 12px; } .main-nav button { padding: 0 8px; } .workspace-heading { align-items: flex-start; gap: 8px; flex-direction: column; padding: 12px; } .workbench-grid { flex-direction: column; padding: 8px; } .sidebar-resize { resize: vertical; width: auto; max-width: none; max-height: 450px; } .ai-placeholder { flex: 0 0 auto; } .canvas-stage { min-height: 300px; } .local-state { font-size: 10px; } }
-.login-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #e9ece7; }
-.login-card, .project-create { display: grid; gap: 10px; padding: 24px; border: 1px solid var(--color-border); border-radius: 10px; background: #fff; box-shadow: var(--shadow); }
-.login-card { width: min(420px, 100%); }
-.login-card h1, .project-create h2 { margin: 0 0 8px; font-size: 20px; }
-.login-card label, .project-create label, .completion-panel > label, .export-panel > label { font-size: 12px; color: var(--color-muted); }
-.login-card input, .project-create input, .project-name-field { min-height: 38px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 5px; }
-.login-card button, .project-create button, .negative-confirmation button, .export-panel button, .logout-button { min-height: 34px; padding: 6px 12px; border: 1px solid #c4572f; border-radius: 5px; background: #c4572f; color: #fff; cursor: pointer; }
+/* First-login surfaces own their palette; the workbench retains the light theme. */
+.login-page, .bootstrap-account {
+  --tk-bg: #090e12;
+  --tk-surface: #121a21;
+  --tk-surface-raised: #19242d;
+  --tk-surface-hover: #21303b;
+  --tk-surface-selected: #2b3023;
+  --tk-text: #eef2f4;
+  --tk-muted: #a7b3bc;
+  --tk-subtle: #8797a4;
+  --tk-accent: #f3d45a;
+  --tk-accent-hover: #ffe789;
+  --tk-on-accent: #10150d;
+  --tk-info: #75cbd8;
+  --tk-danger: #ff8f86;
+  --tk-success: #8fddb1;
+  --tk-border: #34414b;
+  --tk-border-strong: #687782;
+  --tk-font-mono: 'Cascadia Code', Consolas, monospace;
+  color: var(--tk-text);
+}
+body:has(.login-page) { min-width: 320px; }
+.login-page { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px 16px; background: var(--tk-bg); color-scheme: dark; }
+.login-introduction, .login-card { width: min(380px, 100%); min-width: 0; flex-shrink: 0; }
+.login-introduction h2 { margin: 0; color: var(--tk-accent); font-family: Bahnschrift, 'Segoe UI', sans-serif; font-size: 24px; line-height: 1.5; }
+.login-card { display: grid; gap: 8px; padding: 24px; border: 1px solid var(--tk-border); border-top: 2px solid var(--tk-accent); border-radius: 3px; background: var(--tk-surface); }
+.login-card h1 { margin: 0; font-size: 24px; line-height: 1.35; }
+.login-card :is(h1, p) { overflow-wrap: anywhere; }
+.login-card label, .login-help { color: var(--tk-muted); }
+.login-card label { font-size: 14px; }
+.login-card p { line-height: 1.6; }
+.login-help { margin: 0 0 8px; }
+.login-card input { width: 100%; min-width: 0; min-height: 44px; margin-bottom: 4px; padding: 9px 12px; border: 1px solid var(--tk-border-strong); border-radius: 3px; background: var(--tk-bg); color: var(--tk-text); }
+.login-card button { min-width: 44px; min-height: 44px; margin-top: 8px; padding: 8px 12px; border: 1px solid var(--tk-accent); border-radius: 3px; background: var(--tk-accent); color: var(--tk-on-accent); cursor: pointer; touch-action: manipulation; font-weight: 650; }
+.login-card :is(input, button):focus-visible { outline: 2px solid var(--tk-accent); outline-offset: 3px; }
+.login-card :is(input, button):disabled { color: var(--tk-subtle); background: #161d23; border-color: var(--tk-border); cursor: not-allowed; opacity: 1; }
+.login-card [aria-invalid='true'] { border-color: var(--tk-danger); }
+.login-card :is([role='alert'], .field-error) { color: var(--tk-danger); }
+.login-card .field-error { margin: 0 0 4px; font-size: 13px; }
+.login-card button.session-retry:not(:disabled) { background: var(--tk-surface); border-color: var(--tk-border-strong); color: var(--tk-text); font-weight: 500; }
+.bootstrap-account { padding: 16px; border: 1px solid var(--tk-accent); border-radius: 3px; background: var(--tk-surface-selected); line-height: 1.6; }
+.bootstrap-account, .bootstrap-username { overflow-wrap: anywhere; user-select: text; }
+@media (hover: hover) {
+  .login-card button:hover:not(:disabled) { background: var(--tk-accent-hover); border-color: var(--tk-accent-hover); }
+  .login-card button.session-retry:hover:not(:disabled) { background: var(--tk-surface-hover); border-color: var(--tk-accent); }
+}
+@media (max-height: 700px) { .login-page { justify-content: flex-start; } }
+@media (max-width: 639px) { .login-card { padding: 20px; } }
+@media (forced-colors: active) {
+  .login-card :is(input, button), .bootstrap-account { border-color: ButtonText; }
+  .login-card :is(input, button):focus-visible { outline-color: Highlight; }
+}
+.project-create { display: grid; gap: 10px; padding: 24px; border: 1px solid var(--color-border); border-radius: 10px; background: #fff; box-shadow: var(--shadow); }
+.project-create h2 { margin: 0 0 8px; font-size: 20px; }
+.project-create label, .completion-panel > label, .export-panel > label { font-size: 12px; color: var(--color-muted); }
+.project-create input, .project-name-field { min-height: 38px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 5px; }
+.project-create button, .negative-confirmation button, .export-panel button, .logout-button { min-height: 34px; padding: 6px 12px; border: 1px solid #c4572f; border-radius: 5px; background: #c4572f; color: #fff; cursor: pointer; }
 .project-create { grid-template-columns: minmax(110px, 1fr) minmax(150px, 2fr) auto; align-items: end; margin: 18px 0; }
 .project-create h2 { grid-column: 1 / -1; }
 .project-create label { grid-row: 2; }

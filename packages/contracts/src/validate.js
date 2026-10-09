@@ -2,6 +2,7 @@ import Ajv from 'ajv';
 import { readFileSync } from 'node:fs';
 
 const schemaFiles = {
+  bootstrap_status: 'bootstrap_status.schema.json',
   annotation_document: 'annotation_document.schema.json',
   ontology_version: 'ontology_version.schema.json',
   media_revision: 'media_revision.schema.json',

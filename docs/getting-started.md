@@ -80,30 +80,18 @@ doctor 是只读 JSON 诊断：工具版本须为 `pinned`，选定发行须为 
 ## 首次登录与人工标注
 
 1. 打开终端显示的 `WEBLABEL_LOCAL_URL`，默认 `http://127.0.0.1:48100`。不使用公网地址。
-2. 空数据库第一次启动会在本地终端显示一次性 `WEBLABEL_BOOTSTRAP_CODE`，有效10分钟、仅能兑换一次。登录页目前只有用户名/密码，没有启动码输入控件；在**另一个本机 PowerShell 终端**调用真实初始化API，设置12–1024字节的新密码，不把码放URL或日志：
+2. 空数据库第一次启动会在本地终端显示一次性 `WEBLABEL_BOOTSTRAP_CODE`，十分钟有效、仅能兑换一次。页面自动显示“首次设置本地账户”：复制启动码，设置密码并再次确认，再点击“设置并进入”。无需输入用户名，也不需要另开终端调用初始化 API。
+3. 密码按 UTF-8 为 12–1024 字节；中文可能占多个字节。两次密码必须完全一致，首尾空格是密码的一部分，不会被去掉。启动码只去掉首尾空白；不要把码或密码放 URL、日志或截图。成功会直接进入项目页，显示实际用户名；普通新库为 `local-admin`。请保存用户名，之后使用设置的密码普通登录。本版本没有公网注册、密码找回或 SSO。
 
-```powershell
-$base = "http://127.0.0.1:48100" # 改为终端实际 WEBLABEL_LOCAL_URL
-$launchCode = Read-Host "一次性启动码" -AsSecureString
-$newPassword = Read-Host "新本地密码（至少12字节）" -AsSecureString
-try {
-  $payload = @{
-    launch_code = [System.Net.NetworkCredential]::new("", $launchCode).Password
-    password = [System.Net.NetworkCredential]::new("", $newPassword).Password
-  } | ConvertTo-Json -Compress
-  $result = Invoke-RestMethod -Method Post -Uri "$base/api/session/bootstrap" -Headers @{Origin=$base} -ContentType "application/json; charset=utf-8" -Body $payload
-  "本地管理员用户名：" + $result.username
-} finally {
-  Remove-Variable launchCode,newPassword,payload,result -ErrorAction SilentlyContinue
-}
-```
+页面显示“启动码当前不可用”时先“重新检查”，不能认定一定过期；也可能是另一窗口正在兑换。若仍需设置且没有其他窗口正在提交，在启动终端按 Ctrl+C 停止本地服务，再用原数据目录重新启动并使用新码，不删除数据库或项目数据。已有正常账号的重启不会再输出码，页面直接普通登录。
 
-3. 回到浏览器，用返回的用户名和刚设置的密码正常登录，获取浏览器自己的session/CSRF。普通新库用户名为 `local-admin`；本版本没有公网注册、密码找回或SSO。不要把API初始化发出的session手工搬到浏览器。
+收到初始化成功响应但会话未核实时，只使用“重新检查会话”，不要再提交启动码。网络错误或成功响应无法解析也先重查，不能据此认定账户未创建。如果页面核实已有身份却未取得有效 CSRF，按提示在浏览器中**仅清除此本地站点的 `weblabel_session` Cookie**，再用实际用户名和已设置密码正常登录；不要清项目数据或 IndexedDB。状态读取故障显示错误和重查，不假装是普通登录。
+
 4. 新建项目并发布类别/属性规范；导入静态PNG/JPEG，等待后台媒体作业完成。
 5. 打开资产工作台。WebGPU必须显示真实ready才可编辑。框选工具画框、选择/修改类别和属性；一次拖动一个undo。焦点在画布或对象列表时，`V/B/H` 切换选择/矩形/平移，`Delete/Backspace` 删除当前原生选择，`Ctrl/Meta+Z` 撤销、`Ctrl/Meta+Y` 或 `Ctrl/Meta+Shift+Z` 重做，按住 Space 临时平移、松开恢复原工具。文本/IME、项目导航、审核和AI控件不触发编辑快捷键；按钮的 Space 仍用于激活。设备未就绪、服务端版本只读预览或审核提交期间不允许这些原生命令。等待远端保存确认，不把“已保存本地”当远端ACK。
 6. 审核绑定已保存不可变revision。冻结数据集指定train/val/test，快照导出不跟随最新head。YOLO/COCO属性信息损失需要明确确认；原生包用于无损交付。
 
-恢复数据库保留历史用户/审核身份，但不继承旧登录。使用同一个终端API初始化流程创建新管理员；返回的 `restore-admin-<新UUID>` 是实际用户名，记录后再在普通登录页用新密码登录，不假设固定 `restore-admin`。
+恢复数据库保留历史用户/审核身份，但不继承旧登录。页面自动显示“设置恢复后的本地账户”；从恢复进程终端复制新启动码、设置并确认新密码，然后直接进入项目页。成功提示中的 `restore-admin-<新UUID>` 是实际用户名，完整保存后用于下一次普通登录，不假设固定 `restore-admin`，也不覆盖旧账号。
 
 按 **Ctrl+C** 停止。启动器仅监听 loopback，管理 API 及其 Host 子进程树。Windows 使用受管根 PID 的 `taskkill /T /F`，SQLite WAL 崩溃一致性保证不会因强制退出产生半个事务；它不是“每个 AI 调用都已优雅结束”的保证。
 

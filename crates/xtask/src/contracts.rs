@@ -3,9 +3,9 @@ use std::{error::Error, fs, path::Path};
 use annotation_domain::{
     ActivityCheckpoint, ActivityInterval, ActivityKind, ActivitySession, ActivitySessionPage,
     AiApprovedGrants, AiConsentRequest, AiConsentResponse, AiPreviewRequest, AiPreviewResponse,
-    AnnotationDocument, AnnotationRevision, ApiError, EditorCommand, EditorDelta,
-    ExternalProcessingPolicy, MediaRevision, ModelProfile, OntologyVersion, RunEvent, SaveRequest,
-    SaveResponse, StartRunRequest, SuggestionSet,
+    AnnotationDocument, AnnotationRevision, ApiError, BootstrapMode, BootstrapStatus,
+    EditorCommand, EditorDelta, ExternalProcessingPolicy, MediaRevision, ModelProfile,
+    OntologyVersion, RunEvent, SaveRequest, SaveResponse, StartRunRequest, SuggestionSet,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -26,6 +26,9 @@ fn write_json<T: Serialize>(directory: &Path, file: &str, value: &T) -> Result<(
 /// Generate the committed wire artifacts exclusively from annotation-domain Rust declarations.
 pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(output)?;
+    BootstrapMode::export_all_to(output)?;
+    BootstrapStatus::export_all_to(output)?;
+    write_schema::<BootstrapStatus>(output, "bootstrap_status.schema.json")?;
     ActivityKind::export_all_to(output)?;
     ActivityInterval::export_all_to(output)?;
     ActivityCheckpoint::export_all_to(output)?;

@@ -2,6 +2,9 @@ import type { AnnotationRevision } from '../../../../../packages/contracts/gener
 import type { MediaRevision } from '../../../../../packages/contracts/generated/MediaRevision';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 import type { ExternalProcessingPolicy } from '../../../../../packages/contracts/generated/ExternalProcessingPolicy';
+import type { BootstrapStatus } from '../../../../../packages/contracts/generated/BootstrapStatus';
+import { validateContract } from '@weblabel/contracts/validate-browser';
+export type BootstrapResult = { user_id: string; username: string; csrf_token: string };
 
 export type Session = { user_id: string; username: string; platform_admin: boolean; project_roles: { project_id: string; role: string }[] };
 export type Project = { project_id: string; name: string; description: string; allow_self_review: boolean; role?: string };
@@ -35,16 +38,28 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   if (response.status === 204) return undefined as T;
   return await response.json() as T;
 }
+// Provider-only scope fence: stale acknowledgements must not install browser tokens.
+export function loginInScope(username: string, password: string): Promise<Session>;
+export function loginInScope(username: string, password: string, isCurrent: () => boolean): Promise<Session | null>;
+export async function loginInScope(username: string, password: string, isCurrent: () => boolean = () => true): Promise<Session | null> {
+  const result = await request<{ csrf_token: string }>('/api/session/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+  if (!isCurrent()) return null;
+  if (typeof result.csrf_token !== 'string' || !result.csrf_token.trim()) throw new Error('登录响应未提供 CSRF token');
+  setCsrfToken(result.csrf_token);
+  globalThis.sessionStorage.setItem('weblabel_csrf', result.csrf_token);
+  return api.session();
+}
 
 export const api = {
   request,
   session: () => request<Session>('/api/session'),
-  login: async (username: string, password: string) => {
-    const result = await request<{ csrf_token: string }>('/api/session/login', { method: 'POST', body: JSON.stringify({ username, password }) });
-    setCsrfToken(result.csrf_token);
-    globalThis.sessionStorage?.setItem('weblabel_csrf', result.csrf_token);
-    return api.session();
+  bootstrapStatus: async (): Promise<BootstrapStatus> => {
+    const result = await request<BootstrapStatus>('/api/session/bootstrap');
+    if (!validateContract('bootstrap_status', result).valid) throw new ApiFailure(502, 'INVALID_BOOTSTRAP_STATUS', '初始化状态响应无效');
+    return result;
   },
+  bootstrap: (launchCode: string, password: string) => request<BootstrapResult>('/api/session/bootstrap', { method: 'POST', body: JSON.stringify({ launch_code: launchCode, password }) }),
+  login: (username: string, password: string) => loginInScope(username, password),
   logout: () => request<void>('/api/session/logout', { method: 'POST' }),
   projects: () => request<{ items: Project[]; next_cursor: string | null }>('/api/projects'),
   createProject: (body: { name: string; description: string; allow_self_review: boolean }) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(body) }),

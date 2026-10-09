@@ -23,6 +23,7 @@ const bootstrapReplays = new WeakMap<TestApp, () => Promise<number>>();
 const bootstrapClients = new WeakMap<TestApp, () => Promise<ApiClient>>();
 const bootstrapLogins = new WeakMap<TestApp, () => Promise<ApiClient>>();
 const databasePaths = new WeakMap<TestApp, string>();
+const launchCodes = new WeakMap<TestApp, () => Promise<string>>();
 let builtDefaultApiBinary: string | null = null;
 
 async function freeLoopbackPort(): Promise<number> {
@@ -246,6 +247,7 @@ export async function start_test_app(cookieSecure: 'true' | 'false' = 'false', m
     },
     stop,
   };
+  launchCodes.set(app, readLaunchCode);
   bootstrapClients.set(app, getBootstrapClient);
   bootstrapLogins.set(app, async () => {
     await getBootstrapClient();
@@ -299,4 +301,11 @@ export async function relogin_bootstrap_admin_for_test(app: TestApp): Promise<Ap
   const login = bootstrapLogins.get(app);
   if (!login) throw new Error('TestApp was not created by this test helper');
   return login();
+}
+
+/** Read stdout from this helper-owned app without consuming its bootstrap code. */
+export async function launch_code_for_test(app: TestApp): Promise<string> {
+  const readCode = launchCodes.get(app);
+  if (!readCode) throw new Error('TestApp was not created by this test helper');
+  return readCode();
 }

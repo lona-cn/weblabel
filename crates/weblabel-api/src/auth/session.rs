@@ -1,5 +1,6 @@
 use std::sync::atomic::Ordering;
 
+use annotation_domain::{BootstrapMode, BootstrapStatus};
 use axum::{
     extract::State,
     http::{header, HeaderMap, StatusCode},
@@ -25,7 +26,10 @@ const SESSION_SECONDS: u64 = 12 * 60 * 60;
 
 pub fn router(state: AuthState) -> Router {
     Router::new()
-        .route("/api/session/bootstrap", post(bootstrap))
+        .route(
+            "/api/session/bootstrap",
+            get(bootstrap_status).post(bootstrap),
+        )
         .route("/api/session/login", post(login))
         .route("/api/session/logout", post(logout))
         .route("/api/session", get(current_session))
@@ -33,7 +37,43 @@ pub fn router(state: AuthState) -> Router {
             state.clone(),
             super::csrf_and_origin,
         ))
+        .layer(middleware::from_fn(no_store))
         .with_state(state)
+}
+async fn no_store(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+async fn bootstrap_status(State(state): State<AuthState>) -> axum::response::Response {
+    let (users, passwords, sessions): (bool, bool, bool) = match sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM users), EXISTS(SELECT 1 FROM users WHERE password_hash != ''), EXISTS(SELECT 1 FROM sessions)"
+    ).fetch_one(&state.pool).await {
+        Ok(row) => row,
+        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "BOOTSTRAP_STATUS_FAILED", "Bootstrap status could not be read"),
+    };
+    let mode = if !users {
+        BootstrapMode::Initial
+    } else if state.restore_bootstrap_enabled.load(Ordering::Acquire) && !passwords && !sessions {
+        BootstrapMode::Restore
+    } else {
+        BootstrapMode::Login
+    };
+    let bootstrap_available = mode != BootstrapMode::Login
+        && now() <= state.config.launch_code_expires_at
+        && !state.bootstrap_consumed.load(Ordering::Acquire);
+    Json(BootstrapStatus {
+        mode,
+        bootstrap_available,
+    })
+    .into_response()
 }
 
 async fn bootstrap(
@@ -349,4 +389,64 @@ pub(crate) async fn validate_csrf(
     .await?;
     Ok(stored
         .is_some_and(|row| constant_time_eq(&row.get::<String, _>("csrf_hash"), &csrf_hash(csrf))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        auth::{hash_launch_code, AuthConfig},
+        config::ServerConfig,
+        AppState,
+    };
+    use axum::{
+        body::{to_bytes, Body},
+        http::Request,
+    };
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn status_never_releases_an_in_flight_bootstrap_reservation() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = "127.0.0.1:48310";
+        let config = ServerConfig {
+            bind: host.parse().unwrap(),
+            database_url: format!("sqlite:{}", directory.path().join("api.sqlite").display()),
+            object_root: directory.path().join("objects"),
+            write_timeout: std::time::Duration::from_secs(2),
+            production: true,
+        };
+        let state = AppState::open_with_auth(
+            &config,
+            AuthConfig {
+                bind: config.bind,
+                cookie_secure: false,
+                allowed_origins: vec![format!("http://{host}")],
+                allowed_hosts: vec![host.to_owned()],
+                launch_code: hash_launch_code("synthetic-in-flight-code"),
+                launch_code_expires_at: now() + 600,
+            },
+        )
+        .await
+        .unwrap();
+        state.auth.bootstrap_consumed.store(true, Ordering::Release);
+        let response = router(state.auth.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/session/bootstrap")
+                    .header(header::HOST, host)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({"mode":"initial","bootstrap_available":false})
+        );
+        assert!(state.auth.bootstrap_consumed.load(Ordering::Acquire));
+    }
 }

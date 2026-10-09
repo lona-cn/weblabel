@@ -2,6 +2,7 @@
 
 pub mod activity;
 pub mod ai_authorization;
+pub mod auth;
 pub mod document;
 pub mod geometry;
 pub mod hash;
@@ -11,11 +12,14 @@ pub mod revision;
 mod schema;
 pub mod suggestion_validation;
 
-pub use activity::{ActivityCheckpoint, ActivityInterval, ActivityKind, ActivitySession, ActivitySessionPage};
+pub use activity::{
+    ActivityCheckpoint, ActivityInterval, ActivityKind, ActivitySession, ActivitySessionPage,
+};
 pub use ai_authorization::{
     AiApprovedGrants, AiConsentRequest, AiConsentResponse, AiPreviewRequest, AiPreviewResponse,
     ExternalProcessingPolicy,
 };
+pub use auth::{BootstrapMode, BootstrapStatus};
 pub use document::{
     AnnotationDocument, AnnotationObject, Attrs, Completion, CoordinateSpace, CoordinateSpaceType,
     Id, MediaRevision, Origin, OriginType, Scalar,
