@@ -325,7 +325,7 @@ fn crop_grants() -> Value {
 async fn legacy_intent_is_not_executable_authorization() {
     let f = Fixture::new().await;
     let (cookie, csrf, _) = f.login().await;
-    f.profile("profile-ready", "codex_local", "ready", capabilities())
+    f.profile("profile-ready", "claude_local", "ready", capabilities())
         .await;
     let (status, _, _) = send(
         &f.app,
@@ -342,7 +342,6 @@ async fn legacy_intent_is_not_executable_authorization() {
 #[tokio::test]
 async fn every_external_channel_requires_project_policy_even_without_data_grants() {
     for provider in [
-        "codex_local",
         "claude_local",
         "openai_api",
         "anthropic_api",
@@ -366,13 +365,42 @@ async fn every_external_channel_requires_project_policy_even_without_data_grants
         );
         assert_eq!(f.counts().await, (0, 0, 0));
     }
+    // Retired historical identities are not active external channels, even
+    // when project policy would otherwise permit their official runtime.
+    for policy in [false, true] {
+        let f = Fixture::new().await;
+        let (cookie, csrf, actor) = f.login().await;
+        let scope = f
+            .scope(&actor, &cookie, &csrf, "codex_local", policy, false)
+            .await;
+        let (status, body) = f.preview(&cookie, &csrf, &scope.request, no_grants()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["code"], "PROVIDER_RETIRED");
+        assert_eq!(f.counts().await, (0, 0, 0));
+        let mut tx = f.state.repository.begin_write().await.unwrap();
+        let historical: (String, String, String) = sqlx::query_as(
+            "SELECT provider_id,verification,runtime_version FROM model_profiles WHERE profile_id='profile-ready'",
+        )
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            historical,
+            (
+                "codex_local".into(),
+                "not_run".into(),
+                "test-runtime".into()
+            )
+        );
+    }
 }
 #[tokio::test]
 async fn server_fingerprint_ignores_operation_but_pins_prompt_grants_and_private_configuration() {
     let f = Fixture::new().await;
     let (cookie, csrf, actor) = f.login().await;
     let scope = f
-        .scope(&actor, &cookie, &csrf, "codex_local", true, true)
+        .scope(&actor, &cookie, &csrf, "claude_local", true, true)
         .await;
     let (status, first) = f
         .preview(&cookie, &csrf, &scope.request, all_grants())
@@ -457,7 +485,7 @@ async fn runtime_scope_blocks_full_image_pixel_expansion_and_unselected_objects(
     let f = Fixture::new().await;
     let (cookie, csrf, actor) = f.login().await;
     let scope = f
-        .scope(&actor, &cookie, &csrf, "codex_local", true, true)
+        .scope(&actor, &cookie, &csrf, "claude_local", true, true)
         .await;
     let (request, _) = f.authorized(&cookie, &csrf, &scope, crop_grants()).await;
     let (status, run) = f.start(&cookie, &csrf, &request).await;
