@@ -18,7 +18,19 @@ import { taskReportPath } from '../support/report-paths.mjs';
 // prediction evidence is generated here. These tests cannot satisfy G4.
 const root = resolve(import.meta.dirname, '../..');
 let directory: string;
-beforeAll(async () => { directory = await mkdtemp(taskReportPath('T32', 'engineering-')); });
+let terminalAssembly: string;
+beforeAll(async () => {
+  directory = await mkdtemp(taskReportPath('T32', 'engineering-'));
+  if (process.platform === 'win32') {
+    terminalAssembly = resolve(directory, 'T32Terminal.dll');
+    await new Promise<void>((resolvePrepared, reject) => {
+      execFile(resolve(process.env.SystemRoot ?? 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-File', 'tests/fixtures/interactive-terminal/conpty.ps1', '-Prepare', '-AssemblyPath', terminalAssembly], { cwd: root }, (error, stdout, stderr) => {
+        if (error) reject(new Error('ConPTY fixture preparation failed: ' + stdout + stderr, { cause: error }));
+        else resolvePrepared();
+      });
+    });
+  }
+});
 afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
 interface DiagnosticChannel {
   provider_id: string;
@@ -158,18 +170,18 @@ it.each([
   const configPath = resolve(directory, `${randomUUID()}.json`);
   await writeFile(configPath, JSON.stringify(config));
   try {
-    const result = await new Promise<{ exit: number | null; stdout: string }>((resolveResult, reject) => {
+    const result = await new Promise<{ exit: number | null; stdout: string; stderr: string }>((resolveResult, reject) => {
       const command = `"${process.execPath}" scripts/verify-live.mjs --run --config "${relative(root, configPath)}" --report-dir "${relative(root, directory)}"`;
       const windows = process.platform === 'win32';
       const args = windows
-        ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tests/fixtures/interactive-terminal/conpty.ps1', '-CommandLine', command]
+        ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tests/fixtures/interactive-terminal/conpty.ps1', '-AssemblyPath', terminalAssembly, '-CommandLine', command, '-InputLine', 'DECLINE']
         : ['-q', '-e', '-c', command, '/dev/null'];
       const child = execFile(windows ? 'powershell.exe' : 'script', args, {
         cwd: root, timeout: 90000, maxBuffer: 1024 * 1024,
         env: { ...process.env, WEBLABEL_LIVE_SESSION_COOKIE: 't32_engineering=noncredential', WEBLABEL_LIVE_CSRF: 't32-noncredential' },
-      }, (error, stdout) => {
+      }, (error, stdout, stderr) => {
         const exit = error ? typeof error.code === 'number' ? error.code : null : 0;
-        if (exit === null) reject(error); else resolveResult({ exit, stdout });
+        if (exit === null) reject(error); else resolveResult({ exit, stdout, stderr });
       });
       let answered = false;
       child.stdout?.on('data', chunk => {
@@ -186,7 +198,7 @@ it.each([
       evidence_path: plain.match(/"evidence_path": "([^"]+)"/)?.[1] ?? '',
       outbound_model_calls: Number(plain.match(/"outbound_model_calls": (\d+)/)?.[1]),
     };
-    expect(result.exit).toBe(2);
+    expect(result.exit, result.stdout + result.stderr).toBe(2);
     expect(requests).toEqual(['/api/model-profiles']);
     expect(report.run_error).toBe(reason);
     const evidence = JSON.parse(await readFile(resolve(root, report.evidence_path), 'utf8'));
