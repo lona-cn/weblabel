@@ -84,6 +84,22 @@
     "review": "Independent read-only reviewer found no blocking identity/lineage/Linux-broker or fixture-barrier issue; raw worker report/logs retained privately.",
     "limits": "No original hosted helper blocking stage or Windows lock owner captured. Five seconds is a shared operation budget, not a hard OS termination guarantee or complete stream-drain bound. Helper-hang/partial-table fault injection was not exercised. No hardware/model certification. Diagnostic source and probe files removed from delivery."
   },
+  "export_continuation_and_stopped_snapshot_repairs": {
+    "failed_source": "bac9529cc403b32dfa872ec15004dd07b82741a6",
+    "failed_release": "https://github.com/lona-cn/weblabel/actions/runs/38403781176",
+    "failed_main_ci": "https://github.com/lona-cn/weblabel/actions/runs/38403781301",
+    "observed": "Main CI Windows/Linux tests passed then Docker stopped_database exited 1; independent Release had original T15 five-second timeout and one C06 certificate-replacement continuation action absent.",
+    "T15": "Move only fresh authentication/project/ontology/import prerequisites into beforeEach; preserve head/save/export/actual bytes and independent parser, all thirteen business requests, original five-second consumer budget and real worker.",
+    "C06": "Wait for actual claim/submit/continuation enabled state and complete-document SaveQueue durability before freezing proof; preserve all101cases, original deadlines and identity/certificate/no-write guards.",
+    "worker_source_commits": ["12ee2c1f13d53b253177bc663cccd91cb04e2269", "ab0e3c4026b62f6afcd00b4db0ba9df1209d682b"],
+    "main_integrated_commits": ["d48e7616", "6b1c8793"],
+    "main_windows_consumers": "102 passed,0 skipped,maxWorkers=2",
+    "confirmed_sqlite_precondition": "Pinned Linux Node24.16 clean WAL database on actual readonly bind mount has no sidecars: plain readOnly fails errcode14; immutable reads integrity-ok durable data. An actual killed child with committed WAL yields both rows through normal reads, but unconditional immutable loses the WAL row.",
+    "snapshot_repair": "Only WAL-free stopped/exclusively-owned snapshots use immutable URI; WAL-bearing snapshots retain strict normal readonly SQLite reads. Volume/network/nonroot/stop/restart/data/integrity constraints unchanged.",
+    "local_container_limit": "Native WSL Docker engine observed; configured mirror, official registry-1 and Google mirror unavailable. No global changes. Actual full image smoke remains required in final CI, not claimed locally.",
+    "unconfirmed": "Original T15 pending await, exact C06 hosted scheduler interleaving and original Docker checker stderr were not captured; independent reproductions do not invent them.",
+    "review": "Independent read-only reviewer approved both test-only lifecycle deltas and the WAL-aware readonly selector with no blocking finding; final source CI remains required. Raw worker logs and probes private."
+  },
   "product_acceptance": {"T32": "blocked", "T35": "pending", "G4": "not-certified", "real_model_calls": 0},
   "final_publication_verification": "Exact final SHA must pass unchanged hosted build/test/container/release gates; published asset and image identity must be checked after publication"
 }

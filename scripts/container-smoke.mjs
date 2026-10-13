@@ -15,7 +15,14 @@ async function checkData() {
   assert.equal(fs.existsSync('/data/runtime.lock'), false, 'runtime_lock_survived_stop');
   assert.ok(fs.statSync('/data/api.sqlite').isFile(), 'database_missing');
   const { DatabaseSync } = await import('node:sqlite');
-  const db = new DatabaseSync('/data/api.sqlite', { readOnly: true });
+  // Check only the stopped, exclusively-owned volume. If WAL remains, retain
+  // normal SQLite WAL reads; immutable mode must not hide committed WAL data.
+  // Clean shutdown may remove both sidecars, and this readonly mount cannot
+  // recreate them. Only that WAL-free snapshot uses an immutable URI.
+  const location = fs.existsSync('/data/api.sqlite-wal')
+    ? '/data/api.sqlite'
+    : 'file:/data/api.sqlite?mode=ro&immutable=1';
+  const db = new DatabaseSync(location, { readOnly: true });
   try {
     assert.deepEqual(db.prepare('PRAGMA integrity_check').all().map(row => row.integrity_check), ['ok'], 'sqlite_integrity');
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [], 'sqlite_foreign_keys');
