@@ -39,6 +39,16 @@
     "helper_runner_exit_code": 0,
     "raw_evidence": "private project-local publication archive"
   },
+  "export_gate_repair": {
+    "failed_source": "4d121aa253a0314a3a3c071085d99bf03a50d36d",
+    "failed_release_run": "https://github.com/lona-cn/weblabel/actions/runs/38385635874",
+    "observed_failure": "Windows export nine-combination test exceeded its unchanged five-second heartbeat observation timeout",
+    "confirmed_test_defect": "Read-only observation repeatedly acquired BEGIN IMMEDIATE writer admission and detached/closed SQLite connections, competing with the heartbeat being observed",
+    "unconfirmed": "Original log does not identify the exact phase, advancement step or Windows scheduling/close delay",
+    "repair": "Use existing short read_connection borrows and release before waiting; no production changes or deadline/assertion reductions",
+    "local_windows_verification": {"nine_combination_case": "1 passed", "api_library": "77 passed, 0 failed", "docs_structure": "77 files, 358 links passed"},
+    "format_check": "Existing whole-workspace rustfmt differences reported; no broad formatting or CI changes"
+  },
   "product_acceptance": {"T32": "blocked", "T35": "pending", "G4": "not-certified", "real_model_calls": 0},
   "final_publication_verification": "Exact final SHA must pass unchanged hosted build/test/container/release gates; published asset and image identity must be checked after publication"
 }

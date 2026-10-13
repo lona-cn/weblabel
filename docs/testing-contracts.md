@@ -48,6 +48,7 @@ T16 Node Host 的回收验证每轮只取一份 fresh process table，用同一�
 
 T06 的原120ms写锁冲突预算、2秒上界及解锁后recovery断言不变；首次冷迁移不是放宽预算的理由。真实SQLite消费者回归由独立Repository确认abandon/task-abort写入均回滚，恢复writer提交后精确读回，不断言连接identity。超时或取消pending BEGIN、deferred-FK COMMIT失败不得留下行或锁；当前成功和失败路径均关闭专属连接，不能用SQLx库名字代替取消安全证明。
 Repository clones共享一个FIFO写入准入；等待准入、获取连接与BEGIN IMMEDIATE仍合用调用者原始预算。成功、放弃、取消、pending BEGIN、失败/取消COMMIT或ROLLBACK均由独立线程持有连接与准入，直到真实SQLite worker关闭确认后才释放；正常finalize等待关闭，取消或runtime关闭不取消该线程。迁移循环事务、媒体metadata和所有Repository事务走同一准入，独立auth pool不新增此gate，外部writer仍受原预算约束。消费者回归覆盖有限短事务洪流下的真实heartbeat durable写入、FIFO/取消/期限、deferred-FK失败回滚、in-flight取消、无runtime恢复和finalize后的Windows文件句柄释放；不固定连接identity或生产重试。
+导出 worker 的三阶段×续租/失效/接管九组合回归仍使用真实心跳与原期限。观察 lease_until/worker/fence 时只短借 read_connection，读取后在下一次等待前释放，不用 BEGIN IMMEDIATE/写入准入作只读轮询，避免观察者的连接关闭和 writer 竞争污染心跳时限。固定 fixture clock 不传播给未显式 scope 的旁支任务；生产 expiry/fencing、heartbeat cadence、五秒观察期限和原九组合断言不变。
 
 debug-only管理员drain在入口只读捕获按created_at/job_id排序的最多32个queued/running作业，原分派逻辑不变。其他owner尚未完成时，释放读连接后等待该封闭cohort真实succeeded/failed/cancelled/interrupted终态；后到作业不扩大等待集合，不抢有效lease、不改变fence/attempt、不重提交。其他owner等待阶段超过2秒仍未终态返回503 JOB_DRAIN_TIMEOUT；快照/读取失败或捕获作业消失返回500 JOB_DRAIN_FAILED，不以200冒充完成。processed/jobs仍只报告drain自己拥有的分派，失败作业仍为failed，release继续404。T17另保留原22用例并追加真实expired-lease模型drain回归：首attempt到达受控runner后中断，只过期lease，drain通过真实process_next回收attempt2并终结interrupted/unknown/LEASE_EXPIRED_NO_RESEND，禁止重发或产生预测/审计/标注修改。T27新增真实API回归覆盖有效owner、并发写入、成功/失败、后到作业排除、期限和删除；原Vitest T27/T29请求、断言及background worker保持不变，2秒不是整次drain分派的总预算。
 

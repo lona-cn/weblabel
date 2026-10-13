@@ -1963,15 +1963,17 @@ mod commercial_d_private_tests {
                                 *clock.lock().unwrap() = now;
                                 tokio::time::timeout(Duration::from_secs(5), async {
                                     loop {
-                                        let mut tx = f.repository.begin_write().await.unwrap();
+                                        // Observe without competing with the heartbeat writer.
+                                        let mut connection =
+                                            f.repository.read_connection().await.unwrap();
                                         let until: String = sqlx::query_scalar(
                                             "SELECT lease_until FROM jobs WHERE job_id=?",
                                         )
                                         .bind(&lease.job_id)
-                                        .fetch_one(tx.connection())
+                                        .fetch_one(&mut *connection)
                                         .await
                                         .unwrap();
-                                        tx.rollback().await.unwrap();
+                                        drop(connection);
                                         if chrono::DateTime::parse_from_rfc3339(&until).unwrap()
                                             > now + chrono::Duration::milliseconds(1400)
                                         {
@@ -1984,15 +1986,15 @@ mod commercial_d_private_tests {
                                 .unwrap();
                             }
                             assert!(crate::jobs::queue::lease_now() > deadline);
-                            let mut tx = f.repository.begin_write().await.unwrap();
+                            let mut connection = f.repository.read_connection().await.unwrap();
                             let (until, worker_id, fence): (String, String, i64) = sqlx::query_as(
                         "SELECT lease_until,worker_id,fencing_token FROM jobs WHERE job_id=?",
                     )
                     .bind(&lease.job_id)
-                    .fetch_one(tx.connection())
+                    .fetch_one(&mut *connection)
                     .await
                     .unwrap();
-                            tx.rollback().await.unwrap();
+                            drop(connection);
                             assert!(
                                 chrono::DateTime::parse_from_rfc3339(&until).unwrap()
                                     > crate::jobs::queue::lease_now()
