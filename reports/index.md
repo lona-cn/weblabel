@@ -6,6 +6,8 @@
 
 本次净化增量的[源码来源映射](publication/increment-map.json)与[实际整合验证](publication/increment-verification.json)单独记录。它们不分发原始私有产物，不把工程回归或一次硬件烟测写成模型 live、跨平台或 G4 通过。
 
+本次工程预发布候选的[净化增量与修复记录](publication/rc3-integration.json)单独绑定私有来源。新增历史审计 harness 仅保留工具源码，不是可移植运行手册；原始报告、登录产物、截图、下载与运行目录仍在私有归档。旧来源映射和验证记录不升级为本次发布通过。
+
 ## 当前还卡在哪里
 
 原任务历史记录为 T00–T31、T33、T34 done，T32 当时五渠道完整验收 blocked、T35 pending。当前用户选择退役 Codex 后，必需真实渠道仅 Claude/OpenAI/MiMo/Detector 四项，仍全部 blocked；Anthropic API 可选。历史 GPU 通过不能代替本轮硬件重验或所有模型/完整 G4。
@@ -14,7 +16,7 @@
 
 ## 四角色用户体验五波增量
 
-用户已批准持续实施完整[UX01–UX29计划](../docs/ux-improvement-plan.md)，29项现已逐切片落地并验收，不是仅修复拉框。逐项提交、测试、运行证据和边界见需求目录（私有归档：`reports/T35/ux-improvement/item-catalog.json`）、最终结果（私有归档：`reports/T35/ux-improvement/result.json`）及STATUS.user_requests.ux_improvement。原36项状态、T32/G4/性能与许可阻塞不改写。
+用户已批准的完整[UX01–UX29历史计划](../docs/ux-improvement-plan.md)所含29项已逐切片落地并验收，不是仅修复拉框；计划原地归档，不再列作待实施批次。逐项提交、测试、运行证据和边界见需求目录（私有归档：`reports/T35/ux-improvement/item-catalog.json`）、最终结果（私有归档：`reports/T35/ux-improvement/result.json`）及STATUS.user_requests.ux_improvement。原36项状态、T32/G4/性能与许可阻塞不改写。
 
 - 真实GPU手势与预览（私有归档：`reports/T05/ux-improvement/main-static-proof.json`）、DPR2/125%（私有归档：`reports/T05/ux-improvement/main-dpr2-125-proof.json`）、批量/隐藏/过滤外属性与完整几何undo（私有归档：`reports/T12/ux-improvement/main-bulk-geometry-proof.json`）、null明确提交（私有归档：`reports/T12/ux-improvement/main-attribute-proof.json`）。
 - 正式人工→任务提交/继续→负样本→独立身份固定版本审核（私有归档：`reports/T26/ux-improvement/main-packaged-flow-proof.json`）绑定095d6574发行；602正式入口与原envelope完整保全（私有归档：`reports/T12/ux-improvement/main-final-task-entry-proof.json`）、自动媒体作业终态（私有归档：`reports/T08/ux-improvement/main-media-auto-track-proof.json`）、v2规范发布不迁移旧任务/head（私有归档：`reports/T08/ux-improvement/main-norm-version-proof.json`）各保留真实源版本。
@@ -44,7 +46,7 @@
 
 ## 商业核心与体验增量
 
-基于Label Studio固定版本比较的增量A/B/C已提交，并曾按用户要求在C后停止；发现基线为`ffc794c41d88fe3c879babef0178581bbcc6b126`。该停止要求已履行，随后获准恢复的D/E也已分别提交；下面的D/E证据只证明各自报告绑定commit，不是当前HEAD重验或T32/T35通过。规范、多类人工编辑、导入、对象检索、固定任务、可信反馈与布局的原实施范围见[已审查计划](../docs/commercial-core-plan.md)，不得把计划批准当结果。
+基于Label Studio固定版本比较的增量A/B/C已提交，并曾按用户要求在C后停止；发现基线为`ffc794c41d88fe3c879babef0178581bbcc6b126`。该停止要求已履行，随后获准恢复的D/E也已分别提交；下面的D/E证据只证明各自报告绑定commit，不是当前HEAD重验或T32/T35通过。规范、多类人工编辑、导入、对象检索、固定任务、可信反馈与布局的原实施范围保留在[商业核心计划归档](../docs/commercial-core-plan.md)，不再作为执行队列，不得把计划批准当结果。
 
 - 发现基线与授权决定（私有归档：`reports/T08/commercial-core/baseline.json`）；发现资料在同目录discovery。
 - 初次计划审查（私有归档：`reports/T08/commercial-core/plan-review.txt`）与修订批准（私有归档：`reports/T08/commercial-core/plan-approved.txt`）：仅计划通过，不是功能验收。

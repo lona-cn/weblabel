@@ -14,6 +14,8 @@
 
 按[验收说明](verification.md)选择范围；人工路径用[手工验收](manual-smoke.md)，账户与恢复用[运维](operations.md)/[备份恢复](backup-restore.md)，实际结果查[报告索引](../reports/index.md)。当前任务状态来自 [TASKS.json](../TASKS.json)、[STATUS.json](../STATUS.json)和真实提交，不由本文复制或升级。任务卡出链由 TASKS.json 的 card 列表登记，36 项依赖入口见[实施计划](../PLAN.md#完整任务目录)。
 
+商业核心 A–E 与 UX01–UX29 已完成，两份增量计划仅作原地历史归档，不再用于选择待实施批次。当前能力用[能力说明](current-capabilities.md)，接口和不变量用[API 参考](api-reference.md)/[共享契约](contracts.md)；未完成的发布验收仍按根实施计划与 STATUS 恢复。归档不删改历史正文、证据或原始草案，不改变任务及发布关卡状态。
+
 ## 文档目录
 
 | 文档 | 类型 | 读者与读后动作 | 维护责任 | 事实范围/权威依据 | 更新触发 |
@@ -45,8 +47,8 @@
 | [adr/0001-provider-runtime-boundaries.md](adr/0001-provider-runtime-boundaries.md) | 决策 | 维护者：遵守 provider 边界 | main / wl-ai | 已记录决定及证据 | 替代决定或契约影响变化 |
 | [adr/0002-server-owned-ai-authorization.md](adr/0002-server-owned-ai-authorization.md) | 决策 | 维护者：执行服务端外发授权 | main / wl-ai | 已记录授权决定 | 替代决定或授权变化 |
 | [adr/0003-browser-first-login.md](adr/0003-browser-first-login.md) | 决策 | 维护者：保留网页首次登录流程 | main / wl-web | 已记录首次登录决定 | 替代决定或登录变化 |
-| [commercial-core-plan.md](commercial-core-plan.md) | 计划 | 维护者：理解后续工程验收切片 | main | 工程实施计划，不替代原 DAG | 批准计划变化 |
-| [ux-improvement-plan.md](ux-improvement-plan.md) | 计划 | 主集成者：按四角色需求选择批次并验收修复 | main | 用户体验增量计划，不是完成或发布声明 | 批次范围、依赖或验收行为变化 |
+| [commercial-core-plan.md](commercial-core-plan.md) | 归档 | 审查者：对照已完成 A–E 的范围和历史验收 | main | 已结束增量的原需求、审查及证据；非现行契约 | 仅维护归档导读，历史正文不倒写 |
+| [ux-improvement-plan.md](ux-improvement-plan.md) | 归档 | 审查者：对照已完成 UX01–UX29 的需求和证据 | main | 已结束体验增量的历史范围；非待实施批次 | 仅维护归档导读，历史正文不倒写 |
 | [current-capabilities.md](current-capabilities.md) | 参考 | 产品与试用交付人员：选择当前适配路径和核实边界 | main | 当前源码能力及绑定证据，不替代历史关卡 | 能力、接口或实际验收边界变化 |
 | [label-studio-comparison.md](label-studio-comparison.md) | 参考 | 维护者：区分竞品比较与实测能力 | wl-researcher | 带来源的比较与证据边界 | 来源或能力对照变化 |
 | [pilot-protocol.md](pilot-protocol.md) | 规范 | 验收者：执行效率质量测量协议 | wl-qa | 测量目标与协议，不是结果 | 测量协议变化 |

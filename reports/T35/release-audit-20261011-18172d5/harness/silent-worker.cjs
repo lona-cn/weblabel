@@ -1,0 +1,1 @@
+const fs=require('node:fs');fs.writeFileSync('D:/workspace/src/weblabel/target/build-cache/release-audit-20261011/silent-worker.pid',String(process.pid));process.stdin.resume();setInterval(()=>{},1000);

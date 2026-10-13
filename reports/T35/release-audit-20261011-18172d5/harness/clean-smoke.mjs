@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {createServer,connect} from 'node:net';
+import {setTimeout} from 'node:timers/promises';
+import {startLocal} from '../../../scripts/start-local.mjs';
+const root='D:/workspace/src/weblabel', scratch=path.join(root,'target/build-cache/release-audit-20261011'), report=path.join(root,'reports/T35/release-audit-20261011-18172d5');
+process.env.TEMP=process.env.TMP=process.env.TMPDIR=path.join(scratch,'tmp');
+for(const key of Object.keys(process.env))if(key.startsWith('WEBLABEL_'))delete process.env[key];
+const output=process.stdout.write.bind(process.stdout);process.stdout.write=(chunk,...args)=>output(String(chunk).replace(/WEBLABEL_BOOTSTRAP_CODE=\w+/g,'WEBLABEL_BOOTSTRAP_CODE=[REDACTED_SYNTHETIC]'),...args);
+async function free(){const server=createServer();const ready=Promise.withResolvers();server.listen(0,'127.0.0.1',ready.resolve);await ready.promise;const port=server.address().port;const closed=Promise.withResolvers();server.close(closed.resolve);await closed.promise;return port;}
+async function isOpen(port){const result=Promise.withResolvers();const socket=connect(port,'127.0.0.1');socket.once('connect',()=>{socket.destroy();result.resolve(true);});socket.once('error',()=>result.resolve(false));return result.promise;}
+const port=await free(),api=await free();const runtime=await startLocal(['--build-dir',path.join(scratch,'clean-release'),'--data-dir',path.join(scratch,'clean-smoke-data'),'--port',String(port),'--api-port',String(api)]);
+let proof={time:new Date().toISOString(),fixture:'Fresh clean-HEAD release and empty owned data; no credentials, model, private data, or security probes',head:'18172d5bd36932a7a202f174f1969e16dc055738',base_url:runtime.base_url,owned_api:runtime.child.pid};
+try{let response;for(let i=0;i<100;i++){response=await fetch(runtime.base_url+'/api/session');if(response.status!==503)break;await setTimeout(100);}const session=await response.json();const page=await fetch(runtime.base_url+'/');const html=await page.text();const wasm=await fetch(runtime.base_url+'/wasm/wasm_bridge_bg.wasm');const bytes=new Uint8Array(await wasm.arrayBuffer());proof={...proof,session:{status:response.status,body:session},page:{status:page.status,contains_root:html.includes('id="root"')},wasm:{status:wasm.status,length:bytes.length,magic:Array.from(bytes.slice(0,4))}};if(page.status!==200||wasm.status!==200||bytes[0]!==0||bytes[1]!==97||!proof.page.contains_root||response.status===503)throw new Error('clean release functional smoke failed');}finally{await runtime.stop();proof.stopped={api_exit:runtime.child.exitCode,lock_exists:fs.existsSync(path.join(runtime.data,'runtime.lock')),public_port_open:await isOpen(port),api_port_open:await isOpen(api)};fs.writeFileSync(path.join(report,'clean-smoke.json'),JSON.stringify(proof,null,2));console.log(JSON.stringify(proof,null,2));}
+if(proof.stopped.lock_exists||proof.stopped.public_port_open||proof.stopped.api_port_open)throw new Error('owned runtime shutdown incomplete');

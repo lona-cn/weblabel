@@ -1,0 +1,10 @@
+import {DetectorLocalAdapter} from '../../../apps/agent-host/src/providers/detector-local';
+import fs from 'node:fs';import {spawnSync} from 'node:child_process';
+const root='D:/workspace/src/weblabel',scratch=root+'/target/build-cache/release-audit-20261011',nodeDir=root+'/target/t31-node-runtime-v24.16.0/node-v24.16.0-win-x64',pidPath=scratch+'/silent-worker.pid';
+fs.rmSync(pidPath,{force:true});
+const adapter=new DetectorLocalAdapter({spawnPolicy:{trusted_executable_roots:[nodeDir],allowed_env:['SystemRoot','TEMP','TMP'],cwd_root:scratch},workerCommand:{executable:nodeDir+'/node.exe',argv:[scratch+'/silent-worker.cjs']},workerCwd:scratch,lockPath:scratch+'/nonexistent-lock.json',labelMapPath:scratch+'/nonexistent-map.json',imageSource:()=>{throw Error('No images authorized or used');},probeTimeoutMs:50});
+const start=performance.now();let settled=false;let result:unknown;const pending=adapter.probe().then(r=>{settled=true;result=r;},e=>{settled=true;result={error:String(e)};});
+await new Promise(r=>setTimeout(r,500));const elapsed=performance.now()-start,pid=fs.existsSync(pidPath)?Number(fs.readFileSync(pidPath,'utf8')):null;const alive=()=>{if(!pid)return false;try{process.kill(pid,0);return true;}catch{return false;}};
+const evidence={fixture:'silent local NDJSON worker; NO real detector, model load, network, accounts or images',configured_probe_timeout_ms:50,external_watchdog_ms:500,observed_elapsed_ms:elapsed,settled_before_cleanup:settled,pid,worker_alive_before_cleanup:alive(),cleanup:null as unknown,result:null as unknown,worker_alive_after_cleanup:false};
+if(pid&&alive()){const k=spawnSync('taskkill.exe',['/PID',String(pid),'/T','/F'],{encoding:'utf8'});evidence.cleanup={exit_code:k.status,stdout:k.stdout,stderr:k.stderr};}
+await Promise.race([pending,new Promise(r=>setTimeout(r,1000))]);evidence.result=result??null;evidence.worker_alive_after_cleanup=alive();fs.writeFileSync(root+'/reports/T35/release-audit-20261011-18172d5/detector-probe.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence,null,2));if(!pid||evidence.worker_alive_after_cleanup)throw Error('Unsafe/invalid probe cleanup');

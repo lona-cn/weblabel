@@ -20,7 +20,7 @@ export function packageRelease(argv = process.argv.slice(2)) {
   if (fs.existsSync(output)) throw new Error('output_directory_exists: choose a NEW output directory');
   const actualOutput = path.join(fs.realpathSync(path.dirname(output)), path.basename(output));
   if (actualOutput.startsWith(build + path.sep)) throw new Error('output_inside_build_refused');
-  const scriptNames = ['start-local.mjs', 'build.mjs', 'task.mjs', 'backup.mjs', 'restore.mjs', 'doctor.mjs'];
+  const scriptNames = ['start-local.mjs', 'build.mjs', 'task.mjs', 'backup.mjs', 'restore.mjs', 'doctor.mjs', 'ops-diagnostics.mjs', 'upgrade-preflight.mjs'];
   for (const name of scriptNames) checkedPath(path.join(root, 'scripts'), name);
   const { manifest } = validateRelease(build);
   if (!/^[0-9a-f]{40}$/.test(manifest.source_commit)) throw new Error('release_source_commit_invalid');

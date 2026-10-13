@@ -536,7 +536,7 @@ GET/PUT项目external-processing-policy使用实际membership，只有项目admi
 
 ## 商业核心增量：只读定位与显式导入
 
-本增量保持契约v1；新增Rust wire声明经xtask生成，客户端不得手写generated。精确分页、错误、权限及边界验收冻结于[商业核心计划第8节](commercial-core-plan.md#8-审查修订接口与预算冻结)。
+本增量保持契约v1；新增Rust wire声明经xtask生成，客户端不得手写generated。现行分页、错误与权限见[API 成员接口](api-reference.md#成员)和[heads 集合](api-reference.md#两种-heads-集合)，导入、保存与交付预算以本节规范为准；[商业核心计划第8节](commercial-core-plan.md#8-审查修订接口与预算冻结)仅保留历史批准及验收依据，不承担现行契约权威。
 
 新增`AnnotationHeadSummary`、`AnnotationHeadPage`、`AssetAnnotationHead`、`AssetAnnotationHeadPage`、`ProjectMemberRole`、`ProjectMember`、`ProjectMemberPage`与`AnnotationImportCommitRequest`。Option必须显式null；revision_no/object_count/fencing_token为非负安全整数。HeadSummary不含objects，摘要不是冻结/写入授权。项目分页必须先限制媒体页再关联指定规范head，不丢没有head的媒体；读取失败不是head:null。项目成员读取仅项目admin，不使用全站用户列表。
 

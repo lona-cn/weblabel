@@ -29,3 +29,22 @@ __pycache__/
 !/reports/**/*.rs
 !/reports/index.md
 !/reports/publication/**
+
+# Disposable build output, model weights and workstation-local configuration.
+/apps/web/dist/
+/services/detector/weights/
+/.omp/config.yml
+# Never include raw browser network traces, even under source-code exceptions.
+/reports/**/trace/
+/reports/**/trace.zip
+/reports/**/.last-run.json
+# Historical copied worktrees and their generated caches are not release source.
+/reports/**/cleanup-preservation/
+# Committed historical helper sources remain eligible; outputs stay private.
+!/reports/**/*.cjs
+# Generated runtime/build caches never qualify as committed historical tools.
+/reports/**/runtime/
+/reports/**/vite-cache/
+/reports/**/playwright-transform-cache/
+/reports/**/node-compile-cache/
+/reports/**/target/

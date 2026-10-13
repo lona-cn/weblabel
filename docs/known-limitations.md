@@ -18,6 +18,7 @@
 - paused恢复需显式singleflight原请求确认，保留原operation/body/base/lease/journal；真实ACK与最新记录IDB complete且scope仍current之前保持编辑屏障，generic flush/timer不能解锁。fresh明确lease拒绝仅允许核对实际同一固定任务/资产/规范、Native/context并精准领取后明确reprepare新operation；historical unknown不能替换原payload。跨tab冲突仍未解决。 旧成功原请求回执可与当前新操作 lease 资格分离核对；没有 fixed lease 时允许原回执及最新本地记录的受限确认，不允许继续编辑、创建下一操作或把 partial ACK 说成全量同步。
 - 无待处理的无主只读快照只作折叠留档；本地同步标记不是独立服务器 ACK 证明，不用于原作者认领、恢复、merge 或写授权。原始记录保留；未知请求、错误、暂停和坏结构不能归入该展示分类。
 - 构建使用固定 Rust release 与 wasm-bindgen；不依赖旧 wasm-opt 的优化成功，也不宣称二进制位级重现或每种 OS 已验证。
+- 便携包分发完整运维脚本依赖，包括启动/备份/恢复所需的 ops-diagnostics 与 doctor 所需的 upgrade-preflight；以具体 Release 的 bundle/release 清单、SHA256 和解包后实际运行证据核对，不据源码构建结果宣称发布资产可用。
 - 普通入口按项目 tasks 完整分页、asset-wide 核对编辑资格；已关联任务（含关闭、其他作者或规范）保持只读，需明确新任务/领取。列表读取是时点快照而非分配事务锁；后来新增任务仍可能被服务端拒绝，原请求与草稿必须保留，不能自动换 lease/operation 或重放。
 - AI 结果的任务关联仅证明决策保存的精确revision被某submission提交，不证明模型导致审核结果；自愿run/task工时由用户明确选择、本人显式发布。旧区间无绑定ID不可追溯归因，后继revision不能冒充精确绑定，未记录不填零。
 ## 模型事实矩阵
