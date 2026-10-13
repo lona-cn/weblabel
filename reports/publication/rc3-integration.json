@@ -100,6 +100,18 @@
     "unconfirmed": "Original T15 pending await, exact C06 hosted scheduler interleaving and original Docker checker stderr were not captured; independent reproductions do not invent them.",
     "review": "Independent read-only reviewer approved both test-only lifecycle deltas and the WAL-aware readonly selector with no blocking finding; final source CI remains required. Raw worker logs and probes private."
   },
+  "owned_exit_proof_repair": {
+    "failed_source": "3b141a64aa070e093afdefd38f3c66f5f97cde90",
+    "successful_main_ci": "https://github.com/lona-cn/weblabel/actions/runs/38412576301",
+    "failed_independent_release": "https://github.com/lona-cn/weblabel/actions/runs/38412578622",
+    "baseline_counterexample": "Pinned source3b actual Host cancel and timeout with truthful partial real CIM snapshots omitted still-live roots; tree reported success but native exit/stdout/stderr EOF remained absent and Host running at6.5s. Disposal of retained actual child handle released it.",
+    "repair": "Missing known target requires kernel non-liveness; initial root identity uncertainty fails. One cached owned reclaim uses original shared deadline through discovery/helper/identity/native close, then checks exit flags; failure disposes only actual Windows root handle and own pipes, never reports whole tree success. Immediate stderr rejection observation preserves original rejection. Linux broker unchanged.",
+    "source_commits": ["5d4463cc3f78c580c368c048f0451b64cd9e26e4", "5dcc2fc03c4e67e810e48def0203767449b5d073"],
+    "integrated_commits": ["6f7a1416", "9d4d9d67"],
+    "main_verification": {"original_consumers_plus_preaborted_regression": "44 passed,maxWorkers=2", "host_typecheck": "passed", "actual_preaborted_child": {"Windows": "cancelled, kernel-dead,2823.0732ms", "Linux": "cancelled, kernel-dead,18.160082ms, actual private broker ECHILD"}, "real_faults": "Partial truthful CIM, actual failed CIM class and actual sleeping helper deadline, both cancel/timeout: exactly1 failed/reclaim_incomplete response, own kernel PID dead, zero unhandled rejections. Deadline paths5123.6637/5064.7525ms incl OS scheduling overhead, no new budget."},
+    "limits": "Original hosted stages remain unknown; callback-order false-negative was a static race risk, not captured failure. No claim of hidden/unobserved descendant completeness or kernel JobObject ownership; independent inherited helper descendants and intentionally mismatched real root time not exercised. Raw reports/diagnostics stay private.",
+    "review": "Independent read-only reviewer approved full ownership/identity/Linux-broker delta and amended close order without blocking findings; Main separately exercised44consumers, native Windows/Linux scenario and six real failure paths. Exact source publication gates still required."
+  },
   "product_acceptance": {"T32": "blocked", "T35": "pending", "G4": "not-certified", "real_model_calls": 0},
   "final_publication_verification": "Exact final SHA must pass unchanged hosted build/test/container/release gates; published asset and image identity must be checked after publication"
 }
