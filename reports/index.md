@@ -4,6 +4,8 @@
 
 这个索引用来恢复工作和找到原始证据，不代替日志、截图或独立审查。下表中的状态取自本次文档整理前的 STATUS；测试数字是对应阶段实际记录，不表示这一轮又跑了一遍。
 
+本次净化增量的[源码来源映射](publication/increment-map.json)与[实际整合验证](publication/increment-verification.json)单独记录。它们不分发原始私有产物，不把工程回归或一次硬件烟测写成模型 live、跨平台或 G4 通过。
+
 ## 当前还卡在哪里
 
 原任务历史记录为 T00–T31、T33、T34 done，T32 当时五渠道完整验收 blocked、T35 pending。当前用户选择退役 Codex 后，必需真实渠道仅 Claude/OpenAI/MiMo/Detector 四项，仍全部 blocked；Anthropic API 可选。历史 GPU 通过不能代替本轮硬件重验或所有模型/完整 G4。

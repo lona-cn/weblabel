@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "format": "sanitized_source_integration_verification",
+  "source_head": "0eb232cc859568f229e1efa09a2a71fd4f796bbf",
+  "release_source_commit": "f5354c785bf558dd82519eec4a03198c391e6c62",
+  "environment": {
+    "platform": "Windows x64",
+    "node": "24.16.0",
+    "pnpm": "10.34.5",
+    "rust": "1.96.0",
+    "wasm_bindgen": "0.2.128",
+    "wasm_pack": "0.15.0"
+  },
+  "checks": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--locked",
+        "--",
+        "--test-threads=2"
+      ],
+      "passed": 400,
+      "failed": 0,
+      "skipped": 0,
+      "raw_log_scope": "private project-local tool output archive"
+    },
+    {
+      "argv": [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "--project",
+        "web",
+        "--maxWorkers=2"
+      ],
+      "files": 42,
+      "passed": 769,
+      "failed": 0
+    },
+    {
+      "argv": [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "--project",
+        "agent-host",
+        "--maxWorkers=2"
+      ],
+      "files": 7,
+      "passed": 198,
+      "failed": 0
+    },
+    {
+      "argv": [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "--project",
+        "integration",
+        "--maxWorkers=2"
+      ],
+      "files": 14,
+      "passed": 73,
+      "failed": 0,
+      "includes": "Actual Windows ConPTY physical Ctrl+C direct-api and packaged cases"
+    },
+    {
+      "argv": [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "--project",
+        "live-engineering",
+        "--maxWorkers=1"
+      ],
+      "files": 1,
+      "passed": 59,
+      "failed": 0,
+      "live_model_acceptance": false
+    },
+    {
+      "argv": [
+        "node",
+        "--test",
+        "tests/bootstrap/*.test.mjs",
+        "tests/contracts-validation.test.mjs",
+        "tools/check-plan.test.mjs",
+        "tools/check-docs.test.mjs"
+      ],
+      "passed": 64,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "argv": [
+        "pnpm",
+        "--filter",
+        "@weblabel/web",
+        "exec",
+        "tsc",
+        "--noEmit"
+      ],
+      "status": "passed"
+    },
+    {
+      "argv": [
+        "pnpm",
+        "--filter",
+        "@weblabel/web",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "-p",
+        "../../tests/tsconfig.json"
+      ],
+      "status": "passed"
+    },
+    {
+      "argv": [
+        "node",
+        "tools/check-docs.mjs"
+      ],
+      "status": "passed",
+      "files": 77,
+      "links": 340
+    },
+    {
+      "argv": [
+        "node",
+        "scripts/verify-plan.mjs"
+      ],
+      "status": "passed",
+      "tasks": 36,
+      "dependency_edges": 74
+    },
+    {
+      "check": "actual source production build and doctor",
+      "status": "passed",
+      "release_hashes": "hashes_valid",
+      "tools": "pinned"
+    }
+  ],
+  "manual_smoke": {
+    "fixture": "isolated_local_account_and_program_generated_PNG",
+    "browser": "Installed Chromium 153",
+    "actual_backend": "webgpu",
+    "adapter_kind": "hardware",
+    "device_state": "ready",
+    "observed_physical_gpu": "NVIDIA GeForce RTX 5060 Ti",
+    "actions": [
+      "actual GUI login",
+      "actual project creation",
+      "actual PNG upload and succeeded processing",
+      "explicit immutable ontology selection",
+      "one rectangle gesture",
+      "server PUT ACK and canonical revision readback",
+      "one undo removes the only object",
+      "redo restores exact canonical object and ID",
+      "reload preserves exact saved object",
+      "320px login scrollWidth equals innerWidth",
+      "normal owned launcher shutdown and runtime-lock release"
+    ],
+    "model_calls": 0,
+    "private_screenshots": [
+      "actual-workbench.png",
+      "actual-login-320.png"
+    ],
+    "not_full_hardware_gate": true
+  },
+  "object_scan": {
+    "tree": "2def1c660a2566af468047888e15c967e6dfc9d2",
+    "snapshot": "5e946d2a0d66763fe6585ce50a130d95402e0195",
+    "remote": "536d65caf6f9eac8a4e51ec97a8055ee7fde335a",
+    "reachableBlobsChecked": 2076,
+    "reachableTextBlobsChecked": 2036,
+    "largestBlobBytes": 1541165,
+    "oversized": [],
+    "credentialCandidates": [],
+    "rawEvidencePaths": [],
+    "originalPrivateCommitsChecked": 305,
+    "leakedPrivateParents": [],
+    "allOriginalPrivateCommitsExcludedFromPublicParents": true,
+    "scope": "Named credential patterns and raw-evidence policy, not every secret format; binary image review is separate; no matched values emitted."
+  },
+  "failures_retained_not_erased": [
+    {
+      "kind": "invalid old ontology payloads",
+      "resolution": "Valid category fixture; public writer/version/revocation behavior remains checked, internal pool-occupancy assertions removed."
+    },
+    {
+      "kind": "Windows fixture database handle still open",
+      "resolution": "Await auth and repository pools before deleting the owned fixture."
+    },
+    {
+      "kind": "Codex active authorization fixture after retirement",
+      "resolution": "Active tests use Claude engineering fixture; retired Codex stays rejected with zero run/consent/job writes and persisted historical identity."
+    },
+    {
+      "kind": "Legacy export loss DTO and ambiguous rejection precedence",
+      "resolution": "Consume details.loss_report; retain entire loss equality/ZIP/permissions, remove incidental double-invalid error-priority assertion."
+    },
+    {
+      "kind": "Launcher IPC fixture disconnected before shutdown",
+      "resolution": "Await actual startLocal stop and close, preserve exit 130 and owned-lock assertions."
+    },
+    {
+      "kind": "Missing interactive-terminal fixture and missing generated WASM",
+      "resolution": "Restore existing real ConPTY implementation with prepared DLL, build actual pinned WASM; original DECLINE/exit/resources/model-zero semantics retained."
+    },
+    {
+      "kind": "Installed sccache Windows spawn OS error 206",
+      "resolution": "This verification child uses direct pinned Rust, without changing global cache configuration."
+    },
+    {
+      "kind": "Concurrent Windows debug executable rebuild and API consumption",
+      "resolution": "Serialize the final full workspace/API checks; retain failed runs instead of treating them as passing."
+    }
+  ],
+  "review": {
+    "initial_source_commit": "f5354c785bf558dd82519eec4a03198c391e6c62",
+    "follow_up_range": "f5354c7..0eb232c",
+    "result": "readonly_review_passed_with_stated_scope",
+    "scope": "Public/private ancestry and tree/fixture boundaries, source provenance, auth construction, prepared terminal consumers, retirement guards and preserved consumer-visible assertions; no independent re-run or whole-program/G4 certification."
+  },
+  "evidence_scope": "Structured observed summaries; raw logs, databases, runtime tokens, DLLs, browser profiles and other generated receipts stay in the project-local private archive. Metadata-only publication receipt follows the tested source commit; no test, model or hardware gate is silently upgraded.",
+  "release_gates_unchanged": true,
+  "t32": "blocked",
+  "t35": "pending",
+  "g4": "not_run",
+  "account_logins": "isolated synthetic local account only",
+  "paid_model_calls": 0
+}

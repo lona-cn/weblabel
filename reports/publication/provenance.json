@@ -572,5 +572,19 @@
     "Original commit IDs in historical source/docs remain original provenance; use commit-map for current public ancestors; private absolute historical-worktree commands are not portable",
     "No official account/model/paid call or deployment performed; T32 blocked/T35 pending/global release not started",
     "Reachable retained-text credential pattern audit is bounded to named patterns, not all possible secret formats"
+  ],
+  "increments": [
+    {
+      "originalBase": "8df1d5c78c0483108aa0aba67fee4bf38c5dc4c2",
+      "originalHead": "8ef121f00badfb76a2acd03ca1c6ef45fa489a8f",
+      "sourceCommitCount": 119,
+      "sourceSnapshot": "5e946d2a0d66763fe6585ce50a130d95402e0195",
+      "integrationCommit": "f5354c785bf558dd82519eec4a03198c391e6c62",
+      "verifiedSourceHead": "0eb232cc859568f229e1efa09a2a71fd4f796bbf",
+      "sourceMap": "reports/publication/increment-map.json",
+      "verification": "reports/publication/increment-verification.json",
+      "policy": "Same private generated-evidence boundary; 12 manually reviewed synthetic README/tutorial image exceptions; no original private parent commits published.",
+      "acceptanceScope": "Structured observed summaries; raw logs, databases, runtime tokens, DLLs, browser profiles and other generated receipts stay in the project-local private archive. Metadata-only publication receipt follows the tested source commit; no test, model or hardware gate is silently upgraded."
+    }
   ]
 }
