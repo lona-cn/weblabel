@@ -181,7 +181,7 @@ function runTool(executable: string, argv: string[], deadline: number, allowNonz
   return new Promise((resolve, reject) => {
     // execFile kills its own helper on timeout/buffer overflow and waits for
     // close before invoking the callback; no raced, abandoned helper remains.
-    execFile(executable, argv, {
+    const helper = execFile(executable, argv, {
       shell: false,
       windowsHide: true,
       encoding: 'utf8',
@@ -189,6 +189,7 @@ function runTool(executable: string, argv: string[], deadline: number, allowNonz
       timeout,
       killSignal: 'SIGKILL',
     }, (error, stdout, stderr) => {
+      clearTimeout(closeTimer);
       try {
         remainingBudget(deadline, executable);
         // A completed taskkill may return nonzero when a target already exited.
@@ -204,6 +205,14 @@ function runTool(executable: string, argv: string[], deadline: number, allowNonz
         reject(failure);
       }
     });
+    // Descendants can inherit helper pipes. At the existing deadline close
+    // our owned ends too, otherwise execFile's callback can wait for EOF.
+    const closeTimer = setTimeout(() => {
+      helper.kill('SIGKILL');
+      helper.stdin?.destroy();
+      helper.stdout?.destroy();
+      helper.stderr?.destroy();
+    }, timeout);
   });
 }
 
@@ -278,20 +287,26 @@ function findDescendants(rootPid: number, table: Map<number, ProcessRecord>): nu
   return found;
 }
 
-/** A target counts as reclaimed when its pid is gone or the pid now names a different process. */
+/** CIM absence alone is not exit evidence: check kernel liveness separately. */
 function stillSameProcess(target: { pid: number; created_ms: number | null }, table: Map<number, ProcessRecord>): boolean {
   const record = table.get(target.pid);
-  if (!record) return false;
+  if (!record) {
+    if (isProcessAlive(target.pid)) throw new SpawnPolicyError('reclaim_incomplete', 'live process absent from process table: ' + target.pid);
+    return false;
+  }
   if (record.created_ms === null || target.created_ms === null) return true;
   return record.created_ms === target.created_ms;
 }
 
 export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Promise<ReclaimReport> {
+  return reclaimObservedTree(root, reason, performance.now() + RECLAIM_DEADLINE_MS);
+}
+
+async function reclaimObservedTree(root: ReclaimRoot, reason: string, deadline: number): Promise<ReclaimReport> {
   if (process.platform === 'linux') {
     throw new SpawnPolicyError('reclaim_requires_owned_broker', 'Linux reclamation requires the spawned child capability');
   }
   const cutoffMs = Date.now();
-  const deadline = performance.now() + RECLAIM_DEADLINE_MS;
   const table = await snapshotProcessTable(deadline);
   const rootRecord = table.get(root.root_pid);
   // Pid reuse guard: if the root pid now names a process newer than ours, the
@@ -300,6 +315,9 @@ export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Pro
     rootRecord === undefined ||
     rootRecord.created_ms === null ||
     rootRecord.created_ms <= root.spawned_at_ms;
+  if (!rootIsOurs) {
+    throw new SpawnPolicyError('reclaim_incomplete', reason + ': root identity changed; tree ownership cannot be verified');
+  }
   // Lineage bound: a genuine descendant was created after the root spawned and
   // before the root exited. Anything newer belongs to a recycled root pid and
   // is leaked rather than killed.
@@ -310,7 +328,7 @@ export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Pro
     return record.created_ms >= root.spawned_at_ms && record.created_ms <= lineageUpperMs;
   });
   const targets = [
-    ...(rootIsOurs ? [root.root_pid] : []),
+    root.root_pid,
     ...descendants,
   ].map((pid) => ({ pid, created_ms: table.get(pid)?.created_ms ?? null }));
   const mechanism =
@@ -318,7 +336,7 @@ export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Pro
       ? 'windows taskkill /T + CIM descendant sweep (creation-time identity checked)'
       : 'posix signal sweep (ps snapshot + SIGKILL; ps exposes no creation time, so creation identity is unavailable on POSIX)';
   if (process.platform === 'win32') {
-    if (rootIsOurs && rootRecord !== undefined) {
+    if (rootRecord !== undefined) {
       await runTool(systemTool('taskkill.exe'), ['/pid', String(root.root_pid), '/T', '/F'], deadline, true);
     }
   } else {
@@ -515,6 +533,10 @@ export function spawnChild(spec: ChildSpec, policy: SpawnPolicy): SpawnedChild {
   const pid = child.pid;
   const started_at_ms = Date.now();
   const exited = exitPromise(child);
+  const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+  let exited_at_ms: number | undefined;
+  void exited.then(() => { exited_at_ms = Date.now(); });
+  let reclaim: Promise<ReclaimReport> | undefined;
   return {
     pid,
     started_at_ms,
@@ -522,7 +544,36 @@ export function spawnChild(spec: ChildSpec, policy: SpawnPolicy): SpawnedChild {
     stdout: child.stdout,
     stderr: child.stderr,
     wait: () => exited,
-    killTree: (reason: string) => reclaimProcessTree({ root_pid: pid, spawned_at_ms: started_at_ms }, reason),
+    killTree: (reason: string) => {
+      if (reclaim) return reclaim;
+      reclaim = (async () => {
+        const deadline = performance.now() + RECLAIM_DEADLINE_MS;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const report = await reclaimObservedTree({ root_pid: pid, spawned_at_ms: started_at_ms, exited_at_ms }, reason, deadline);
+          // Observation alone cannot prove that our native child exited.
+          if (child.exitCode === null && child.signalCode === null) {
+            throw new SpawnPolicyError('reclaim_incomplete', reason + ': process table did not prove owned child exit');
+          }
+          await new Promise<void>((resolve, reject) => {
+            timer = setTimeout(() => reject(new SpawnPolicyError('reclaim_incomplete', reason + ': owned child exit/pipe close deadline exceeded')),
+              remainingBudget(deadline, 'owned child exit/pipe close'));
+            closed.then(resolve, reject);
+          });
+          return report;
+        } catch (error) {
+          // Dispose only capabilities we own; this does not prove tree cleanup.
+          if (process.platform === 'win32') child.kill('SIGKILL');
+          child.stdin?.destroy();
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          throw error;
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+        }
+      })();
+      return reclaim;
+    },
   };
 }
 
@@ -536,19 +587,12 @@ export async function superviseChild(
   const timer = timeoutMs !== null && timeoutMs > 0 ? setTimeout(() => stop('timeout'), timeoutMs) : null;
   const onAbort = () => stop('cancelled');
   options.signal?.addEventListener('abort', onAbort, { once: true });
+  if (options.signal?.aborted) onAbort();
   try {
     const winner = await Promise.race([exited.then(() => 'exit' as const), stopped]);
     if (winner === 'exit') {
-      // Captured before the reclaim snapshot: descendants born after the root
-      // died cannot belong to its tree (pid reuse) and must not be killed.
-      const exited_at_ms = Date.now();
       const { code, signal } = await exited;
-      const reclaimed = process.platform === 'linux'
-        ? await child.killTree('exit cleanup')
-        : await reclaimProcessTree(
-            { root_pid: child.pid, spawned_at_ms: child.started_at_ms, exited_at_ms },
-            'exit cleanup',
-          );
+      const reclaimed = await child.killTree('exit cleanup');
       return { outcome: code === 0 && signal === null ? 'exited' : 'crashed', exit_code: code, reclaimed };
     }
     const reclaimed = await child.killTree(winner);

@@ -309,6 +309,11 @@ export class HostSession {
       }
       if (stderrRest.trim() !== '') this.log(`provider[pid ${child.pid}]: ${stderrRest}`);
     })();
+    // Reclamation can fail before the normal stream await. Observe that
+    // rejection now without replacing the original promise's failure.
+    void stderrLog.catch((error: unknown) => {
+      this.log('provider child stderr stream error: ' + String(error));
+    });
     const childRequest: RuntimeEnvelope = {
       protocol_version: PROTOCOL_VERSION,
       id: state.run_id,

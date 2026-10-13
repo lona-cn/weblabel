@@ -313,6 +313,31 @@ it('reclaims detached descendants left behind by a crashing child', { timeout: 3
   await session.close();
 });
 
+it('honors an already aborted signal for a real live child without a run deadline', { timeout: 30000 }, async () => {
+  const workDir = makeWorkDir('already aborted');
+  const marker = join(workDir, 'ready');
+  const child = spawnChild({
+    executable: process.execPath,
+    argv: ['-e', "const fs = require('fs'); fs.writeFileSync(" + JSON.stringify(marker) + ", String(process.pid)); setInterval(() => {}, 1000)"],
+    cwd: workDir,
+  }, policyFor(workDir));
+  child.stdout.resume();
+  child.stderr.resume();
+  try {
+    await waitFor('actual child launch', () => existsSync(marker));
+    const actualPid = Number(readFileSync(marker, 'utf8'));
+    expect(isProcessAlive(actualPid)).toBe(true);
+    const abort = new AbortController();
+    abort.abort('cancelled before supervision');
+    const result = await superviseChild(child, { signal: abort.signal });
+    expect(result.outcome).toBe('cancelled');
+    expect(isProcessAlive(actualPid)).toBe(false);
+    await child.wait();
+  } finally {
+    await child.killTree('test cleanup');
+  }
+});
+
 it('stops a crash orphan heartbeat, preserves exit 7, and leaves another owned run alive', { timeout: 30000 }, async () => {
   const workDir = makeWorkDir('owned crash 目录');
   const crashedFile = join(workDir, 'crashed-pids');
