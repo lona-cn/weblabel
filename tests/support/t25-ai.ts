@@ -42,52 +42,7 @@ export interface Seeded {
   canonicalSha256: string;
 }
 
-
-
-// The shared harness upload helper sends untyped blobs (application/octet-stream)
-// which the media decode-header policy rejects at processing time; a browser
-// file input carries the real MIME type, so this test uploads with a typed File.
-interface MediaUploader {
-  cookie: string;
-  csrf: string;
-}
-async function uploaderFor(admin: ApiClient, baseUrl: string, projectId: string): Promise<MediaUploader> {
-  const username = `t25-uploader-${crypto.randomUUID()}`;
-  const password = `${crypto.randomUUID()}long-enough-password`;
-  const created = await admin.request<JsonObject>('POST', '/api/users', { username, password });
-  expect(created.status).toBe(201);
-  const userId = stringField(created.json, 'user_id', 'user creation');
-  const membership = await admin.request('POST', `/api/projects/${projectId}/members`, { user_id: userId, role: 'admin' });
-  expect(membership.status).toBe(200);
-  const login = await fetch(new URL('/api/session/login', baseUrl), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', origin: baseUrl, host: new URL(baseUrl).host },
-    body: JSON.stringify({ username, password }),
-  });
-  expect(login.status).toBe(200);
-  const cookie = (login.headers.get('set-cookie') ?? '').split(';', 1)[0] ?? '';
-  expect(cookie).not.toBe('');
-  const body: unknown = await login.json();
-  return { cookie, csrf: stringField(body, 'csrf_token', 'login') };
-}
-
-async function uploadImage(baseUrl: string, uploader: MediaUploader, projectId: string, bytes: Uint8Array<ArrayBuffer>, operationId: string) {
-  const form = new FormData();
-  form.append('images', new File([bytes], 'orientation-1.jpg', { type: 'image/jpeg' }), 'orientation-1.jpg');
-  return fetch(new URL(`/api/projects/${projectId}/assets`, baseUrl), {
-    method: 'POST',
-    headers: {
-      cookie: uploader.cookie,
-      'x-csrf-token': uploader.csrf,
-      origin: baseUrl,
-      'idempotency-key': operationId,
-    },
-    body: form,
-  });
-}
-
 export async function seed(admin: ApiClient, app: TestApp): Promise<Seeded> {
-  const baseUrl=app.base_url;
   const database=new DatabaseSync(database_path_for_test(app));
   try {
     // The background API worker also acquires the SQLite writer. Wait once at
@@ -105,11 +60,12 @@ export async function seed(admin: ApiClient, app: TestApp): Promise<Seeded> {
   expect(ontology.status).toBe(201);
   const ontologyId = stringField(ontology.json, 'ontology_version_id', 'ontology');
 
-  const uploader = await uploaderFor(admin, baseUrl, projectId);
+  // Media setup is not an uploader-identity test; reuse the authenticated
+  // bootstrap client and the shared typed-upload implementation.
   const image = new Uint8Array(await readFile(new URL('../fixtures/media/orientation-1.jpg', import.meta.url)));
-  const upload = await uploadImage(baseUrl, uploader, projectId, image, `t25-import-${crypto.randomUUID()}`);
+  const upload = await admin.upload<JsonObject>(`/api/projects/${projectId}/assets`, image, 'orientation-1.jpg', `t25-import-${crypto.randomUUID()}`, 'image/jpeg');
   expect(upload.status).toBe(202);
-  const importJobId = stringField(await upload.json(), 'import_job_id', 'upload');
+  const importJobId = stringField(upload.json, 'import_job_id', 'upload');
   // A background fixture can already own this job. Read its completion rather
   // than requiring this fixture to win the worker lease.
   let importJob: JsonObject = {};
