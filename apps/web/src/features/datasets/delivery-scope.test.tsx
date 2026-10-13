@@ -102,9 +102,9 @@ async function open(project = P) {
   await screen.findByRole('option', { name: '第 1 版' }); return view;
 }
 async function browse() {
-  await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: /类别规范版本/ }), O);
-  await userEvent.setup().click(readButton());
-  await screen.findByLabelText(/image-0\.png/);
+  await user.selectOptions(screen.getByRole('combobox', { name: /类别规范版本/ }), O);
+  await user.click(readButton());
+  await screen.findByTestId(`dataset-disposition-${id(20000)}`);
 }
 function scopeControl(n: number) { return screen.getByTestId(`dataset-disposition-${id(20000 + n)}`); }
 async function choose(n: number, scope: 'include' | 'exclude' | 'outside') { await user.selectOptions(scopeControl(n), scope); }
@@ -143,11 +143,18 @@ it('keeps include, exclude, outside and unbrowsed distinct in the actual snapsho
 });
 it('browses 1300+ rows without truncation, retaining cross-page choices on back', async () => {
   count = 1301; await open(); await browse(); await choose(0, 'include'); await choose(1, 'exclude');
-  for (let page = 1; page <= 13; page++) { await nextPage(); await screen.findByLabelText(new RegExp(`image-${page * 100}\\.png`)); }
+  // Wait for the specific row, not a label scan of every element on each page.
+  const visibleRow = async (n: number) => {
+    const control = await screen.findByTestId(`dataset-disposition-${id(20000 + n)}`);
+    expect(control).toHaveAccessibleName(`image-${n}.png`);
+    return control;
+  };
+  for (let page = 1; page <= 13; page++) { await nextPage(); await visibleRow(page * 100); }
   await choose(1300, 'include');
-  await userEvent.setup().click(screen.getByRole('button', { name: /上一页|返回上一页/ }));
-  await screen.findByLabelText(/image-1200\.png/); await nextPage(); await screen.findByLabelText(/image-1300\.png/);
-  await userEvent.setup().click(freezeButton()); await userEvent.setup().click(freezeButton()); await waitFor(() => expect(writes('/dataset-versions')).toHaveLength(1));
+  const pageControls = within(screen.getByTestId('dataset-next-page').parentElement!);
+  await user.click(pageControls.getByRole('button', { name: '上一页' }));
+  await visibleRow(1200); await nextPage(); expect(await visibleRow(1300)).toHaveValue('include');
+  await user.click(screen.getByTestId('snapshot-create')); await user.click(screen.getByTestId('snapshot-create')); await waitFor(() => expect(writes('/dataset-versions')).toHaveLength(1));
   expect(writes('/dataset-versions')[0].body!.items.map(item => item.asset_revision_id)).toEqual([id(20000), id(21300)]);
   expect(writes('/dataset-versions')[0].body!.excluded.map(item => item.asset_revision_id)).toEqual([id(20001)]);
   expect(calls.some(c => c.path.endsWith('/annotation-heads') && c.url.searchParams.get('cursor') === '1300')).toBe(true);
