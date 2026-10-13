@@ -11,11 +11,13 @@
 //!      spawned in new process groups (detached);
 //!   3. `taskkill /pid <orphan> /F` per surviving descendant from the snapshot;
 //!   4. bounded liveness polling for the root and every known descendant.
+//! Discovery, helpers, descendant sweep and identity verification share one
+//! five-second deadline; failed/partial observations never prove reclamation.
 //! Linux reuses the API binary's private per-child subreaper broker. READY/GO
 //! gates launch; pinned parent identity and a private ECHILD acknowledgement
 //! gate completion. Other POSIX platforms retain the snapshot/signal sweep.
 
-import { spawn as spawnProcess, spawnSync, type ChildProcess } from 'node:child_process';
+import { execFile, spawn as spawnProcess, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
@@ -168,16 +170,41 @@ function systemTool(name: string): string {
   return found ?? name;
 }
 
-function runTool(executable: string, argv: string[]): Promise<number | null> {
-  const { promise, resolve } = Promise.withResolvers<number | null>();
-  const child = spawnProcess(executable, argv, {
-    shell: false,
-    windowsHide: true,
-    stdio: ['ignore', 'ignore', 'ignore'],
+function remainingBudget(deadline: number, stage: string): number {
+  const remaining = Math.ceil(deadline - performance.now());
+  if (remaining <= 0) throw new SpawnPolicyError('reclaim_incomplete', `${stage}: reclaim deadline exceeded`);
+  return remaining;
+}
+
+function runTool(executable: string, argv: string[], deadline: number, allowNonzeroExit = false): Promise<string> {
+  const timeout = remainingBudget(deadline, executable);
+  return new Promise((resolve, reject) => {
+    // execFile kills its own helper on timeout/buffer overflow and waits for
+    // close before invoking the callback; no raced, abandoned helper remains.
+    execFile(executable, argv, {
+      shell: false,
+      windowsHide: true,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      timeout,
+      killSignal: 'SIGKILL',
+    }, (error, stdout, stderr) => {
+      try {
+        remainingBudget(deadline, executable);
+        // A completed taskkill may return nonzero when a target already exited.
+        // Only identity verification can declare success, never helper failure.
+        if (error && !(allowNonzeroExit && typeof error.code === 'number' && !error.killed && error.signal === null)) {
+          throw error;
+        }
+        if (!allowNonzeroExit && stderr.trim() !== '') throw new Error(stderr.trim());
+        resolve(stdout);
+      } catch (cause) {
+        const failure = new SpawnPolicyError('reclaim_incomplete', `${executable}: reclaim helper failed`);
+        failure.cause = cause;
+        reject(failure);
+      }
+    });
   });
-  child.once('error', () => resolve(null));
-  child.once('exit', (code) => resolve(code));
-  return promise;
 }
 
 export function isProcessAlive(pid: number): boolean {
@@ -200,31 +227,39 @@ function parseProcessTable(output: string): Map<number, ProcessRecord> {
   const records = new Map<number, ProcessRecord>();
   for (const line of output.split('\n')) {
     const match = /^\s*(\d+)\s+(\d+)\s*(\S*)\s*$/.exec(line);
-    if (!match) continue;
+    if (line.trim() === '') continue;
+    if (!match) throw new SpawnPolicyError('reclaim_incomplete', 'invalid process table row');
     const pid = Number(match[1]);
     const created = match[3] === '' ? null : Date.parse(match[3]);
+    if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(Number(match[2])) || records.has(pid) ||
+        (process.platform === 'win32' && (created === null || Number.isNaN(created)))) {
+      throw new SpawnPolicyError('reclaim_incomplete', 'invalid process identity in table');
+    }
     records.set(pid, {
       ppid: Number(match[2]),
       created_ms: Number.isNaN(created) ? null : created,
     });
   }
+  if (records.size === 0) throw new SpawnPolicyError('reclaim_incomplete', 'empty process table');
   return records;
 }
 
-function snapshotProcessTable(): Map<number, ProcessRecord> {
+async function snapshotProcessTable(deadline: number): Promise<Map<number, ProcessRecord>> {
   const result =
     process.platform === 'win32'
-      ? spawnSync(
+      ? await runTool(
           systemTool('powershell.exe'),
           [
             '-NoProfile',
             '-Command',
-            'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.ToUniversalTime().ToString(\'o\'))" }',
+            '$ErrorActionPreference = "Stop"; Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.ToUniversalTime().ToString(\'o\'))" }',
           ],
-          { encoding: 'utf8', windowsHide: true },
+          deadline,
         )
-      : spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' });
-  return parseProcessTable(result.stdout ?? '');
+      : await runTool('ps', ['-A', '-o', 'pid=,ppid='], deadline);
+  const table = parseProcessTable(result);
+  remainingBudget(deadline, 'process table validation');
+  return table;
 }
 
 function findDescendants(rootPid: number, table: Map<number, ProcessRecord>): number[] {
@@ -256,7 +291,8 @@ export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Pro
     throw new SpawnPolicyError('reclaim_requires_owned_broker', 'Linux reclamation requires the spawned child capability');
   }
   const cutoffMs = Date.now();
-  const table = snapshotProcessTable();
+  const deadline = performance.now() + RECLAIM_DEADLINE_MS;
+  const table = await snapshotProcessTable(deadline);
   const rootRecord = table.get(root.root_pid);
   // Pid reuse guard: if the root pid now names a process newer than ours, the
   // pid was recycled and killing "its tree" would kill unrelated processes.
@@ -282,17 +318,12 @@ export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Pro
       ? 'windows taskkill /T + CIM descendant sweep (creation-time identity checked)'
       : 'posix signal sweep (ps snapshot + SIGKILL; ps exposes no creation time, so creation identity is unavailable on POSIX)';
   if (process.platform === 'win32') {
-    if (rootIsOurs) {
-      await runTool(systemTool('taskkill.exe'), ['/pid', String(root.root_pid), '/T', '/F']);
-    }
-    for (const target of targets) {
-      if (target.pid === root.root_pid) continue;
-      if (stillSameProcess(target, snapshotProcessTable())) {
-        await runTool(systemTool('taskkill.exe'), ['/pid', String(target.pid), '/F']);
-      }
+    if (rootIsOurs && rootRecord !== undefined) {
+      await runTool(systemTool('taskkill.exe'), ['/pid', String(root.root_pid), '/T', '/F'], deadline, true);
     }
   } else {
     for (const target of targets) {
+      remainingBudget(deadline, 'signal sweep');
       try {
         process.kill(target.pid, 'SIGKILL');
       } catch {
@@ -300,16 +331,32 @@ export async function reclaimProcessTree(root: ReclaimRoot, reason: string): Pro
       }
     }
   }
-  const deadline = Date.now() + RECLAIM_DEADLINE_MS;
+  let descendantsSwept = process.platform !== 'win32';
+  // With an absent root no tool ran after discovery, so this is also the
+  // first fresh orphan identity query. Never carry it across an await.
+  let discoveryTable = process.platform === 'win32' && rootRecord === undefined ? table : undefined;
   for (;;) {
     if (targets.length === 0) break;
-    const verificationTable = snapshotProcessTable();
+    const verificationTable = discoveryTable ?? await snapshotProcessTable(deadline);
+    discoveryTable = undefined;
     const alive = targets.filter((target) => stillSameProcess(target, verificationTable));
     if (alive.length === 0) break;
-    if (Date.now() >= deadline) {
-      throw new SpawnPolicyError('reclaim_incomplete', `${reason}: pids still alive after reclaim: ${alive.map((t) => t.pid).join(',')}`);
+    if (!descendantsSwept) {
+      descendantsSwept = true;
+      let firstDescendant = true;
+      // The successful table already proves absent identities reclaimed. Only
+      // survivors need the fresh pre-kill identity query and orphan sweep.
+      for (const target of alive) {
+        if (target.pid === root.root_pid) continue;
+        const identityTable = firstDescendant ? verificationTable : await snapshotProcessTable(deadline);
+        firstDescendant = false;
+        if (stillSameProcess(target, identityTable)) {
+          await runTool(systemTool('taskkill.exe'), ['/pid', String(target.pid), '/F'], deadline, true);
+        }
+      }
+      continue;
     }
-    await delay(250);
+    await delay(Math.min(250, remainingBudget(deadline, reason + ': identity verification')));
   }
   return {
     root_pid: root.root_pid,
