@@ -355,6 +355,9 @@ mod tests {
         .unwrap();
         assert_eq!(lease, (Some("actor".into()), 123, 3));
         pool.close().await;
+        // AppState owns a separate repository pool in addition to auth.pool.
+        // Await both SQLx worker shutdowns before deleting the Windows fixture.
+        app.repository.close_for_test().await;
         directory.close().unwrap();
     }
 }
