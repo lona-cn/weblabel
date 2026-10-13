@@ -19,8 +19,9 @@ command([process.execPath, 'scripts/build-agent-host.mjs']);
 command(['cargo', 'build', '--locked', '-p', 'weblabel-api', '--bin', 'weblabel-api']);
 process.env.WEBLABEL_API_BINARY = path.join(path.resolve(root, process.env.CARGO_TARGET_DIR ?? 'target'), 'debug', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
 command(['cargo', 'test', '--workspace', '--locked', '--', '--test-threads=2']);
-command([process.execPath, '--test', 'tests/bootstrap/t00.test.mjs', 'tests/contracts-validation.test.mjs', 'tools/check-plan.test.mjs']);
+command([process.execPath, '--test', 'tests/bootstrap/*.test.mjs', 'tests/contracts-validation.test.mjs', 'tools/check-plan.test.mjs', 'tools/check-docs.test.mjs']);
 command([process.execPath, 'scripts/verify-plan.mjs']);
+command([process.execPath, 'tools/check-docs.mjs']);
 command(['cargo', 'run', '--locked', '-p', 'xtask', '--', 'contracts-check']);
 command(['pnpm', '--filter', '@weblabel/web', 'exec', 'tsc', '--noEmit']);
 // Bound cold compiler/security fixtures and Argon2/CIM consumers to a realistic runner load; deadlines remain unchanged.

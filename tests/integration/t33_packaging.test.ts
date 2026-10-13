@@ -25,7 +25,7 @@ async function port() {
 }
 async function launch(data: string, requireBootstrap = true) {
   const webPort = await port(), apiPort = await port();
-  const script = `import {startLocal} from ${JSON.stringify(new URL('../../scripts/start-local.mjs', import.meta.url).href)}; await startLocal(${JSON.stringify(['--build-dir', build, '--data-dir', data, '--port', String(webPort), '--api-port', String(apiPort)])}); process.on('message',()=>{process.emit('SIGINT');process.disconnect();});`;
+  const script = `import {startLocal} from ${JSON.stringify(new URL('../../scripts/start-local.mjs', import.meta.url).href)}; const started = startLocal(${JSON.stringify(['--build-dir', build, '--data-dir', data, '--port', String(webPort), '--api-port', String(apiPort)])}); process.once('message', async message => { if (message !== 'interrupt') throw new Error('unexpected_owned_control_message'); const runtime = await started; process.emit('SIGINT'); await runtime.stop(); process.exitCode = 130; process.disconnect(); }); await started;`;
   // Windows runtime PATH deliberately excludes Python, pnpm and official provider CLIs.
   const env = { ...process.env, PATH: taskkillPath ? path.dirname(taskkillPath) : '/usr/bin:/bin', WEBLABEL_HOST_CONFIG: '' };
   const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: root, env, shell: false, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });

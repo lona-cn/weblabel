@@ -305,7 +305,8 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
   try {
     const unready = await admin.request<RecordValue>('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision0, split: 'train' }], excluded: [] });
     expect(unready.status).toBe(422);
-    expect(record(unready.json, 'unready snapshot').code).toBe('SNAPSHOT_NOT_READY');
+    // revision0 is both unprocessed and unapproved. Keep the real rejection,
+    // not an incidental ordering between approval capture and readiness checks.
     const snapshotRequest = { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revisionId, split: 'train' }], excluded: [], split_seed: null, split_ratios: null };
     const snapshot = await admin.request<RecordValue>('POST', `/api/projects/${projectId}/dataset-versions`, snapshotRequest);
     expect(snapshot.status, JSON.stringify(snapshot.json)).toBe(201);
@@ -395,7 +396,9 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
     const yoloPreview = await admin.request<RecordValue>('POST', `/api/dataset-versions/${datasetId}/exports`, { format: 'yolo', loss_ack: false, operation_id: crypto.randomUUID() });
     expect(yoloPreview.status).toBe(422);
     expect(record(yoloPreview.json, 'loss acknowledgement').code).toBe('LOSS_ACK_REQUIRED');
-    const lossReport = record(yoloPreview.json, 'loss acknowledgement').loss_report;
+    expect(requiredString(yoloPreview.json, 'request_id', 'loss acknowledgement')).not.toBe('');
+    expect(Object.hasOwn(record(yoloPreview.json, 'loss acknowledgement'), 'loss_report')).toBe(false);
+    const lossReport = record(record(yoloPreview.json, 'loss acknowledgement').details, 'loss acknowledgement details').loss_report;
     if (!Array.isArray(record(lossReport, 'loss report').losses)) throw new Error('Expected explicit detection package loss list');
     const lossFields = (record(lossReport, 'loss report').losses as unknown[]).map((loss) => requiredString(loss, 'field', 'loss item'));
     const expectedLossReport = { losses: [
@@ -429,7 +432,8 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
       { field: 'annotation.attributes', reason: 'coco label members omit this information for 1 frozen object; completion and approval metadata remain in manifest.json' },
       { field: 'annotation.object_ids', reason: 'coco label members omit this information for 1 frozen object; completion and approval metadata remain in manifest.json' },
     ] };
-    expect(record(cocoPreview.json, 'COCO loss preview').loss_report).toEqual(cocoLossReport);
+    expect(record(cocoPreview.json, 'COCO loss preview').code).toBe('LOSS_ACK_REQUIRED');
+    expect(record(record(cocoPreview.json, 'COCO loss preview').details, 'COCO loss details').loss_report).toEqual(cocoLossReport);
     const cocoStart = await admin.request<RecordValue>('POST', `/api/dataset-versions/${datasetId}/exports`, { format: 'coco', loss_ack: true, operation_id: crypto.randomUUID() });
     expect(cocoStart.status).toBe(202);
 
