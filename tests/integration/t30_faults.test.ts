@@ -208,7 +208,12 @@ for(const scenario of ['crash','oversized','spawn_child'] as const){
     try{
       const admin=await bootstrap_admin_for_test(app),pins=await seed(admin,app),owner=await addMember(admin,app.base_url,pins.projectId,'admin');
       const db=new DatabaseSync(database_path_for_test(app));
-      try{db.prepare("INSERT INTO model_profiles SELECT 't30-fault-runtime','mimo_api','synthetic-fault-protocol','api_key',capabilities_json,'ready','not_run',NULL,NULL,'{}',NULL,created_at FROM model_profiles WHERE profile_id='profile_mock_local'").run();}finally{db.close();}
+      try {
+        // Reuse the seed fixture's bounded native SQLite writer admission.
+        db.exec('PRAGMA busy_timeout=1000; BEGIN IMMEDIATE');
+        db.prepare("INSERT INTO model_profiles SELECT 't30-fault-runtime','mimo_api','synthetic-fault-protocol','api_key',capabilities_json,'ready','not_run',NULL,NULL,'{}',NULL,created_at FROM model_profiles WHERE profile_id='profile_mock_local'").run();
+        db.exec('COMMIT');
+      } finally { db.close(); }
       expect((await admin.request('PUT',`/api/projects/${pins.projectId}/external-processing-policy`,{allow_external_processing:true})).status).toBe(200);
       const directory=path.join(t30RuntimeRoot,`child-${scenario}-${crypto.randomUUID()}`),pidFile=path.join(directory,'pids.json');
       service=await persistentCopy(app,directory);

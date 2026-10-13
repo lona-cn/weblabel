@@ -49,6 +49,16 @@
     "local_windows_verification": {"nine_combination_case": "1 passed", "api_library": "77 passed, 0 failed", "docs_structure": "77 files, 358 links passed"},
     "format_check": "Existing whole-workspace rustfmt differences reported; no broad formatting or CI changes"
   },
+  "remaining_windows_fixture_repairs": {
+    "failed_runs": ["https://github.com/lona-cn/weblabel/actions/runs/38387962552", "https://github.com/lona-cn/weblabel/actions/runs/38387964567"],
+    "F17": "Bound the existing profile INSERT fixture with the same single 1000ms native busy handler and immediate transaction as T25 seed; retain real worker and all original fault assertions/deadlines",
+    "T17": "Reuse the existing administrator typed media upload instead of creating an unrelated uploader account; retain fresh app/database and all five cases, original 10000ms hook and actual authorization identities",
+    "delivery": "Use stable row IDs with per-page accessible-name assertions and scoped pagination queries; retain 1301 rows, 14 pages, back/forward, actual snapshot body and original 5000ms limit",
+    "source_commits": ["2d784e45", "f796375f"],
+    "integrated_commits": ["e7b31169", "cd0b526e"],
+    "main_windows_verification": {"T30_faults": "7 passed", "T17_and_delivery": "72 passed"},
+    "unconfirmed": "Original T17 pending await and specific Windows scheduling delay were not captured; repeated global DOM scans are a confirmed test-design cost, not proof of a particular hosted stall"
+  },
   "product_acceptance": {"T32": "blocked", "T35": "pending", "G4": "not-certified", "real_model_calls": 0},
   "final_publication_verification": "Exact final SHA must pass unchanged hosted build/test/container/release gates; published asset and image identity must be checked after publication"
 }
