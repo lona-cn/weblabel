@@ -71,6 +71,19 @@
     "official_sources": ["https://github.com/nodejs/node/issues/63638", "https://github.com/nodejs/node/pull/65118"],
     "unconfirmed": "Original hosted TMP alias and exact native stack were not recorded; source-native reproduction does not invent them"
   },
+  "windows_close_and_reclaim_repairs": {
+    "failed_source": "8a26852897f0d75ccc20a826580288b0ac20a3a6",
+    "failed_runs": ["https://github.com/lona-cn/weblabel/actions/runs/38396672564", "https://github.com/lona-cn/weblabel/actions/runs/38396673608"],
+    "readback_observation": "Instrumented original local Windows fixture reached cleanup error after both closes: auth_closed=true,size=1; SQLite/WAL/SHM remained. Handle query then exceeded the diagnostic tool deadline; owner was not captured.",
+    "confirmed_sqlx_race": "0.8.6 return-to-pool can pass is_closed before awaiting ping, then enqueue idle and release the final permit after close last drained; close final acquire has no following drain.",
+    "fixture_repair": "After business quiescence, borrow all auth pool capacity together, explicitly await every connection close, then pool/repository close and original immediate directory deletion; no retry, deadline or consumer assertion removed.",
+    "host_source_commit": "97d35b29f73a01be3d88feea1d8c381edb537fa3",
+    "host_integrated_commit": "e1beed8a",
+    "host_repair": "One monotonic 5000ms reclamation budget includes asynchronous discovery, owned helper termination, descendant sweep and fresh identity verification; failures or partial tables cannot establish disappearance. Original Linux broker and PID creation/lineage guards retained.",
+    "main_windows_verification": {"original_T16_T18_consumers": "43 passed,0 skipped,maxWorkers=2", "api_library": "77 passed,0 failed,test-threads=2", "actual_owned_child_smoke": {"alive": false, "elapsed_ms": 2505.5622, "responsive_parent_ticks": 161}},
+    "review": "Independent read-only reviewer found no blocking identity/lineage/Linux-broker or fixture-barrier issue; raw worker report/logs retained privately.",
+    "limits": "No original hosted helper blocking stage or Windows lock owner captured. Five seconds is a shared operation budget, not a hard OS termination guarantee or complete stream-drain bound. Helper-hang/partial-table fault injection was not exercised. No hardware/model certification. Diagnostic source and probe files removed from delivery."
+  },
   "product_acceptance": {"T32": "blocked", "T35": "pending", "G4": "not-certified", "real_model_calls": 0},
   "final_publication_verification": "Exact final SHA must pass unchanged hosted build/test/container/release gates; published asset and image identity must be checked after publication"
 }

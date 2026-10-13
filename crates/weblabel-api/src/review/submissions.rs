@@ -354,6 +354,17 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(lease, (Some("actor".into()), 123, 3));
+        // SQLx 0.8.6 may finish pool.close after the last permit is returned
+        // without draining the connection queued by that return. Quiesce all
+        // slots first, then await each SQLite worker before fixture deletion.
+        let capacity = pool.options().get_max_connections();
+        let mut connections = Vec::with_capacity(capacity as usize);
+        for _ in 0..capacity {
+            connections.push(pool.acquire().await.unwrap());
+        }
+        for connection in connections {
+            connection.close().await.unwrap();
+        }
         pool.close().await;
         // AppState owns a separate repository pool in addition to auth.pool.
         // Await both SQLx worker shutdowns before deleting the Windows fixture.
