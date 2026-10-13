@@ -6,7 +6,7 @@
 
 本次净化增量的[源码来源映射](publication/increment-map.json)与[实际整合验证](publication/increment-verification.json)单独记录。它们不分发原始私有产物，不把工程回归或一次硬件烟测写成模型 live、跨平台或 G4 通过。
 
-本次工程预发布候选的[净化增量与修复记录](publication/rc3-integration.json)单独绑定私有来源。新增历史审计 harness 仅保留工具源码，不是可移植运行手册；原始报告、登录产物、截图、下载与运行目录仍在私有归档。旧来源映射和验证记录不升级为本次发布通过。
+本次已发布的[工程预发布 rc.3](https://github.com/lona-cn/weblabel/releases/tag/v0.1.0-rc.3)及其[净化增量与验证记录](publication/rc3-integration.json)绑定不可变 source `8a2ab61`：Release 全部门禁通过，两平台公开下载产物校验与独立持久化烟测通过。后续 main 只有测试、文档和来源记录修复，其 CI 独立记账，不移动 release tag 或替换 assets/image。新增历史审计 harness 仅保留工具源码；原始报告、登录产物、截图和运行目录保持私有。工程预发布不升级 T32/T35/G4 验收。
 
 ## 当前还卡在哪里
 

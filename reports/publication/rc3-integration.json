@@ -113,5 +113,26 @@
     "review": "Independent read-only reviewer approved full ownership/identity/Linux-broker delta and amended close order without blocking findings; Main separately exercised44consumers, native Windows/Linux scenario and six real failure paths. Exact source publication gates still required."
   },
   "product_acceptance": {"T32": "blocked", "T35": "pending", "G4": "not-certified", "real_model_calls": 0},
-  "final_publication_verification": "Exact final SHA must pass unchanged hosted build/test/container/release gates; published asset and image identity must be checked after publication"
+  "final_publication_verification": {
+    "release_url": "https://github.com/lona-cn/weblabel/releases/tag/v0.1.0-rc.3",
+    "source_commit": "8a2ab61b8b52d3617fb999a0ead6ef81e4e2c736",
+    "tag": "v0.1.0-rc.3", "prerelease": true, "draft": false,
+    "workflow": "https://github.com/lona-cn/weblabel/actions/runs/38421293169",
+    "hosted_verdict": "All unchanged Windows/Linux build/test, real Linux container, GHCR digest pull/smoke and publish gates passed at this exact source",
+    "actual_downloads": "All five public assets matched GitHub stored size/digest; both archive SHA256 sidecars and extracted bundle/release source hashes passed",
+    "archive_sha256": {"win32-x64": "cb6f93563869918c1e298a161d595dd6900d49fca6cb85872f3e60c4df8e81dd", "linux-x64": "9a863e05616dd1269586b47cb784bf5c470b67b91228a0c7b1b2ba5341abd8d6"},
+    "downloaded_standalone_smoke": {"Windows": "passed", "Linux_WSL_native": "passed", "scope": "Bundled pinned Node, isolated cwd/no developer PATH, real auth/media/annotation/CAS/idempotency, stop/endpoints/lock cleanup, restart durable document/revision/media, SQLite integrity/foreign keys"},
+    "ghcr_image": "ghcr.io/lona-cn/weblabel@sha256:19155b6a00a470a1e25431f5b5be0d68251d35598dcb51516436786f0219f273",
+    "limits": "Hosted software GPU is not hardware/G4; authenticated CI digest pull is not an anonymous registry access claim; no paid/live model or T32/T35 acceptance"
+  },
+  "post_release_consumer_repairs": {
+    "failed_independent_main_ci": "https://github.com/lona-cn/weblabel/actions/runs/38421289686",
+    "source_commit": "8a2ab61b8b52d3617fb999a0ead6ef81e4e2c736",
+    "failures": ["Windows T25 beforeEach timeout10000ms; last pending await unknown", "Windows C06 acquire:document proof fixture timed out waiting for completion action before deferred proof; production not implicated by the log"],
+    "repairs": ["Shared typed bootstrap upload removes unrelated uploader creation/membership/login without copying seed or changing Seeded callers", "C06 waits for actual fixed postcommit context and enabled submit; zero pre-click PUT/submit, remote flush remains submit-triggered"],
+    "test_source_commits": ["e0eab508", "94f3af31c3bef7e9ec201a51e91cd55095bb2544"],
+    "main_verification": "Actual rebuilt Host and all original T25/T30/C06 consumers:112passed,3files,maxWorkers2; test typecheck and docs77files/360links passed",
+    "review": "Independent read-only review approved shared helper, genuine identity boundaries and C06 submission barrier; final docs remove obsolete drain description",
+    "boundary": "Only test/docs/provenance changed after release. The corresponding later main CI records its own SHA/result; it neither rewrites the earlier failed main verdict nor changes immutable rc.3 source/tag/assets/image. No live T32 execution."
+  }
 }
