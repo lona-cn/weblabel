@@ -59,6 +59,18 @@
     "main_windows_verification": {"T30_faults": "7 passed", "T17_and_delivery": "72 passed"},
     "unconfirmed": "Original T17 pending await and specific Windows scheduling delay were not captured; repeated global DOM scans are a confirmed test-design cost, not proof of a particular hosted stall"
   },
+  "native_watcher_repair": {
+    "failed_source": "b95d05dde3a1df0a1c97513ac08960893b80938c",
+    "failed_runs": ["https://github.com/lona-cn/weblabel/actions/runs/38391826172", "https://github.com/lona-cn/weblabel/actions/runs/38391828457"],
+    "observed_hosted_failure": "Vitest detector lifecycle worker exited 3221226505 (0xC0000409)",
+    "owned_native_reproduction": "Actual Windows 8.3 watcher alias reproduced fs-event.c:72 prefix assertion and 3221226505; same directory long path emitted expected event and exited 0",
+    "realpath_boundary": "JS realpathSync retains 8.3 aliases; realpathSync.native expands them on the actual pinned Windows Node runtime",
+    "repair": "Only canonicalize the existing fixture watch directory with native realpath; no production, Node pin, CI or deadline changes",
+    "before": "Full detector file with forced short TEMP and JS realpath crashed natively after 16 cases",
+    "after": "Full original 26-case detector lifecycle suite passed under actual short TEMP with native realpath",
+    "official_sources": ["https://github.com/nodejs/node/issues/63638", "https://github.com/nodejs/node/pull/65118"],
+    "unconfirmed": "Original hosted TMP alias and exact native stack were not recorded; source-native reproduction does not invent them"
+  },
   "product_acceptance": {"T32": "blocked", "T35": "pending", "G4": "not-certified", "real_model_calls": 0},
   "final_publication_verification": "Exact final SHA must pass unchanged hosted build/test/container/release gates; published asset and image identity must be checked after publication"
 }

@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {existsSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {existsSync,mkdtempSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname,join,resolve} from 'node:path';
 import {DetectorLocalAdapter} from '../src/providers/detector-local';
@@ -54,7 +54,8 @@ it('already cancelled run does not spawn a child',async()=>fixture('normal',asyn
 it('cancellation after actual child launch settles once and reclaims child',async()=>fixture('silent',async(adapter,pidPath)=>{
  const abort=new AbortController();const pending=collect(adapter,abort.signal);
  // Poll the fixture launch artifact, not a guessed platform startup duration.
- const watch=await import('node:fs/promises');if(!existsSync(pidPath)){const watcher=watch.watch(dirname(pidPath));try{for await(const _event of watcher){if(existsSync(pidPath))break;}}finally{await watcher.return?.();}}
+ // Native realpath expands Windows 8.3 aliases; JS realpath retains them.
+ const watch=await import('node:fs/promises');if(!existsSync(pidPath)){const watcher=watch.watch(realpathSync.native(dirname(pidPath)));try{for await(const _event of watcher){if(existsSync(pidPath))break;}}finally{await watcher.return?.();}}
  abort.abort();expect(await bounded(pending)).toMatchObject([{type:'cancelled'}]);gone(pidPath);
 }),12000);
 it('candidate deadline interrupts an uncooperative submission after worker exit',async()=>fixture('candidate',async(adapter,pidPath)=>{
