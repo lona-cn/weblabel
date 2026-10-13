@@ -8,6 +8,7 @@ pub mod datasets;
 pub mod jobs;
 pub mod media;
 pub mod projects;
+pub mod readiness;
 pub mod review;
 pub mod runtime;
 pub mod storage;
@@ -57,6 +58,22 @@ impl AppState {
         config: &ServerConfig,
         auth_config: AuthConfig,
     ) -> Result<Self, sqlx::Error> {
+        Self::open_with_auth_mode(config, auth_config, false).await
+    }
+
+    /// Authentication maintenance must not mutate interrupted model runs.
+    pub async fn open_for_password_recovery(
+        config: &ServerConfig,
+        auth_config: AuthConfig,
+    ) -> Result<Self, sqlx::Error> {
+        Self::open_with_auth_mode(config, auth_config, true).await
+    }
+
+    async fn open_with_auth_mode(
+        config: &ServerConfig,
+        auth_config: AuthConfig,
+        password_recovery: bool,
+    ) -> Result<Self, sqlx::Error> {
         let repository = Repository::open(
             &config.database_url,
             &config.object_root,
@@ -82,7 +99,9 @@ impl AppState {
         // Restart recovery: model runs left in flight are interrupted with
         // unknown cost and are never resent automatically.
         let run_tokens = crate::runtime::run_tokens::RunTokenStore::new();
-        crate::ai::runs::recover_interrupted(&repository, &run_tokens).await?;
+        if !password_recovery {
+            crate::ai::runs::recover_interrupted(&repository, &run_tokens).await?;
+        }
         Ok(Self {
             repository,
             auth,
@@ -93,10 +112,32 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
+    let readiness_router = Router::new()
+        .route("/ready", get(readiness::ready))
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            state.auth.clone(),
+            auth::host_and_origin,
+        ));
+    if state.auth.password_recovery_enabled() {
+        return Router::new()
+            .route("/health", get(health))
+            .fallback(recovery_maintenance)
+            .with_state(state.clone())
+            .merge(readiness_router)
+            .merge(auth::password_recovery_router(state.auth.clone()))
+            .layer(middleware::from_fn_with_state(
+                state.auth,
+                auth::host_and_origin,
+            ))
+            .layer(middleware::from_fn(request_id));
+    }
     Router::new()
         .route("/health", get(health))
         .with_state(state.clone())
+        .merge(readiness_router)
         .merge(auth::router(state.auth.clone()))
+        .merge(auth::password_recovery_router(state.auth.clone()))
         .merge(projects::router(
             state.auth.clone(),
             state.repository.clone(),
@@ -130,6 +171,20 @@ pub fn router(state: AppState) -> Router {
         ))
         .fallback(not_found)
         .layer(middleware::from_fn(request_id))
+}
+
+async fn recovery_maintenance(Extension(request_id): Extension<RequestId>) -> Response {
+    let mut response = ApiErrorResponse::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "RECOVERY_MAINTENANCE",
+        "Administrator password recovery is active; remove recovery environment variables and restart normally",
+        request_id.0,
+    ).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 async fn health(State(_state): State<AppState>) -> StatusCode {

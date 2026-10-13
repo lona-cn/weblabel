@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useSession, type AuthEntry } from '../../app/providers';
 import { ApiFailure } from '../../lib/t15/api';
+import { AdminRecoveryForm } from './AdminRecoveryForm';
 
 function Frame({ children }: { children: ReactNode }) {
   return <main className="login-page"><section className="login-introduction" aria-label="WebLabel"><h2>WebLabel</h2></section>{children}</main>;
@@ -14,6 +15,7 @@ export function Login() {
     retrying.current = true; setChecking(true);
     try { await refresh(); } finally { retrying.current = false; setChecking(false); }
   }
+  if (entry.kind === 'recovery') return <Frame><AdminRecoveryForm key={entry.status.request_id} entry={entry} /></Frame>;
   if (entry.kind === 'bootstrap' || entry.kind === 'login') {
     return <Frame><CredentialForm key={entry.kind === 'bootstrap' ? `bootstrap-${entry.mode}` : `login-${entry.usernameHint}`} entry={entry} /></Frame>;
   }

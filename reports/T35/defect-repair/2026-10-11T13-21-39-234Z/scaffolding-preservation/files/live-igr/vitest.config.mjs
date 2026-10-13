@@ -1,0 +1,1 @@
+export default {test:{include:['target/defect-repair/2026-10-11T13-21-39-234Z/live-igr/t32_provider.spec.ts'],passWithNoTests:false}};

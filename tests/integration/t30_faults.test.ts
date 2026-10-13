@@ -8,12 +8,15 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { bootstrap_admin_for_test, database_path_for_test, start_test_app } from '../support/app';
 import { authorize, seed, startRunBody } from '../support/t25-ai';
-import { addMember, head, id, jsonObject, loginClient, persistentCopy, silentProvider, writeEvidence } from '../support/faults';
+import { addMember, head, id, jsonObject, loginClient, persistentCopy, silentProvider, t30RuntimeRoot, writeEvidence } from '../support/faults';
 import type { AnnotationObject } from '../../packages/contracts/generated/AnnotationObject';
 import type { PersistentApi } from '../support/faults';
 import type { SaveRequest } from '../../packages/contracts/generated/SaveRequest';
 import type { SaveResponse } from '../../packages/contracts/generated/SaveResponse';
 import { isProcessAlive } from '../../apps/agent-host/src/security/spawn';
+
+// Main validates fresh release/source Host hashes before importing this test file.
+const t30HostScript = path.resolve(process.env.WEBLABEL_T30_HOST_SCRIPT ?? 'target/agent-host/runtime.mjs');
 
 const person:AnnotationObject={object_id:'t30-person',label_id:'label_person',geometry:{type:'bbox_xyxy',x_min:1,y_min:2,x_max:12,y_max:18},attributes:{helmet_state:'unknown'},origin:{type:'manual',prediction_id:null,model_run_id:null,import_batch_id:null}};
 
@@ -65,7 +68,7 @@ it('F09/F17 real SQLite timeout and killed owned API preserve atomic revision an
     const admin=await bootstrap_admin_for_test(app),pins=await seed(admin,app);
     const owner=await addMember(admin,app.base_url,pins.projectId,'admin');
     const before=await head(admin,pins.assetRevisionId,pins.ontologyId);
-    service=await persistentCopy(app,path.resolve(`reports/T30/runtime/crash-${crypto.randomUUID()}`));
+    service=await persistentCopy(app,path.join(t30RuntimeRoot,`crash-${crypto.randomUUID()}`));
     await service.start();
     let client=(await loginClient(service.base,owner.username,owner.password)).api;
     const body:SaveRequest={operation_id:crypto.randomUUID(),base_revision_id:before.annotation_revision_id,document:{...before.document,completion:'in_progress',objects:[person]},lease:null,suggestion_decisions:[]};
@@ -150,7 +153,7 @@ it('F10/F12/F13 export ACK disconnect then changed head keeps original approved 
     const reader=download.body!.getReader();await reader.read();await reader.cancel();
     const retry=await fetch(new URL(id(result,'download_url'),app.base_url),{headers:{cookie:downloadMember.cookie,origin:app.base_url}});expect(retry.status).toBe(200);
     const bytes=new Uint8Array(await retry.arrayBuffer());expect(createHash('sha256').update(bytes).digest('hex')).toBe(result.object_sha256);
-    await mkdir('reports/T30/runtime',{recursive:true});const archive=path.resolve(`reports/T30/runtime/export-${crypto.randomUUID()}.zip`);await writeFile(archive,bytes);
+    await mkdir(t30RuntimeRoot,{recursive:true});const archive=path.join(t30RuntimeRoot,`export-${crypto.randomUUID()}.zip`);await writeFile(archive,bytes);
     const parsed=JSON.parse(execFileSync(process.env.PYTHON??'python',['-c','import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(json.dumps({"manifest":json.loads(z.read("manifest.json")),"revision":json.loads(z.read("annotations/"+sys.argv[2]+".json"))}))',archive,pins.assetRevisionId],{encoding:'utf8'}));
     const manifestItems=parsed.manifest.items as Record<string,unknown>[];
     expect(manifestItems.map(item=>({asset_revision_id:item.asset_revision_id,annotation_revision_id:item.annotation_revision_id,split:item.split}))).toEqual(snapshotBody.items);
@@ -171,12 +174,12 @@ it('F17/F23 actual supervised Node host times out once, preserves unknown cost a
     const db=new DatabaseSync(database_path_for_test(app));
     try{db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES(?,'mimo_api',?,'api_key',?,'ready','not_run',NULL,NULL,?,'env:T30_SYNTHETIC_KEY','2026-10-06T00:00:00Z')").run(config.profile_id,config.model_id,JSON.stringify(capabilities),JSON.stringify(config));}finally{db.close();}
     expect((await admin.request('PUT',`/api/projects/${pins.projectId}/external-processing-policy`,{allow_external_processing:true})).status).toBe(200);
-    service=await persistentCopy(app,path.resolve(`reports/T30/runtime/model-${crypto.randomUUID()}`));
+    service=await persistentCopy(app,path.join(t30RuntimeRoot,`model-${crypto.randomUUID()}`));
     const setup=async(base:string)=>{
-      const file=path.resolve('reports/T30/runtime/t30-host.json');
+      const file=path.join(t30RuntimeRoot,'t30-host.json');
       // Keep default provider HTTP timeout 60000ms and production parent deadline 120s unchanged.
       await writeFile(file,JSON.stringify({apiBase:base,timeoutMs:120000,providers:[{provider:'mimo_api',config}]}));
-      return {WEBLABEL_HOST_EXECUTABLE:process.execPath,WEBLABEL_HOST_CWD:path.resolve('reports/T30/runtime'),WEBLABEL_HOST_CONFIG:file,WEBLABEL_HOST_SCRIPT:path.resolve('target/agent-host/runtime.mjs'),WEBLABEL_HOST_ALLOWED_ENV:'T30_SYNTHETIC_KEY',T30_SYNTHETIC_KEY:'t30-synthetic-not-a-credential'};
+      return {WEBLABEL_HOST_EXECUTABLE:process.execPath,WEBLABEL_HOST_CWD:t30RuntimeRoot,WEBLABEL_HOST_CONFIG:file,WEBLABEL_HOST_SCRIPT:t30HostScript,WEBLABEL_HOST_ALLOWED_ENV:'T30_SYNTHETIC_KEY',T30_SYNTHETIC_KEY:'t30-synthetic-not-a-credential'};
     };
     await service.start(setup);
     let client=(await loginClient(service.base,owner.username,owner.password)).api;
@@ -207,7 +210,7 @@ for(const scenario of ['crash','oversized','spawn_child'] as const){
       const db=new DatabaseSync(database_path_for_test(app));
       try{db.prepare("INSERT INTO model_profiles SELECT 't30-fault-runtime','mimo_api','synthetic-fault-protocol','api_key',capabilities_json,'ready','not_run',NULL,NULL,'{}',NULL,created_at FROM model_profiles WHERE profile_id='profile_mock_local'").run();}finally{db.close();}
       expect((await admin.request('PUT',`/api/projects/${pins.projectId}/external-processing-policy`,{allow_external_processing:true})).status).toBe(200);
-      const directory=path.resolve(`reports/T30/runtime/child-${scenario}-${crypto.randomUUID()}`),pidFile=path.join(directory,'pids.json');
+      const directory=path.join(t30RuntimeRoot,`child-${scenario}-${crypto.randomUUID()}`),pidFile=path.join(directory,'pids.json');
       service=await persistentCopy(app,directory);
       const hostConfig=path.join(directory,'host.json');await writeFile(hostConfig,JSON.stringify({providers:[],timeoutMs:120000,apiBase:'http://127.0.0.1:1'}));
       await service.start({WEBLABEL_HOST_EXECUTABLE:process.execPath,WEBLABEL_HOST_SCRIPT:path.resolve('tests/support/fake-runtime.mjs'),WEBLABEL_HOST_CWD:directory,WEBLABEL_HOST_CONFIG:hostConfig,WEBLABEL_HOST_ALLOWED_ENV:'TEST_SCENARIO,FAKE_RUNTIME_PID_FILE,FAKE_RUNTIME_SPAWN_CHILD',TEST_SCENARIO:scenario,FAKE_RUNTIME_PID_FILE:pidFile,FAKE_RUNTIME_SPAWN_CHILD:'1'});

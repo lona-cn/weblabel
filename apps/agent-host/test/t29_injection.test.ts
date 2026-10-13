@@ -74,7 +74,7 @@ afterAll(async () => {
 });
 function configureProfile(provider: SyntheticProviderId): void {
   const db = new DatabaseSync(join(app.directory, 'api.sqlite'));
-  try { db.prepare("UPDATE model_profiles SET provider_id=?,model_id='T29-synthetic-model',auth_kind=?,verification='not_run',config_json=?,capabilities_json=?,secret_ref='env:T29_SYNTHETIC_KEY' WHERE profile_id=?").run(provider, provider === 'codex_local' ? 'official_user_login' : 'api_key', JSON.stringify(executionConfig), JSON.stringify(capabilities), syntheticProfileId); }
+  try { db.prepare("UPDATE model_profiles SET provider_id=?,model_id='T29-synthetic-model',auth_kind=?,verification='not_run',config_json=?,capabilities_json=?,secret_ref='env:T29_SYNTHETIC_KEY' WHERE profile_id=?").run(provider, 'api_key', JSON.stringify(executionConfig), JSON.stringify(capabilities), syntheticProfileId); }
   finally { db.close(); }
 }
 async function authorizedRun() {
@@ -159,15 +159,6 @@ it('MCP revalidates hostile arguments and propagates authoritative expired-token
     expect(denied.isError).toBe(true); expect(JSON.stringify(denied.content)).toContain('RUN_TOKEN_EXPIRED');
     expect(JSON.stringify(denied)).not.toContain(expired);
   } finally { await client.close(); await server.close(); }
-});
-it('production Codex dispatch stays UNSUPPORTED_RUNTIME without launching a fake official SDK', async () => {
-  configureProfile('codex_local');
-  try {
-    const { request, runId, token, profile } = await authorizedRun(); const calls = providerCalls.length;
-    const result = await runHost({ directory: app.directory, apiBase: app.base_url, token, secret: `T29-synthetic-${randomUUID()}`, provider: 'codex_local', config: executionConfig, runId, request, profile });
-    expect(result.exitCode).toBe(0); expect(result.terminal).toMatchObject({ ok: false, error: { code: 'UNSUPPORTED_RUNTIME' } });
-    expect(providerCalls.length).toBe(calls); expect(result.shellExecuted).toBe(false);
-  } finally { configureProfile('mimo_api'); }
 });
 
 it('grant filesystem containment rejects real junction/symlink escape and portable path bypasses', async () => {

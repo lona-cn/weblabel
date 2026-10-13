@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, ApiFailure, loginInScope, setCsrfToken, type Session, type BootstrapResult } from '../lib/t15/api';
+import { api, ApiFailure, loginInScope, setCsrfToken, type Session, type BootstrapResult, type AdminRecoveryStatus } from '../lib/t15/api';
 
 export type AuthEntry =
   | { kind: 'checking' }
+  | { kind: 'recovery'; status: AdminRecoveryStatus; phase: 'ready' | 'pending' | 'unknown'; checking: boolean }
   | { kind: 'authenticated'; session: Session; createdUsername: string | null }
   | { kind: 'login'; usernameHint: string }
   | { kind: 'bootstrap'; mode: 'initial' | 'restore'; available: boolean }
@@ -12,6 +13,7 @@ type SessionContextValue = {
   entry: AuthEntry;
   login(username: string, password: string): Promise<void>;
   bootstrap(launchCode: string, password: string): Promise<void>;
+  recover(code: string, password: string): Promise<void>;
   logout(): Promise<void>;
   refresh(): Promise<void>;
 };
@@ -26,6 +28,26 @@ export function AppProviders({ children }: { children: ReactNode }) {
   const generation = useRef(0);
   const pending = useRef<{ ack: BootstrapResult | null; username: string | null; received: boolean } | null>(null);
   const logoutFlight = useRef<Promise<void> | null>(null);
+  const recovery = useRef<Extract<AuthEntry, { kind: 'recovery' }> | null>(null);
+  const recoveryFlight = useRef(false);
+  const inspectRecovery = useCallback(async (id: number): Promise<boolean> => {
+    const previous = recovery.current;
+    try {
+      const status = await api.adminRecoveryStatus();
+      if (id !== generation.current) return true;
+      if (previous && (status.request_id !== previous.status.request_id || status.username !== previous.status.username)) throw new Error('恢复请求已改变');
+      if (status.state === 'disabled') return false;
+      setCsrfToken(null);
+      const next: Extract<AuthEntry, { kind: 'recovery' }> = { kind: 'recovery', status, phase: 'ready', checking: false };
+      recovery.current = next; setEntry(next); return true;
+    } catch {
+      if (id === generation.current) {
+        if (previous) { const next = { ...previous, phase: 'unknown' as const, checking: false }; recovery.current = next; setEntry(next); }
+        else setEntry({ kind: 'error', message: '无法确认管理员恢复状态。请只读重新检查；不要提交密码。' });
+      }
+      return true;
+    }
+  }, []);
   const readStatus = useCallback(async (id: number, usernameHint = '') => {
     const status = await api.bootstrapStatus();
     if (id !== generation.current) return;
@@ -36,7 +58,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     const ack = creation?.ack;
     const validAck = ack && nonempty(ack.user_id) && nonempty(ack.username) && nonempty(ack.csrf_token);
     try {
-      if (id !== generation.current) return;
+      if (id !== generation.current || await inspectRecovery(id)) return;
       if (validAck) {
         setCsrfToken(ack.csrf_token);
         globalThis.sessionStorage.setItem('weblabel_csrf', ack.csrf_token);
@@ -68,24 +90,31 @@ export function AppProviders({ children }: { children: ReactNode }) {
         setEntry(creation?.received ? { kind: 'bootstrap_created', username: creation.username, error: readError } : { kind: 'error', message: readError });
       }
     }
-  }, [readStatus]);
+  }, [readStatus, inspectRecovery]);
   const refresh = useCallback(async () => {
+    if (recoveryFlight.current) return;
     const id = ++generation.current;
+    if (recovery.current) {
+      setEntry({ ...recovery.current, checking: true });
+      await inspectRecovery(id); return;
+    }
     const creation = pending.current;
     setEntry(creation?.received ? { kind: 'bootstrap_created', username: creation.username, error: null } : { kind: 'checking' });
     await check(id);
-  }, [check]);
+  }, [check, inspectRecovery]);
   useEffect(() => { void refresh(); return () => { ++generation.current; }; }, [refresh]);
   const login = useCallback(async (username: string, password: string) => {
     const id = ++generation.current;
+    if (await inspectRecovery(id)) return;
     const identity = await loginInScope(username, password, () => id === generation.current);
     if (id !== generation.current || !identity) return;
     pending.current = null;
     setEntry({ kind: 'authenticated', session: identity, createdUsername: null });
-  }, []);
+  }, [inspectRecovery]);
   const bootstrap = useCallback(async (launchCode: string, password: string) => {
     const id = ++generation.current;
     let ack: BootstrapResult;
+    if (await inspectRecovery(id)) return;
     try { ack = await api.bootstrap(launchCode, password); }
     catch (reason) {
       if (id !== generation.current) return;
@@ -105,7 +134,30 @@ export function AppProviders({ children }: { children: ReactNode }) {
     setEntry({ kind: 'bootstrap_created', username, error: null });
     // The acknowledgement commits creation before any storage or identity read.
     await check(id);
-  }, [check, readStatus]);
+  }, [check, readStatus, inspectRecovery]);
+  const recover = useCallback(async (code: string, password: string) => {
+    const current = recovery.current;
+    if (!current || current.phase !== 'ready' || current.status.state !== 'available' || recoveryFlight.current) return;
+    recoveryFlight.current = true;
+    const id = ++generation.current;
+    const submitting = { ...current, phase: 'pending' as const, checking: false };
+    recovery.current = submitting; setEntry(submitting);
+    try {
+      const status = await api.adminRecover({ recovery_code: code.trim(), password });
+      if (id !== generation.current) return;
+      if (status.request_id !== current.status.request_id || status.username !== current.status.username) throw new Error('恢复响应请求不一致');
+      const next = { ...current, status, phase: 'ready' as const, checking: false };
+      recovery.current = next; setEntry(next);
+    } catch (reason) {
+      if (id !== generation.current) return;
+      if (reason instanceof ApiFailure && ((reason.status === 400 && reason.code === 'INVALID_PASSWORD') || (reason.status === 401 && reason.code === 'INVALID_RECOVERY_CODE') || (reason.status === 429 && reason.code === 'RECOVERY_RATE_LIMITED'))) {
+        const next = { ...current, phase: 'ready' as const, checking: false };
+        recovery.current = next; setEntry(next);
+        throw reason;
+      }
+      const next = { ...current, phase: 'unknown' as const, checking: false }; recovery.current = next; setEntry(next);
+    } finally { recoveryFlight.current = false; }
+  }, []);
   const logout = useCallback((): Promise<void> => {
     if (logoutFlight.current) return logoutFlight.current;
     const id = ++generation.current;
@@ -129,7 +181,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     void operation.finally(() => { if (logoutFlight.current === operation) logoutFlight.current = null; });
     return operation;
   }, []);
-  const value = useMemo(() => ({ entry, login, bootstrap, logout, refresh }), [entry, login, bootstrap, logout, refresh]);
+  const value = useMemo(() => ({ entry, login, bootstrap, recover, logout, refresh }), [entry, login, bootstrap, recover, logout, refresh]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 export function useSession(): SessionContextValue {

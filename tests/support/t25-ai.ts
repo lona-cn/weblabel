@@ -42,13 +42,7 @@ export interface Seeded {
   canonicalSha256: string;
 }
 
-async function drainJobs(client: ApiClient): Promise<number> {
-  const response = await client.request<JsonObject>('POST', '/internal/test/jobs/drain', {});
-  expect(response.status, JSON.stringify(response.json)).toBe(200);
-  const processed = object(response.json, 'drain').processed;
-  if (typeof processed !== 'number') throw new Error('drain.processed must be numeric');
-  return processed;
-}
+
 
 // The shared harness upload helper sends untyped blobs (application/octet-stream)
 // which the media decode-header policy rejects at processing time; a browser
@@ -116,9 +110,8 @@ export async function seed(admin: ApiClient, app: TestApp): Promise<Seeded> {
   const upload = await uploadImage(baseUrl, uploader, projectId, image, `t25-import-${crypto.randomUUID()}`);
   expect(upload.status).toBe(202);
   const importJobId = stringField(await upload.json(), 'import_job_id', 'upload');
-  await drainJobs(admin);
   // A background fixture can already own this job. Read its completion rather
-  // than requiring the manual drain to win the worker lease.
+  // than requiring this fixture to win the worker lease.
   let importJob: JsonObject = {};
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {

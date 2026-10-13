@@ -1,5 +1,9 @@
 import { defineConfig } from '@playwright/test';
 
+const recoveryOrigin = process.env.WEBLABEL_T30_ORIGIN ?? 'http://127.0.0.1:5191';
+const recoveryUrl = new URL(recoveryOrigin);
+if (recoveryUrl.hostname !== '127.0.0.1' || ['5173', '4174', '48100'].includes(recoveryUrl.port) || !recoveryUrl.port) throw new Error('T30 requires an explicit private loopback browser port');
+
 export default defineConfig({
   projects: [
     { name: 'e2e', testDir: './tests/e2e' },
@@ -32,6 +36,12 @@ export default defineConfig({
     {
       command: 'node scripts/build-web-bridge.mjs && pnpm --filter @weblabel/web exec vite --host 127.0.0.1 --port 5173 --strictPort --mode test',
       url: 'http://127.0.0.1:5173/',
+      reuseExistingServer: false,
+      timeout: 120_000,
+    },
+    {
+      command: `pnpm --filter @weblabel/web exec vite --host 127.0.0.1 --port ${recoveryUrl.port} --strictPort --mode test`,
+      url: recoveryOrigin,
       reuseExistingServer: false,
       timeout: 120_000,
     },

@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { mkdir, writeFile, cp, rm } from 'node:fs/promises';
 import { backup, DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
+import { ownedReportRoot, taskReportPath } from './report-paths.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Page, Route } from '@playwright/test';
 import { database_path_for_test, prepare_test_api } from './app';
@@ -13,6 +14,10 @@ import type { AnnotationDocument } from '../../packages/contracts/generated/Anno
 import type { AnnotationRevision } from '../../packages/contracts/generated/AnnotationRevision';
 import type { Viewport } from '../../apps/web/src/lib/editor/types';
 
+// Test-only output seam; callers select a fresh owned root before importing this module.
+const t30Root = process.env.WEBLABEL_T30_TEST_ROOT ? ownedReportRoot(process.env.WEBLABEL_T30_TEST_ROOT) : taskReportPath('T30');
+export const t30RuntimeRoot = path.join(t30Root, 'runtime');
+const t30ObservationRoot = path.join(t30Root, 'observations');
 export const privateOrigin = process.env.WEBLABEL_T30_ORIGIN ?? 'http://127.0.0.1:5191';
 const originUrl = new URL(privateOrigin);
 if (originUrl.hostname !== '127.0.0.1' || ['5173', '4174', '48100'].includes(originUrl.port) || !originUrl.port) throw new Error('T30 requires an explicit private loopback browser port');
@@ -89,7 +94,7 @@ export async function installBrowserFaults(page:Page):Promise<void> {
     window.__t30Faults=control;
     const put=IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put=function(...args:Parameters<IDBObjectStore['put']>){
-      if(control.quota && this.name==='drafts') throw new DOMException('T30 injected browser storage quota failure','QuotaExceededError');
+      if(control.quota && this.name==='draft_branches') throw new DOMException('T30 injected browser storage quota failure','QuotaExceededError');
       return Reflect.apply(put,this,args);
     };
     // DOM typings omit WebGPU; this named binding describes the platform extension, not an external payload.
@@ -173,4 +178,4 @@ export async function persistentCopy(app:TestApp, directory:string):Promise<Pers
     async stop(){if(child){const active=child;if(active.exitCode===null&&active.signalCode===null){const exit=Promise.withResolvers<void>();active.once('exit',()=>exit.resolve());active.kill('SIGTERM');await exit.promise;}child=null;}await rm(directory,{recursive:true,force:true});},
   };
 }
-export async function writeEvidence(name:string, value:unknown):Promise<void>{await mkdir('reports/T30/observations',{recursive:true});await writeFile(`reports/T30/observations/${name}.json`,JSON.stringify(value,null,2));}
+export async function writeEvidence(name:string, value:unknown):Promise<void>{await mkdir(t30ObservationRoot,{recursive:true});await writeFile(path.join(t30ObservationRoot,`${name}.json`),JSON.stringify(value,null,2));}

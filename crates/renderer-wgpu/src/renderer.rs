@@ -2,18 +2,18 @@
 use std::future::Future;
 #[cfg(target_arch = "wasm32")]
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
+    Arc,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::JsValue;
 
 #[cfg(target_arch = "wasm32")]
 use crate::{
-    buffers::{BBoxInstance, bbox_instances_into, overlay_instances_into},
+    buffers::{bbox_instances_into, overlay_instances_into, BBoxInstance},
     scene::{
-        CanonicalImage, Overlay, RenderObject, RenderScene, Viewport, changed_element_range,
-        dirty_byte_range, scene_upload_plan, validate_projection, validate_scene,
+        changed_element_range, dirty_byte_range, scene_upload_plan, validate_projection,
+        validate_scene, CanonicalImage, Overlay, RenderObject, RenderScene, Viewport,
     },
 };
 
@@ -969,8 +969,12 @@ impl Renderer {
             }
             if !scene.overlays.is_empty() {
                 let bind = instance_bind(&self.device, &self.instance_layout, &self.overlay_buffer);
-                pass.set_pipeline(&self.overlay_pipeline);
                 pass.set_bind_group(1, &bind, &[]);
+                // Reuse the native preview bounds; no additional CPU geometry.
+                pass.set_pipeline(&self.box_pipeline);
+                pass.draw(0..6, 0..scene.overlays.len() as u32);
+                // Preserve flags=0 as the existing center control.
+                pass.set_pipeline(&self.overlay_pipeline);
                 pass.draw(0..6, 0..scene.overlays.len() as u32);
             }
         }
@@ -978,7 +982,7 @@ impl Renderer {
         self.stats.record_submission(
             1 + self.visible_ranges.len() as u64
                 + self.selected_control_ranges.len() as u64
-                + u64::from(!scene.overlays.is_empty()),
+                + 2 * u64::from(!scene.overlays.is_empty()),
         );
         self.queue.present(frame);
         if suboptimal {

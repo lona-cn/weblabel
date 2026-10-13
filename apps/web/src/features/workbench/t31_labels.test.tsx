@@ -32,6 +32,8 @@ class Factory implements EditorFacadeFactory {
       const facade: EditorFacade = {
         dispatch: () => delta, pointer: () => delta, set_tool: () => {}, set_active_label: () => {},
         set_viewport: (value) => { viewport = value; }, zoom_at: () => {}, fit_image: () => {},
+        focus_selection: () => {}, get_hit_stack_state: () => ({ index: null, count: 0 }),
+        focus_region: () => { throw new Error('Unexpected focus region'); },
         set_selection: () => delta, set_local_flags: () => delta, get_snapshot: () => asset.document,
         get_commit_readback: () => { throw Error('Projection fixture has no document commits'); },
         get_generation: () => 0, get_object_hashes: () => ({}), get_viewport: () => viewport,
@@ -44,14 +46,14 @@ class Factory implements EditorFacadeFactory {
   }
 }
 function label(object_id: string, x_css = 10.125, y_css = 20.25, selected = false): CanvasLabel { return { object_id, x_css, y_css, selected }; }
-function visible(): { id: string | null; text: string | null; selected: string | null; transform: string }[] {
-  return screen.queryAllByTestId('canvas-label').map((node) => ({ id: node.getAttribute('data-object-id'), text: node.textContent, selected: node.getAttribute('data-selected'), transform: node.style.transform }));
+function visible(): { id: string | null; selected: string | null; transform: string }[] {
+  return screen.queryAllByTestId('canvas-label').map((node) => ({ id: node.getAttribute('data-object-id'), selected: node.getAttribute('data-selected'), transform: node.style.transform }));
 }
 async function mount() {
   vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 640, 480));
   const factory = new Factory(), scheduler = new Scheduler();
   let host: EditorHost | undefined;
-  const props = { request: request(), hostOptions: { facadeFactory: factory, scheduler }, activeTool: 'select' as const, onDelta: () => {}, onHostReady: (ready: EditorHost) => { host = ready; } };
+  const props = { request: request(), hostOptions: { facadeFactory: factory, scheduler }, activeTool: 'select' as const, onDelta: () => {}, onHostSettled: (ready: EditorHost) => { host = ready; } };
   const view = render(<StrictMode><CanvasView {...props} /></StrictMode>);
   await act(async () => { await Promise.resolve(); factory.creations[0].settle(); });
   function frame(labels: CanvasLabel[]): void {
@@ -72,7 +74,7 @@ describe('T31 native canvas label DOM projection', () => {
       { id: 'first', transform: 'translate(10.125px, 20.25px)' }, { id: 'second', transform: 'translate(30.5px, 40.75px)' },
     ]);
     mounted.frame([label('first', 10.125000000000002, 20.250000000000004, true), label('second', 30.5, 40.75)]);
-    expect(visible()[0]).toEqual({ id: 'first', text: 'first', selected: 'true', transform: 'translate(10.125000000000002px, 20.250000000000004px)' });
+    expect(visible()[0]).toEqual({ id: 'first', selected: 'true', transform: 'translate(10.125000000000002px, 20.250000000000004px)' });
     mounted.frame([label('first', -4.375, 92.625, false), label('second', 30.5, 40.75, true)]);
     expect(visible().map(({ id, selected, transform }) => ({ id, selected, transform }))).toEqual([
       { id: 'first', selected: 'false', transform: 'translate(-4.375px, 92.625px)' }, { id: 'second', selected: 'true', transform: 'translate(30.5px, 40.75px)' },
@@ -90,8 +92,8 @@ describe('T31 native canvas label DOM projection', () => {
     frame([]);
     expect(visible()).toEqual([]);
     frame([label('first', 83.125, 14.875, true), label('replacement')]);
-    expect(visible().map(({ text, selected, transform }) => ({ text, selected, transform }))).toEqual([
-      { text: 'first', selected: 'true', transform: 'translate(83.125px, 14.875px)' }, { text: 'replacement', selected: 'false', transform: 'translate(10.125px, 20.25px)' },
+    expect(visible().map(({ id, selected, transform }) => ({ id, selected, transform }))).toEqual([
+      { id: 'first', selected: 'true', transform: 'translate(83.125px, 14.875px)' }, { id: 'replacement', selected: 'false', transform: 'translate(10.125px, 20.25px)' },
     ]);
   });
 
@@ -119,5 +121,15 @@ describe('T31 native canvas label DOM projection', () => {
     mounted.frame([label('new-only', 7.75, 8.875)]);
     act(() => { secondRendered(); });
     expect(visible().map(({ id, transform }) => ({ id, transform }))).toEqual([{ id: 'new-only', transform: 'translate(7.75px, 8.875px)' }]);
+  });
+
+  it('refreshes semantic class and document order text even when native positions and selection are unchanged', async () => {
+    const mounted = await mount();
+    mounted.frame([label('first'), label('second', 30.5, 40.75)]);
+    mounted.view.rerender(<StrictMode><CanvasView {...mounted.props} objectNames={{ first: '车辆 #1', second: '行人 #2' }} /></StrictMode>);
+    expect(screen.getAllByTestId('canvas-label').map(node => node.textContent)).toEqual(['车辆 #1', '行人 #2']);
+    mounted.view.rerender(<StrictMode><CanvasView {...mounted.props} objectNames={{ first: '自行车 #2', second: '行人 #1' }} /></StrictMode>);
+    expect(screen.getAllByTestId('canvas-label').map(node => node.textContent)).toEqual(['自行车 #2', '行人 #1']);
+    expect(visible().map(({ transform }) => transform)).toEqual(['translate(10.125px, 20.25px)', 'translate(30.5px, 40.75px)']);
   });
 });

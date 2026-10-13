@@ -28,6 +28,151 @@ fn person() -> Id {
     Id::from("object_person_001")
 }
 
+fn relabel_fixture() -> (AnnotationDocument, annotation_domain::OntologyVersion) {
+    let mut document = editor().snapshot();
+    let mut ontology: annotation_domain::OntologyVersion =
+        serde_json::from_str(include_str!("../../../tests/fixtures/golden/ontology.json")).unwrap();
+    let definition = |key: &str, kind, value, min, max| annotation_domain::AttributeDef {
+        key: key.into(),
+        kind,
+        required: false,
+        default_value: value,
+        enum_values: if kind == annotation_domain::AttributeKind::Enum {
+            vec!["valid".into()]
+        } else {
+            vec![]
+        },
+        min,
+        max,
+    };
+    use annotation_domain::AttributeKind::*;
+    ontology.labels[0].attributes = vec![
+        definition("keep", Text, Scalar::Null, None, None),
+        definition("enum", Text, Scalar::Null, None, None),
+        definition("range", Number, Scalar::Null, None, None),
+        definition("type", Text, Scalar::Null, None, None),
+        definition("null", Text, Scalar::Null, None, None),
+        definition("remove", Boolean, Scalar::Null, None, None),
+        definition(
+            "optional",
+            Text,
+            Scalar::String("old-default".into()),
+            None,
+            None,
+        ),
+    ];
+    document.objects[0].attributes = [
+        ("keep".into(), Scalar::String("kept".into())),
+        ("enum".into(), Scalar::String("invalid".into())),
+        ("range".into(), Scalar::Number(20.0)),
+        ("type".into(), Scalar::String("wrong-type".into())),
+        ("null".into(), Scalar::Null),
+        ("remove".into(), Scalar::Boolean(true)),
+    ]
+    .into_iter()
+    .collect();
+    let mut target = ontology.labels[0].clone();
+    target.label_id = Id::from("target");
+    target.name = "target".into();
+    target.attributes = vec![
+        definition("keep", Text, Scalar::String("fallback".into()), None, None),
+        definition("enum", Enum, Scalar::String("valid".into()), None, None),
+        definition("range", Number, Scalar::Number(5.0), Some(0.0), Some(10.0)),
+        definition("type", Boolean, Scalar::Boolean(false), None, None),
+        definition("null", Number, Scalar::Number(1.0), None, None),
+        definition("missing", Text, Scalar::String("filled".into()), None, None),
+    ];
+    target.attributes[4].required = true;
+    ontology.labels.push(target);
+    (document, ontology)
+}
+
+#[test]
+fn relabel_reconciles_attributes_in_one_undoable_command() {
+    let (before, ontology) = relabel_fixture();
+    let mut editor = Editor::new(before.clone(), ontology).unwrap();
+    let delta = editor
+        .dispatch(EditorCommand::SetLabel {
+            object_ids: vec![person()],
+            label_id: Id::from("target"),
+        })
+        .unwrap();
+    let after = editor.snapshot();
+    assert_eq!(
+        after.objects[0].attributes,
+        [
+            ("keep".into(), Scalar::String("kept".into())),
+            ("enum".into(), Scalar::String("valid".into())),
+            ("range".into(), Scalar::Number(5.0)),
+            ("type".into(), Scalar::Boolean(false)),
+            ("null".into(), Scalar::Null),
+            ("missing".into(), Scalar::String("filled".into())),
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert_eq!(delta.changed_objects, after.objects);
+    assert_eq!(delta.generation, 1);
+    editor.dispatch(EditorCommand::Undo).unwrap();
+    assert_eq!(editor.snapshot(), before);
+    editor.dispatch(EditorCommand::Redo).unwrap();
+    assert_eq!(editor.snapshot(), after);
+}
+
+#[test]
+fn same_label_keeps_historical_missing_optional_and_no_history() {
+    let (before, ontology) = relabel_fixture();
+    let mut editor = Editor::new(before.clone(), ontology).unwrap();
+    let delta = editor
+        .dispatch(EditorCommand::SetLabel {
+            object_ids: vec![person()],
+            label_id: before.objects[0].label_id.clone(),
+        })
+        .unwrap();
+    assert_eq!(editor.snapshot(), before);
+    assert!(!delta.document_changed);
+    assert_eq!(delta.generation, 0);
+    assert!(!delta.can_undo);
+}
+
+#[test]
+fn relabel_locked_or_unknown_member_rolls_back_the_entire_selection() {
+    let (mut before, ontology) = relabel_fixture();
+    let mut second = before.objects[0].clone();
+    second.object_id = Id::from("second");
+    before.objects.push(second);
+    let mut editor = Editor::new(before.clone(), ontology).unwrap();
+    editor
+        .set_local_flags(&[Id::from("second")], Some(true), Some(true))
+        .unwrap();
+    assert_eq!(
+        editor
+            .dispatch(EditorCommand::SetLabel {
+                object_ids: vec![person(), Id::from("second")],
+                label_id: Id::from("target")
+            })
+            .unwrap_err()
+            .code,
+        "OBJECT_LOCKED"
+    );
+    assert_eq!(editor.snapshot(), before);
+    assert!(editor
+        .dispatch(EditorCommand::SetLabel {
+            object_ids: vec![person(), Id::from("absent")],
+            label_id: Id::from("target")
+        })
+        .is_err());
+    assert!(editor
+        .dispatch(EditorCommand::SetLabel {
+            object_ids: vec![person()],
+            label_id: Id::from("absent")
+        })
+        .is_err());
+    assert_eq!(editor.snapshot(), before);
+    assert_eq!(editor.generation(), 0);
+    assert!(!editor.can_undo());
+}
+
 #[test]
 fn empty_undo_preserves_document_and_generation() {
     let mut editor = editor();

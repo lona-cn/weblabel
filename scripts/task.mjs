@@ -7,9 +7,13 @@ const captureLimit = 64 * 1024;
 
 export function resolveArgv(argv) {
   if (process.platform !== 'win32' || path.basename(argv[0]).toLowerCase() !== 'pnpm') return argv;
-  const corepackEntry = path.resolve(path.dirname(process.execPath), 'node_modules', 'corepack', 'dist', 'pnpm.js');
-  if (!fs.existsSync(corepackEntry)) throw new Error(`Cannot resolve Corepack pnpm entrypoint: ${corepackEntry}`);
-  return [process.execPath, corepackEntry, ...argv.slice(1)];
+  const entries = [
+    process.env.APPDATA && path.resolve(process.env.APPDATA, "npm", "node_modules", "pnpm", "bin", "pnpm.cjs"),
+    path.resolve(path.dirname(process.execPath), "node_modules", "corepack", "dist", "pnpm.js"),
+  ].filter(Boolean);
+  const entry = entries.find((candidate) => fs.existsSync(candidate));
+  if (!entry) throw new Error("Installed pnpm entrypoint unavailable");
+  return [process.execPath, entry, ...argv.slice(1)];
 }
 
 export function isZeroTestRun(argv, output) {
@@ -25,7 +29,13 @@ export function isZeroTestRun(argv, output) {
   return /no test files found|no tests found|no tests ran|collected 0 items/i.test(output);
 }
 
-export function runArgv(argv, cwd = process.cwd()) {
+/** Numeric completion stays compatible; onClose observes the native exit before normalization.
+ * @param {string[]} argv
+ * @param {string} cwd
+ * @param {{env?: NodeJS.ProcessEnv, onStdout?: (chunk:string)=>void, onStderr?: (chunk:string)=>void, signal?: AbortSignal, onSpawnError?: (error:Error)=>void, onClose?: (code:number|null, signal:NodeJS.Signals|null)=>void}} options
+ * @returns {Promise<number>}
+ */
+export function runArgv(argv, cwd = process.cwd(), options = {}) {
   if (!Array.isArray(argv) || argv.length === 0 || argv.some((part) => typeof part !== 'string' || part.length === 0)) {
     return Promise.reject(new TypeError('check argv must be a non-empty string array'));
   }
@@ -36,12 +46,19 @@ export function runArgv(argv, cwd = process.cwd()) {
   } catch (error) {
     return Promise.reject(error);
   }
+  if (options.signal?.aborted) return Promise.resolve(options.signal.reason === 'SIGTERM' ? 143 : 130);
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
-    let interrupted = false;
+    let interrupted = null;
     let settled = false;
     let child;
+    let spawnError = false;
+    let killerDone = Promise.resolve();
+    const reportError = error => {
+      const text = `${command}: ${error.message}\n`;
+      process.stderr.write(text); options.onStderr?.(text); options.onSpawnError?.(error);
+    };
     const complete = (status) => {
       if (settled) return;
       settled = true;
@@ -54,9 +71,10 @@ export function runArgv(argv, cwd = process.cwd()) {
         shell: false,
         windowsHide: true,
         detached: process.platform !== 'win32',
+        env: options.env,
       });
     } catch (error) {
-      process.stderr.write(`${command}: ${error.message}\n`);
+      reportError(error);
       complete(1);
       return;
     }
@@ -67,29 +85,34 @@ export function runArgv(argv, cwd = process.cwd()) {
     };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout = retain(stdout, chunk, process.stdout); });
-    child.stderr.on('data', (chunk) => { stderr = retain(stderr, chunk, process.stderr); });
+    child.stdout.on('data', (chunk) => { options.onStdout?.(chunk); stdout = retain(stdout, chunk, process.stdout); });
+    child.stderr.on('data', (chunk) => { options.onStderr?.(chunk); stderr = retain(stderr, chunk, process.stderr); });
     const onSignal = (signal) => {
-      interrupted = true;
+      if (interrupted || !child.pid) return;
+      interrupted = signal;
       if (process.platform === 'win32') {
         const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-        killer.on('error', () => child.kill(signal));
+        killerDone = new Promise(resolve => { killer.once('error', () => { child.kill(signal); resolve(); }); killer.once('close', resolve); });
       } else {
         try { process.kill(-child.pid, signal); } catch { child.kill(signal); }
       }
     };
     const onInterrupt = () => onSignal('SIGINT');
     const onTerminate = () => onSignal('SIGTERM');
-    process.once('SIGINT', onInterrupt);
-    process.once('SIGTERM', onTerminate);
+    const onAbort = () => onSignal(options.signal.reason === 'SIGTERM' ? 'SIGTERM' : 'SIGINT');
+    if (options.signal) { options.signal.addEventListener('abort', onAbort, { once: true }); if (options.signal.aborted) onAbort(); }
+    else { process.once('SIGINT', onInterrupt); process.once('SIGTERM', onTerminate); }
     child.once('error', (error) => {
-      process.stderr.write(`${command}: ${error.message}\n`);
-      complete(1);
+      reportError(error);
+      spawnError = true;
     });
-    child.once('close', (code, signal) => {
+    child.once('close', async (code, signal) => {
+      await killerDone;
+      options.signal?.removeEventListener('abort', onAbort);
       process.removeListener('SIGINT', onInterrupt);
       process.removeListener('SIGTERM', onTerminate);
-      let status = interrupted ? (signal === 'SIGTERM' ? 143 : 130) : (code ?? (signal === 'SIGINT' ? 130 : 1));
+      options.onClose?.(code, signal);
+      let status = spawnError ? 1 : interrupted ? (interrupted === "SIGTERM" ? 143 : 130) : (code ?? (signal === "SIGINT" ? 130 : 1));
       if (status === 0 && isZeroTestRun(argv, `${stdout}\n${stderr}`)) {
         process.stderr.write('Test command collected zero tests.\n');
         status = 1;

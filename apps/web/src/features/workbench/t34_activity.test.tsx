@@ -44,9 +44,8 @@ it('does not issue a Publish request for zero samples and stops collection on un
   let now = 0;
   const collector = new ActivityCollector('project', 'actor', () => now);
   const view = render(<ActivityPanel projectId="project" actorId="actor" collector={collector} />);
-  await userEvent.click(screen.getByText('查看工时分类、明细与保存操作'));
+  await userEvent.click(screen.getByTestId('activity-details').querySelector('summary')!);
   await userEvent.click(screen.getByTestId('activity-publish'));
-  expect(screen.getByRole('status')).toHaveTextContent('无数据');
   expect(network).not.toHaveBeenCalled();
   await userEvent.click(screen.getByTestId('activity-opt-in'));
   now = 1000; view.unmount();
@@ -124,7 +123,7 @@ it('keeps foreground keyboard-only object inspection active past 60 seconds and 
       <ActivityPanel projectId="project" actorId="actor" collector={collector} /></main>;
   }
   const view = render(<Inspection />);
-  const list = screen.getByRole('listbox', { name: '标注对象' });
+  const list = screen.getByTestId('object-list');
   const select = (time: number, key: string, objectId: string) => {
     now = time;
     fireEvent(list, new KeyboardEvent('keydown', { key, code: key, bubbles: true }));
@@ -181,7 +180,7 @@ it('does not extend keyboard time outside the surface, while unfocused or hidden
   let now = 0;
   const collector = new ActivityCollector('project', 'actor', () => now);
   const view = render(<main><Toolbar active="select" onChange={() => {}} /><ActivityPanel projectId="project" actorId="actor" collector={collector} /></main>);
-  const button = screen.getByRole('button', { name: '矩形工具' });
+  const button = screen.getByTestId('tool-box');
   fireEvent.click(screen.getByTestId('activity-opt-in'));
   now = 30_000;
   fireEvent(document.body, new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

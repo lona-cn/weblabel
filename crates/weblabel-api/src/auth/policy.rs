@@ -34,6 +34,7 @@ pub struct AuthState {
     pub(crate) restore_bootstrap_enabled: Arc<AtomicBool>,
     pub(crate) login_limiter: Arc<tokio::sync::Mutex<LoginLimiter>>,
     pub(crate) dummy_password_hash: String,
+    pub(crate) password_recovery: Option<Arc<super::recovery::Recovery>>,
 }
 
 #[derive(Default)]
@@ -109,6 +110,7 @@ impl AuthState {
             restore_bootstrap_enabled: Arc::new(AtomicBool::new(false)),
             login_limiter: Arc::new(tokio::sync::Mutex::new(LoginLimiter::default())),
             dummy_password_hash: super::password::hash("nonexistent-account-password")?,
+            password_recovery: None,
         })
     }
 

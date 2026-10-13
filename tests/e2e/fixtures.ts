@@ -79,6 +79,19 @@ function stringField(value: unknown, name: string): string {
   return field;
 }
 
+export async function waitForCanonicalAssets(api: ApiClient, projectId: string, expectedCount: number): Promise<JsonRecord[]> {
+  let assets: JsonRecord[] = [];
+  await expect.poll(async () => {
+    const response = await api.request<JsonRecord>('GET', `/api/projects/${projectId}/assets`);
+    if (response.status !== 200) throw new Error(`Canonical assets query failed: ${JSON.stringify(response.json)}`);
+    const items = record(response.json, 'assets').items;
+    if (!Array.isArray(items)) throw new Error('Canonical asset list must be an array');
+    assets = items.map(item => record(item, 'canonical asset'));
+    return assets.length;
+  }, { message: `All ${expectedCount} uploads must finish canonical processing` }).toBe(expectedCount);
+  return assets;
+}
+
 async function generatedImage(index: number): Promise<Buffer> {
   const pixels = Buffer.alloc(WIDTH * HEIGHT * 3);
   for (let y = 0; y < HEIGHT; y += 1) {
@@ -159,14 +172,8 @@ async function seed(app: TestApp, api: ApiClient, demoDir: string): Promise<Seed
     await uploadTypedImage(app, projectId, uploader, bytes, BOXES.length + index, filename, 'image/jpeg');
   }
   const totalAssets = BOXES.length + 2;
-  const drained = await api.request<JsonRecord>('POST', '/internal/test/jobs/drain', {});
-  if (drained.status !== 200 || record(drained.json, 'drain').processed !== totalAssets) {
-    throw new Error(`T15 media processing did not finish all ${totalAssets} uploads: ${JSON.stringify(drained.json)}`);
-  }
-  const assetsResponse = await api.request<JsonRecord>('GET', `/api/projects/${projectId}/assets`);
-  if (assetsResponse.status !== 200) throw new Error(`T15 assets query failed: ${JSON.stringify(assetsResponse.json)}`);
-  const assets = record(assetsResponse.json, 'assets').items;
-  if (!Array.isArray(assets) || assets.length !== totalAssets) throw new Error(`T15 expected ${totalAssets} imported images, received ${Array.isArray(assets) ? assets.length : 'invalid list'}`);
+  // Observe the production media worker through the public canonical-asset list; do not invoke debug drains.
+  const assets = await waitForCanonicalAssets(api, projectId, totalAssets);
   const seededAssets: SeededAsset[] = [];
   for (const rawAsset of assets) {
     const asset = record(rawAsset, 'asset');
@@ -230,7 +237,7 @@ export const test = base.extend<Fixtures>({
     await page.getByTestId('login-password').fill(seededProject.login.password);
     await page.getByTestId('login-submit').click();
     await expect(page.getByTestId('login-submit')).toHaveCount(0);
-    await page.goto(`http://127.0.0.1:5173/?project_id=${encodeURIComponent(seededProject.project_id)}`);
+    await page.goto(`http://127.0.0.1:5173/?project_id=${encodeURIComponent(seededProject.project_id)}&ontology_version_id=${encodeURIComponent(seededProject.ontology_version_id)}`);
     await expect(page.getByTestId('asset-grid')).toBeVisible();
     await use(page);
   },

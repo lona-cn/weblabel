@@ -9,6 +9,8 @@
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "github-slugger": "2.0.0",
+    "markdown-it": "14.1.0",
     "sharp": "0.34.4",
     "vitest": "5.0.1"
   },
@@ -19,6 +21,7 @@
     "backup": "node scripts/backup.mjs",
     "restore": "node scripts/restore.mjs",
     "doctor": "node scripts/doctor.mjs",
+    "docs:check": "node tools/check-docs.mjs",
     "test:task": "node scripts/task.mjs",
     "verify:fast": "node scripts/verify.mjs fast",
     "verify:integration": "node scripts/verify.mjs integration",
@@ -26,6 +29,7 @@
     "verify:gpu": "node scripts/verify.mjs gpu",
     "verify:live": "node scripts/verify.mjs live",
     "verify:release": "node scripts/verify.mjs release",
+    "typecheck:host": "pnpm --filter @weblabel/web exec tsc --noEmit -p ../agent-host/tsconfig.json",
     "test:unit": "vitest run",
     "media:fixtures": "node scripts/generate-media-fixtures.mjs",
     "wasm:probe-build": "node scripts/build-wgpu-probe.mjs",

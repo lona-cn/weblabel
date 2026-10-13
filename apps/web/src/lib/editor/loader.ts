@@ -10,6 +10,28 @@ import type {
   EditorWasmBridge,
   Id,
 } from './types';
+import type { AnnotationDocument, OntologyVersion, RelabelChange, RelabelWasmBridge } from './types';
+import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
+
+/** Pins the inputs before async loading; Rust owns all validation and attribute policy. */
+export async function projectRelabel(
+  document: AnnotationDocument, ontology: OntologyVersion, change: RelabelChange,
+  source: string | URL | EditorWasmBridge = DEFAULT_WASM_BRIDGE_URL,
+): Promise<AnnotationObject> {
+  const pinnedDocument = structuredClone(document);
+  const pinnedOntology = structuredClone(ontology);
+  const pinnedChange = { ...change };
+  try {
+    const bridge = await loadWasmBridge(source) as Partial<RelabelWasmBridge>;
+    if (typeof bridge.project_relabel !== 'function') {
+      throw new Error('The loaded native editor does not support relabel projection');
+    }
+    return bridge.project_relabel(pinnedDocument, pinnedOntology,
+      pinnedChange.object_id, pinnedChange.before_hash, pinnedChange.label_id);
+  } catch (reason) {
+    throw toApiError(reason, 'RELABEL_PROJECTION_FAILED', newRequestId);
+  }
+}
 
 let requestCounter = 0;
 /** Actual exported WASM function calls and binary RGBA copies; JsValue object references are not byte copies. */

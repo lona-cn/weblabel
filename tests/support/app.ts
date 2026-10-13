@@ -24,6 +24,14 @@ const bootstrapClients = new WeakMap<TestApp, () => Promise<ApiClient>>();
 const bootstrapLogins = new WeakMap<TestApp, () => Promise<ApiClient>>();
 const databasePaths = new WeakMap<TestApp, string>();
 const launchCodes = new WeakMap<TestApp, () => Promise<string>>();
+type DownloadResponse = { status: number; bytes: Uint8Array; headers: Headers };
+const downloads = new WeakMap<ApiClient, (path: string) => Promise<DownloadResponse>>();
+
+export async function download_for_test(client: ApiClient, path: string): Promise<DownloadResponse> {
+  const download = downloads.get(client);
+  if (!download) throw new Error('ApiClient was not created by this test helper');
+  return download(path);
+}
 let builtDefaultApiBinary: string | null = null;
 
 async function freeLoopbackPort(): Promise<number> {
@@ -57,7 +65,10 @@ function responseClient(
   csrf: () => string,
   onCookie?: (cookie: string) => void,
 ): ApiClient {
+  const clientOrigin = new URL(baseUrl).origin;
   async function send<T>(method: string, path: string, body: BodyInit | undefined, contentType?: string, idempotencyKey?: string): Promise<ApiResponse<T>> {
+    const url = new URL(path, baseUrl);
+    if (url.origin !== clientOrigin || url.username || url.password) throw new Error('Test request must remain same-origin without URL credentials');
     const headers = new Headers();
     const activeCookie = cookie();
     if (activeCookie) headers.set('cookie', activeCookie);
@@ -66,7 +77,7 @@ function responseClient(
     headers.set('origin', baseUrl);
     if (contentType) headers.set('content-type', contentType);
     if (idempotencyKey) headers.set('idempotency-key', idempotencyKey);
-    const response = await fetch(new URL(path, baseUrl), { method, headers, body });
+    const response = await fetch(url, { method, headers, body, redirect: 'error' });
     const setCookie = response.headers.get('set-cookie');
     if (setCookie) onCookie?.(setCookie.split(';', 1)[0] ?? '');
     const text = await response.text();
@@ -78,7 +89,7 @@ function responseClient(
     return { status: response.status, json: json as T, headers: response.headers };
   }
 
-  return {
+  const client: ApiClient = {
     request<T = unknown>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>> {
       return send<T>(method, path, body === undefined ? undefined : JSON.stringify(body), body === undefined ? undefined : 'application/json');
     },
@@ -90,6 +101,30 @@ function responseClient(
       return send<T>('POST', path, form, undefined, idempotencyKey);
     },
   };
+  downloads.set(client, async path => {
+    const url = new URL(path, baseUrl);
+    if (url.origin !== clientOrigin || url.username || url.password) throw new Error('Test download must remain same-origin without URL credentials');
+    const headers = new Headers({ origin: baseUrl });
+    const activeCookie = cookie();
+    if (activeCookie) headers.set('cookie', activeCookie);
+    const response = await fetch(url, { headers, redirect: 'error' });
+    const setCookie = response.headers.get('set-cookie');
+    if (setCookie) onCookie?.(setCookie.split(';', 1)[0] ?? '');
+    return { status: response.status, bytes: new Uint8Array(await response.arrayBuffer()), headers: response.headers };
+  });
+  return client;
+}
+/** Authenticates only caller-owned synthetic loopback installations. */
+export async function login_at_origin_for_test(baseUrl: string, credentials: { username: string; password: string } | { launch_code: string; password: string }): Promise<ApiClient> {
+  const origin = new URL(baseUrl);
+  if (origin.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname) || origin.pathname !== '/' || origin.search || origin.hash || origin.username || origin.password) throw new Error('Synthetic fixture requires a loopback HTTP origin');
+  let cookie = ''; let csrf = '';
+  const client = responseClient(origin.origin, () => cookie, () => csrf, value => { cookie = value; });
+  const response = await client.request<JsonRecord>('POST', 'launch_code' in credentials ? '/api/session/bootstrap' : '/api/session/login', credentials);
+  if (response.status < 200 || response.status >= 300) throw new Error('Synthetic login failed (' + response.status + '): ' + JSON.stringify(response.json));
+  csrf = fieldString(record(response.json, 'synthetic login'), 'csrf_token');
+  if (!cookie) throw new Error('Synthetic login did not return a session cookie');
+  return client;
 }
 export function prepare_test_api(): string {
   const configuredBinary = process.env.WEBLABEL_API_BINARY;

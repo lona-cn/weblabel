@@ -29,3 +29,5 @@ session router 最外层统一 Cache-Control: no-store，包括成功、错误�
 ## 范围
 
 保留 query 导航，不新增静态发行不支持 fallback 的 /setup 路径。没有公网注册、网页发码、自动重启、密码找回、云账号或订阅要求。初始化状态只是 UI 提示，不赋予任何写权限。
+
+后续管理员恢复增量采用独立exclusive maintenance入口，先于session/bootstrap显示独立表单；不改变本ADR的initial/restore初始化权限。终端码授权更新已有身份，完成不自动登录，清环境并重启才普通登录。公网自助找回、网页发码、自动重启仍不支持；详见[运维](../operations.md#管理员密码恢复)。

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { root, options, requireNode, validateEntries, checkedPath, sha, mainGuard } from './build.mjs';
 import { schemaHash, migrations, validateDatabase, objectHashes, objectName } from './backup.mjs';
+import { backupBoundary, restoreChecklist } from './ops-diagnostics.mjs';
 requireNode();
 const { DatabaseSync } = await import('node:sqlite');
 
@@ -43,6 +44,7 @@ export function restoreBackup(argv = process.argv.slice(2)) {
   const args = options(argv, ['--backup-dir', '--data-dir', '--migrations-dir']);
   requireNode();
   if (!args['--backup-dir'] || !args['--data-dir']) throw new Error('required: --backup-dir --data-dir');
+  console.log(JSON.stringify({ format: 'weblabel-backup-boundary', ...backupBoundary }));
   const source = path.resolve(args['--backup-dir']), destination = path.resolve(args['--data-dir']);
   if (fs.existsSync(destination)) throw new Error('restore_directory_exists: restore only to a NEW directory');
   const { manifest, manifest_sha256 } = validateBackup(source, args['--migrations-dir'] ? path.resolve(args['--migrations-dir']) : undefined);
@@ -60,6 +62,7 @@ export function restoreBackup(argv = process.argv.slice(2)) {
     fs.writeFileSync(path.join(destination, 'restore.json'), JSON.stringify({ format: 'weblabel-restored-data', version: 1, backup_manifest_sha256: manifest_sha256, authentication: manifest.authentication }, null, 2), { flag: 'wx' });
   } catch (error) { throw new Error(`restore_failed_target_preserved: ${error.message}`); }
   console.log(`restore_created: ${destination}; choose fresh local credentials using the one-time bootstrap code`);
+  console.log(JSON.stringify({ format: 'weblabel-restore-handoff', version: 1, historical_identities: 'unchanged', business_bytes: 'unchanged', checklist: restoreChecklist }));
   return destination;
 }
 mainGuard(import.meta.url, () => restoreBackup());

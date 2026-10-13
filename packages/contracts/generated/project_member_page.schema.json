@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProjectMemberPage",
+  "type": "object",
+  "required": [
+    "items",
+    "next_cursor"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ProjectMember"
+      }
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "ProjectMember": {
+      "type": "object",
+      "required": [
+        "role",
+        "user_id",
+        "username"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/definitions/ProjectMemberRole"
+        },
+        "user_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProjectMemberRole": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "annotator",
+        "reviewer",
+        "viewer"
+      ]
+    }
+  }
+}

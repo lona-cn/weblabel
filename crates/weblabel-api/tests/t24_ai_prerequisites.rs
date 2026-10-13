@@ -186,7 +186,7 @@ async fn malformed_public_capabilities_fail_closed_without_exposing_private_colu
     let (cookie, _, _) = f.login().await;
     f.profile(
         "profile-invalid",
-        "codex_local",
+        "claude_local",
         "ready",
         json!({"image_input":true,"secret_ref":"private-capability-sentinel"}),
     )

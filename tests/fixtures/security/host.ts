@@ -9,7 +9,7 @@ export function buildHost(): void {
   execFileSync(process.execPath, ['scripts/build-agent-host.mjs'], { cwd: root, stdio: 'inherit' });
   built = true;
 }
-export type SyntheticProviderId = 'mimo_api' | 'openai_api' | 'anthropic_api' | 'codex_local';
+export type SyntheticProviderId = 'mimo_api' | 'openai_api' | 'anthropic_api';
 export interface HostInput {
   directory: string; apiBase: string; token: string; secret: string;
   provider: SyntheticProviderId; config: Record<string, unknown>;

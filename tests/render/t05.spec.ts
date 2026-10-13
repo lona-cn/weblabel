@@ -325,6 +325,49 @@ test('zoom keeps the bbox stroke and handle at fixed screen width at the C8 view
   await page.evaluate(() => window.__t05?.dispose());
 });
 
+for (const dpr of [1, 2]) {
+  test('UX01 preview outline and center remain visible before commit at DPR ' + dpr, async ({ browser }) => {
+    const context = await browser.newContext({ deviceScaleFactor: dpr });
+    const page = await context.newPage();
+    const projection = {
+      objects: [{ bounds: [10, 20, 110, 220], color: [0, 1, 0, 1], selected: true, locked: false }],
+      overlays: [{ bounds: [120, 60, 220, 160], color: [0, 0, 1, 1] }],
+    };
+    const boot = await bootGoldenScene(page, projection, { scale: 2, tx: 13, ty: -7 });
+    expect(boot.state).toBe('ready');
+    console.info('UX01_ADAPTER ' + boot.adapter);
+    const assertPreview = async (scale: number, tx: number, ty: number, name: string) => {
+      const shot = await captureScene(page, 'reports/T05/ux-improvement/main-independent/' + name + '-dpr' + dpr + '.png');
+      const x0 = (120 * scale + tx) * dpr, x1 = (220 * scale + tx) * dpr;
+      const y0 = (60 * scale + ty) * dpr, y1 = (160 * scale + ty) * dpr;
+      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+      for (const [x, y] of [[x0, my - 20 * dpr], [x1 - 1, my - 20 * dpr], [mx - 20 * dpr, y0], [mx - 20 * dpr, y1 - 1]]) {
+        expect(shot.handle(x, y)).toBe(true);
+      }
+      expect(shot.handle(mx, my)).toBe(true);
+      expect(shot.handle(mx + 6 * dpr, my)).toBe(false);
+      expect(shot.handle(x0 + 4 * dpr, my - 20 * dpr)).toBe(false);
+      // Committed selection still retains all eight CSS-space controls.
+      for (const [x, y] of [[10, 20], [60, 20], [110, 20], [10, 120], [110, 120], [10, 220], [60, 220], [110, 220]]) {
+        const px = (x * scale + tx) * dpr, py = (y * scale + ty) * dpr;
+        // Samples are inside the 8px control but outside the 2px bbox stroke.
+        expect(shot.stroke(px - 3 * dpr, py - 3 * dpr)).toBe(true);
+        expect(shot.stroke(px - 5 * dpr, py - 5 * dpr)).toBe(false);
+      }
+    };
+    await assertPreview(2, 13, -7, 'preview-scale2');
+    await page.evaluate(() => window.__t05!.update_viewport({ scale: 1, tx: 33, ty: 13, css_width: 640, css_height: 480, dpr: window.devicePixelRatio }));
+    await assertPreview(1, 33, 13, 'preview-scale1');
+    await page.evaluate((objects) => window.__t05!.update_objects({ objects, overlays: [] }), projection.objects);
+    const cleared = await captureScene(page, 'reports/T05/ux-improvement/main-independent/preview-cleared-dpr' + dpr + '.png');
+    for (const [x, y] of [[153, 93], [252, 93], [183, 73], [183, 172], [203, 123]]) {
+      expect(cleared.handle(x * dpr, y * dpr)).toBe(false);
+    }
+    await page.evaluate(() => window.__t05!.dispose());
+    await context.close();
+  });
+}
+
 test('actual external device loss keeps the scene and recover() restores rendering', async ({ page }) => {
   await page.addInitScript(() => {
     type Device = NonNullable<Window['__t05Device']>;

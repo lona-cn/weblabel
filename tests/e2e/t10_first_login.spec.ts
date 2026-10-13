@@ -9,9 +9,11 @@ test('T10 first browser setup connects the real session and CSRF and permits pas
   await forward_api_for_test(page, app.base_url);
   const code = await launch_code_for_test(app);
   const password = '  首次登录-2026  ';
+  await page.setViewportSize({ width: 320, height: 720 });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '首次设置本地账户' })).toBeVisible();
   await expect(page.getByTestId('login-username')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByTestId('bootstrap-launch-code').fill('incorrect-code');
   await page.getByTestId('bootstrap-password').fill(password);
   await page.getByTestId('bootstrap-password-confirm').fill(password);
@@ -51,9 +53,10 @@ test('T10 first browser setup connects the real session and CSRF and permits pas
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '登录', exact: true })).toBeVisible();
   await expect(page.getByTestId('bootstrap-submit')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByTestId('login-username').fill('local-admin');
   await page.getByTestId('login-password').fill(password);
   await page.getByTestId('login-submit').click();
-  await expect(page.getByRole('button', { name: /首次登录浏览器回归/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开项目 首次登录浏览器回归' })).toBeVisible();
   await testInfo.attach('first-login-sanitized-result', { body: Buffer.from(JSON.stringify({ fixture: 'real_empty_app_native_page', bootstrap_wrong_code: 401, bootstrap: 200, projects_post: 201, logout: 204, username: session.username, user_id: session.user_id, project_id: project.project_id, relogin: true })), contentType: 'application/json' });
 });

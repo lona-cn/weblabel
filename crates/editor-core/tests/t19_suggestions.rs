@@ -194,6 +194,156 @@ fn typed_attrs(pairs: Vec<(&str, Scalar)>) -> Attrs {
         .collect()
 }
 
+#[test]
+fn relabel_acceptance_projects_target_attributes_and_undo_restores_original() {
+    let mut ontology = ontology();
+    let mut target = ontology.labels[0].clone();
+    target.label_id = Id::from("target");
+    target.attributes[0].key = "target_state".into();
+    ontology.labels.push(target);
+    let before = document();
+    let mut editor = Editor::new(before.clone(), ontology).unwrap();
+    let set = set_with_changes(json!([{
+        "kind": "set_label", "change_id": "relabel", "object_id": "object_person_001",
+        "label_id": "target", "before_hash": original_hash(), "reason": "relabel review"
+    }]));
+    let delta = editor
+        .dispatch(EditorCommand::ApplySuggestions {
+            set,
+            change_ids: ids(&["relabel"]),
+            expected_generation: 0,
+        })
+        .unwrap();
+    let after = editor.snapshot();
+    assert_eq!(
+        after.objects[0].attributes,
+        typed_attrs(vec![("target_state", Scalar::String("unknown".into()))])
+    );
+    assert_eq!(after.objects[0].label_id, Id::from("target"));
+    assert_eq!(
+        delta.suggestion_decisions[0].decision,
+        SuggestionDecision::Accept
+    );
+    let undo = editor.dispatch(EditorCommand::Undo).unwrap();
+    assert_eq!(editor.snapshot(), before);
+    assert_eq!(
+        undo.suggestion_decisions[0].decision,
+        SuggestionDecision::Revert
+    );
+    let redo = editor.dispatch(EditorCommand::Redo).unwrap();
+    assert_eq!(editor.snapshot(), after);
+    assert_eq!(
+        redo.suggestion_decisions[0].decision,
+        SuggestionDecision::Accept
+    );
+}
+
+#[test]
+fn same_label_acceptance_keeps_optional_missing_but_records_decision() {
+    let mut ontology = ontology();
+    let mut optional = ontology.labels[0].attributes[0].clone();
+    optional.key = "historical_optional".into();
+    optional.required = false;
+    ontology.labels[0].attributes.push(optional);
+    let before = document();
+    let mut editor = Editor::new(before.clone(), ontology).unwrap();
+    let set = set_with_changes(json!([{
+        "kind": "set_label", "change_id": "same", "object_id": "object_person_001",
+        "label_id": "label_person", "before_hash": original_hash(), "reason": "same label review"
+    }]));
+    let delta = editor
+        .dispatch(EditorCommand::ApplySuggestions {
+            set,
+            change_ids: ids(&["same"]),
+            expected_generation: 0,
+        })
+        .unwrap();
+    assert_eq!(editor.snapshot(), before);
+    assert_eq!(
+        delta.suggestion_decisions[0].decision,
+        SuggestionDecision::Accept
+    );
+    assert_eq!(delta.generation, 0);
+    assert!(!delta.document_changed);
+    assert!(delta.can_undo);
+    let undo = editor.dispatch(EditorCommand::Undo).unwrap();
+    assert_eq!(editor.snapshot(), before);
+    assert_eq!(
+        undo.suggestion_decisions[0].decision,
+        SuggestionDecision::Revert
+    );
+    assert_eq!(undo.generation, 0);
+    assert!(!undo.document_changed);
+    assert!(undo.can_redo);
+    let no_op = editor
+        .dispatch(EditorCommand::SetLabel {
+            object_ids: vec![person()],
+            label_id: Id::from("label_person"),
+        })
+        .unwrap();
+    assert!(no_op.can_redo);
+    let redo = editor.dispatch(EditorCommand::Redo).unwrap();
+    assert_eq!(
+        redo.suggestion_decisions[0].decision,
+        SuggestionDecision::Accept
+    );
+    assert_eq!(editor.snapshot(), before);
+    assert_eq!(redo.generation, 0);
+    assert!(!redo.document_changed);
+    editor.dispatch(EditorCommand::Undo).unwrap();
+    editor
+        .dispatch(EditorCommand::SetAttributes {
+            object_ids: vec![person()],
+            values: typed_attrs(vec![("helmet_state", Scalar::String("wearing".into()))]),
+        })
+        .unwrap();
+    assert!(!editor.can_redo());
+    editor.dispatch(EditorCommand::Undo).unwrap();
+    assert_eq!(editor.snapshot(), before);
+    assert!(!editor.can_undo());
+}
+
+#[test]
+fn decision_only_history_retains_latest_128_accepts_without_document_changes() {
+    let mut editor = editor();
+    let before = editor.snapshot();
+    for index in 0..129 {
+        let change_id = format!("same_{index}");
+        let set = set_with_changes(json!([{
+            "kind": "set_label", "change_id": change_id, "object_id": "object_person_001",
+            "label_id": "label_person", "before_hash": original_hash(), "reason": "same label review"
+        }]));
+        editor
+            .dispatch(EditorCommand::ApplySuggestions {
+                set,
+                change_ids: ids(&[&change_id]),
+                expected_generation: 0,
+            })
+            .unwrap();
+    }
+    for index in (1..129).rev() {
+        let undo = editor.dispatch(EditorCommand::Undo).unwrap();
+        assert_eq!(
+            undo.suggestion_decisions[0].change_ids,
+            ids(&[&format!("same_{index}")])
+        );
+        assert_eq!(
+            undo.suggestion_decisions[0].decision,
+            SuggestionDecision::Revert
+        );
+        assert_eq!(undo.generation, 0);
+        assert!(!undo.document_changed);
+    }
+    assert!(!editor.can_undo());
+    assert_eq!(editor.snapshot(), before);
+    let redo = editor.dispatch(EditorCommand::Redo).unwrap();
+    assert_eq!(redo.suggestion_decisions[0].change_ids, ids(&["same_1"]));
+    assert_eq!(
+        redo.suggestion_decisions[0].decision,
+        SuggestionDecision::Accept
+    );
+}
+
 // 1. Stale detection: any mismatch leaves the document untouched.
 
 #[test]

@@ -2,9 +2,11 @@
 // DPR-aware viewport + canvas-local pointer routing, dirty-flag render
 // scheduling, and idempotent disposal. Geometry math lives in Rust
 // (geometry::viewport); this class only forwards browser facts.
+import type { BBox } from '../../../../../packages/contracts/generated/BBox';
 import { freezeDeep } from '../persistence/draft-store';
 import { assertCanonicalBudget, bridgeStats, createEditorFacadeFactory, DEFAULT_WASM_BRIDGE_URL, toApiError } from './loader';
-import type { CanvasLabel, RenderStats, LocalObjectFlagMap, LocalObjectFlags } from './types';
+import type { CanvasLabel, RenderStats, LocalObjectFlagMap, LocalObjectFlags, HitStackState } from './types';
+export { projectRelabel } from './loader';
 import type {
   AnnotationDocument,
   ApiError,
@@ -208,10 +210,12 @@ export class EditorHost {
     // it in set_tool and the web side releases the gesture's pointer captures.
     this.releaseCaptures();
     this.activePointerId = null;
-    return this.guard((facade) => {
+    const accepted = this.guard((facade) => {
       facade.set_tool(tool);
       return true;
     }, 'EDITOR_BRIDGE_FAILURE') === true;
+    if (accepted) this.markDirty();
+    return accepted;
   }
 
   setActiveLabel(labelId: Id): void {
@@ -267,6 +271,22 @@ export class EditorHost {
     this.markDirty();
   }
 
+  focusSelection(): void {
+    this.guard((facade) => { facade.focus_selection(); return null; }, 'EDITOR_BRIDGE_FAILURE');
+    this.markDirty();
+  }
+
+  focusRegion(bounds: BBox): boolean {
+    const focused = this.guard(facade => facade.focus_region(bounds), 'EDITOR_BRIDGE_FAILURE', true) ?? false;
+    if (focused) this.markDirty();
+    return focused;
+  }
+
+
+  getHitStackState(): Readonly<HitStackState> | null {
+    return this.guard((facade) => Object.freeze(facade.get_hit_stack_state()), 'EDITOR_BRIDGE_FAILURE', true);
+  }
+
   setPredictions(sets: SuggestionSet[]): void {
     this.guard((facade) => {
       facade.set_predictions(sets);
@@ -291,8 +311,8 @@ export class EditorHost {
   }
 
   /** The Rust-owned view (the additive C3 read-back from reports/T09). */
-  getViewport(): Viewport | null {
-    return this.guard((facade) => facade.get_viewport(), 'EDITOR_BRIDGE_FAILURE', true);
+  getViewport(): Readonly<Viewport> | null {
+    return this.guard((facade) => Object.freeze({ ...facade.get_viewport() }), 'EDITOR_BRIDGE_FAILURE', true);
   }
 
   /**

@@ -1,53 +1,53 @@
-# WebLabel v0.1 Implementation Plan
+# WebLabel v0.1 实施计划
 
-> **For agentic workers:** 使用用户指定的 omp 多Agent执行，按 `docs/execution.md` 的隔离、测试、审查、集成流程逐任务推进。已安装相关开发skills时可以辅助，但它们不是本包执行前提；不要更换成另一套编排工具。
+这份计划说明项目边界、任务关系和验收条件，不是当前完成情况。已有应用时从启动入口恢复；进度以 STATUS、实际提交和报告为准，不重新执行已完成任务。
 
-**Goal:** 从空目录交付浏览器中真实wgpu图片标注/审校工作台，并通过官方订阅运行时和多模态API生成可审阅、可撤销、可追溯的候选。
+## 要交付什么
 
-**Architecture:** React业务UI + Rust/WASM编辑内核 + wgpu画布；本地Rust服务管理SQLite/不可变媒体/版本；Node Host管理官方Codex/Claude和模型API，Python检测worker为可选组件。所有模型只能产候选，人工接受通过统一编辑/保存事务。
+在浏览器中完成真实 wgpu 图片标注与审校。官方订阅运行时和多模态 API 只生成候选；人工采纳必须可审阅、可撤销、可追溯，并进入统一编辑与保存事务。
 
-**Tech Stack:** Rust/Axum/SQLx/SQLite、wgpu/WGSL/WASM、React/TypeScript/Vite、Node24LTS、pnpm、Playwright/Vitest、Python/uv；具体成功组合由T00固定。
+React 负责业务界面，Rust/WASM 负责编辑内核，wgpu 负责画布。本地 Rust 服务管理 SQLite、不可变媒体和版本；Node Host 管理官方 Claude 及模型 API；Python 检测 worker 是可选组件。Codex 已退役，仅保留历史身份解码。
 
-**Spec:** `docs/architecture.md` + `docs/contracts.md` + `docs/testing-contracts.md`；原草案 `docs/reference/original-proposal.md`。
+技术栈为 Rust / Axum / SQLx / SQLite、wgpu / WGSL / WASM、React / TypeScript / Vite、Node 24 LTS、pnpm、Playwright / Vitest、Python / uv。实际可用的固定组合由 T00 核验，不凭计划里的名称猜测支持。
 
-## Global Constraints
+开发仍使用用户指定的 omp。按协作规程完成隔离、测试、审查和集成；可使用已安装 skills，但不改用另一套编排工具。具体接口以架构、共享契约和测试约定为准；原始草案保留作历史对照。
 
-- 桌面浏览器、静态PNG/JPEG、bbox+属性；v0.1正式部署只loopback。
-- canonical连续像素坐标、EXIF可追溯，领域f64；DPR只用于显示。
-- Rust编辑几何唯一来源；预测/文档/不可变版本/审核/快照分层。
-- 保存CAS+幂等+同事务候选journal；一个逻辑拖动一个undo。
-- 用户本人官方订阅运行时；无token抓取、凭证转售或未授权外发。
-- 36项任务唯一DAG；最多3写+1只读review，隔离未经证实就串行。
-- 未运行真实模型/硬件不能标live/hardware通过；mock仅工程验证。
-- 文件64MiB、单边4096、像素16,777,216、decoded并发1、GPU纹理预算256MiB；超限明确拒绝，不静默降质。
-- 不引入Mask/Polygon/视频/3D/云计费/实时协同/自研推理引擎。
+## 本轮边界
 
-## Review Focus
+- 面向桌面浏览器和静态 PNG / JPEG，编辑 bbox 与属性；首版正式部署只在 loopback。
+- 坐标使用 canonical 连续像素，EXIF 变换可追溯；领域数值使用 f64，DPR 只影响显示。
+- Rust 是编辑几何唯一来源。预测、文档、不可变版本、审核和快照分层，不让旧模型结果覆盖人工修改。
+- 保存使用 CAS、幂等及同事务候选 journal；一次逻辑拖动只产生一个 undo。
+- 订阅接入只使用用户本人官方运行时；禁止抓 token、转售凭证或未经授权外发。
+- TASKS.json 是唯一任务 DAG。最多 3 个写入者加 1 个只读审查者；隔离未证实就串行。
+- 没有运行真实模型或硬件，就不能标为 live / hardware 通过；mock 只能验证工程行为。
+- 文件上限 64 MiB、单边 4096、像素 16,777,216、decoded 并发 1、GPU 纹理预算 256 MiB。超限必须明确拒绝，不能静默降质。
+- 本轮不做 Mask、Polygon、视频、3D、云计费、实时协同或自研推理引擎。
 
-1. 方向含镜像的图片及DPR变化：显示与训练导出同一坐标。T03/T07/T14/T15。
-2. 输入中断/IME/异步初始化：不创建半框、不误删、不把旧图挂新图。T09/T12。
-3. 保存ACK、AI乱序、跨图片和跨版本：不清掉新dirty、不把候选覆盖人。T11/T13/T19/T24/T30。
-4. 取消/进程崩溃/授权变更与恶意提示：不泄漏密钥、不越权执行、不自动重复计费。T16/T21/T25/T29/T32。
-5. 审核后的新编辑与导出期间变化：review只绑定原版本、snapshot不漂移、negative不猜测。T26/T27。
+## 审查时重点看什么
 
-## 阅读与执行顺序
+1. 图片含镜像方向或 DPR 改变时，显示与训练导出是否使用同一坐标。对应 T03 / T07 / T14 / T15。
+2. 输入中断、IME、异步初始化时，是否避免半框、误删和旧图挂到新图。对应 T09 / T12。
+3. 保存 ACK、AI 乱序、切图和跨版本时，是否保留新的 dirty 状态，并拒绝旧候选覆盖人。对应 T11 / T13 / T19 / T24 / T30。
+4. 取消、崩溃、授权变更与恶意提示时，是否保护密钥、拒绝越权和自动重复计费。对应 T16 / T21 / T25 / T29 / T32。
+5. 审核后继续编辑或导出中修改时，review 是否仍绑定原版本，snapshot 是否固定，negative 是否由人明确确认。对应 T26 / T27。
 
-从START_HERE.md开始；START_PROMPT.md可直接附给omp。主Agent读架构/契约/执行规程后只执行T00；不是一上来开多个Agent同时创建package.json。
+## 怎样按计划工作
 
-任务卡各自包含输入、输出、文件归属、精确行为、断言起点、窄测试argv、交付证据和停止条件。TASKS.json是机读调度依据；STATUS.json唯一运行状态，初始全部pending。
+先从 START_HERE 恢复，再读架构、契约和协作规程。只有尚未初始化时才串行执行 T00，不让多个工作者同时创建共享入口。
 
-## 子项目与关卡
+每张任务卡都应能单独派发：说明依赖输入、交付内容、文件范围、行为与断言、精确验收 argv、证据和停止条件。调度读 TASKS.json，运行状态读 STATUS.json。
 
-| 关卡 | 能看见/验证的软件成果 | 范围 |
+| 关卡 | 要验证的成果 | 任务范围 |
 |---|---|---|
-| G0 | 固定版本workspace与一致契约 | T00/T01；T02并行核验运行时 |
-| G1 | 真wgpu画框、保存、刷新、导出并加载 | T03–T15 |
-| G2 | 模型候选、授权、差异、接受与撤销整链 | T16–T25；mock可验工程但必须标记 |
-| G3 | 审核/快照/权限/故障恢复/可重复构建 | T26–T30/T33 |
-| G4 | Windows真实GPU与五种必需实际渠道 | T31/T32；缺条件为blocked |
-| G5 | 测量工具、独立总审查与真实发布结论 | T34/T35 |
+| G0 | 固定版本的工作区和一致契约 | T00 / T01；T02 可并行核验运行时 |
+| G1 | 真 wgpu 画框、保存、刷新、导出与加载 | T03–T15 |
+| G2 | 模型候选、授权、差异、接受与撤销的完整链路 | T16–T25；mock 工程验证必须明确标注 |
+| G3 | 审核、快照、权限、故障恢复和可重复构建 | T26–T30 / T33 |
+| G4 | Windows 真实 GPU 与四个必需实际渠道 | T31 / T32；缺条件就 blocked |
+| G5 | 测量工具、独立总审查和真实发布结论 | T34 / T35 |
 
-这不是严格按编号单线程：例如T26可以在AI后半段进行，T33/T34可在外部G4等待期间完成。以依赖和locks判断ready，不以表格行序猜可并行。
+不用按编号逐个串行。T26 可以与 AI 后半段独立推进，T33 / T34 可以在等待外部 G4 条件时完成。是否就绪、能否并行，都由依赖和 locks 决定，不靠表格顺序猜测。
 
 ## 完整任务目录
 
@@ -75,10 +75,10 @@
 | [T19](tasks/T19.md) | 候选校验、原子接受与可撤销来源 | wl-core | T04, T17 |
 | [T20](tasks/T20.md) | OpenAI/Luna、Anthropic与MiMo HTTP适配器 | wl-ai | T16 |
 | [T21](tasks/T21.md) | 受限MCP语义工具与run级权限 | wl-ai | T16, T19 |
-| [T22](tasks/T22.md) | 官方Codex订阅运行时适配 | wl-ai | T02, T21 |
+| [T22](tasks/T22.md) | Codex 活动渠道退役与历史身份保全 | wl-ai | T02, T21 |
 | [T23](tasks/T23.md) | 官方Claude订阅/Sonnet运行时适配 | wl-ai | T02, T21 |
 | [T24](tasks/T24.md) | AI面板、差异预览与按上下文接受 | wl-web | T13, T19 |
-| [T25](tasks/T25.md) | 模型全链路、外发授权与差异化AI关卡 | wl-ai | T18, T20, T22, T23, T24 |
+| [T25](tasks/T25.md) | 模型全链路、外发授权与差异化AI关卡 | wl-ai | T18, T20, T23, T24 |
 | [T26](tasks/T26.md) | 任务租约、版本审核与负样本语义 | wl-backend | T15 |
 | [T27](tasks/T27.md) | 不可变数据集快照与可校验交付 | wl-backend | T14, T26 |
 | [T28](tasks/T28.md) | 密集对象性能、按需绘制与资源预算 | wl-renderer | T12, T13, T24 |
@@ -135,8 +135,8 @@ flowchart TD
 
 图用于理解模块；机器精确依赖以TASKS.json为准。
 
-## 完成定义
+## 什么时候才算完成
 
-首版完整完成需要G0–G5按实际证据通过，尤其Codex订阅、Claude订阅/Sonnet、Luna API、MiMo API和真实检测器不能互相替代。缺账号/权限/硬件可交limited preview，但T35不能done。每个任务的代码完成和provider的live_passed是不同状态。
+完整首版需要 G0–G5 都有实际通过证据。Claude 本人官方订阅/full Sonnet、OpenAI API/full Luna、MiMo image API 和锁定 RT-DETR 四渠道不能互相替代；Anthropic API 可选，Codex 退役。缺账号、调用授权、真实证据或硬件仍 blocked；本轮安全排除不算通过，不把 T35 标 done。
 
-本执行包只完成计划及结构校验，未实现产品，不包含可运行的pnpm dev业务应用。T00负责建立这些命令；直接运行前请先让omp执行T00。
+代码任务完成与 provider 的 live_passed 是两种状态。计划结构检查、页面打开、构建成功都不替代真实验收。

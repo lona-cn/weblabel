@@ -31,6 +31,26 @@ fn instance_layout_matches_shader_record() {
 }
 
 #[test]
+fn preview_instances_preserve_native_bounds_and_center_control_flags() {
+    use renderer_wgpu::{buffers::overlay_instances_into, scene::Overlay};
+    let bounds = [13.25, 27.5, 109.75, 211.125];
+    let mut instances = Vec::new();
+    overlay_instances_into(
+        &[Overlay {
+            bounds,
+            color: [0.0, 0.0, 1.0, 1.0],
+        }],
+        &mut instances,
+    );
+    assert_eq!(instances.len(), 1);
+    assert_eq!(instances[0].bounds, bounds);
+    assert_eq!(instances[0].flags, 0);
+    assert_eq!(instances[0].padding, [0; 3]);
+    overlay_instances_into(&[], &mut instances);
+    assert!(instances.is_empty());
+}
+
+#[test]
 fn zero_area_viewport_has_no_backing_store_and_restores_nonzero_size() {
     let zero = Viewport {
         scale: 1.0,

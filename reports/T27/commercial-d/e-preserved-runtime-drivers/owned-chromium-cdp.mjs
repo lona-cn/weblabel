@@ -1,0 +1,15 @@
+import {chromium} from '@playwright/test';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+const root=await fs.realpath(process.cwd());
+const profile=path.join(root,'target/build-cache/commercial-d/formal-browser-profile');
+const temporary=path.join(root,'target/build-cache/commercial-d/browser-temp');
+await fs.mkdir(profile,{recursive:true});await fs.mkdir(temporary,{recursive:true});
+for(const directory of [profile,temporary])if(!(await fs.realpath(directory)).toLowerCase().startsWith(root.toLowerCase()+path.sep))throw new Error('Owned browser path escapes project');
+process.env.TEMP=temporary;process.env.TMP=temporary;process.env.TMPDIR=temporary;
+const context=await chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,args:['--enable-unsafe-webgpu','--use-angle=d3d11','--disable-software-rasterizer','--remote-debugging-port=0']});
+const active=await fs.readFile(path.join(profile,'DevToolsActivePort'),'utf8');
+const port=Number(active.split(/\r?\n/)[0]);if(!Number.isInteger(port)||port<1||port>65535)throw new Error('Invalid owned CDP port');
+console.log('OWNED_CHROMIUM_CDP_READY http://127.0.0.1:'+port);
+let closing=false;const stop=async()=>{if(closing)return;closing=true;await context.close();process.exit(0);};
+process.on('SIGINT',stop);process.on('SIGTERM',stop);context.on('close',()=>process.exit(0));

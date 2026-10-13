@@ -1,0 +1,61 @@
+import { test, expect } from '@playwright/test';
+import { launch_code_for_test, start_test_app } from '../support/app';
+import sharp from 'sharp';
+test.use({ trace: 'off', screenshot: 'off', video: 'off' });
+test('new local installation creates a real independent reviewer through GUI', async ({ page }, testInfo) => {
+  const app = await start_test_app();
+  try {
+    await page.route(String(testInfo.project.use.baseURL) + '/api/**', async route => {
+      const request = route.request(); const source = new URL(request.url()); const headers: Record<string, string> = { ...request.headers(), origin: app.base_url }; delete headers.host; delete headers['content-length'];
+      const response = await route.fetch({ url: `${app.base_url}${source.pathname}${source.search}`, headers });
+      await route.fulfill({ response });
+    });
+    await page.goto('/');
+    await page.getByTestId('bootstrap-launch-code').fill(await launch_code_for_test(app));
+    await page.getByTestId('bootstrap-password').fill('synthetic-browser-ux18');
+    await page.getByTestId('bootstrap-password-confirm').fill('synthetic-browser-ux18');
+    await page.getByTestId('bootstrap-submit').click();
+    await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
+    await page.getByText('平台账号管理 / 准备独立审核身份', { exact: true }).click();
+    await page.getByLabel('新账号用户名').fill('browser-reviewer');
+    await page.getByLabel('新账号密码').fill('synthetic-reviewer-ux18');
+    const created = page.waitForResponse(r => r.url().endsWith('/api/users') && r.request().method() === 'POST');
+    await page.getByRole('button', { name: '创建普通账号' }).click();
+    const accountResponse = await created; expect(accountResponse.status()).toBe(201);
+    const account = await accountResponse.json() as { user_id: string };
+    await expect(page.getByLabel('新账号密码')).toHaveValue('');
+    await page.getByTestId('project-name').fill('Browser independent review');
+    const projectResponse = page.waitForResponse(r => r.url().endsWith('/api/projects') && r.request().method() === 'POST');
+    await page.getByTestId('project-submit').click();
+    const createdProject = await projectResponse; expect(createdProject.status()).toBe(201);
+    const project = await createdProject.json() as { project_id: string; allow_self_review: boolean }; expect(project.allow_self_review).toBe(false);
+    await page.goto('/');
+    await page.getByRole('button', { name: '管理成员：Browser independent review' }).click();
+    await page.getByText('Browser independent review · 项目成员', { exact: true }).click();
+    await page.getByLabel('目标 user_id').fill(account.user_id);
+    await page.getByRole('combobox', { name: /项目角色/ }).selectOption('reviewer');
+    await page.getByRole('button', { name: '确认设置项目成员' }).click();
+    await expect(page.getByText(/browser-reviewer · reviewer/)).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('independent-reviewer.png') });
+    const actual = await page.evaluate(async projectId => { const response = await fetch(`/api/projects/${projectId}/members`); return { status: response.status, body: await response.json() }; }, project.project_id);
+    expect(actual.status).toBe(200); expect(actual.body.items).toEqual(expect.arrayContaining([expect.objectContaining({ user_id: account.user_id, role: 'reviewer' })]));
+    await testInfo.attach('actual-member-state', { body: Buffer.from(JSON.stringify({ project_id: project.project_id, user_id: account.user_id, role: 'reviewer', allow_self_review: false, actual })), contentType: 'application/json' });
+    const png = await sharp({ create: { width: 20, height: 20, channels: 3, background: '#557788' } }).png().toBuffer();
+    const uploaded = await page.evaluate(async ({ projectId, bytes }) => {
+      const form = new FormData(); form.append('images', new Blob([new Uint8Array(bytes)], { type: 'image/png' }), 'synthetic-delivery.png');
+      const response = await fetch('/api/projects/' + projectId + '/assets', { method: 'POST', headers: { 'x-csrf-token': sessionStorage.getItem('weblabel_csrf') ?? '', 'idempotency-key': crypto.randomUUID() }, body: form });
+      return { status: response.status, body: await response.json() };
+    }, { projectId: project.project_id, bytes: [...png] });
+    expect(uploaded.status).toBe(202);
+    await expect.poll(async () => page.evaluate(async projectId => { const response = await fetch('/api/projects/' + projectId + '/assets?limit=100'); return (await response.json()).items.length; }, project.project_id)).toBe(1);
+    const ontologies = await page.evaluate(async projectId => { const response = await fetch('/api/projects/' + projectId + '/ontologies'); return (await response.json()).items; }, project.project_id);
+    await page.goto('/?project_id=' + project.project_id + '&dataset_view=1');
+    await page.getByTestId('dataset-ontology').selectOption(ontologies[0].ontology_version_id);
+    await page.getByRole('button', { name: '浏览图片与标注摘要' }).click();
+    await expect(page.getByText('此固定版本未完成', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('snapshot-create')).toBeDisabled();
+    await page.getByRole('combobox', { name: 'synthetic-delivery.png' }).selectOption('exclude');
+    await expect(page.getByRole('region', { name: '冻结确认摘要' })).toContainText('明确排除 1');
+    await page.screenshot({ path: testInfo.outputPath('exact-delivery-blocker.png') });
+  } finally { await app.stop(); }
+});

@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+const report=path.dirname(fileURLToPath(import.meta.url));
+const node='D:/workspace/src/weblabel/target/t31-node-runtime-v24.16.0/node-v24.16.0-win-x64/node.exe';
+const release='D:/workspace/src/weblabel/target/defect-repair/verification/2026-10-11T16-27-14-786Z-4b536dc1-c177-4189-bc7a-5784b43d3a06/release';
+const temp=path.join(report,'temp'); fs.mkdirSync(temp,{recursive:true});
+const env=Object.fromEntries(['SystemRoot','SystemDrive','WINDIR','PATH','PATHEXT','COMSPEC'].filter(k=>process.env[k]).map(k=>[k,process.env[k]]));
+Object.assign(env,{TEMP:temp,TMP:temp,TMPDIR:temp,WEBLABEL_SKIP_SECURITY:'1'});
+const argv=[node,path.join(report,'shadow-active-host-shutdown.mjs'),'direct-api',release,path.join(report,'physical-smoke')];
+const result=spawnSync(argv[0],argv.slice(1),{cwd:'D:/workspace/src/weblabel',env,encoding:'utf8',shell:false,timeout:115000,maxBuffer:16*1024*1024});
+fs.writeFileSync(path.join(report,'shadow-command.log'),result.stdout+result.stderr);
+fs.writeFileSync(path.join(report,'shadow-command.json'),JSON.stringify({argv,cwd:'D:/workspace/src/weblabel',env,exit_code:result.status,signal:result.signal,error:result.error?.message,modelcalls:0,skipSecurity:true},null,2));
+process.stdout.write(result.stdout); process.stderr.write(result.stderr); process.exitCode=result.status??1;

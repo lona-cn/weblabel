@@ -84,6 +84,10 @@ impl ObjectStore {
             std::env::current_dir()?.join(root)
         };
         create_dir_all_durably(&root)?;
+        // Native Windows persistence APIs require verbatim paths beyond MAX_PATH.
+        // Resolve once; every staged, published and read path inherits this root.
+        #[cfg(windows)]
+        let root = fs::canonicalize(root)?;
         if let Some(parent) = root.parent() {
             sync_directory(parent)?;
         }

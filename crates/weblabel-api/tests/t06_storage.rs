@@ -4,6 +4,72 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use weblabel_api::{config::ServerConfig, storage::ObjectStore, AppState};
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn repository_clones_admit_four_sustained_writers_without_starvation() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/admission-fixtures");
+    std::fs::create_dir_all(&root).unwrap();
+    let directory = tempfile::tempdir_in(root).unwrap();
+    let state = AppState::open(&test_config(directory.path(), Duration::from_secs(2)))
+        .await
+        .unwrap();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(4));
+    let mut writers = Vec::new();
+    for writer in 0..4 {
+        let repository = state.repository.clone();
+        let barrier = barrier.clone();
+        writers.push(tokio::spawn(async move {
+            barrier.wait().await;
+            let mut maximum = Duration::ZERO;
+            for wave in 0..500 {
+                let start = Instant::now();
+                let tx = repository
+                    .begin_write()
+                    .await
+                    .unwrap_or_else(|error| panic!("writer={writer} wave={wave} error={error:?}"));
+                maximum = maximum.max(start.elapsed());
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                tx.commit().await.unwrap();
+            }
+            (writer, maximum)
+        }));
+    }
+    for writer in writers {
+        println!(
+            "sustained writer/max_begin_wait={:?}",
+            writer.await.unwrap()
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn repository_four_short_writers_complete_one_hundred_waves() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/admission-fixtures");
+    std::fs::create_dir_all(&root).unwrap();
+    let directory = tempfile::tempdir_in(root).unwrap();
+    let state = AppState::open(&test_config(directory.path(), Duration::from_secs(2)))
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(4));
+        let mut writers = Vec::new();
+        for _ in 0..4 {
+            let repository = state.repository.clone();
+            let barrier = barrier.clone();
+            writers.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let tx = repository.begin_write().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                tx.commit().await.unwrap();
+            }));
+        }
+        for writer in writers {
+            writer.await.unwrap();
+        }
+    }
+}
+
 fn test_config(root: &std::path::Path, timeout: Duration) -> ServerConfig {
     ServerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
@@ -83,7 +149,9 @@ fn object_content_deduplicates_and_filename_never_becomes_a_path() {
 
     assert_eq!(first.sha256, second.sha256);
     assert_eq!(first.path, second.path);
-    assert!(first.path.starts_with(&object_root));
+    assert!(std::fs::canonicalize(&first.path)
+        .unwrap()
+        .starts_with(std::fs::canonicalize(&object_root).unwrap()));
     assert!(!first.path.to_string_lossy().contains("evil.png"));
 }
 
@@ -126,7 +194,9 @@ fn concurrent_initialization_durably_creates_nested_object_root() {
         .collect::<Vec<_>>();
 
     let stored = stores[0].put_bytes("image.png", b"durable object").unwrap();
-    assert!(stored.path.starts_with(&object_root));
+    assert!(std::fs::canonicalize(&stored.path)
+        .unwrap()
+        .starts_with(std::fs::canonicalize(&object_root).unwrap()));
     assert_eq!(std::fs::read(&stored.path).unwrap(), b"durable object");
 }
 
@@ -580,4 +650,51 @@ fn production_configuration_rejects_non_loopback_bind() {
     assert_eq!(error.code, "NON_LOOPBACK_BIND");
     config.production = false;
     assert!(config.validate().is_ok());
+}
+
+#[cfg(windows)]
+#[test]
+fn long_windows_object_paths_publish_atomically_deduplicate_and_survive_reopen() {
+    use std::os::windows::ffi::OsStrExt;
+
+    let temp = tempdir().unwrap();
+    let base = temp.path().join("long-object-root");
+    let padding = 191usize
+        .saturating_sub(base.as_os_str().encode_wide().count() + 1)
+        .max(1);
+    let root = base.join("r".repeat(padding));
+    let store = ObjectStore::new(&root).unwrap();
+    let bytes = b"immutable media at the Windows native path boundary";
+    let hash = format!("{:x}", Sha256::digest(bytes));
+    let destination = root.join(&hash[..2]).join(&hash[2..4]).join(&hash);
+    assert!(destination.as_os_str().encode_wide().count() >= 260);
+
+    let unpublished = store.stage_bytes("original.jpg", bytes).unwrap();
+    assert!(
+        !destination.exists(),
+        "unpublished bytes must not be a readable object"
+    );
+    drop(unpublished);
+    assert_eq!(count_files(store.root()), 0);
+
+    let first = store
+        .stage_bytes("original.jpg", bytes)
+        .unwrap()
+        .publish()
+        .unwrap();
+    assert_eq!(first.sha256, hash);
+    assert_eq!(first.size_bytes, bytes.len() as u64);
+    assert_eq!(std::fs::read(&first.path).unwrap(), bytes);
+    let second = store.put_bytes("another-name.jpg", bytes).unwrap();
+    assert_eq!(second.sha256, hash);
+    assert_eq!(std::fs::read(&second.path).unwrap(), bytes);
+    assert_eq!(count_files(store.root()), 1);
+    drop(store);
+
+    let reopened = ObjectStore::new(&root).unwrap();
+    assert_eq!(
+        std::fs::read(reopened.path_for_hash(&hash).unwrap()).unwrap(),
+        bytes
+    );
+    assert_eq!(count_files(reopened.root()), 1);
 }

@@ -1,16 +1,942 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "1391abc3ef9c1561983a31b98e898444c9fabc47",
-  "last_updated_at": "2026-10-09T11:05:05.277Z",
+  "application_commit": "5e946d2a0d66763fe6585ce50a130d95402e0195",
+  "last_updated_at": "2026-10-12T17:57:58.774Z",
   "user_requests": {
     "first_start_login": {
       "status": "done",
-      "base_commit": "e832edd3bb1cb987a1d31e308477a24b04f4887a",
-      "integrated_commit": "1391abc3ef9c1561983a31b98e898444c9fabc47",
+      "base_commit": "01160b8fee95b4e2940236cc87fd484f571e19fa",
+      "integrated_commit": "f27c34dc95ccc80e9f9e31759498ba7e6e6a4795",
       "contract_version": "v1",
-      "evidence": ["reports/publication/first-start-login.json", "reports/publication/first-start-login-review.json"],
+      "evidence": [
+        "reports/T10/first-start-login/verification.json",
+        "reports/T10/first-start-login/review-initial.json",
+        "reports/T10/first-start-login/review-final.json",
+        "reports/T10/first-start-login/release-smoke.json",
+        "reports/T10/first-start-login/final-native.log",
+        "reports/T10/first-start-login/final-in-flight.log",
+        "reports/T10/first-start-login/final-frontend.log",
+        "reports/T10/first-start-login/final-integration-auth.log",
+        "reports/T10/first-start-login/final-e2e.log",
+        "reports/T10/first-start-login/cleanup.json"
+      ],
       "blockers": [],
+      "release_gate_change": false,
+      "publication_verification": {
+        "status": "done",
+        "base_commit": "e832edd3bb1cb987a1d31e308477a24b04f4887a",
+        "integrated_commit": "1391abc3ef9c1561983a31b98e898444c9fabc47",
+        "contract_version": "v1",
+        "evidence": [
+          "reports/publication/first-start-login.json",
+          "reports/publication/first-start-login-review.json"
+        ],
+        "blockers": [],
+        "release_gate_change": false
+      }
+    },
+    "ux_improvement": {
+      "status": "done",
+      "approved_scope": "all_five_waves_UX01_UX29",
+      "plan": "docs/ux-improvement-plan.md",
+      "base_commit": "f807d5092ad0998d425e11afafc5c10b36b0b813",
+      "contract_version": "v1_additive_explicit_voluntary_activity_binding",
+      "latest_implementation_commit": "97effe65effde17b5b60cac634189f4b17a18f2f",
+      "verified_release_source": "97effe65effde17b5b60cac634189f4b17a18f2f",
+      "item_catalog": "reports/T35/ux-improvement/item-catalog.json",
+      "items": [
+        {
+          "id": "UX01",
+          "status": "done",
+          "actualcommit": [
+            "ee5b6484575b83c879077a912668e1f6cffc4c1a"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T05/ux-improvement/green-all-pixels.log",
+            "reports/T05/ux-improvement/native-gestures.log"
+          ],
+          "smoke": [
+            "reports/T05/ux-improvement/main-static-proof.json",
+            "reports/T05/ux-improvement/main-dpr2-125-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX02",
+          "status": "done",
+          "actualcommit": [
+            "286d57313fbc157273735953d88e47c093c545c7",
+            "c96f668e4725f996526971039264e99eecabfb0b",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T12/ux-improvement/tests.log"
+          ],
+          "smoke": [
+            "reports/T12/ux-improvement/main-bulk-geometry-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX03",
+          "status": "done",
+          "actualcommit": [
+            "286d57313fbc157273735953d88e47c093c545c7",
+            "c96f668e4725f996526971039264e99eecabfb0b",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T12/ux-improvement/tests.log"
+          ],
+          "smoke": [
+            "reports/T12/ux-improvement/main-attribute-proof.json",
+            "reports/T12/ux-improvement/main-bulk-geometry-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX04",
+          "status": "done",
+          "actualcommit": [
+            "286d57313fbc157273735953d88e47c093c545c7",
+            "c96f668e4725f996526971039264e99eecabfb0b",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T12/ux-improvement/tests.log"
+          ],
+          "smoke": [
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX05",
+          "status": "done",
+          "actualcommit": [
+            "063d215ed74b1b7fc1e97ccd3bd19d7dedbddd23",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T35/ux-improvement/main-native-regression.log"
+          ],
+          "smoke": [
+            "reports/T12/ux-improvement/main-bulk-geometry-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX06",
+          "status": "done",
+          "actualcommit": [
+            "12b9ab95c3520f0b149d202a6bf3e5434806928d",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "f5309c708e404d368011a44450191384f674c577",
+            "227d3a31d07572b554a3e894c4802c6ab59e2fae",
+            "60200d8fb33875dade3cf396a0d596ed86de5904"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T26/ux-improvement/rust-checks.log",
+            "reports/T26/ux-improvement/web-checks.json"
+          ],
+          "smoke": [
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json",
+            "reports/T26/ux-improvement/task-entry-guard/result.json",
+            "reports/T12/ux-improvement/main-final-task-entry-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX07",
+          "status": "done",
+          "actualcommit": [
+            "286d57313fbc157273735953d88e47c093c545c7",
+            "c96f668e4725f996526971039264e99eecabfb0b",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T12/ux-improvement/tests.log"
+          ],
+          "smoke": [
+            "reports/T12/ux-improvement/main-pause-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX08",
+          "status": "done",
+          "actualcommit": [
+            "286d57313fbc157273735953d88e47c093c545c7",
+            "c96f668e4725f996526971039264e99eecabfb0b",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T12/ux-improvement/tests.log"
+          ],
+          "smoke": [
+            "reports/T12/ux-improvement/main-readonly-surface-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX09",
+          "status": "done",
+          "actualcommit": [
+            "286d57313fbc157273735953d88e47c093c545c7",
+            "c96f668e4725f996526971039264e99eecabfb0b",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T12/ux-improvement/tests.log"
+          ],
+          "smoke": [
+            "reports/T12/ux-improvement/main-readonly-surface-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX10",
+          "status": "done",
+          "actualcommit": [
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log"
+          ],
+          "smoke": [
+            "reports/T08/ux-improvement/main-media-auto-track-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX11",
+          "status": "done",
+          "actualcommit": [
+            "78bf10d8732c0692a41d8fcbbbb91a5c770f8423",
+            "840c85b698f2d816f8c032ffec58e1164f1ed179",
+            "c715111d5a782329059c036352d6fcd2e05d6523",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "342505f9859d9b680ec7e8faa04d698296002260"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T24/ux-improvement/ai-tests.log",
+            "reports/T24/ux-improvement/empty-presets/green.log"
+          ],
+          "smoke": [
+            "reports/T24/ux-improvement/empty-presets/result.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX12",
+          "status": "done",
+          "actualcommit": [
+            "12b9ab95c3520f0b149d202a6bf3e5434806928d",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "f5309c708e404d368011a44450191384f674c577",
+            "227d3a31d07572b554a3e894c4802c6ab59e2fae",
+            "60200d8fb33875dade3cf396a0d596ed86de5904"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T26/ux-improvement/rust-checks.log",
+            "reports/T26/ux-improvement/web-checks.json"
+          ],
+          "smoke": [
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json",
+            "reports/T26/ux-improvement/task-entry-guard/result.json",
+            "reports/T12/ux-improvement/main-final-task-entry-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX13",
+          "status": "done",
+          "actualcommit": [
+            "f203c27e3de58edebcab8540cae0fd348f75ae87",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T08/ux-improvement/project-delivery.json"
+          ],
+          "smoke": [
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json",
+            "reports/T08/ux-improvement/main-norm-version-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX14",
+          "status": "done",
+          "actualcommit": [
+            "f203c27e3de58edebcab8540cae0fd348f75ae87",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T08/ux-improvement/project-delivery.json"
+          ],
+          "smoke": [
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json",
+            "reports/T08/ux-improvement/main-norm-version-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX15",
+          "status": "done",
+          "actualcommit": [
+            "12b9ab95c3520f0b149d202a6bf3e5434806928d",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "f5309c708e404d368011a44450191384f674c577",
+            "227d3a31d07572b554a3e894c4802c6ab59e2fae",
+            "60200d8fb33875dade3cf396a0d596ed86de5904"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T26/ux-improvement/rust-checks.log",
+            "reports/T26/ux-improvement/web-checks.json"
+          ],
+          "smoke": [
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json",
+            "reports/T12/ux-improvement/main-final-task-entry-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX16",
+          "status": "done",
+          "actualcommit": [
+            "12b9ab95c3520f0b149d202a6bf3e5434806928d",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "f5309c708e404d368011a44450191384f674c577",
+            "227d3a31d07572b554a3e894c4802c6ab59e2fae",
+            "60200d8fb33875dade3cf396a0d596ed86de5904"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T26/ux-improvement/rust-checks.log",
+            "reports/T26/ux-improvement/web-checks.json"
+          ],
+          "smoke": [
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX17",
+          "status": "done",
+          "actualcommit": [
+            "f203c27e3de58edebcab8540cae0fd348f75ae87",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T08/ux-improvement/project-delivery.json"
+          ],
+          "smoke": [
+            "reports/T08/ux-improvement/project-delivery.json",
+            "reports/T12/ux-improvement/main-final-task-entry-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX18",
+          "status": "done",
+          "actualcommit": [
+            "f203c27e3de58edebcab8540cae0fd348f75ae87",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T08/ux-improvement/project-delivery.json"
+          ],
+          "smoke": [
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX19",
+          "status": "done",
+          "actualcommit": [
+            "f203c27e3de58edebcab8540cae0fd348f75ae87",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "afddea4641bf7a07c4a9d677dd47b180a676726f"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T08/ux-improvement/project-delivery.json"
+          ],
+          "smoke": [
+            "reports/T27/ux-improvement/acceptance/main-20261013/ux19-result.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX20",
+          "status": "done",
+          "actualcommit": [
+            "78bf10d8732c0692a41d8fcbbbb91a5c770f8423",
+            "840c85b698f2d816f8c032ffec58e1164f1ed179",
+            "c715111d5a782329059c036352d6fcd2e05d6523",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "342505f9859d9b680ec7e8faa04d698296002260"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T24/ux-improvement/ai-tests.log",
+            "reports/T24/ux-improvement/empty-presets/green.log"
+          ],
+          "smoke": [
+            "reports/T24/ux-improvement/empty-presets/result.json",
+            "reports/T24/ux-improvement/primary-surface/result.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX21",
+          "status": "done",
+          "actualcommit": [
+            "78bf10d8732c0692a41d8fcbbbb91a5c770f8423",
+            "840c85b698f2d816f8c032ffec58e1164f1ed179",
+            "c715111d5a782329059c036352d6fcd2e05d6523",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "d075b261dc27e3a065fe6ebbef4323e896127c06"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T24/ux-improvement/ai-tests.log"
+          ],
+          "smoke": [
+            "reports/T24/ux-improvement/primary-surface/result.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX22",
+          "status": "done",
+          "actualcommit": [
+            "78bf10d8732c0692a41d8fcbbbb91a5c770f8423",
+            "840c85b698f2d816f8c032ffec58e1164f1ed179",
+            "c715111d5a782329059c036352d6fcd2e05d6523",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T24/ux-improvement/ai-tests.log"
+          ],
+          "smoke": [
+            "reports/T24/ux-improvement/primary-surface/result.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX23",
+          "status": "done",
+          "actualcommit": [
+            "78bf10d8732c0692a41d8fcbbbb91a5c770f8423",
+            "840c85b698f2d816f8c032ffec58e1164f1ed179",
+            "c715111d5a782329059c036352d6fcd2e05d6523",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "cc07d37bb3c8bb790f88a3d28d593e1060613c00",
+            "d660a74f675ea1fb3b5d12a56dd26b5f1af9c98f",
+            "d5006e69c54b4367abd5ffdd89757cbcc87ce24e",
+            "e17f6e2508d197ebd767c1141da00e64de1df690",
+            "4e316d98781bda10a15fc680c4d2beecb130a2ae",
+            "a3bebc835be80bc2c2daf3dfe0caac8f81571a54",
+            "97effe65effde17b5b60cac634189f4b17a18f2f"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T24/ux-improvement/ai-tests.log",
+            "reports/T35/ux-improvement/closure-final/main-final-web.log",
+            "reports/T24/ux-improvement/ux23-main-final/api-lib.log"
+          ],
+          "smoke": [
+            "reports/T24/ux-improvement/primary-surface/result.json",
+            "reports/T24/ux-improvement/ux23-main-final/production-activity-proof.json",
+            "reports/T24/ux-improvement/ux23-main-final/old-props-new-click-browser-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-ux23-closure.json"
+        },
+        {
+          "id": "UX24",
+          "status": "done",
+          "actualcommit": [
+            "464c8e8fe008efd2f5ee492bc0754683a52953e4",
+            "fcfd3f541f0cef9ea8a023481b1991269ddfc628",
+            "89513a46e92e01bb3dd63740c593009954dae1e9",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T33/ux-improvement/ops-tests.log",
+            "reports/T33/ux-improvement/main-tests.log"
+          ],
+          "smoke": [
+            "reports/T33/ux-improvement/main-runtime-doctor-proof.json",
+            "reports/T33/ux-improvement/main-entry-launcher-exit.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX25",
+          "status": "done",
+          "actualcommit": [
+            "89513a46e92e01bb3dd63740c593009954dae1e9",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T33/ux-improvement/ops-tests.log",
+            "reports/T33/ux-improvement/main-tests.log"
+          ],
+          "smoke": [
+            "reports/T33/ux-improvement/main-launcher-exit.json",
+            "reports/T33/ux-improvement/main-entry-launcher-exit.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX26",
+          "status": "done",
+          "actualcommit": [
+            "89513a46e92e01bb3dd63740c593009954dae1e9",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T33/ux-improvement/ops-tests.log",
+            "reports/T33/ux-improvement/main-tests.log"
+          ],
+          "smoke": [
+            "reports/T33/ux-improvement/main-runtime-doctor-proof.json",
+            "reports/T33/ux-improvement/main-entry-launcher-exit.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX27",
+          "status": "done",
+          "actualcommit": [
+            "89513a46e92e01bb3dd63740c593009954dae1e9",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T33/ux-improvement/ops-tests.log",
+            "reports/T33/ux-improvement/main-tests.log"
+          ],
+          "smoke": [
+            "reports/T33/ux-improvement/main-ops-proof.json",
+            "reports/T12/ux-improvement/main-closed-task-original-rescue.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX28",
+          "status": "done",
+          "actualcommit": [
+            "89513a46e92e01bb3dd63740c593009954dae1e9",
+            "53bd7929f14cec19bdeceaa8747d02865464ff15"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/entry-final/main-final-web.log",
+            "reports/T33/ux-improvement/ops-tests.log",
+            "reports/T33/ux-improvement/main-tests.log"
+          ],
+          "smoke": [
+            "reports/T33/ux-improvement/main-ops-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        },
+        {
+          "id": "UX29",
+          "status": "done",
+          "actualcommit": [
+            "53bd7929f14cec19bdeceaa8747d02865464ff15",
+            "53b3f82df919058964274d27f81015e8b5238630",
+            "de827f7f312c42108325131ec130824d4ce7f7f5",
+            "0fbc7406867af32d1bd588d230f6d441db7229f0",
+            "3e117e76271c393cce5e52ba6bd183eab038e237"
+          ],
+          "tests": [
+            "reports/T35/ux-improvement/main-docs-check.log",
+            "reports/T35/ux-improvement/docs-current/check-docs.log",
+            "reports/T35/ux-improvement/main-docs-final.log"
+          ],
+          "smoke": [
+            "reports/T35/ux-improvement/docs-current/result.json",
+            "reports/T26/ux-improvement/main-packaged-flow-proof.json"
+          ],
+          "review": "reports/T35/ux-improvement/review-60200d8.json"
+        }
+      ],
+      "remaining": [],
+      "release_gate_change": false,
+      "live_model_calls": 0,
+      "original_task_statuses_unchanged": true,
+      "evidence_limits": [
+        "Synthetic local accounts/media only",
+        "AI component/controlled HTTP != live support",
+        "1099 batch evidence retains original53b3f82d source binding",
+        "ConPTY signal exit512 retained, safe ownedstop receipt does not imply normalexit0",
+        "T32/G4/performance/license blockers unchanged"
+      ],
+      "final_evidence": [
+        "reports/T35/ux-improvement/release-closure-final-manifest.json",
+        "reports/T35/ux-improvement/closure-final/main-final-runs.json",
+        "reports/T35/ux-improvement/review-ux23-closure.json",
+        "reports/T35/ux-improvement/result.json",
+        "reports/T35/ux-improvement/worktree-cleanup-final.json"
+      ],
+      "documentation_commit": "3e117e76271c393cce5e52ba6bd183eab038e237"
+    },
+    "admin_password_recovery": {
+      "status": "done",
+      "base_commit": "3e707e181dd71f85561d7a075a95fe8f93c31fcf",
+      "actualcommit": "81978b02433035d55a4fa48de43ae05b29b0ff13",
+      "contract_version": "v1-additive-admin-recovery",
+      "evidence": [
+        "reports/T10/admin-recovery/verification.json",
+        "reports/T10/admin-recovery/final-smoke.json",
+        "reports/T10/admin-recovery/review-final.json",
+        "reports/T10/admin-recovery/release-final-manifest.json",
+        "reports/T10/admin-recovery/main-native.log",
+        "reports/T10/admin-recovery/main-web.log",
+        "reports/T10/admin-recovery/main-launcher.log",
+        "reports/T10/admin-recovery/final-consumed-cli.log",
+        "reports/T10/admin-recovery/worktree-cleanup.json",
+        "reports/T10/admin-recovery/temporary-cleanup.json"
+      ],
+      "blockers": [],
+      "release_gate_change": false
+    },
+    "documentation_management": {
+      "status": "done",
+      "base_commit": "dd78c6b92ec2d11f1682362ee51ed6b02ec51bb4",
+      "integrated_commit": "10c4da6627da4244ee6c1f70c252b03bfafc6671",
+      "contract_version": "v1",
+      "run_id": "2026-10-12T12-52-37-812Z",
+      "evidence": [
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/actualcommit.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/result.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/documentation-hashes.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/artifact-hashes.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/review.md",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/review-evidence-final.md",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/fast-project-cargo/result.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/primary-save-replay-conflicts.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/ui-dataset-independent.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/backup-restore-smoke.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/api-unicode-closed.json",
+        "reports/T33/documentation/2026-10-12T12-52-37-812Z/temporary-cleanup.json"
+      ],
+      "blockers": [],
+      "release_gate_change": false
+    },
+    "defect_repair": {
+      "status": "completed_authorized_scope_with_release_blockers",
+      "base_commit": "18172d5bd36932a7a202f174f1969e16dc055738",
+      "run_id": "2026-10-11T13-21-39-234Z",
+      "contract_version": "v1",
+      "completed_shared_defects": [
+        "WL-03",
+        "WL-04"
+      ],
+      "remaining_defects": [
+        "WL-05"
+      ],
+      "shared_prerequisites": {
+        "actualcommit": "69f28c00fb93b6a07c37610ae18ae7571ab66565",
+        "evidence": [
+          "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/step1.json",
+          "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/shared-base-proof.json",
+          "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/shared-base-review.json",
+          "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/shared-base-actualcommit.json"
+        ],
+        "scope": "scoped_engineering_only_not_hardware_performance_or_live_support"
+      },
+      "required_live_channels": [
+        "claude_local",
+        "openai_api",
+        "mimo_api",
+        "detector_local"
+      ],
+      "optional_live_channels": [
+        "anthropic_api"
+      ],
+      "security": {
+        "status": "skipped_by_user",
+        "verification": "not_verified",
+        "scope_deviation_evidence": "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/security-scope-deviation.json"
+      },
+      "actual_model_calls": 0,
+      "external_blockers": [
+        "新增明确官方账户/完整model_id与权益、两样本图hash和外发scope、费用/请求数量授权及真实原始收据；旧Detector5请求已用完不能重用"
+      ],
+      "full_release_ready": false,
+      "actualcommit": "04f7e27f6bf2a034152c5fb68fc32711be111f37",
+      "source_snapshot_sha256": "1e9f85917719920b8315650070c0dda419abad5695a7a22bd3c7ef183b61a3d3",
+      "completed_engineering_defects": [
+        "WL-01",
+        "WL-02",
+        "WL-03",
+        "WL-04",
+        "WL-06",
+        "WL-07",
+        "WL-08",
+        "WL-09",
+        "WL-10"
+      ],
+      "evidence": [
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/repair-result.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/repair-report.md",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/gate-release-authorized-source/result.json",
+        "reports/T00/defect-repair/2026-10-11T13-21-39-234Z/final-security-exclusion-source-review.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/gate-release-authorized-source/smoke.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/primary-a11y-8/actual-primary-a11y.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/cleanup-preservation/normal-worktree-removal-result.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/scaffolding-preservation/manifest.json"
+      ],
+      "current_release_gate": {
+        "status": "failed",
+        "exit_code": 1,
+        "evidence": "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/gate-release-authorized-source/result.json"
+      },
+      "gpu_performance": {
+        "status": "failed",
+        "boxes": 2000,
+        "scenario": "committed_edit",
+        "cpu_p95_ms": 15.862000000004628,
+        "required_cpu_p95_ms": 8,
+        "evidence": "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/gate-release-authorized-source/T31/result.json",
+        "optimization_not_in_current_scope": true
+      },
+      "release_blockers": [
+        "2k committed_edit CPU P9515.862ms exceeds unchanged8ms; optimization is outside this authorized defect scope",
+        "Four actual channels lack new explicit authorization and genuine complete receipts",
+        "Security skipped by user, not verified"
+      ],
+      "remote_ci_exercised": false,
+      "clean_clone_claim": false,
+      "full_1_0_ready": false
+    },
+    "readme_first_use": {
+      "status": "done",
+      "base_commit": "d7954ae77a36fb45df2cf6495dedf5d3540a0a23",
+      "integrated_commit": "4b432b865fe1d9ceb84554c5ab1db1842a51217e",
+      "contract_version": "C3",
+      "evidence": [
+        "reports/T33/readme-first-use/actualcommit.json",
+        "reports/T33/readme-first-use/verification.json",
+        "reports/T33/readme-first-use/screenshots.json",
+        "reports/T33/readme-first-use/docs-smoke.json",
+        "reports/T33/readme-first-use/actual-browser-first-login.json",
+        "reports/T33/readme-first-use/p2-task5-reviewed.json",
+        "reports/T33/readme-first-use/actual-zip-readback.json",
+        "reports/T33/readme-first-use/independent-review-final-pass.txt",
+        "reports/T33/readme-first-use/owned-runtime-stop.json",
+        "reports/T33/readme-first-use/worktree-cleanup.json",
+        "reports/T33/readme-first-use/temporary-cleanup.json"
+      ],
+      "blockers": [],
+      "product_sources_changed": false,
+      "release_gate_change": false
+    },
+    "ui_redesign": {
+      "status": "done",
+      "base_commit": "09ad052a1344e0d8b8a31580b70b9c7234ee73b1",
+      "integrated_commit": "c126d734d802998b1da245b41d384b236da35482",
+      "contract_version": "v1",
+      "evidence": [
+        "reports/T08/ui-redesign/research.json",
+        "reports/T08/ui-redesign/verification.json",
+        "reports/T08/ui-redesign/tests.log",
+        "reports/T08/ui-redesign/e2e-results-after.json",
+        "reports/T08/ui-redesign/review.json",
+        "reports/T08/ui-redesign/method.json"
+      ],
+      "blockers": [],
+      "release_gate_change": false
+    },
+    "ui_refine": {
+      "status": "done",
+      "base_commit": "0d775230d140a3873ffb8017540691f052e4940d",
+      "integrated_commit": "3c9fb400ebed2f1b61d081a4687a824d4bae5abe",
+      "copy_commit": "e72639b7",
+      "contract_version": "v1",
+      "evidence": [
+        "reports/T08/ui-refine/verification.json",
+        "reports/T08/ui-refine/tests.log",
+        "reports/T08/ui-refine/types.log",
+        "reports/T08/ui-refine/build.log",
+        "reports/T08/ui-refine/e2e-results-final.json",
+        "reports/T08/ui-refine/review.json",
+        "reports/T08/ui-refine/review-final.txt",
+        "reports/T08/ui-refine/download-manifest.json",
+        "reports/T08/ui-refine/method.json"
+      ],
+      "blockers": [],
+      "release_gate_change": false
+    },
+    "documentation_cleanup": {
+      "status": "done",
+      "base_commit": "779c7ab9cb6472c41e26a08969f073a8ac5c18f8",
+      "integrated_commit": "11131ed620b209b1e625e9e557754ba128acb219",
+      "contract_version": "v1",
+      "evidence": [
+        "reports/T00/docs-cleanup/verification.json",
+        "reports/T00/docs-cleanup/review.json"
+      ],
+      "blockers": [],
+      "release_gate_change": false
+    },
+    "ui_layout_fix": {
+      "status": "done",
+      "base_commit": "8af77d60f4ea7e5a7d60bbff2ecd8b15ceba2d65",
+      "integrated_commit": "806f536e6d80fb5f96812d93c82d6b26a7a3b941",
+      "contract_version": "v1",
+      "evidence": [
+        "reports/T08/layout-fix/verification.json",
+        "reports/T08/layout-fix/review.json",
+        "reports/T08/layout-fix/focus-review.json",
+        "reports/T08/layout-fix/native-smoke.json",
+        "reports/T08/layout-fix/native-dataset.zip",
+        "reports/T08/layout-fix-smoke-main/result.json",
+        "reports/T08/layout-fix/worktree-evidence.json",
+        "reports/T08/layout-fix/checks.log",
+        "reports/T08/layout-fix/final-checks.log"
+      ],
+      "blockers": [],
+      "release_gate_change": false
+    },
+    "commercial_core": {
+      "status": "done",
+      "base_commit": "ffc794c41d88fe3c879babef0178581bbcc6b126",
+      "integrated_commit": "35c8009c28b54681425d14bcfbf479f8e6168e27",
+      "contract_version": "v1",
+      "plan_status": "E-result-reviewed",
+      "evidence": [
+        "docs/commercial-core-plan.md",
+        "reports/T08/commercial-core/baseline.json",
+        "reports/T08/commercial-core/plan-review.txt",
+        "reports/T08/commercial-core/plan-approved.txt",
+        "reports/T08/commercial-core/iteration-c-verification.json",
+        "reports/T08/commercial-core/review-c-final.json",
+        "reports/T08/commercial-core/c-conflict-recovery-delta-review.json",
+        "reports/T08/commercial-core/c-closure-cleanup.json",
+        "reports/T27/commercial-d/d-resume-plan.json",
+        "reports/T27/commercial-d/plan-review.json",
+        "reports/T27/commercial-d/resume-baseline.json",
+        "reports/T27/commercial-d/d-iteration-verification.json",
+        "reports/T27/commercial-d/d-result-review-final.json",
+        "reports/T27/commercial-d/d-actualcommit.json",
+        "reports/T27/commercial-d/e-plan-review-final.json",
+        "reports/T27/commercial-d/e-native-workspace-initial-failure.json",
+        "reports/T27/commercial-d/e-debug-api-build-receipt.json",
+        "reports/T27/commercial-d/e-joint-verification-final.json",
+        "reports/T27/commercial-d/e-result-review-final.json",
+        "reports/T27/commercial-d/e-review-report-persistence-cleared-by-main.json",
+        "reports/T27/commercial-d/e-native-full-workspace-green.json",
+        "reports/T27/commercial-d/e-whole-11-integration-green.json",
+        "reports/T27/commercial-d/e-three-ui-exports-independent-green.json",
+        "reports/T27/commercial-d/e-focus-final-release-verified.json",
+        "reports/T27/commercial-d/e-five-final-source-actual-dataset-keyboard-green.json",
+        "reports/T27/commercial-d/e-five-final-source-native-hardware-keyboard-green.json",
+        "reports/T27/commercial-d/e-real-immutable-approval-new-head-not-inherited.json",
+        "reports/T27/commercial-d/e-final-normal-owned-runtime-stop.json",
+        "reports/T27/commercial-d/e-owned-worktree-cleanup-complete.json",
+        "reports/T27/commercial-d/e-owned-temporary-drivers-cleanup.json",
+        "reports/T27/commercial-d/e-final-metadata-and-original-DAG-smoke.json",
+        "reports/T27/commercial-d/e-actualcommit.json"
+      ],
+      "iterations": [
+        {
+          "id": "A",
+          "status": "done",
+          "actualcommit": "ec077774de46f580e08517b4819e4ddd1fac8d88",
+          "verification": "reports/T08/commercial-core/iteration-a-verification.json",
+          "review": "reports/T08/commercial-core/review-a-final.json",
+          "next": "B"
+        },
+        {
+          "id": "B",
+          "status": "done",
+          "actualcommit": "ade75241730502a8dfad56a022f6a9d37c16a784",
+          "verification": "reports/T08/commercial-core/iteration-b-verification.json",
+          "review": "reports/T08/commercial-core/review-b-final.json",
+          "next": "C"
+        },
+        {
+          "id": "C",
+          "status": "done",
+          "actualcommit": "f2c0ef9e4101f848583f1d9569cc1d0970b1ce0a",
+          "verification": "reports/T08/commercial-core/iteration-c-verification.json",
+          "review": "reports/T08/commercial-core/review-c-final.json",
+          "delta_review": "reports/T08/commercial-core/c-conflict-recovery-delta-review.json",
+          "next": null
+        },
+        {
+          "id": "D",
+          "status": "done",
+          "plan_review": "reports/T27/commercial-d/plan-review.json",
+          "functional_red": "reports/T27/commercial-d/functional-red-summary.json",
+          "actualcommit": "5849c5b918755febf91b000f1a3cb5d5ece29817",
+          "verification": "reports/T27/commercial-d/d-iteration-verification.json",
+          "review": "reports/T27/commercial-d/d-result-review-final.json",
+          "next": "E"
+        },
+        {
+          "id": "E",
+          "status": "done",
+          "dependency": "5849c5b918755febf91b000f1a3cb5d5ece29817",
+          "plan": "reports/T27/commercial-d/e-joint-plan-candidate.json",
+          "dependency_commit": "5849c5b918755febf91b000f1a3cb5d5ece29817",
+          "plan_review": "reports/T27/commercial-d/e-plan-review-final.json",
+          "verification": "reports/T27/commercial-d/e-joint-verification-final.json",
+          "review": "reports/T27/commercial-d/e-result-review-final.json",
+          "actualcommit": "35c8009c28b54681425d14bcfbf479f8e6168e27",
+          "next": null,
+          "actualcommit_receipt": "reports/T27/commercial-d/e-actualcommit.json"
+        }
+      ],
+      "stop_requested": false,
+      "stop_after_iteration": null,
+      "next_iteration": null,
+      "stop_reason": "D/E已完成真实联合验收、独立审查与focused提交；原36任务DAG无可执行就绪任务，T32 blocked/T35 pending及暂不授予再分发许可保持。",
+      "stop_history": [
+        {
+          "after_iteration": "C",
+          "decision": "用户要求C轮后停止；已完成并提交，未执行D/E",
+          "source_commit": "f2c0ef9e4101f848583f1d9569cc1d0970b1ce0a",
+          "archive_commit": "feb9b828b6cf2511e0650ea6840e22c365ee1a0f"
+        }
+      ],
+      "resume_request": {
+        "base_commit": "feb9b828b6cf2511e0650ea6840e22c365ee1a0f",
+        "intent": "按比较结果重新编排持续迭代D/E",
+        "plan": "reports/T27/commercial-d/d-resume-plan.json",
+        "baseline": "reports/T27/commercial-d/resume-baseline.json",
+        "plan_review": "reports/T27/commercial-d/plan-review.json"
+      },
+      "blockers": [
+        "User declined additional live model calls; T32 remains blocked and T35 pending."
+      ],
+      "license_decision": "temporarily_no_redistribution_grant",
       "release_gate_change": false
     }
   },
@@ -30,7 +956,7 @@
         "reports/T00/tests.log",
         "reports/T00/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T01": {
       "status": "done",
@@ -47,7 +973,7 @@
         "reports/T01/tests.log",
         "reports/T01/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T02": {
       "status": "done",
@@ -64,7 +990,7 @@
         "reports/T02/tests.log",
         "reports/T02/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T03": {
       "status": "done",
@@ -81,7 +1007,7 @@
         "reports/T03/tests.log",
         "reports/T03/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T04": {
       "status": "done",
@@ -96,7 +1022,7 @@
       "archived_original_evidence": [
         "reports/T04/"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T05": {
       "status": "done",
@@ -125,7 +1051,7 @@
         "reports/T05/loss-before.png",
         "reports/T05/loss-after-recover.png"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T06": {
       "status": "done",
@@ -142,7 +1068,7 @@
         "reports/T06/tests.log",
         "reports/T06/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T07": {
       "status": "done",
@@ -159,7 +1085,7 @@
         "reports/T07/tests.log",
         "reports/T07/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T08": {
       "status": "done",
@@ -176,11 +1102,11 @@
         "reports/T08/tests.log",
         "reports/T08/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T09": {
       "status": "done",
-      "base_commit": null,
+      "base_commit": "6e7d67d",
       "integrated_commit": "f890eff07277aec5bb3e7693b3c38846dd5b60a5",
       "evidence": [
         "reports/publication/provenance.json"
@@ -200,7 +1126,7 @@
         "reports/T09/canvas-render.png",
         "reports/T09/integration.patch"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T10": {
       "status": "done",
@@ -217,7 +1143,7 @@
         "reports/T10/tests.log",
         "reports/T10/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T11": {
       "status": "done",
@@ -234,11 +1160,11 @@
         "reports/T11/tests.log",
         "reports/T11/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T12": {
       "status": "done",
-      "base_commit": null,
+      "base_commit": "ec85e21",
       "integrated_commit": "9b4945f3851c475bd034a9d32d6b500d51cba41f",
       "evidence": [
         "reports/publication/provenance.json"
@@ -251,11 +1177,11 @@
         "reports/T12/tests.log",
         "reports/T12/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T13": {
       "status": "done",
-      "base_commit": null,
+      "base_commit": "ec85e21",
       "integrated_commit": "3be67ac89785d05f884a907b8d9e097df3922583",
       "evidence": [
         "reports/publication/provenance.json"
@@ -268,7 +1194,7 @@
         "reports/T13/tests.log",
         "reports/T13/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T14": {
       "status": "done",
@@ -285,7 +1211,7 @@
         "reports/T14/tests.log",
         "reports/T14/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T15": {
       "status": "done",
@@ -302,7 +1228,7 @@
         "reports/T15/tests.log",
         "reports/T15/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T16": {
       "status": "done",
@@ -319,7 +1245,7 @@
         "reports/T16/tests.log",
         "reports/T16/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T17": {
       "status": "done",
@@ -336,7 +1262,7 @@
         "reports/T17/tests.log",
         "reports/T17/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T18": {
       "status": "done",
@@ -353,7 +1279,7 @@
         "reports/T18/tests.log",
         "reports/T18/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T19": {
       "status": "done",
@@ -370,7 +1296,7 @@
         "reports/T19/tests.log",
         "reports/T19/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T20": {
       "status": "done",
@@ -387,7 +1313,7 @@
         "reports/T20/tests.log",
         "reports/T20/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T21": {
       "status": "done",
@@ -404,28 +1330,45 @@
         "reports/T21/tests.log",
         "reports/T21/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T22": {
       "status": "done",
-      "base_commit": null,
-      "integrated_commit": "1ca6097fbdbf467ef9d5f8e77c6ef7ab8a07aa85",
+      "base_commit": "c5909001720b3c16c12f87e18e950eb41264f89c",
+      "integrated_commit": "69f28c00fb93b6a07c37610ae18ae7571ab66565",
+      "current_scope": "Codex active retirement with durable history retained; no installation/integration compatibility",
       "evidence": [
         "reports/publication/provenance.json"
       ],
-      "blockers": [],
-      "original_base_commit": "1190d87",
-      "original_integrated_commit": "deeb2f70718bb8be514ada138933cfa55cbbc3ba",
-      "archived_original_evidence": [
-        "reports/T22/result.json",
-        "reports/T22/tests.log",
-        "reports/T22/review.md"
+      "history": [
+        {
+          "base_commit": "1190d87",
+          "integrated_commit": "deeb2f70718bb8be514ada138933cfa55cbbc3ba",
+          "evidence": [
+            "reports/T22/result.json",
+            "reports/T22/tests.log",
+            "reports/T22/review.md"
+          ],
+          "scope": "historical synthetic Codex adapter engineering; not live support"
+        }
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "blockers": [],
+      "original_base_commit": "c5909001720b3c16c12f87e18e950eb41264f89c",
+      "original_integrated_commit": "69f28c00fb93b6a07c37610ae18ae7571ab66565",
+      "archived_original_evidence": [
+        "reports/T22/defect-repair/2026-10-11T13-21-39-234Z/result.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/retirement-main-rust.log",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/retirement-main-host-fresh-vitest.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/retirement-panel-green-vitest.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/shared-base-proof.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/shared-base-review.json",
+        "reports/T35/defect-repair/2026-10-11T13-21-39-234Z/shared-base-actualcommit.json"
+      ],
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T23": {
       "status": "done",
-      "base_commit": null,
+      "base_commit": "bcac566",
       "integrated_commit": "9a8f7d7f5f4eee5041172841092d7462be9107fe",
       "evidence": [
         "reports/publication/provenance.json"
@@ -438,7 +1381,7 @@
         "reports/T23/tests.log",
         "reports/T23/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T24": {
       "status": "done",
@@ -455,7 +1398,7 @@
         "reports/T24/tests.log",
         "reports/T24/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T25": {
       "status": "done",
@@ -479,7 +1422,7 @@
         "reports/T25/main-final-node-and-contract-green.log",
         "reports/T25/integration-notes.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T26": {
       "status": "done",
@@ -496,7 +1439,7 @@
         "reports/T26/tests.log",
         "reports/T26/review.md"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T27": {
       "status": "done",
@@ -514,7 +1457,7 @@
         "reports/T27/review.md",
         "reports/T27/ui-smoke.webp"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T28": {
       "status": "done",
@@ -536,7 +1479,7 @@
         "reports/T28/main-final-metrics.json",
         "reports/T28/main-release-browser-refusal.json"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T29": {
       "status": "done",
@@ -557,7 +1500,7 @@
         "reports/T29/main-production-scan.json",
         "reports/T29/independent-final-evidence-closure.json"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T30": {
       "status": "done",
@@ -578,7 +1521,7 @@
         "reports/T30/independent-final-layout-source-review.json",
         "reports/T32/independent-final-bounded-security-review.json"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T31": {
       "status": "done",
@@ -696,26 +1639,48 @@
         "reports/T31/label-projection/independent-main-passing-closure-review.json",
         "reports/T31/label-projection/main-final-acceptance-closure.json"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T32": {
       "status": "blocked",
       "base_commit": "8c59d672584713a12261899c7c14d83acf073b72",
-      "integrated_commit": "1a37f1632f6c6bc6c9bf3b9569fdfb0c0e2874b1",
+      "integrated_commit": "79360d3c6d23162b42f53bc67ccb320b91f00fb7",
       "evidence": [],
       "blockers": [
-        "G4五渠道真实运行未授权/未满足：官方账号与完整型号/运行时边界、付费和generated-image预算授权、公开锁定权重及真实forward/human review；35项工程闭环和真实诊断不能替代live"
+        "Codex当前PATH ENOENT且生产仍拒绝未证实的native工具/filesystem边界；Claude2.1.183仅version/help，官方账号与完整Sonnet未知；Luna/MiMo本人账户/完整型号/外发费用预算未授权。",
+        "检测器已授权下载4文件并逐hash核对、真实CPU加载与一次遮挡图forward/decode成功（300queries、0检测）。五次请求额度用完；清晰图仍无最终成功回执，非空候选/接受撤销保存/取消及双图人工质量验收未满足。不得把0候选或工程测试当完整live；T32仍blocked，T35仍pending。"
       ],
+      "detector_observation": {
+        "source_commit": "79360d3c6d23162b42f53bc67ccb320b91f00fb7",
+        "status": "partial_actual_execution_not_gate_pass",
+        "successful_run_id": "6b21ceaa-a2c0-5df1-bdfd-564cc56c3bc4",
+        "requests": 5,
+        "remaining_requests": 0,
+        "forward_completed": true,
+        "device": "cpu",
+        "queries": 300,
+        "detections": 0
+      },
       "original_base_commit": "66166686147199be75f4a392c3314c24dc36ec3c",
-      "original_integrated_commit": "2cf8e45425527635935a1f66d062b4b0b3119a5e",
+      "original_integrated_commit": "79360d3c6d23162b42f53bc67ccb320b91f00fb7",
       "archived_original_evidence": [
         "reports/T32/result.json",
         "reports/T32/main-final-registered-closure.log",
         "reports/T32/main-final-hash-evidence-consumers-after-apply.log",
         "reports/T32/main-execution-ledger.json",
-        "reports/T32/independent-final-bounded-security-review.json"
+        "reports/T32/independent-final-bounded-security-review.json",
+        "reports/T32/resume-2026-10-09/result.json",
+        "reports/T32/resume-2026-10-09/required-diagnostic.json",
+        "reports/T32/resume-2026-10-09/commands.log",
+        "reports/T32/resume-2026-10-09/readiness-review.json",
+        "reports/T32/detector-live-2026-10-09/result.json",
+        "reports/T32/detector-live-2026-10-09/review.json",
+        "reports/T32/detector-live-2026-10-09/post-fix-occluded-events.json",
+        "reports/T32/detector-live-2026-10-09/persisted-run-ledger.json",
+        "reports/T32/detector-live-2026-10-09/detector-suite-final.log",
+        "reports/T32/detector-live-2026-10-09/cleanup.json"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T33": {
       "status": "done",
@@ -741,7 +1706,7 @@
         "reports/T33/main-current-native-strict-clippy.log",
         "reports/T33/main-current-native-release-strict-clippy.log"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T34": {
       "status": "done",
@@ -767,18 +1732,20 @@
         "reports/T33/main-pilot-public-pixel-inventory-green.log",
         "reports/T33/main-independent-final-surface-evidence-review.json"
       ],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     },
     "T35": {
       "status": "pending",
       "base_commit": null,
       "integrated_commit": null,
       "evidence": [],
-      "blockers": [],
+      "blockers": [
+        "waiting_for_T32_live_gate: T32五渠道真实验收未done，T35依赖未满足，不启动总审查或升级发布关卡"
+      ],
       "original_base_commit": null,
       "original_integrated_commit": null,
       "archived_original_evidence": [],
-      "evidence_scope": "Original accepted task status; private run artifacts withheld from public Git, not newly executed against rewritten commits"
+      "evidence_scope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
     }
   },
   "release": {
@@ -792,7 +1759,7 @@
       "G5": "not_run"
     }
   },
-  "original_application_commit": "d156ffbe636881b91ab690aca620cbf639c613a5",
+  "original_application_commit": "04f7e27f6bf2a034152c5fb68fc32711be111f37",
   "publication": {
     "mode": "sanitized_development_history",
     "originalHead": "8df1d5c78c0483108aa0aba67fee4bf38c5dc4c2",
@@ -800,6 +1767,11 @@
     "commitMap": "reports/publication/commit-map.json",
     "provenance": "reports/publication/provenance.json",
     "originalLocalRepositoryUnchanged": true,
-    "globalReleaseStatusUnchanged": true
+    "globalReleaseStatusUnchanged": true,
+    "incrementOriginalHead": "8ef121f00badfb76a2acd03ca1c6ef45fa489a8f",
+    "incrementOriginalBase": "8df1d5c78c0483108aa0aba67fee4bf38c5dc4c2",
+    "incrementSourceSnapshot": "5e946d2a0d66763fe6585ce50a130d95402e0195",
+    "incrementCommits": 119,
+    "evidenceScope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4."
   }
 }

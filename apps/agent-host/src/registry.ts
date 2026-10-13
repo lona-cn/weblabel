@@ -37,7 +37,7 @@ export interface RuntimeContext {
   read_region(grant_id: Id, region: BBox | null): Promise<RuntimeReadRegion>;
   get_document(): Promise<AnnotationDocument>;
   get_ontology(): Promise<OntologyVersion>;
-  submit_candidates(candidate: unknown): Promise<SuggestionSet>;
+  submit_candidates(candidate: unknown, operationSignal?: AbortSignal): Promise<SuggestionSet>;
   report_issues(issues: unknown): Promise<void>;
 }
 

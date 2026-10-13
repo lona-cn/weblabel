@@ -1,5 +1,5 @@
 /**
- * Entry point of the standalone stdio MCP command installed for Codex/Claude
+ * Entry point of the standalone stdio MCP command installed for Claude
  * (docs/contracts.md C5). The run-scoped bearer token is read from the private
  * child environment only — never from argv, tool arguments or config files —
  * and stdout stays protocol-only; logs go to stderr after redaction.

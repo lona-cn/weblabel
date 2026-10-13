@@ -813,6 +813,13 @@ pub(crate) async fn resolve_profile_on(
     };
     let provider_id = parse_provider(&row.try_get::<String, _>("provider_id").unwrap_or_default())
         .ok_or_else(|| storage_failure("PROFILE_INVALID", "Stored model profile is invalid"))?;
+    if provider_id == annotation_domain::ProviderId::CodexLocal {
+        return Err(RunFailure::new(
+            StatusCode::CONFLICT,
+            "PROVIDER_RETIRED",
+            "Codex is retained for historical records only",
+        ));
+    }
     let auth_kind = parse_auth_kind(&row.try_get::<String, _>("auth_kind").unwrap_or_default())
         .ok_or_else(|| storage_failure("PROFILE_INVALID", "Stored model profile is invalid"))?;
     let availability =
@@ -1288,4 +1295,88 @@ pub(super) async fn cancel_route(
         Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
         Err(failure) => failure.into_response(),
     }
+}
+
+/// Read-only observations, not accuracy, human attribution or ROI.
+pub(super) async fn outcome_summary(
+    State(state): State<AiState>,
+    Path(run_id): Path<String>,
+    Extension(actor): Extension<Principal>,
+) -> Response {
+    let result = async {
+        let failed = || crate::ai::failure_response(StatusCode::INTERNAL_SERVER_ERROR,"OUTCOME_SUMMARY_FAILED","Could not read outcome summary");
+        let mut tx = state.repository.begin_write().await.map_err(|_|failed())?;
+        let record = load_record(tx.connection(), &run_id).await.map_err(|_|failed())?.ok_or_else(||crate::ai::failure_response(StatusCode::NOT_FOUND,"RUN_NOT_FOUND","Model run not found"))?;
+        if member_role(tx.connection(),&record.project_id,&actor.user_id).await.map_err(|_|failed())?.is_none() { return Err(crate::ai::failure_response(StatusCode::NOT_FOUND,"RUN_NOT_FOUND","Model run not found")); }
+        let count: i64 = sqlx::query_scalar("SELECT COALESCE(sum(json_array_length(changes_json)),0) FROM suggestion_sets WHERE run_id=?").bind(&run_id).fetch_one(tx.connection()).await.map_err(|_|failed())?;
+        let totals=sqlx::query("SELECT count(CASE WHEN d.decision='accept' THEN 1 END) AS accepts,count(CASE WHEN d.decision='revert' THEN 1 END) AS reverts FROM suggestion_decisions d JOIN suggestion_sets s ON s.suggestion_set_id=d.suggestion_set_id WHERE s.run_id=?").bind(&run_id).fetch_one(tx.connection()).await.map_err(|_|failed())?;
+        let accepts: i64=totals.get("accepts");let reverts: i64=totals.get("reverts");
+        // Fold append-only journal transitions in SQLite: only the latest accepted state of each change is effective.
+        let accepted_rows=sqlx::query("SELECT d.suggestion_set_id,d.change_id,d.bound_revision_id,(SELECT COALESCE(json_extract(c.value,'$.object.object_id'),json_extract(c.value,'$.object_id')) FROM json_each(s.changes_json) c WHERE json_extract(c.value,'$.change_id')=d.change_id) AS object_id FROM suggestion_decisions d JOIN suggestion_sets s ON s.suggestion_set_id=d.suggestion_set_id WHERE s.run_id=? AND d.decision='accept' AND NOT EXISTS(SELECT 1 FROM suggestion_decisions later WHERE later.suggestion_set_id=d.suggestion_set_id AND later.change_id=d.change_id AND later.rowid>d.rowid) ORDER BY d.rowid").bind(&run_id).fetch_all(tx.connection()).await.map_err(|_|failed())?;
+        let rejected: i64=sqlx::query_scalar("SELECT count(*) FROM suggestion_sets s,json_each(s.changes_json) c WHERE s.run_id=? AND (EXISTS(SELECT 1 FROM suggestion_change_rejections r WHERE r.suggestion_set_id=s.suggestion_set_id AND r.change_id=json_extract(c.value,'$.change_id')) OR EXISTS(SELECT 1 FROM suggestion_set_states st WHERE st.suggestion_set_id=s.suggestion_set_id AND st.state='rejected'))").bind(&run_id).fetch_one(tx.connection()).await.map_err(|_|failed())?;
+        let head: Option<String>=sqlx::query_scalar("SELECT r.body_json FROM annotation_heads h JOIN annotation_revisions r ON r.annotation_revision_id=h.annotation_revision_id WHERE h.project_id=? AND h.asset_revision_id=? AND h.ontology_version_id=?").bind(&record.project_id).bind(&record.asset_revision_id).bind(&record.ontology_version_id).fetch_optional(tx.connection()).await.map_err(|_|failed())?;
+        let head: Option<annotation_domain::AnnotationDocument> = head.map(|v|serde_json::from_str(&v)).transpose().map_err(|_|failed())?;
+        let head_objects: BTreeMap<&str,&annotation_domain::AnnotationObject>=head.as_ref().into_iter().flat_map(|document|document.objects.iter().map(|object|(&*object.object_id,object))).collect();
+        let mut accepted_documents: BTreeMap<&str,annotation_domain::AnnotationDocument>=BTreeMap::new();
+        let mut observations=Vec::with_capacity(accepted_rows.len());
+        for row in &accepted_rows {
+            let set_id: &str=row.get("suggestion_set_id");let change_id: &str=row.get("change_id");let revision: &str=row.get("bound_revision_id");
+            let object_id: &str=row.try_get::<Option<&str>,_>("object_id").map_err(|_|failed())?.ok_or_else(failed)?;
+            // Several changes can belong to one saved revision: deserialize that immutable document only once.
+            if !accepted_documents.contains_key(revision) {
+                let body: String=sqlx::query_scalar("SELECT body_json FROM annotation_revisions WHERE annotation_revision_id=? AND project_id=?").bind(revision).bind(&record.project_id).fetch_one(tx.connection()).await.map_err(|_|failed())?;
+                accepted_documents.insert(revision,serde_json::from_str(&body).map_err(|_|failed())?);
+            }
+            let accepted=accepted_documents.get(revision).expect("accepted revision loaded above");
+            let before=accepted.objects.iter().find(|object|&*object.object_id==object_id);
+            let current=head_objects.get(object_id).copied();
+            let status=if head.is_none() || before.is_none() {"unknown"} else if current.is_none() {"absent_from_current_head"} else if before.map(object_hash)==current.map(object_hash) {"unchanged_since_acceptance"} else {"changed_since_acceptance"};
+            observations.push(json!({"suggestion_set_id":set_id,"change_id":change_id,"object_id":object_id,"accepted_revision_id":revision,"current_status":status,"attribution":"unknown"}));
+        }
+        // Match every historical decision only to a submitted exact, existing revision.
+        let task_rows = sqlx::query(r#"
+            SELECT t.task_id, t.state AS task_state, rs.review_id, rs.state AS review_state,
+                   r.annotation_revision_id, r.asset_revision_id, r.ontology_version_id,
+                   json_group_array(DISTINCT d.decision) AS decision_kinds,
+                   json_group_array(DISTINCT s.suggestion_set_id) AS suggestion_set_ids
+            FROM suggestion_decisions d
+            JOIN suggestion_sets s ON s.suggestion_set_id=d.suggestion_set_id
+            JOIN annotation_revisions r ON r.annotation_revision_id=d.bound_revision_id
+                 AND r.project_id=s.project_id AND r.asset_revision_id=s.asset_revision_id
+            JOIN review_submissions rs ON rs.project_id=r.project_id
+            JOIN json_each(rs.revision_ids_json) submitted
+                 ON submitted.type='text' AND submitted.value=r.annotation_revision_id
+            JOIN review_tasks t ON t.task_id=rs.task_id AND t.project_id=r.project_id
+                 AND t.asset_revision_id=r.asset_revision_id AND t.ontology_version_id=r.ontology_version_id
+            WHERE s.run_id=? AND r.project_id=? AND r.asset_revision_id=? AND r.ontology_version_id=?
+            GROUP BY rs.review_id,r.annotation_revision_id
+            ORDER BY rs.review_id,r.annotation_revision_id LIMIT 101
+        "#)
+            .bind(&run_id).bind(&record.project_id).bind(&record.asset_revision_id).bind(&record.ontology_version_id).fetch_all(tx.connection()).await.map_err(|_|failed())?;
+        let mut submissions = Vec::with_capacity(task_rows.len().min(100));
+        for row in task_rows.iter().take(100) {
+            let mut kinds: Vec<String> = serde_json::from_str(row.get::<&str,_>("decision_kinds")).map_err(|_|failed())?;
+            let mut sets: Vec<String> = serde_json::from_str(row.get::<&str,_>("suggestion_set_ids")).map_err(|_|failed())?;
+            kinds.sort(); sets.sort();
+            submissions.push(json!({"task_id":row.get::<&str,_>("task_id"),"review_id":row.get::<&str,_>("review_id"),"annotation_revision_id":row.get::<&str,_>("annotation_revision_id"),"asset_revision_id":row.get::<&str,_>("asset_revision_id"),"ontology_version_id":row.get::<&str,_>("ontology_version_id"),"task_state":row.get::<&str,_>("task_state"),"review_state":row.get::<&str,_>("review_state"),"decision_kinds":kinds,"suggestion_set_ids":sets}));
+        }
+        let task_binding = if submissions.is_empty() { Value::Null } else { json!({"basis":"exact_decision_revision_submission","submissions":submissions,"truncated":task_rows.len()>100}) };
+        // Published intervals are actor-owned. Old unbound records are unknown, not zero.
+        // Integer milliseconds are summed before conversion to seconds.
+        let work = sqlx::query("SELECT count(*) AS matched,COALESCE(sum(CASE WHEN json_extract(i.value,'$.kind')!='model_wait' THEN CAST(json_extract(i.value,'$.duration_ms') AS INTEGER) ELSE 0 END),0) AS human_ms FROM activity_sessions a,json_each(a.intervals_json) i WHERE a.project_id=? AND a.actor_id=? AND json_extract(i.value,'$.run_id')=?")
+            .bind(&record.project_id).bind(&actor.user_id).bind(&run_id).fetch_one(tx.connection()).await.map_err(|_|failed())?;
+        let matched: i64 = work.get("matched");
+        let recorded_work_seconds = if matched == 0 { None } else { Some(work.get::<i64,_>("human_ms") as f64 / 1000.0) };
+        let work_time_reason = if matched == 0 { "No current-actor published interval explicitly binds this run" } else { "Measured current-actor explicit run intervals; model_wait excluded" };
+        let task_work = sqlx::query("SELECT json_extract(i.value,'$.task_id') AS task_id,COALESCE(sum(CASE WHEN json_extract(i.value,'$.kind')!='model_wait' THEN CAST(json_extract(i.value,'$.duration_ms') AS INTEGER) ELSE 0 END),0) AS human_ms FROM activity_sessions a,json_each(a.intervals_json) i WHERE a.project_id=? AND a.actor_id=? AND json_extract(i.value,'$.run_id')=? AND json_type(i.value,'$.task_id')='text' GROUP BY task_id ORDER BY task_id")
+            .bind(&record.project_id).bind(&actor.user_id).bind(&run_id).fetch_all(tx.connection()).await.map_err(|_|failed())?;
+        let activity_task_bindings: Vec<Value> = task_work.iter().map(|row| json!({"task_id":row.get::<&str,_>("task_id"),"recorded_work_seconds":row.get::<i64,_>("human_ms") as f64/1000.0,"basis":"explicit_voluntary_run_task_interval"})).collect();
+        let usage: Option<String>=sqlx::query_scalar("SELECT usage_json FROM model_runs WHERE run_id=?").bind(&run_id).fetch_one(tx.connection()).await.map_err(|_|failed())?;
+        let mut usage: Value=usage.map(|s|serde_json::from_str(&s)).transpose().map_err(|_|failed())?.unwrap_or(Value::Null);
+        crate::ai::redact_json(&mut usage);
+        let net_accepted=accepted_rows.len();
+        tx.commit().await.map_err(|_|failed())?;
+        Ok(Json(json!({"run":record.summary(),"candidate_change_count":count,"accepted_change_count":net_accepted,"accept_journal_count":accepts,"revert_journal_count":reverts,"rejected_change_count":rejected,"object_observations":observations,"task_binding":task_binding,"activity_task_bindings":activity_task_bindings,"recorded_work_seconds":recorded_work_seconds,"work_time_scope":"current_actor_explicit_run_intervals","work_time_reason":work_time_reason,"usage":usage,"cost_display":record.cost_display,"accuracy":null,"roi":null})).into_response())
+    }.await;
+    result.unwrap_or_else(|e| e)
 }

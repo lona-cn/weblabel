@@ -183,6 +183,111 @@ impl OntologyVersion {
     }
 }
 
+/// Validates one value using the document attribute rules; null stays legal.
+pub(crate) fn validate_attribute_value(
+    def: &AttributeDef,
+    value: &Scalar,
+) -> Result<(), DomainError> {
+    let valid_kind = matches!(
+        (def.kind, value),
+        (_, Scalar::Null)
+            | (AttributeKind::Enum | AttributeKind::Text, Scalar::String(_))
+            | (AttributeKind::Boolean, Scalar::Boolean(_))
+            | (AttributeKind::Number, Scalar::Number(_))
+    );
+    if !valid_kind {
+        return Err(DomainError::new(
+            "ATTRIBUTE_TYPE_MISMATCH",
+            "attribute value does not match ontology kind",
+        ));
+    }
+    if let Scalar::String(text) = value {
+        if text.chars().count() > 4096 {
+            return Err(DomainError::new(
+                "INVALID_ATTRIBUTE_VALUE",
+                "attribute exceeds 4096 characters",
+            ));
+        }
+        if def.kind == AttributeKind::Enum && !def.enum_values.contains(text) {
+            return Err(DomainError::new(
+                "INVALID_ENUM_VALUE",
+                "attribute value is not an allowed enum value",
+            ));
+        }
+    }
+    if let Scalar::Number(number) = value {
+        if !number.is_finite() {
+            return Err(DomainError::new(
+                "INVALID_ATTRIBUTE_VALUE",
+                "attribute must be finite",
+            ));
+        }
+        if def.min.is_some_and(|min| *number < min) || def.max.is_some_and(|max| *number > max) {
+            return Err(DomainError::new(
+                "ATTRIBUTE_OUT_OF_RANGE",
+                "numeric attribute is outside ontology limits",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Reconciles only actual label changes against an already validated target.
+/// Same-label calls deliberately preserve historical missing optional values.
+pub fn relabel_object(object: &mut crate::AnnotationObject, target: &LabelDef) -> bool {
+    if object.label_id == target.label_id {
+        return false;
+    }
+    object.attributes.retain(|key, value| {
+        target
+            .attributes
+            .iter()
+            .find(|def| def.key == *key)
+            .is_some_and(|def| validate_attribute_value(def, value).is_ok())
+    });
+    for def in &target.attributes {
+        if !object.attributes.contains_key(&def.key) {
+            object
+                .attributes
+                .insert(def.key.clone(), def.default_value.clone());
+        }
+    }
+    object.label_id = target.label_id.clone();
+    true
+}
+
+/// Projects against fixed inputs without creating or mutating an editor session.
+pub fn project_relabel(
+    document: &AnnotationDocument,
+    ontology: &OntologyVersion,
+    object_id: &Id,
+    before_hash: &str,
+    label_id: &Id,
+) -> Result<crate::AnnotationObject, DomainError> {
+    validate_document(document, ontology)?;
+    let object = document
+        .objects
+        .iter()
+        .find(|object| object.object_id == *object_id)
+        .ok_or_else(|| {
+            DomainError::new("UNKNOWN_OBJECT", "object is not in the pinned document")
+        })?;
+    if crate::object_hash(object) != before_hash {
+        return Err(DomainError::new(
+            "BEFORE_HASH_MISMATCH",
+            "object changed since the pinned snapshot",
+        ));
+    }
+    let target = ontology
+        .labels
+        .iter()
+        .find(|label| label.label_id == *label_id)
+        .ok_or_else(|| DomainError::new("UNKNOWN_LABEL", "label is not in the pinned ontology"))?;
+    let mut projected = object.clone();
+    relabel_object(&mut projected, target);
+    Ok(projected)
+}
+
 pub fn validate_document(
     document: &AnnotationDocument,
     ontology: &OntologyVersion,
@@ -223,37 +328,7 @@ pub fn validate_document(
                     "object attribute is not defined by ontology",
                 )
             })?;
-            let valid_kind = matches!(
-                (def.kind, value),
-                (_, Scalar::Null)
-                    | (AttributeKind::Enum | AttributeKind::Text, Scalar::String(_))
-                    | (AttributeKind::Boolean, Scalar::Boolean(_))
-                    | (AttributeKind::Number, Scalar::Number(_))
-            );
-            if !valid_kind {
-                return Err(DomainError::new(
-                    "ATTRIBUTE_TYPE_MISMATCH",
-                    "attribute value does not match ontology kind",
-                ));
-            }
-            if let Scalar::String(value) = value {
-                if def.kind == AttributeKind::Enum && !def.enum_values.contains(value) {
-                    return Err(DomainError::new(
-                        "INVALID_ENUM_VALUE",
-                        "attribute value is not an allowed enum value",
-                    ));
-                }
-            }
-            if let Scalar::Number(value) = value {
-                if def.min.is_some_and(|min| *value < min)
-                    || def.max.is_some_and(|max| *value > max)
-                {
-                    return Err(DomainError::new(
-                        "ATTRIBUTE_OUT_OF_RANGE",
-                        "numeric attribute is outside ontology limits",
-                    ));
-                }
-            }
+            validate_attribute_value(def, value)?;
         }
     }
     Ok(())

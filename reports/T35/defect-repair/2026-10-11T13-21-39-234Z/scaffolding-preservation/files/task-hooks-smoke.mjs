@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {runArgv} from "file:///D:/workspace/src/weblabel/scripts/task.mjs";
+const env=Object.fromEntries(['PATH','Path','SystemRoot','WINDIR','APPDATA','LOCALAPPDATA','PATHEXT'].filter(k=>process.env[k]).map(k=>[k,process.env[k]]));
+const marker='harmless-parent-only'; process.env.WEBLABEL_HOOK_SMOKE=marker;
+let stdout='',stderr='',native=null;
+const code=await runArgv([process.execPath,'-e',"const c=require('node:crypto'); if(process.env.WEBLABEL_HOOK_SMOKE!==undefined)process.exit(7); const s='complete-stream-'.repeat(9000);process.stdout.write(s);process.stderr.write(c.createHash('sha256').update(s).digest('hex'))"],process.cwd(),{env,onStdout:c=>stdout+=c,onStderr:c=>stderr+=c,onClose:(exit_code,signal)=>native={exit_code,signal}});
+assert.equal(code,0); assert.deepEqual(native,{exit_code:0,signal:null}); assert.equal(stdout,'complete-stream-'.repeat(9000)); assert.equal(stderr,createHash('sha256').update(stdout).digest('hex')); delete process.env.WEBLABEL_HOOK_SMOKE;
+const output={schema_version:1,actual_code:code,native,stdout_bytes:Buffer.byteLength(stdout),full_stdout_sha256:stderr,tail_limit:65536,complete_environment_replacement_observed:true,model_calls:0};fs.writeFileSync("reports/T35/defect-repair/2026-10-11T13-21-39-234Z/task-hooks-post-igr-proof.json",JSON.stringify(output,null,2),{flag:'wx'});console.log('\n'+JSON.stringify(output));

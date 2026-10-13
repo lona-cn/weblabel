@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { captureEvidenceIdentity } from '../../../scripts/evidence-identity.mjs';
+const root=fs.realpathSync(path.resolve(import.meta.dirname,'../../..'));
+const R='reports/T35/defect-repair/2026-10-11T13-21-39-234Z';
+const baseline=JSON.parse(fs.readFileSync(path.join(root,R,'baseline.json'),'utf8'));
+const identity=captureEvidenceIdentity();
+const prior=JSON.parse(fs.readFileSync(path.join(root,'reports/T00/defect-repair/2026-10-11T13-21-39-234Z/final-full-source-review.json'),'utf8'));
+const paths=[...new Set([...Object.keys(baseline.identity.source_hashes),...Object.keys(identity.source_hashes)])].filter(p=>baseline.identity.source_hashes[p]!==identity.source_hashes[p]);
+const docs=[...new Set([...Object.keys(prior.source_sha256).filter(p=>p.endsWith('.md')),'docs/architecture.md','docs/product-spec.md'])].filter(p=>fs.existsSync(path.join(root,p)));
+const scope=[...paths,...docs];
+const output={schema_version:1,identity,baseline_commit:baseline.identity.source_commit,source_paths:paths,docs,scope,original_changes:baseline.original_changes,review_scope:'Conservative raw-identity delta union (including deleted Codex sources, newly covered inputs and possible CRLF-only differences), plus affected docs; not a claim that every entry is a semantic product edit. Preserve user baseline changes. Excludes user historical reports. No security audit or paid/live model approval.'};
+fs.writeFileSync(path.join(root,R,process.argv[2]??'final-review-input.json'),JSON.stringify(output,null,2),{flag:'wx'});
+console.log(JSON.stringify({snapshot:identity.source_snapshot_sha256,raw_identity_delta_or_coverage_extension_paths:paths.length,docs:docs.length,scope:scope.length}));

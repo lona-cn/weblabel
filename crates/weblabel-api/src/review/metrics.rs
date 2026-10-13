@@ -104,6 +104,22 @@ pub(super) async fn checkpoint(
         tx.rollback().await.map_err(|_| unavailable())?;
         return Err(conflict());
     }
+    // Validate only appended evidence; immutable historical bindings remain replayable.
+    for interval in &body.intervals[previous.len()..] {
+        let mut run_context: Option<(String, String)> = None;
+        if let Some(run_id) = &interval.run_id {
+            annotation_domain::document::validate_id(run_id).map_err(|_| invalid())?;
+            run_context = sqlx::query_as("SELECT asset_revision_id,ontology_version_id FROM model_runs WHERE run_id=? AND project_id=?")
+                .bind(&**run_id).bind(&project_id).fetch_optional(tx.connection()).await.map_err(|_| unavailable())?;
+            if run_context.is_none() { return Err(invalid()); }
+        }
+        if let Some(task_id) = &interval.task_id {
+            annotation_domain::document::validate_id(task_id).map_err(|_| invalid())?;
+            let task_context: Option<(String, String)> = sqlx::query_as("SELECT asset_revision_id,ontology_version_id FROM review_tasks WHERE task_id=? AND project_id=?")
+                .bind(&**task_id).bind(&project_id).fetch_optional(tx.connection()).await.map_err(|_| unavailable())?;
+            if task_context.is_none() || run_context.as_ref().is_some_and(|run| Some(run) != task_context.as_ref()) { return Err(invalid()); }
+        }
+    }
     let version = version
         .checked_add(1)
         .filter(|v| *v <= 9_007_199_254_740_991)

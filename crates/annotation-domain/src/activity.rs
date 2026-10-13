@@ -26,6 +26,13 @@ pub struct ActivityInterval {
     #[schemars(range(min = 1.0, max = 86400000.0))]
     #[ts(type = "number")]
     pub duration_ms: u64,
+    /// Explicit voluntary association, never inferred from the current media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub task_id: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub run_id: Option<Id>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, ts_rs::TS)]

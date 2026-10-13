@@ -19,7 +19,6 @@ export interface HarnessLog {
   disposed: number;
   renders: number;
   pointer: number;
-  snapshots: number;
   setViewports: number;
   argBytes: number;
   mounted: boolean;
@@ -30,7 +29,7 @@ export interface T09Harness {
   factory: { gated: boolean; logs: HarnessLog[]; release(index: number): void; releaseAll(): void };
   frameCounter: { active: number };
   canvasListenerCounts: Record<string, number>;
-  readyHosts: EditorHost[];
+  settledHost: EditorHost | null;
   deltas: EditorDelta[];
   makeRequest(rgba: number[], width: number, height: number, id: string): EditorAssetRequest;
   frames(count: number): Promise<void>;
@@ -41,6 +40,7 @@ export interface T09Harness {
   load(request: EditorAssetRequest): Promise<{ status: EditorHostStatus; transfers: readonly BinaryTransfer[] }>;
   hostState(): { status: EditorHostStatus; error: ApiError | null; transfers: readonly BinaryTransfer[] };
   facadeRead(index: number): { generation: number; viewport: Viewport };
+  nativeState(): { document: EditorAssetRequest['document'] | null; generation: number | null };
   strictMount(containerId: string, request: EditorAssetRequest): boolean;
   unmountReact(): void;
   disposeHost(): void;
@@ -105,7 +105,7 @@ class HarnessFactory implements EditorFacadeFactory {
   private readonly pending: { index: number; release(): void }[] = [];
   constructor(private readonly real: EditorFacadeFactory) {}
   async create(canvas: HTMLCanvasElement, request: EditorAssetRequest) {
-    const log = { disposed: 0, renders: 0, pointer: 0, snapshots: 0, setViewports: 0, argBytes: 0, mounted: false };
+    const log = { disposed: 0, renders: 0, pointer: 0, setViewports: 0, argBytes: 0, mounted: false };
     this.logs.push(log);
     const index = this.logs.length - 1;
     // Register the gate before the async device init so a test can deterministically
@@ -137,7 +137,6 @@ function instrument(facade: EditorFacade, log: HarnessLog): EditorFacade {
           log.pointer += 1;
           log.argBytes = Math.max(log.argBytes, JSON.stringify(args[0]).length);
         }
-        if (prop === 'get_snapshot') log.snapshots += 1;
         if (prop === 'render') log.renders += 1;
         if (prop === 'set_viewport') {
           log.setViewports += 1;
@@ -205,7 +204,7 @@ async function bootHarness() {
   }
   window.__t09 = {
     bootHarness,
-    readyHosts: [],
+    settledHost: null,
     deltas: [],
     factory,
     frameCounter,
@@ -237,7 +236,7 @@ async function bootHarness() {
     newHost(canvasId) {
       const canvas = document.getElementById(canvasId);
       if (!(canvas instanceof HTMLCanvasElement)) throw new Error('T09 canvas missing: ' + canvasId);
-      state.host = new EditorHost({ facadeFactory: factory });
+      state.host = new EditorHost({ facadeFactory: factory, onDelta: delta => window.__t09.deltas.push(delta) });
       state.host.mount(canvas);
       return true;
     },
@@ -256,6 +255,9 @@ async function bootHarness() {
       const facade = state.factory.created[index];
       return { generation: facade.get_generation(), viewport: facade.get_viewport() };
     },
+    nativeState() {
+      return { document: host().getSnapshot(), generation: host().getGeneration() };
+    },
     strictMount(containerId, request) {
       const container = document.getElementById(containerId);
       if (!container) throw new Error('T09 React container missing: ' + containerId);
@@ -266,7 +268,7 @@ async function bootHarness() {
           hostOptions: { facadeFactory: factory },
           activeTool: 'select',
           onDelta: (_host: EditorHost, delta: EditorDelta) => window.__t09.deltas.push(delta),
-          onHostReady: (host: EditorHost) => window.__t09.readyHosts.push(host),
+          onHostSettled: (host: EditorHost) => { window.__t09.settledHost = host; },
         })),
       );
       return true;
@@ -614,13 +616,16 @@ test.describe('T09-C sizing', () => {
 
 test('T09-D one pointermove round submits input only and idle submits no GPU work', async ({ page }) => {
   await bootPage(page);
-  await page.evaluate(async () => {
+  const before = await page.evaluate(async () => {
     const t = window.__t09;
     t.newHost('t09-canvas');
     const rgba = new Uint8Array(640 * 480 * 4);
     for (let i = 0; i < 640 * 480; i += 1) rgba.set([230, 45, 25, 255], i * 4);
-    await t.load(t.makeRequest(Array.from(rgba), 640, 480, 'asset-rev-pointer'));
+    const request = t.makeRequest(Array.from(rgba), 640, 480, 'asset-rev-pointer');
+    request.document.objects.push({ object_id: 'hover-person', label_id: 'label_person', geometry: { type: 'bbox_xyxy', x_min: 30.25, y_min: 40.5, x_max: 170.75, y_max: 130.125 }, attributes: { helmet_state: 'wearing' }, origin: { type: 'manual', prediction_id: null, model_run_id: null, import_batch_id: null } });
+    await t.load(request);
     await t.frames(4);
+    return t.nativeState();
   });
   const canvas = page.locator('#t09-canvas');
   const box = await canvas.boundingBox();
@@ -631,10 +636,13 @@ test('T09-D one pointermove round submits input only and idle submits no GPU wor
   const afterMoves = await page.evaluate(async () => {
     const t = window.__t09;
     await t.frames(4);
-    return t.factory.logs[0];
+    return { ...t.factory.logs[0], state: t.nativeState(), deltas: t.deltas, host: t.hostState() };
   });
   expect(afterMoves.pointer).toBe(6);
-  expect(afterMoves.snapshots, 'pointer streaming must never snapshot').toBe(0);
+  expect(afterMoves.state).toEqual(before);
+  expect(before.document?.objects[0].geometry).toEqual({ type: 'bbox_xyxy', x_min: 30.25, y_min: 40.5, x_max: 170.75, y_max: 130.125 });
+  expect(afterMoves.host.error).toBeNull();
+  expect(afterMoves.deltas.map(delta => ({ generation: delta.generation, changed: delta.document_changed, undo: delta.can_undo, redo: delta.can_redo, selected: delta.selected_object_ids, error: delta.error }))).toEqual(Array.from({ length: 6 }, () => ({ generation: before.generation, changed: false, undo: false, redo: false, selected: [], error: null })));
   expect(afterMoves.argBytes, 'the move payload is the small C3 PointerInput').toBeLessThan(200);
 
   const idleBefore = afterMoves.renders;
@@ -692,7 +700,7 @@ test('T09-E React StrictMode remount keeps one listener set and one submit per r
 
   const before = await page.evaluate(() => {
     const t = window.__t09;
-    return { logs: t.factory.logs, listeners: { ...t.canvasListenerCounts }, ready: t.readyHosts.length };
+    return { logs: t.factory.logs, listeners: { ...t.canvasListenerCounts }, currentHost: t.settledHost ? { status: t.settledHost.status, document: t.settledHost.getSnapshot(), generation: t.settledHost.getGeneration() } : null };
   });
   expect(before.logs.length).toBeGreaterThanOrEqual(2);
   const live = before.logs.filter((log) => log.disposed === 0);
@@ -701,7 +709,7 @@ test('T09-E React StrictMode remount keeps one listener set and one submit per r
     if (log !== live[0]) expect(log.disposed).toBeGreaterThanOrEqual(1);
   }
   expect(before.listeners.pointermove ?? 0, 'no duplicated pointermove listeners').toBe(1);
-  expect(before.ready, 'only the current mounted caller receives onHostReady').toBe(1);
+  expect(before.currentHost).toEqual({ status: 'ready', generation: 0, document: { schema_version: 1, asset_revision_id: 'asset-rev-strict-remount', ontology_version_id: 'fixture-ontology-v1', coordinate_space: { type: 'canonical_image_pixels', width: 32, height: 32 }, completion: 'unprocessed', objects: [] } });
   for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'contextmenu', 'wheel']) {
     expect(before.listeners[type], type + ' has one host listener').toBe(1);
   }

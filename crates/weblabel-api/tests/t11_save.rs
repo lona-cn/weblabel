@@ -21,6 +21,159 @@ use weblabel_api::{
 const HOST: &str = "127.0.0.1:48100";
 const ORIGIN: &str = "http://127.0.0.1:48100";
 
+// C06: a valid lease for an asset does not authorize a different immutable ontology.
+async fn commercial_task_on_other_ontology(fixture: &Fixture) {
+    let (status, ontology) = fixture.request("POST", &format!("/api/projects/{}/ontologies", fixture.project_id), Some(json!({
+        "labels": [{"label_id":"vehicle","name":"Vehicle v2","color":"#0099ff","attributes":[],"shortcut":null,"allowed_geometry_types":["bbox_xyxy"]}],
+        "guidelines_markdown":"Task is fixed to this new version, not the original annotation head."
+    }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{ontology}");
+    let (status, session) = fixture.request("GET", "/api/session", None).await;
+    assert_eq!(status, StatusCode::OK, "{session}");
+    let (status, task) = fixture
+        .request(
+            "POST",
+            &format!("/api/projects/{}/tasks", fixture.project_id),
+            Some(json!({
+                "asset_revision_id":fixture.asset_revision_id,
+                "ontology_version_id":ontology["ontology_version_id"],
+                "assignee_id":session["user_id"]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{task}");
+}
+
+async fn commercial_claim_task(fixture: &Fixture) -> Value {
+    let (status, tasks) = fixture
+        .request(
+            "GET",
+            &format!("/api/projects/{}/tasks", fixture.project_id),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{tasks}");
+    let task_id = tasks["items"][0]["task_id"].as_str().unwrap();
+    let (status, lease) = fixture
+        .request(
+            "POST",
+            &format!("/api/tasks/{task_id}/lease"),
+            Some(json!({"action":"acquire"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{lease}");
+    json!({"task_id":task_id,"fencing_token":lease["fencing_token"]})
+}
+
+async fn commercial_annotation_storage(
+    fixture: &Fixture,
+) -> (Vec<(String, String)>, i64, i64, i64) {
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let heads = sqlx::query_as::<_, (String, String)>("SELECT ontology_version_id,annotation_revision_id FROM annotation_heads WHERE asset_revision_id=? ORDER BY ontology_version_id")
+        .bind(&fixture.asset_revision_id).fetch_all(tx.connection()).await.unwrap();
+    let revisions =
+        sqlx::query_scalar("SELECT COUNT(*) FROM annotation_revisions WHERE asset_revision_id=?")
+            .bind(&fixture.asset_revision_id)
+            .fetch_one(tx.connection())
+            .await
+            .unwrap();
+    let decisions = sqlx::query_scalar("SELECT COUNT(*) FROM suggestion_decisions")
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+    let operations = sqlx::query_scalar("SELECT COUNT(*) FROM idempotency_keys")
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    (heads, revisions, decisions, operations)
+}
+
+#[tokio::test]
+async fn commercial_task_ontology_save_rejects_without_mutating_storage() {
+    let fixture = fixture().await;
+    commercial_task_on_other_ontology(&fixture).await;
+    let lease = commercial_claim_task(&fixture).await;
+    let before = commercial_annotation_storage(&fixture).await;
+    let mut document = fixture.document();
+    document["completion"] = json!("complete");
+    document["objects"] = json!([{"object_id":"c06-manual","label_id":"vehicle","geometry":{"type":"bbox_xyxy","x_min":1,"y_min":2,"x_max":10,"y_max":12},"attributes":{},"origin":{"type":"manual","prediction_id":null,"model_run_id":null,"import_batch_id":null}}]);
+    let mut request = fixture.save_request(
+        "c06-wrong-ontology-save",
+        &fixture.initial_revision_id,
+        document,
+    );
+    request["lease"] = lease;
+    let (status, error) = fixture
+        .request("PUT", &fixture.annotation_path(), Some(request))
+        .await;
+    let after = commercial_annotation_storage(&fixture).await;
+    assert_eq!(
+        (status, error["code"].clone(), after),
+        (
+            StatusCode::CONFLICT,
+            json!("TASK_ONTOLOGY_MISMATCH"),
+            before
+        ),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn commercial_task_ontology_import_rejects_without_mutating_storage() {
+    let fixture = fixture().await;
+    // Preview is a genuine read-only parser operation for the existing v1 head.
+    let boundary = "c06-import-boundary";
+    let data = json!({"images":[{"id":17,"file_name":"fixture.png","width":32,"height":24}],"categories":[{"id":90,"name":"Vehicle","label_id":"vehicle"}],"annotations":[{"id":1,"image_id":17,"category_id":90,"bbox":[1,2,9,10],"iscrowd":0}]});
+    let body = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\ncoco\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"ontology_version_id\"\r\n\r\n{}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"data\"; filename=\"annotations.json\"\r\nContent-Type: application/json\r\n\r\n{data}\r\n--{boundary}--\r\n", fixture.ontology_id);
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/assets/{}/annotation-import-previews",
+                    fixture.asset_revision_id
+                ))
+                .header("host", HOST)
+                .header("origin", ORIGIN)
+                .header("cookie", &fixture.cookie)
+                .header("x-csrf-token", &fixture.csrf)
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let preview: Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["base_revision_id"], fixture.initial_revision_id);
+    commercial_task_on_other_ontology(&fixture).await;
+    let lease = commercial_claim_task(&fixture).await;
+    let before = commercial_annotation_storage(&fixture).await;
+    let (status, error) = fixture.request("POST", &format!("/api/annotation-import-previews/{}/commit", preview["import_batch_id"].as_str().unwrap()), Some(json!({"loss_ack":true,"operation_id":"bd6cd77d-9b47-4a92-a7db-0b40be560006","lease":lease}))).await;
+    let after = commercial_annotation_storage(&fixture).await;
+    assert_eq!(
+        (status, error["code"].clone(), after),
+        (
+            StatusCode::CONFLICT,
+            json!("TASK_ONTOLOGY_MISMATCH"),
+            before
+        ),
+        "{error}"
+    );
+}
+
 struct Fixture {
     app: Router,
     state: AppState,
@@ -519,11 +672,19 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
         .any(|loss| loss["field"] == "segmentation"));
     let operation_id = "b7d69d86-0d8e-4b75-b1fd-59e3cd3e0845";
     let commit_path = format!("/api/annotation-import-previews/{batch_id}/commit");
+    let (missing_status, _) = fixture
+        .request(
+            "POST",
+            &commit_path,
+            Some(json!({"loss_ack":true,"operation_id":operation_id})),
+        )
+        .await;
+    assert_eq!(missing_status, StatusCode::BAD_REQUEST);
     let (rejected_status, rejected) = fixture
         .request(
             "POST",
             &commit_path,
-            Some(json!({"loss_ack":false,"operation_id":operation_id})),
+            Some(json!({"loss_ack":false,"operation_id":operation_id,"lease":null})),
         )
         .await;
     assert_eq!(
@@ -532,11 +693,101 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
         "{rejected}"
     );
     assert_eq!(rejected["code"], "LOSS_ACK_REQUIRED");
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let actor: String =
+        sqlx::query_scalar("SELECT user_id FROM users WHERE username='local-admin'")
+            .fetch_one(tx.connection())
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO review_tasks(task_id,project_id,asset_revision_id,ontology_version_id,assignee_id,created_by,state,created_at) VALUES('import-task',?,?,?,?,?,'open','2026-01-01T00:00:00Z')")
+        .bind(&fixture.project_id).bind(&fixture.asset_revision_id).bind(target_ontology_id).bind(&actor).bind(&actor).execute(tx.connection()).await.unwrap();
+    sqlx::query("INSERT INTO task_leases(task_id,holder_id,fencing_token,expires_at,updated_at) VALUES('import-task',?,2,?,0)")
+        .bind(&actor).bind(chrono::Utc::now().timestamp()+300).execute(tx.connection()).await.unwrap();
+    tx.commit().await.unwrap();
+    for (lease, expected) in [
+        (Value::Null, "LEASE_REQUIRED"),
+        (
+            json!({"task_id":"import-task","fencing_token":1}),
+            "STALE_FENCING_TOKEN",
+        ),
+    ] {
+        let (status, error) = fixture
+            .request(
+                "POST",
+                &commit_path,
+                Some(json!({"loss_ack":true,"operation_id":operation_id,"lease":lease})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{error}");
+        assert_eq!(error["code"], expected);
+        let (status, unchanged) = fixture
+            .request("GET", &fixture.annotation_path(), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            unchanged["annotation_revision_id"],
+            fixture.initial_revision_id
+        );
+    }
+    for (state, holder, expiry, expected) in [
+        (
+            "open",
+            None,
+            chrono::Utc::now().timestamp() + 300,
+            "LEASE_NOT_HELD",
+        ),
+        ("open", Some(actor.as_str()), 0, "LEASE_EXPIRED"),
+        (
+            "submitted",
+            Some(actor.as_str()),
+            chrono::Utc::now().timestamp() + 300,
+            "TASK_NOT_OPEN",
+        ),
+    ] {
+        let mut tx = fixture.repository.begin_write().await.unwrap();
+        sqlx::query("UPDATE review_tasks SET state=? WHERE task_id='import-task'")
+            .bind(state)
+            .execute(tx.connection())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE task_leases SET holder_id=?,expires_at=? WHERE task_id='import-task'")
+            .bind(holder)
+            .bind(expiry)
+            .execute(tx.connection())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let (status,error)=fixture.request("POST", &commit_path, Some(json!({"loss_ack":true,"operation_id":operation_id,"lease":{"task_id":"import-task","fencing_token":2}}))).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{error}");
+        assert_eq!(error["code"], expected);
+        let mut tx = fixture.repository.begin_write().await.unwrap();
+        let revisions: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM annotation_revisions WHERE ontology_version_id=?",
+        )
+        .bind(target_ontology_id)
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+        assert_eq!(revisions, 0);
+        tx.rollback().await.unwrap();
+    }
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    sqlx::query("UPDATE review_tasks SET state='open' WHERE task_id='import-task'")
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE task_leases SET holder_id=?,expires_at=? WHERE task_id='import-task'")
+        .bind(&actor)
+        .bind(chrono::Utc::now().timestamp() + 300)
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
     let (status, committed) = fixture
         .request(
             "POST",
             &commit_path,
-            Some(json!({"loss_ack":true,"operation_id":operation_id})),
+            Some(json!({"loss_ack":true,"operation_id":operation_id,"lease":{"task_id":"import-task","fencing_token":2}})),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{committed}");
@@ -550,7 +801,7 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
         .request(
             "POST",
             &commit_path,
-            Some(json!({"loss_ack":true,"operation_id":operation_id})),
+            Some(json!({"loss_ack":true,"operation_id":operation_id,"lease":{"task_id":"import-task","fencing_token":2}})),
         )
         .await;
     assert_eq!(replay_status, StatusCode::OK, "{replay}");
@@ -558,6 +809,60 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
         replay["revision"]["annotation_revision_id"],
         committed["revision"]["annotation_revision_id"]
     );
+    let (status, error) = fixture
+        .request(
+            "POST",
+            &commit_path,
+            Some(json!({"loss_ack":true,"operation_id":operation_id,"lease":null})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{error}");
+    assert_eq!(error["code"], "IDEMPOTENCY_CONFLICT");
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    sqlx::query("DELETE FROM task_leases WHERE task_id='import-task'")
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM review_tasks WHERE task_id='import-task'")
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut cursor = String::new();
+    let mut heads = Vec::new();
+    loop {
+        let (status, page) = fixture
+            .request(
+                "GET",
+                &format!(
+                    "/api/assets/{}/annotation-heads?limit=1{}",
+                    fixture.asset_revision_id, cursor
+                ),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        heads.push(
+            page["items"][0]["annotation_revision_id"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+        match page["next_cursor"].as_str() {
+            Some(next) => cursor = format!("&cursor={next}"),
+            None => break,
+        }
+    }
+    heads.sort();
+    let mut expected = vec![
+        fixture.initial_revision_id.clone(),
+        committed["revision"]["annotation_revision_id"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    ];
+    expected.sort();
+    assert_eq!(heads, expected);
 
     let revision_id = committed["revision"]["annotation_revision_id"]
         .as_str()
@@ -575,6 +880,21 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rejected}");
     assert_eq!(rejected["code"], "LOSS_ACK_REQUIRED");
+    let failure: annotation_domain::ApiError = serde_json::from_value(rejected).unwrap();
+    assert_eq!(failure.code, "LOSS_ACK_REQUIRED");
+
+    let details = failure
+        .details
+        .as_ref()
+        .expect("Loss acknowledgement error requires details");
+    assert_eq!(details["loss_report"]["losses"][0]["field"], "object_ids");
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let exports: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM annotation_exports")
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+    assert_eq!(exports, 0);
+    tx.rollback().await.unwrap();
     let (status, exported) = fixture
         .request(
             "POST",
@@ -739,6 +1059,7 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
             &native_commit_path,
             Some(json!({
                 "loss_ack":false,
+                "lease":null,
                 "operation_id":"b7d69d86-0d8e-4b75-b1fd-59e3cd3e0851"
             })),
         )
@@ -755,6 +1076,7 @@ async fn t14_import_preview_commit_export_and_download_are_bound_to_revision() {
             &native_commit_path,
             Some(json!({
                 "loss_ack":true,
+                "lease":null,
                 "operation_id":"b7d69d86-0d8e-4b75-b1fd-59e3cd3e0851"
             })),
         )
@@ -1236,4 +1558,432 @@ async fn save_journals_decisions_with_the_revision_atomically_and_idempotently()
         .unwrap();
     assert_eq!(predictions, 1, "undo must never delete prediction history");
     tx.commit().await.unwrap();
+}
+
+#[tokio::test]
+async fn commercial_empty_publish_and_head_summary_boundaries() {
+    let fixture = fixture().await;
+    let (status, _) = fixture
+        .request(
+            "POST",
+            &format!("/api/projects/{}/ontologies", fixture.project_id),
+            Some(json!({"labels":[],"guidelines_markdown":""})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, page) = fixture
+        .request(
+            "GET",
+            &format!(
+                "/api/assets/{}/annotation-heads?limit=1",
+                fixture.asset_revision_id
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        page["items"][0]["annotation_revision_id"],
+        fixture.initial_revision_id
+    );
+    assert_eq!(page["items"][0]["object_count"], 0);
+    assert!(page["items"][0].get("objects").is_none());
+    assert_eq!(
+        page["items"][0].get("approved_review_id"),
+        Some(&Value::Null)
+    );
+    let (status, project_page) = fixture
+        .request(
+            "GET",
+            &format!(
+                "/api/projects/{}/annotation-heads?ontology_version_id={}&limit=1",
+                fixture.project_id, fixture.ontology_id
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{project_page}");
+    assert_eq!(
+        project_page["items"][0]["head"]["annotation_revision_id"],
+        fixture.initial_revision_id
+    );
+    for endpoint in [
+        format!(
+            "/api/assets/{}/annotation-heads?limit=101",
+            fixture.asset_revision_id
+        ),
+        format!("/api/projects/{}/members?limit=0", fixture.project_id),
+    ] {
+        assert_eq!(
+            fixture.request("GET", &endpoint, None).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let (status, members) = fixture
+        .request(
+            "GET",
+            &format!("/api/projects/{}/members?limit=1", fixture.project_id),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{members}");
+    assert_eq!(members["items"][0]["username"], "local-admin");
+    assert_eq!(members["items"][0]["role"], "admin");
+    assert_eq!(members.get("next_cursor"), Some(&Value::Null));
+}
+
+#[tokio::test]
+async fn commercial_project_pages_preserve_missing_heads_and_member_privacy() {
+    let fixture = fixture().await;
+    let (status, ontologies) = fixture
+        .request(
+            "GET",
+            &format!("/api/projects/{}/ontologies", fixture.project_id),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let mut ontology = ontologies["items"][0].clone();
+    ontology["ontology_version_id"] = json!("z-new-ontology");
+    ontology["version_no"] = json!(2);
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    sqlx::query("INSERT INTO ontology_versions(ontology_version_id,project_id,version_no,body_json,created_at) VALUES('z-new-ontology',?,2,?,'2026-01-01T00:00:00Z')").bind(&fixture.project_id).bind(ontology.to_string()).execute(tx.connection()).await.unwrap();
+    let actor: String =
+        sqlx::query_scalar("SELECT user_id FROM users WHERE username='local-admin'")
+            .fetch_one(tx.connection())
+            .await
+            .unwrap();
+    for id in ["member-a", "member-b"] {
+        sqlx::query("INSERT INTO users(user_id,username,password_hash,created_at) VALUES(?,?,'','2026-01-01T00:00:00Z')").bind(id).bind(id).execute(tx.connection()).await.unwrap();
+        sqlx::query("INSERT INTO memberships(project_id,user_id,role) VALUES(?,?,'viewer')")
+            .bind(&fixture.project_id)
+            .bind(id)
+            .execute(tx.connection())
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+    let mut png = std::io::Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(RgbImage::new(32, 24))
+        .write_to(&mut png, ImageFormat::Png)
+        .unwrap();
+    let imported = import_one(
+        &fixture.repository,
+        &MediaWorker::new(),
+        ImportInput {
+            project_id: fixture.project_id.clone(),
+            ontology_version_id: "z-new-ontology".into(),
+            actor_id: actor.clone(),
+            source_group_id: "second-source".into(),
+            original_name: "second.png".into(),
+            declared_mime: Some("image/png".into()),
+            bytes: png.into_inner(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut cursor = String::new();
+    let mut assets = Vec::new();
+    loop {
+        let (status, page) = fixture
+            .request(
+                "GET",
+                &format!(
+                    "/api/projects/{}/annotation-heads?ontology_version_id={}&limit=1{}",
+                    fixture.project_id, fixture.ontology_id, cursor
+                ),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let item = &page["items"][0];
+        let asset = item["media"]["asset_revision_id"].as_str().unwrap();
+        if asset == imported.asset_revision_id {
+            assert_eq!(item.get("head"), Some(&Value::Null));
+        } else {
+            assert_eq!(
+                item["head"]["annotation_revision_id"],
+                fixture.initial_revision_id
+            );
+        }
+        assets.push(asset.to_owned());
+        match page["next_cursor"].as_str() {
+            Some(next) => cursor = format!("&cursor={next}"),
+            None => break,
+        }
+    }
+    let mut expected = vec![
+        fixture.asset_revision_id.clone(),
+        imported.asset_revision_id,
+    ];
+    expected.sort();
+    assert_eq!(assets, expected);
+    let mut members = Vec::new();
+    cursor.clear();
+    loop {
+        let (status, page) = fixture
+            .request(
+                "GET",
+                &format!(
+                    "/api/projects/{}/members?limit=1{}",
+                    fixture.project_id, cursor
+                ),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        members.push(page["items"][0]["user_id"].as_str().unwrap().to_owned());
+        match page["next_cursor"].as_str() {
+            Some(next) => cursor = format!("&cursor={next}"),
+            None => break,
+        }
+    }
+    let mut expected = vec![actor.clone(), "member-a".into(), "member-b".into()];
+    expected.sort();
+    assert_eq!(members, expected);
+    for role in ["annotator", "reviewer", "viewer"] {
+        let mut tx = fixture.repository.begin_write().await.unwrap();
+        sqlx::query("UPDATE memberships SET role=? WHERE project_id=? AND user_id=?")
+            .bind(role)
+            .bind(&fixture.project_id)
+            .bind(&actor)
+            .execute(tx.connection())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            fixture
+                .request(
+                    "GET",
+                    &format!("/api/projects/{}/members", fixture.project_id),
+                    None
+                )
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    sqlx::query("DELETE FROM memberships WHERE project_id=? AND user_id=?")
+        .bind(&fixture.project_id)
+        .bind(&actor)
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        fixture
+            .request(
+                "GET",
+                &format!("/api/projects/{}/members", fixture.project_id),
+                None
+            )
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fixture
+            .request(
+                "GET",
+                &format!("/api/assets/{}/annotation-heads", fixture.asset_revision_id),
+                None
+            )
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn commercial_summary_approval_is_exact_and_corruption_is_not_missing() {
+    let fixture = fixture().await;
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let actor: String =
+        sqlx::query_scalar("SELECT user_id FROM users WHERE username='local-admin'")
+            .fetch_one(tx.connection())
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO review_tasks(task_id,project_id,asset_revision_id,ontology_version_id,assignee_id,created_by,state,created_at) VALUES('summary-task',?,?,?,?,?,'closed','2026-01-01T00:00:00Z')").bind(&fixture.project_id).bind(&fixture.asset_revision_id).bind(&fixture.ontology_id).bind(&actor).bind(&actor).execute(tx.connection()).await.unwrap();
+    let revisions = json!([fixture.initial_revision_id]).to_string();
+    sqlx::query("INSERT INTO review_submissions(review_id,task_id,project_id,submitted_by,revision_ids_json,state,created_at) VALUES('exact-review','summary-task',?,?,?,'approved','2026-01-01T00:00:00Z')").bind(&fixture.project_id).bind(&actor).bind(&revisions).execute(tx.connection()).await.unwrap();
+    sqlx::query("INSERT INTO review_decisions(review_id,decided_by,decision,reason,revision_ids_json,created_at) VALUES('exact-review',?,'approve','accepted',?,'2026-01-01T00:00:00Z')").bind(&actor).bind(&revisions).execute(tx.connection()).await.unwrap();
+    tx.commit().await.unwrap();
+    let asset_path = format!("/api/assets/{}/annotation-heads", fixture.asset_revision_id);
+    let project_path = format!(
+        "/api/projects/{}/annotation-heads?ontology_version_id={}",
+        fixture.project_id, fixture.ontology_id
+    );
+    let (status, page) = fixture.request("GET", &asset_path, None).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["items"][0]["approved_review_id"], "exact-review");
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let mut document = fixture.document();
+    document["completion"] = json!("invalid_completion");
+    sqlx::query("INSERT INTO annotation_revisions(annotation_revision_id,project_id,asset_revision_id,ontology_version_id,parent_revision_id,revision_no,body_json,content_hash,created_by,created_at) VALUES('corrupt-summary',?,?,?,?,2,?,'bad',?,'2026-01-01T00:00:00Z')").bind(&fixture.project_id).bind(&fixture.asset_revision_id).bind(&fixture.ontology_id).bind(&fixture.initial_revision_id).bind(document.to_string()).bind(&actor).execute(tx.connection()).await.unwrap();
+    sqlx::query("UPDATE annotation_heads SET annotation_revision_id='corrupt-summary' WHERE project_id=? AND asset_revision_id=? AND ontology_version_id=?").bind(&fixture.project_id).bind(&fixture.asset_revision_id).bind(&fixture.ontology_id).execute(tx.connection()).await.unwrap();
+    tx.commit().await.unwrap();
+    for path in [&asset_path, &project_path] {
+        let (status, error) = fixture.request("GET", path, None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{error}");
+        assert_eq!(error["code"], "ANNOTATION_HEAD_READ_FAILED");
+    }
+}
+
+#[tokio::test]
+async fn commercial_required_null_defaults_publish_and_require_key_presence() {
+    let fixture = fixture().await;
+    let ontology_path = format!("/api/projects/{}/ontologies", fixture.project_id);
+    let (status, before) = fixture.request("GET", &ontology_path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let original = before["items"][0].clone();
+    let attributes = json!([
+        {"key":"category","kind":"enum","required":true,"default_value":null,"enum_values":["visible","hidden"],"min":null,"max":null},
+        {"key":"flag","kind":"boolean","required":true,"default_value":null,"enum_values":[],"min":null,"max":null},
+        {"key":"score","kind":"number","required":true,"default_value":null,"enum_values":[],"min":0,"max":10},
+        {"key":"note","kind":"text","required":true,"default_value":null,"enum_values":[],"min":null,"max":null}
+    ]);
+    let body = json!({"labels":[{"label_id":"vehicle","name":"Vehicle","color":"#0099ff","attributes":attributes,"shortcut":null,"allowed_geometry_types":["bbox_xyxy"]}],"guidelines_markdown":"Required means key presence, including explicit null."});
+    let (status, published) = fixture
+        .request("POST", &ontology_path, Some(body.clone()))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{published}");
+    assert_eq!(published["labels"][0]["attributes"], attributes);
+    assert_ne!(
+        published["ontology_version_id"],
+        original["ontology_version_id"]
+    );
+    let (status, listed) = fixture.request("GET", &ontology_path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed["items"], json!([published.clone(), original]));
+    for key in ["required", "default_value", "enum_values", "min", "max"] {
+        let mut invalid = body.clone();
+        invalid["labels"][0]["attributes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+        assert_eq!(
+            fixture
+                .request("POST", &ontology_path, Some(invalid))
+                .await
+                .0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "missing {key}"
+        );
+    }
+    for (field, value) in [
+        ("required", json!(null)),
+        ("required", json!("true")),
+        ("kind", json!("unknown")),
+    ] {
+        let mut invalid = body.clone();
+        invalid["labels"][0]["attributes"][0][field] = value;
+        assert_eq!(
+            fixture
+                .request("POST", &ontology_path, Some(invalid))
+                .await
+                .0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    for (index, field, value) in [
+        (0, "default_value", json!("outside-enum")),
+        (1, "default_value", json!("not-boolean")),
+        (2, "default_value", json!(11)),
+        (3, "default_value", json!(false)),
+        (0, "enum_values", json!([])),
+        (2, "min", json!(11)),
+    ] {
+        let mut invalid = body.clone();
+        invalid["labels"][0]["attributes"][index][field] = value;
+        assert_eq!(
+            fixture
+                .request("POST", &ontology_path, Some(invalid))
+                .await
+                .0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let mut png = std::io::Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(RgbImage::new(32, 24))
+        .write_to(&mut png, ImageFormat::Png)
+        .unwrap();
+    let mut tx = fixture.repository.begin_write().await.unwrap();
+    let actor: String =
+        sqlx::query_scalar("SELECT user_id FROM users WHERE username='local-admin'")
+            .fetch_one(tx.connection())
+            .await
+            .unwrap();
+    tx.rollback().await.unwrap();
+    let imported = import_one(
+        &fixture.repository,
+        &MediaWorker::new(),
+        ImportInput {
+            project_id: fixture.project_id.clone(),
+            ontology_version_id: published["ontology_version_id"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            actor_id: actor,
+            source_group_id: "required-null-source".into(),
+            original_name: "required-null.png".into(),
+            declared_mime: Some("image/png".into()),
+            bytes: png.into_inner(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut document = fixture.document();
+    document["asset_revision_id"] = json!(imported.asset_revision_id);
+    document["ontology_version_id"] = published["ontology_version_id"].clone();
+    document["objects"] = json!([{"object_id":"required-null-object","label_id":"vehicle","geometry":{"type":"bbox_xyxy","x_min":1,"y_min":1,"x_max":20,"y_max":20},"attributes":{"category":null,"flag":null,"score":null,"note":null},"origin":{"type":"manual","prediction_id":null,"model_run_id":null,"import_batch_id":null}}]);
+    let annotation_path = format!(
+        "/api/assets/{}/annotation?ontology_version_id={}",
+        imported.asset_revision_id,
+        published["ontology_version_id"].as_str().unwrap()
+    );
+    let request = fixture.save_request(
+        "required-null-save",
+        &imported.annotation_revision_id,
+        document.clone(),
+    );
+    let (status, saved) = fixture
+        .request("PUT", &annotation_path, Some(request))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(
+        saved["revision"]["document"]["objects"][0]["attributes"],
+        document["objects"][0]["attributes"]
+    );
+    let revision_id = saved["revision"]["annotation_revision_id"]
+        .as_str()
+        .unwrap();
+    for key in ["category", "flag", "score", "note"] {
+        let mut missing = document.clone();
+        missing["objects"][0]["attributes"]
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+        let request =
+            fixture.save_request(&format!("required-missing-{key}"), revision_id, missing);
+        let (status, error) = fixture
+            .request("PUT", &annotation_path, Some(request))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{error}");
+        assert_eq!(error["code"], "MISSING_REQUIRED_ATTRIBUTE");
+    }
+    let (status, head) = fixture.request("GET", &annotation_path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(head["annotation_revision_id"], revision_id);
+    let (status, historical) = fixture
+        .request("GET", &fixture.annotation_path(), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        historical["annotation_revision_id"],
+        fixture.initial_revision_id
+    );
+    let (status, final_list) = fixture.request("GET", &ontology_path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(final_list, listed);
 }

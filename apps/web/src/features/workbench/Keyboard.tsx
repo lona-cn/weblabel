@@ -33,7 +33,10 @@ export function isTextEntryTarget(target: EventTarget | null): boolean {
     element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.tagName === 'SELECT'
   );
 }
-
+/** Controls own editing keys; listbox/option and canvas remain editor targets. */
+function isControlTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('button, a[href], summary, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [role="spinbutton"], [role="textbox"], [role="combobox"], [role="tab"], [role="menuitem"]');
+}
 function randomObjectId(): string {
   return (
     globalThis.crypto?.randomUUID?.() ??
@@ -46,11 +49,15 @@ export function Keyboard({
   tools,
   store,
   acceptsTarget,
+  categoryKeys = {},
+  onCategory,
 }: {
   host: KeyboardHostPort;
   tools: ToolState;
   store: SelectionStore;
   acceptsTarget: (target: EventTarget | null) => boolean;
+  categoryKeys?: Readonly<Record<string, string>>;
+  onCategory?: (labelId: string) => void;
 }) {
   const composing = useRef(false);
 
@@ -63,15 +70,15 @@ export function Keyboard({
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       // IME composition or text-field focus: the editor never sees the key.
-      if (composing.current || event.isComposing || isTextEntryTarget(event.target) || !acceptsTarget(event.target)) return;
+      if (event.defaultPrevented || composing.current || event.isComposing || isTextEntryTarget(event.target) || isControlTarget(event.target) || !acceptsTarget(event.target)) return;
+      if (event.target instanceof Element && event.target.closest('.shortcut-help')) return;
       const accelerator = event.ctrlKey || event.metaKey;
       if (event.key === 'Escape') {
         host.cancelGesture();
         return;
       }
       if (event.code === 'Space') {
-        // Native controls retain Space activation; only the editor surface pans.
-        if (event.target instanceof Element && event.target.closest('button, a[href], summary, input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="switch"], [role="slider"], [role="tab"]')) return;
+        // Only the editor surface pans; controls were excluded above.
         event.preventDefault();
         if (!event.repeat) tools.beginSpacePan();
         return;
@@ -113,6 +120,7 @@ export function Keyboard({
         event.preventDefault();
         tools.set(tool);
       }
+      else { const labelId = categoryKeys[event.key.toLowerCase()]; if (labelId) { event.preventDefault(); onCategory?.(labelId); } }
     };
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.code === 'Space') tools.endSpacePan();
@@ -133,7 +141,7 @@ export function Keyboard({
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [host, tools, store, acceptsTarget]);
+  }, [host, tools, store, acceptsTarget, categoryKeys, onCategory]);
 
   return null;
 }

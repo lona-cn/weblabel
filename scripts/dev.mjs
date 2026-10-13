@@ -4,13 +4,14 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { resolveArgv } from './task.mjs';
+import { validateAdminRecoveryEnvironment, nonApiEnvironment } from './start-local.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 
 function stopTree(child, signal) {
   if (!child.pid) return;
   if (process.platform === 'win32') {
-    const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { env: nonApiEnvironment(process.env), stdio: 'ignore', windowsHide: true });
     killer.on('error', () => {});
     child.kill(signal);
   } else {
@@ -18,7 +19,14 @@ function stopTree(child, signal) {
   }
 }
 
-export function runProcessGroup(commands, cwd = process.cwd()) {
+export function developmentEnvironments(parent) {
+  validateAdminRecoveryEnvironment(parent);
+  const api = { ...parent, WEBLABEL_COOKIE_SECURE: parent.WEBLABEL_COOKIE_SECURE ?? 'false' };
+  const web = nonApiEnvironment(api);
+  return [api, web];
+}
+
+export function runProcessGroup(commands, cwd = process.cwd(), environments = commands.map(() => process.env)) {
   if (commands.length === 0) return Promise.reject(new Error('No development processes were configured.'));
   let resolved;
   try {
@@ -49,9 +57,11 @@ export function runProcessGroup(commands, cwd = process.cwd()) {
     const onTerminate = () => stopAll('SIGTERM', 143);
     process.once('SIGINT', onInterrupt);
     process.once('SIGTERM', onTerminate);
-    for (const [command, ...args] of resolved) {
+    for (const [index, argv] of resolved.entries()) {
+      const [command, ...args] = argv;
       const child = spawn(command, args, {
         cwd,
+        env: environments[index],
         stdio: 'inherit',
         shell: false,
         windowsHide: true,
@@ -72,7 +82,7 @@ export function runProcessGroup(commands, cwd = process.cwd()) {
 
 function main() {
   const root = path.resolve(path.dirname(scriptPath), '..');
-  process.env.WEBLABEL_COOKIE_SECURE ??= 'false';
+  const environments = developmentEnvironments(process.env);
   const webManifestPath = path.join(root, 'apps', 'web', 'package.json');
   const webManifest = JSON.parse(fs.readFileSync(webManifestPath, 'utf8'));
   if (!webManifest.scripts?.dev) {
@@ -82,7 +92,7 @@ function main() {
   return runProcessGroup([
     ['cargo', 'run', '-p', 'weblabel-api'],
     ['pnpm', '--filter', '@weblabel/web', 'run', 'dev'],
-  ], root);
+  ], root, environments);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {

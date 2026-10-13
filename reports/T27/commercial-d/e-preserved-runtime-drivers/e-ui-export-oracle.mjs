@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {readFile,writeFile,realpath} from 'node:fs/promises';
+import {resolve,relative,isAbsolute} from 'node:path';
+import {createHash} from 'node:crypto';
+import sharp from 'sharp';
+const root=await realpath('D:/workspace/src/weblabel');
+const inside=async p=>{const actual=await realpath(resolve(p));const rel=relative(root,actual);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel));return actual;};
+const expectedPath=await inside(process.argv[2]);
+const expected=JSON.parse(await readFile(expectedPath,'utf8'));
+process.env.PYTHON='C:/Python314/python.exe';
+const {verifyDeliveryArchive}=await import(new URL('../../../tests/support/dataset-delivery.ts',import.meta.url).href);
+const original=Buffer.from(expected.asset.originalBase64,'base64');
+const canonical=Buffer.from(expected.asset.canonicalBase64,'base64');
+const before=await sharp(original).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+const after=await sharp(canonical).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+assert.deepEqual(after.info,before.info);assert.deepEqual(after.data,before.data);
+assert.equal(before.info.width,expected.asset.width);assert.equal(before.info.height,expected.asset.height);
+expected.asset.pixelsSha256=createHash('sha256').update(before.data).digest('hex');
+const frozen={fixture:{projectId:expected.projectId,ontology:expected.ontology},datasetId:expected.datasetId,snapshotHash:expected.snapshotHash,expected:[expected.asset],excluded:expected.excluded};
+const receipts=[];
+for(const entry of expected.receipts){const file=await inside(entry.path);const bytes=await readFile(file);receipts.push(await verifyDeliveryArchive(frozen,entry.format,bytes,entry.job.result,entry.loss_report));}
+assert.deepEqual(receipts.map(r=>r.format),['native','yolo','coco']);
+const report={status:'PASS',source_expected:expectedPath,scope:'ActualnormalUIRootdownloaded3ZIPs; fullimmutableDoc/approval/MediaDTO/hash/pixel/globalmap/split/membership/omissions; no ZIP-derivedexpected',original_canonical_full_RGBA_equal:true,receipts};
+await writeFile(resolve('reports/T27/commercial-d/e-three-ui-exports-independent-green.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx'});
+console.log(JSON.stringify(report));

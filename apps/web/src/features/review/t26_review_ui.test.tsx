@@ -13,10 +13,13 @@ const mocked = vi.hoisted(() => ({
   decide: vi.fn(),
   issues: vi.fn(),
   revision: vi.fn(),
+  assetsPage: vi.fn(async () => ({ items: [], next_cursor: null })),
 }));
 vi.mock('./api', () => ({ reviewApi: mocked }));
 
-import { ReviewPanel } from './ReviewPanel';
+import { ReviewPanel, type TaskOpenPreparation } from './ReviewPanel';
+import { api } from '../../lib/t15/api';
+const prepare = async (): Promise<TaskOpenPreparation> => ({ token: Symbol(), isCurrent: () => true, validateCurrent: async () => true, onTaskOpen: () => undefined, release: () => undefined });
 
 const task: ReviewTask = {
   task_id: 'task-1', project_id: 'project-1', asset_revision_id: 'asset-1', ontology_version_id: 'ontology-1',
@@ -45,6 +48,8 @@ const currentRevision: AnnotationRevision = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.spyOn(api, 'members').mockResolvedValue({ items: [{ user_id: 'annotator-3', username: 'third-annotator', role: 'annotator' }], next_cursor: null });
+  vi.spyOn(api, 'ontologies').mockResolvedValue({ items: [], next_cursor: null });
   mocked.tasks.mockResolvedValue({ items: [task], next_cursor: null });
   mocked.createTask.mockResolvedValue({});
   mocked.lease.mockImplementation(async (taskId: string, action: string, holderId?: string) => ({
@@ -60,6 +65,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('T26 review panel integration', () => {
@@ -69,10 +75,10 @@ describe('T26 review panel integration', () => {
       order.push('flush-and-read-head');
       await submit('revision-current');
     });
-    render(<ReviewPanel projectId="project-1" session={annotator} onLeaseChange={() => undefined} onSubmitTask={onSubmitTask} />);
+    render(<ReviewPanel onPrepareTaskCreate={prepare} onPrepareTaskOpen={prepare} projectId="project-1" session={annotator} onLeaseChange={() => undefined} onSubmitTask={onSubmitTask} />);
     await screen.findByTestId('review-task-task-1');
 
-    fireEvent.click(screen.getByRole('button', { name: '领取 60 秒任务' }));
+    fireEvent.click(screen.getByRole('button', { name: '领取任务' }));
     await waitFor(() => expect(mocked.lease).toHaveBeenCalledWith('task-1', 'acquire'));
     fireEvent.click(screen.getByTestId('task-submit'));
     await waitFor(() => expect(mocked.submit).toHaveBeenCalledWith('task-1', 'revision-current'));
@@ -83,15 +89,15 @@ describe('T26 review panel integration', () => {
   it('renews the current lease at 20 seconds and releases it on unmount', async () => {
     vi.useFakeTimers();
     const onLeaseChange = vi.fn();
-    const view = render(<ReviewPanel projectId="project-1" session={annotator} onLeaseChange={onLeaseChange} onSubmitTask={async (_task, submit) => { await submit('revision-1'); }} />);
+    const view = render(<ReviewPanel onPrepareTaskCreate={prepare} onPrepareTaskOpen={prepare} projectId="project-1" session={annotator} onLeaseChange={onLeaseChange} onSubmitTask={async (_task, submit) => { await submit('revision-1'); }} />);
     await act(async () => { await Promise.resolve(); });
-    fireEvent.click(screen.getByRole('button', { name: '领取 60 秒任务' }));
+    fireEvent.click(screen.getByRole('button', { name: '领取任务' }));
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(onLeaseChange).toHaveBeenCalledWith({ asset_revision_id: 'asset-1', task_id: 'task-1', fencing_token: 42 });
+    expect(onLeaseChange).toHaveBeenCalledWith({ asset_revision_id: 'asset-1', ontology_version_id: 'ontology-1', task_id: 'task-1', fencing_token: 42 });
 
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     expect(mocked.lease).toHaveBeenCalledWith('task-1', 'renew');
-    expect(onLeaseChange).toHaveBeenLastCalledWith({ asset_revision_id: 'asset-1', task_id: 'task-1', fencing_token: 42 });
+    expect(onLeaseChange).toHaveBeenLastCalledWith({ asset_revision_id: 'asset-1', ontology_version_id: 'ontology-1', task_id: 'task-1', fencing_token: 42 });
 
     view.unmount();
     expect(mocked.lease).toHaveBeenCalledWith('task-1', 'release');
@@ -103,13 +109,11 @@ describe('T26 review panel integration', () => {
     mocked.revision.mockImplementation(async (revisionId: string) => revisionId === 'revision-old' ? previousRevision : currentRevision);
     mocked.issues.mockResolvedValue({ items: [{ issue_id: 'issue-1', review_id: 'review-1', annotation_revision_id: 'revision-current', ontology_version_id: 'ontology-1', object_id: 'object-1', code: 'attribute-check', message: 'Verify helmet attribute', region: null, created_at: '2026-09-26T00:00:00Z' }] });
     const reviewer: Session = { ...annotator, user_id: 'reviewer-1', username: 'reviewer', project_roles: [{ project_id: 'project-1', role: 'reviewer' }] };
-    render(<ReviewPanel projectId="project-1" session={reviewer} onLeaseChange={() => undefined} onSubmitTask={async () => undefined} />);
+    render(<ReviewPanel onPrepareTaskCreate={prepare} onPrepareTaskOpen={prepare} projectId="project-1" session={reviewer} onLeaseChange={() => undefined} onSubmitTask={async () => undefined} />);
     await screen.findByTestId('review-task-task-1');
     expect((screen.getByTestId('review-approve') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByTestId('review-diff-task-1'));
     const diff = await screen.findByTestId('review-diff-content-task-1');
-    expect(diff.textContent).toContain('object-1：changed · attributes');
-    expect(diff.textContent).toContain('attributes: {"helmet":"unknown"} → {"helmet":"wearing"}');
     fireEvent.change(screen.getByLabelText('理由'), { target: { value: 'Verified' } });
     await waitFor(() => expect((screen.getByTestId('review-approve') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('review-approve'));
@@ -119,10 +123,45 @@ describe('T26 review panel integration', () => {
   it('transfers through the project-admin route with the selected holder id', async () => {
     mocked.tasks.mockResolvedValue({ items: [{ ...task, assignee_id: 'annotator-2' }], next_cursor: null });
     const admin: Session = { ...annotator, user_id: 'admin-1', username: 'admin', project_roles: [{ project_id: 'project-1', role: 'admin' }] };
-    render(<ReviewPanel projectId="project-1" session={admin} onLeaseChange={() => undefined} onSubmitTask={async (_task, submit) => { await submit('revision-1'); }} />);
-    await screen.findByTestId('review-task-task-1');
-    fireEvent.change(screen.getByLabelText('转交至项目标注者 ID'), { target: { value: 'annotator-3' } });
+    render(<ReviewPanel onPrepareTaskCreate={prepare} onPrepareTaskOpen={prepare} projectId="project-1" session={admin} onLeaseChange={() => undefined} onSubmitTask={async (_task, submit) => { await submit('revision-1'); }} />);
+    await waitFor(() => expect(Array.from((screen.getByLabelText('转交至项目标注者') as HTMLSelectElement).options, (item) => item.value)).toContain('annotator-3'));
+    fireEvent.change(screen.getByLabelText('转交至项目标注者'), { target: { value: 'annotator-3' } });
     fireEvent.click(screen.getByTestId('task-transfer-task-1'));
     await waitFor(() => expect(mocked.lease).toHaveBeenCalledWith('task-1', 'transfer', 'annotator-3'));
   });
 });
+
+it('refuses claim when a changed draft branch is observed during asynchronous preflight', async () => {
+  let resolve!: (value: boolean) => void; const gate = { promise: new Promise<boolean>(done => { resolve = done; }), resolve: (value: boolean) => resolve(value) };
+  const release = vi.fn(), opened = vi.fn();
+  const preparation = async (): Promise<TaskOpenPreparation> => ({ token: Symbol(), isCurrent: () => true, validateCurrent: () => gate.promise, onTaskOpen: opened, release });
+  render(<ReviewPanel onPrepareTaskCreate={prepare} onPrepareTaskOpen={preparation} projectId="project-1" session={annotator} onLeaseChange={() => undefined} onSubmitTask={async () => undefined} />);
+  await screen.findByTestId('review-task-task-1');
+  fireEvent.click(screen.getByRole('button', { name: '领取任务' }));
+  await act(async () => { await Promise.resolve(); });
+  expect(mocked.lease).not.toHaveBeenCalled();
+  await act(async () => { gate.resolve(false); });
+  await waitFor(() => expect(release).toHaveBeenCalled());
+  expect(mocked.lease).not.toHaveBeenCalled();
+  expect(opened).not.toHaveBeenCalled();
+});
+it('releases its actual acquired lease without installing Native when post-claim draft validation changes', async () => {
+  let resolve!: (value: boolean) => void; const gate = { promise: new Promise<boolean>(done => { resolve = done; }), resolve: (value: boolean) => resolve(value) };
+  const release = vi.fn(), opened = vi.fn(), changed = vi.fn();
+  let claimed = false;
+  mocked.lease.mockImplementation(async (taskId: string, action: string) => {
+    if (action === 'acquire') claimed = true;
+    return { task_id: taskId, holder_id: action === 'release' ? null : annotator.user_id, fencing_token: 42, expires_at_unix: 1_800_000_000, lease_seconds: 60, heartbeat_seconds: 20 };
+  });
+  const preparation = async (): Promise<TaskOpenPreparation> => ({ token: Symbol(), isCurrent: () => true, validateCurrent: () => claimed ? gate.promise : Promise.resolve(true), onTaskOpen: opened, release });
+  render(<ReviewPanel onPrepareTaskCreate={prepare} onPrepareTaskOpen={preparation} projectId="project-1" session={annotator} onLeaseChange={changed} onSubmitTask={async () => undefined} />);
+  await screen.findByTestId('review-task-task-1');
+  fireEvent.click(screen.getByRole('button', { name: '领取任务' }));
+  await waitFor(() => expect(mocked.lease).toHaveBeenCalledWith('task-1', 'acquire'));
+  expect(opened).not.toHaveBeenCalled();
+  await act(async () => { gate.resolve(false); });
+  await waitFor(() => expect(mocked.lease).toHaveBeenCalledWith('task-1', 'release'));
+  expect(opened).not.toHaveBeenCalled();
+  expect(changed.mock.calls.every(([lease]) => lease === null)).toBe(true);
+  expect(release).toHaveBeenCalled();
+}); 

@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {buildRelease} from '../../../scripts/build.mjs';
+const root=await fs.realpath(process.cwd());const scratch=await fs.mkdtemp(path.join(root,'target/build-cache/commercial-d/junction-boundary-'));
+const target=path.join(scratch,'target');const link=path.join(scratch,'junction');await fs.mkdir(target);await fs.writeFile(path.join(target,'sentinel'),'owned-junction-sentinel');await fs.symlink(target,link,'junction');
+assert.equal(await fs.realpath(link),await fs.realpath(target));
+const future=path.join(target,'future');await assert.rejects(()=>buildRelease(['--build-dir',future,'--intermediate-dir',path.join(link,'future')]),error=>error.message.startsWith('build_directories_overlap'));
+await assert.rejects(()=>fs.lstat(future),error=>error.code==='ENOENT');assert.equal(await fs.readFile(path.join(target,'sentinel'),'utf8'),'owned-junction-sentinel');
+const second=path.join(scratch,'release');await assert.rejects(()=>buildRelease(['--build-dir',second,'--intermediate-dir',link]),error=>error.message.startsWith('intermediate_directory_exists'));
+await assert.rejects(()=>fs.lstat(second),error=>error.code==='ENOENT');assert.equal(await fs.readFile(path.join(target,'sentinel'),'utf8'),'owned-junction-sentinel');
+await fs.writeFile('reports/T27/commercial-d/d5-physical-junction-observation.json',JSON.stringify({platform:process.platform,actual_junction_target:await fs.realpath(link),physical_future_alias_rejected:true,existing_junction_rejected:true,no_release_or_future_output:true,sentinel_unchanged:true,limit:'Actual Root-only junction preflight; successful fullsource build remains separate.'},null,2)+'\n');
+console.log('ACTUAL_PHYSICAL_JUNCTION_BOUNDARY_OK');await fs.rm(scratch,{recursive:true});

@@ -1,4 +1,5 @@
 mod external_processing;
+mod members;
 mod ontology;
 mod users;
 
@@ -23,7 +24,10 @@ pub fn router(state: AuthState, repository: Repository) -> Router {
             get(users::list_users).post(users::create_user),
         )
         .route("/api/projects", get(list_projects).post(create_project))
-        .route("/api/projects/{project_id}/members", post(add_member))
+        .route(
+            "/api/projects/{project_id}/members",
+            post(add_member).get(members::list),
+        )
         .route(
             "/api/projects/{project_id}/ontologies",
             get(ontology::list).post(ontology::publish),

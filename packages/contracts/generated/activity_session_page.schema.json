@@ -43,11 +43,32 @@
         "kind": {
           "$ref": "#/definitions/ActivityKind"
         },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "seq": {
           "type": "integer",
           "format": "uint64",
           "maximum": 9007199254740991.0,
           "minimum": 0.0
+        },
+        "task_id": {
+          "description": "Explicit voluntary association, never inferred from the current media.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false

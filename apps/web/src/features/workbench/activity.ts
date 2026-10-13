@@ -11,11 +11,23 @@ export function activeDuration(intervals: readonly FocusInterval[]): number {
   }, 0);
 }
 export type ActivityStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+export type ActivityBinding = { task_id?: string; run_id?: string };
+function bindingFields(value: object): ActivityBinding {
+  const result: ActivityBinding = {};
+  for (const key of ['task_id', 'run_id'] as const) {
+    if (!Object.hasOwn(value, key)) continue;
+    const id = (value as ActivityBinding)[key];
+    if (typeof id !== 'string' || !id.trim() || id.length > 128) throw new Error('Invalid activity binding');
+    result[key] = id;
+  }
+  return result;
+}
 export class ActivityCollector {
   currentSession = crypto.randomUUID();
   private enabled = false;
   private focused = true;
   private kind: ActivityKind = 'task';
+  private binding: ActivityBinding = {};
   private anchor = 0;
   private lastInput = 0;
   private highWater = 0;
@@ -45,7 +57,7 @@ export class ActivityCollector {
           if (!item || typeof item !== 'object' || !('seq' in item) || item.seq !== index || !('kind' in item) || typeof item.kind !== 'string' || !Object.hasOwn(kinds, item.kind) || !('duration_ms' in item) || !Number.isSafeInteger(item.duration_ms) || (item.duration_ms as number) <= 0 || (item.duration_ms as number) > 86_400_000) throw new Error('Invalid local activity interval');
           total += item.duration_ms as number;
           if (total > 86_400_000) throw new Error('Local activity session exceeds one day');
-          return { seq: index, kind: item.kind as ActivityKind, duration_ms: item.duration_ms as number };
+          return { seq: index, kind: item.kind as ActivityKind, duration_ms: item.duration_ms as number, ...bindingFields(item) };
         });
         return { session_id: value.session_id, version: value.version as number, intervals };
       });
@@ -58,6 +70,12 @@ export class ActivityCollector {
   getRevision = (): number => this.revision;
   isEnabled(): boolean { return this.enabled; }
   getKind(): ActivityKind { return this.kind; }
+  getBinding(): ActivityBinding { return { ...this.binding }; }
+  setBinding(binding: ActivityBinding): void {
+    const next = bindingFields(binding);
+    if (next.task_id === this.binding.task_id && next.run_id === this.binding.run_id) return;
+    this.commit(); this.binding = next; this.notify();
+  }
   private now(): number {
     const sample = this.clock();
     if (!Number.isFinite(sample)) throw new Error('Invalid monotonic clock');
@@ -95,7 +113,7 @@ export class ActivityCollector {
       this.notify();
       return;
     }
-    session.intervals.push({ seq: session.intervals.length, kind: this.kind, duration_ms: duration });
+    session.intervals.push({ seq: session.intervals.length, kind: this.kind, duration_ms: duration, ...this.binding });
     this.persist();
     this.notify();
   }
@@ -129,6 +147,7 @@ export class ActivityCollector {
     this.storage = storage;
     this.enabled = false;
     this.sessions = [];
+    this.binding = {};
     this.currentSession = crypto.randomUUID();
     this.problem = null;
     this.recoveryJournal = null;

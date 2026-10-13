@@ -1,5 +1,7 @@
+/// <reference lib="es2024.promise" />
 import * as matchers from '@testing-library/jest-dom/matchers';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { RouteView } from '../../app/routes';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,12 +24,15 @@ let sessionRead: () => Promise<Response>;
 let post: () => Promise<Response>;
 let statusRead: () => Promise<Response>;
 let writes: number;
+let recoveryRead: () => Promise<Response>;
 beforeEach(() => {
   writes = 0; sessionStorage.clear(); setCsrfToken(null);
   sessionRead = async () => unauth();
   post = async () => reply(ack);
   statusRead = async () => reply({ mode: 'initial', bootstrap_available: true });
+  recoveryRead = async () => reply({ state: 'disabled', request_id: null, username: null });
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/session/password-recovery') return recoveryRead();
     if (url === '/api/session') return sessionRead();
     if (url === '/api/session/bootstrap' && init?.method === 'POST') { writes++; return post(); }
     if (url === '/api/session/bootstrap') return statusRead();
@@ -44,6 +49,59 @@ async function fill(password = '  中文密码-2026  ', confirm = password) {
   fireEvent.change(screen.getByTestId('bootstrap-password-confirm'), { target: { value: confirm } });
 }
 describe('first local login', () => {
+  it('verifies newly created project membership before enabling media import', async () => {
+    const previousUrl = location.href;
+    const previousHistoryState = history.state;
+    const previousFetch = globalThis.fetch;
+    const project = { project_id: 'fresh-project', name: '新建权限项目', description: '', allow_self_review: false, role: 'admin' };
+    const ontology = { ontology_version_id: 'fresh-ontology', project_id: project.project_id, version_no: 1,
+      labels: [{ label_id: 'server-label', name: '物体', color: '#e2763d', shortcut: null, allowed_geometry_types: ['bbox_xyxy'], attributes: [] }],
+      guidelines_markdown: '', allow_out_of_bounds: false };
+    const freshSession = { ...identity, project_roles: [{ project_id: project.project_id, role: 'admin' }] };
+    const projectPath = '/api/projects/' + project.project_id;
+    let created = false;
+    let published = false;
+    let resolveSession!: (response: Response) => void;
+    const pendingSession = new Promise<Response>(resolve => { resolveSession = resolve; });
+    history.replaceState(null, '', '/');
+    sessionStorage.setItem('weblabel_csrf', ack.csrf_token);
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (url === '/api/session/password-recovery') return reply({ state: 'disabled', request_id: null, username: null });
+      if (url === '/api/session' && method === 'GET') return published ? pendingSession : reply(identity);
+      if (url === '/api/projects' && method === 'POST') { created = true; return reply(project, 201); }
+      if (url === '/api/projects' && method === 'GET') return reply({ items: created ? [project] : [], next_cursor: null });
+      if (url === projectPath + '/ontologies' && method === 'POST') { published = true; return reply(ontology, 201); }
+      if (url === projectPath + '/ontologies' && method === 'GET') return reply({ items: published ? [ontology] : [], next_cursor: null });
+      if (method === 'GET' && [projectPath + '/assets?limit=100', projectPath + '/tasks', projectPath + '/members?limit=100'].includes(url)) return reply({ items: [], next_cursor: null });
+      if (url === '/api/model-profiles' && method === 'GET') return reply({ items: [] });
+      if (url === projectPath + '/external-processing-policy' && method === 'GET') return reply({ allow_external_processing: false });
+      throw new Error('Unexpected request: ' + method + ' ' + url);
+    }));
+    try {
+      render(<AppProviders><RouteView /></AppProviders>);
+      await screen.findByRole('heading', { name: '项目' });
+      await waitFor(() => expect(screen.getByTestId('project-submit')).toBeEnabled());
+      await userEvent.type(screen.getByRole('textbox', { name: '项目名称' }), project.name);
+      await userEvent.click(screen.getByTestId('project-submit'));
+      await waitFor(() => {
+        expect(screen.queryByRole('region', { name: '项目' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '工作台' })).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('媒体文件')).not.toBeInTheDocument();
+      });
+      await act(async () => { resolveSession(reply(freshSession)); await pendingSession; });
+      await userEvent.click(await screen.findByRole('button', { name: '图片与对象' }));
+      const mediaInput = await screen.findByLabelText('媒体文件');
+      await waitFor(() => expect(mediaInput).toBeEnabled());
+      expect(screen.getByRole('textbox', { name: '项目名称' })).toHaveValue(project.name);
+    } finally {
+      cleanup();
+      resolveSession(reply(freshSession));
+      history.replaceState(previousHistoryState, '', previousUrl);
+      vi.stubGlobal('fetch', previousFetch);
+    }
+  });
+
   it('detects initial setup instead of pretending the user can log in', async () => {
     mount(); expect(await screen.findByRole('heading', { name: '首次设置本地账户' })).toBeVisible();
     expect(screen.queryByTestId('login-username')).not.toBeInTheDocument();
@@ -113,15 +171,31 @@ describe('first local login', () => {
     post = () => new Promise((done) => { resolve = done; });
     mount(); await fill(); const form = screen.getByTestId('bootstrap-submit').closest('form')!;
     fireEvent.submit(form); fireEvent.submit(form);
-    expect(screen.getByTestId('bootstrap-launch-code')).toBeDisabled(); expect(screen.getByTestId('session-retry')).toBeDisabled(); expect(form).toHaveAttribute('aria-busy', 'true'); expect(writes).toBe(1);
+    expect(screen.getByTestId('bootstrap-launch-code')).toBeDisabled(); expect(screen.getByTestId('session-retry')).toBeDisabled(); expect(form).toHaveAttribute('aria-busy', 'true'); await waitFor(() => expect(writes).toBe(1));
     await act(async () => { resolve(reply({ code: 'INVALID_BOOTSTRAP_CODE' }, 401)); }); expect(await screen.findByRole('alert')).toHaveTextContent('启动码错误');
   });
-  it('ignores a StrictMode delayed old 401 after a newer bootstrap identity and token', async () => {
-    let resolve!: (response: Response) => void; let reads = 0;
-    sessionRead = () => ++reads === 1 ? new Promise((done) => { resolve = done; }) : Promise.resolve(unauth());
+  it('ignores a delayed old session 401 after a newer bootstrap identity and token', async () => {
+    const { promise, resolve } = Promise.withResolvers<Response>(); let reads = 0;
+    sessionRead = () => ++reads === 1 ? promise : Promise.resolve(unauth());
+    let scope!: ReturnType<typeof useSession>;
+    function Controls() { scope = useSession(); return null; }
+    render(<AppProviders><Controls /><Entry /></AppProviders>);
+    await waitFor(() => expect(reads).toBe(1));
+    await act(async () => { await scope.refresh(); });
+    post = async () => { sessionRead = async () => reply(identity); return reply(ack); };
+    await fill(); await userEvent.click(screen.getByTestId('bootstrap-submit'));
+    await screen.findByTestId('bootstrap-account');
+    await act(async () => { resolve(unauth()); });
+    expect(screen.getByTestId('bootstrap-account')).toHaveTextContent(identity.username);
+    expect(csrfToken()).toBe(ack.csrf_token);
+    expect(sessionStorage.getItem('weblabel_csrf')).toBe(ack.csrf_token);
+  });
+  it('ignores a StrictMode delayed old recovery status after a newer bootstrap identity and token', async () => {
+    const { promise, resolve } = Promise.withResolvers<Response>(); let reads = 0;
+    recoveryRead = () => ++reads === 1 ? promise : Promise.resolve(reply({ state: 'disabled', request_id: null, username: null }));
     post = async () => { sessionRead = async () => reply(identity); return reply(ack); };
     mount(true); await fill(); await userEvent.click(screen.getByTestId('bootstrap-submit')); await screen.findByTestId('bootstrap-account');
-    await act(async () => { resolve(unauth()); });
+    await act(async () => { resolve(reply({ state: 'disabled', request_id: null, username: null })); });
     expect(screen.getByTestId('bootstrap-account')).toHaveTextContent(identity.username); expect(csrfToken()).toBe(ack.csrf_token); expect(sessionStorage.getItem('weblabel_csrf')).toBe(ack.csrf_token);
   });
 
@@ -136,9 +210,12 @@ describe('first local login', () => {
     function Controls() { scope = useSession(); return null; }
     const view = render(<AppProviders><Controls /><Entry /></AppProviders>);
     await screen.findByTestId('bootstrap-submit');
-    vi.mocked(fetch).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const { promise, resolve: resolveLogin } = Promise.withResolvers<Response>(); resolve = resolveLogin;
+    const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => url === '/api/session/login' ? promise : normalFetch(url, init));
     let pending!: Promise<void>;
     act(() => { pending = scope.login('synthetic-user', 'synthetic-password'); });
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => url === '/api/session/login')).toBe(true));
     view.unmount();
     await act(async () => { resolve(reply({ csrf_token: 'stale-token' })); await pending; });
     expect(csrfToken()).toBeNull(); expect(sessionStorage.getItem('weblabel_csrf')).toBeNull();
@@ -147,10 +224,12 @@ describe('first local login', () => {
     let scope!: ReturnType<typeof useSession>; let resolve!: (response: Response) => void;
     function Controls() { scope = useSession(); return null; }
     render(<AppProviders><Controls /><Entry /></AppProviders>); await screen.findByTestId('bootstrap-submit');
-    vi.mocked(fetch).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const { promise, resolve: resolveLogin } = Promise.withResolvers<Response>(); resolve = resolveLogin;
+    const normalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => url === '/api/session/login' ? JSON.parse(init!.body as string).username === 'older-user' ? promise : reply({ csrf_token: 'newer-token' }) : normalFetch(url, init));
     let older!: Promise<void>;
     act(() => { older = scope.login('older-user', 'synthetic-password'); });
-    vi.mocked(fetch).mockImplementationOnce(async () => reply({ csrf_token: 'newer-token' })); sessionRead = async () => reply(identity);
+    sessionRead = async () => reply(identity);
     await act(async () => { await scope.login('newer-user', 'synthetic-password'); });
     await screen.findByTestId('project-submit');
     await act(async () => { resolve(reply({ csrf_token: 'older-token' })); await older; });

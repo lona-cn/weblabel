@@ -1,0 +1,18 @@
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
+const req = createRequire("D:/workspace/src/weblabel/package.json");
+const sharp = req('./node_modules/.pnpm/sharp@0.34.4/node_modules/sharp');
+const p = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const first = await sharp(p.shots[0].file).metadata();
+const scale = first.height / p.shots[0].box.height;
+const head = p.header ? await sharp(p.header).metadata() : null;
+const width = Math.max(first.width, head?.width ?? 0);
+const h = head?.height ?? 0;
+const height = h + Math.round(p.total * scale);
+const inputs = [];
+if (p.header) inputs.push({ input: p.header, top: 0, left: 0 });
+for (const s of p.shots) inputs.push({ input: s.file, top: h + Math.round(s.y * scale), left: 0 });
+await sharp({ create: { width, height, channels: 4, background: '#080f13' } }).composite(inputs).png().toFile(p.output);
+const b = fs.readFileSync(p.output);
+console.log(JSON.stringify({ name: p.name, bytes: b.length, sha256: crypto.createHash('sha256').update(b).digest('hex'), width, height, physical_scale: scale, capture: 'actual-scroll-stitch-no-DOM-or-CSS-change' }));

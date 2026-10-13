@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AnnotationHeadSummary",
+  "type": "object",
+  "required": [
+    "annotation_revision_id",
+    "approved_review_id",
+    "completion",
+    "content_hash",
+    "object_count",
+    "ontology_version_id",
+    "revision_no"
+  ],
+  "properties": {
+    "annotation_revision_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "approved_review_id": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "completion": {
+      "$ref": "#/definitions/Completion"
+    },
+    "content_hash": {
+      "type": "string"
+    },
+    "object_count": {
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    },
+    "ontology_version_id": {
+      "$ref": "#/definitions/Id"
+    },
+    "revision_no": {
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Completion": {
+      "type": "string",
+      "enum": [
+        "unprocessed",
+        "in_progress",
+        "complete",
+        "confirmed_negative"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    }
+  }
+}

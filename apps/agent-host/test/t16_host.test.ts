@@ -760,7 +760,7 @@ function mockAdapter(): ProviderAdapter {
 function adapterWithProfile(overrides: {
   availability?: 'ready' | 'needs_login' | 'needs_configuration' | 'unsupported' | 'blocked';
   verification?: 'not_run' | 'mock_only' | 'live_passed' | 'live_failed';
-  provider_id?: 'codex_local' | 'claude_local' | 'openai_api' | 'anthropic_api' | 'mimo_api' | 'detector_local' | 'mock';
+  provider_id?: 'claude_local' | 'openai_api' | 'anthropic_api' | 'mimo_api' | 'detector_local' | 'mock';
 }): ProviderAdapter {
   return {
     probe: async () => [

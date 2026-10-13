@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+const directory = "reports/T35/defect-repair/2026-10-11T13-21-39-234Z";
+const read = async name => JSON.parse(await readFile(directory+'/'+name+'-vitest.json', 'utf8'));
+const red = await read('media-worker-red');
+const green = await read('media-worker-green');
+const failed = red.testResults.flatMap(s=>s.assertionResults).filter(t=>t.status==='failed');
+assert.equal(red.numFailedTests, 1);
+assert.equal(failed[0].title, 'manual model control does not stop public canonical media processing');
+assert.match(failed[0].failureMessages.join(' '), /Production media worker must canonicalize without a debug drain/);
+assert.equal(green.numTotalTests, 4);
+assert.equal(green.numPassedTests, 3);
+assert.equal(green.numFailedTests, 0);
+assert.equal(green.numPendingTests, 1);
+console.log(JSON.stringify({red: {collected:red.numTotalTests,passed:red.numPassedTests,failed:red.numFailedTests,skipped:red.numPendingTests,failed_title:failed[0].title,canonical_timeout_observed:true}, green: {collected:green.numTotalTests,passed:green.numPassedTests,failed:green.numFailedTests,skipped:green.numPendingTests}, skipped_scope:'preview approval permission topic excluded by user', actual_model_calls:0}));

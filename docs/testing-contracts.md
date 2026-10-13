@@ -1,14 +1,18 @@
 # 测试、装配与共享接口补充
 
-本文件与 contracts.md 一起冻结。这里定义的是待实现测试接口，不是已有工具。
+供编写和维护跨模块测试的工程师使用。本文与 contracts.md 一起冻结公共 helper、夹具与装配规则；具体实现和运行结果须核对源码及任务报告，不能把接口说明当作测试已通过。
 
 ## 1. 测试用例可独立运行
 
 T00 创建 crates 的 lib 与 bin 最小入口、Vitest workspace、Playwright config；所有 packages 名称固定：annotation-domain、geometry、editor-core、renderer-wgpu、wasm-bridge、dataset-formats、weblabel-api、xtask；JS packages 为 @weblabel/web、@weblabel/agent-host、@weblabel/contracts。workspace 根统一运行 pnpm exec vitest / playwright。
 
-TASKS.json 中 argv 为窄测试入口；任务实现时要创建这些路径，不得改成全部测试绕过指定断言。出现环境失败时记录环境阻塞，不当成 Red 功能测试证据。测试 helper 在 tests/support/；任何额外 helper 必须在同一任务定义，不能留神秘全局对象。
+TASKS.json 的 argv 指定本任务的窄测试入口，不能换成全套测试来绕开指定断言。缺少路径应补实现；环境失败应记录为环境阻塞，不算 Red 功能失败。
 
-Vitest 运行 TS 测试，tsconfig 引用 generated contracts；Playwright 用 `data-testid` 寻址。Rust integration test 文件统一小写 snake_case，例如 t03_geometry.rs；cargo --test 参数同名。Python使用 pytest，测试收集为零视为失败。所有 test ID 大小写以 manifest 为准。
+共享 helper 放在 tests/support/。新增 helper 必须由对应任务定义，不能依赖未说明的全局对象。
+
+Vitest 运行 TS 测试，tsconfig 引用 generated contracts；Playwright 用 `data-testid` 寻址。Rust integration test 文件统一小写 snake_case，例如 t03_geometry.rs；cargo --test 参数同名。
+
+Python使用 pytest，测试收集为零视为失败。所有 test ID 大小写以 manifest 为准。
 
 ## 2. HTTP 测试 helper：T06/T10 负责
 
@@ -42,8 +46,8 @@ T17 保持原30秒retention lease、2100事件生产、2000窗口与104..2103的
 
 T16 Node Host 的回收验证每轮只取一份 fresh process table，用同一份表检查该轮所有原 owned targets；空 targets 不新增查询，不跨轮或 await 缓存。Windows 原 initial CIM、每个 descendant taskkill 前的 fresh creation-identity 查询、root/lineage guards、taskkill argv、实际 child exit、5秒 polling期限与250ms间隔全部保留；这不是新的端到端5秒保证，initial snapshot/tool仍在原 polling计时外。no-resend 原 case 以 finally await session.close 清理请求或断言失败，原20秒 case/run、800ms真实观察、2 parent requests与5断言不变。本机真实 malformed child 的改前/后观察为4/3次CIM、总查询4723.5897/3661.1614ms、killTree5085.7418/4053.5802ms；改后验证 targets=2/alive=0、真实child退出、failed/invalid_json、ledger恰好1个start_run/attempts=1且无backstop。它证明消除重复扫描与真实消费行为，不证明历史CI17最后await或未知Windows descendant身份；完整原17case通过，无硬件/G4/T32/T35认证。
 
-T06 的原120ms写锁冲突预算、2秒上界及解锁后recovery断言不变；首次冷迁移不是放宽预算的理由。新增真实SQLite消费者回归由独立Repository确认abandon/task-abort写入均回滚，恢复writer提交后精确读回，不断言连接identity。临时native smoke另覆盖timeout/取消pending BEGIN及deferred-FK COMMIT失败后无残留行/锁；成功归池、失败关闭的源码审查不以SQLx库名字代替取消安全证明。
-Repository clones共享一个FIFO写入准入；等待准入、获取连接与BEGIN IMMEDIATE仍合用调用者原始预算，准入持有到COMMIT/ROLLBACK确认完成。放弃、取消、pending BEGIN、失败/取消COMMIT或ROLLBACK先detach可疑连接，再在异常路径独立线程等待真实SQLite worker关闭确认后释放准入；runtime关闭后也不得把仍持writer的连接归池。迁移循环事务、媒体metadata和所有Repository事务走同一准入，独立auth pool不新增此gate/close线程，外部writer仍受原预算约束。T06新增消费者回归覆盖有限短事务洪流下的真实heartbeat durable写入、FIFO/取消/期限、deferred-FK失败回滚、in-flight取消和无runtime恢复；不固定连接identity或生产重试。
+T06 的原120ms写锁冲突预算、2秒上界及解锁后recovery断言不变；首次冷迁移不是放宽预算的理由。真实SQLite消费者回归由独立Repository确认abandon/task-abort写入均回滚，恢复writer提交后精确读回，不断言连接identity。超时或取消pending BEGIN、deferred-FK COMMIT失败不得留下行或锁；当前成功和失败路径均关闭专属连接，不能用SQLx库名字代替取消安全证明。
+Repository clones共享一个FIFO写入准入；等待准入、获取连接与BEGIN IMMEDIATE仍合用调用者原始预算。成功、放弃、取消、pending BEGIN、失败/取消COMMIT或ROLLBACK均由独立线程持有连接与准入，直到真实SQLite worker关闭确认后才释放；正常finalize等待关闭，取消或runtime关闭不取消该线程。迁移循环事务、媒体metadata和所有Repository事务走同一准入，独立auth pool不新增此gate，外部writer仍受原预算约束。消费者回归覆盖有限短事务洪流下的真实heartbeat durable写入、FIFO/取消/期限、deferred-FK失败回滚、in-flight取消、无runtime恢复和finalize后的Windows文件句柄释放；不固定连接identity或生产重试。
 
 debug-only管理员drain在入口只读捕获按created_at/job_id排序的最多32个queued/running作业，原分派逻辑不变。其他owner尚未完成时，释放读连接后等待该封闭cohort真实succeeded/failed/cancelled/interrupted终态；后到作业不扩大等待集合，不抢有效lease、不改变fence/attempt、不重提交。其他owner等待阶段超过2秒仍未终态返回503 JOB_DRAIN_TIMEOUT；快照/读取失败或捕获作业消失返回500 JOB_DRAIN_FAILED，不以200冒充完成。processed/jobs仍只报告drain自己拥有的分派，失败作业仍为failed，release继续404。T17另保留原22用例并追加真实expired-lease模型drain回归：首attempt到达受控runner后中断，只过期lease，drain通过真实process_next回收attempt2并终结interrupted/unknown/LEASE_EXPIRED_NO_RESEND，禁止重发或产生预测/审计/标注修改。T27新增真实API回归覆盖有效owner、并发写入、成功/失败、后到作业排除、期限和删除；原Vitest T27/T29请求、断言及background worker保持不变，2秒不是整次drain分派的总预算。
 
@@ -83,16 +87,21 @@ CI11原direct-native case的首个PowerShell/CIM snapshot实际等待30038.317ms
 |---|---|
 | project-create / project-name / project-submit | 项目创建表单 |
 | media-import / asset-grid / asset-item-{id} | 文件input、列表、媒体项 |
+| toggle-assets / toggle-attributes / toggle-ai / close-assets / close-inspector | 工作台侧栏切换与窄屏关闭；切换不卸载 AI 状态 |
 | annotation-canvas / gpu-status / tool-box / tool-select / tool-pan | 画布、诊断与工具 |
 | object-list / object-item-{id} / attribute-{key} | 虚拟对象列表和属性控件 |
 | save-status / undo / redo / image-next / image-prev | 保存与编辑 |
-| ai-provider / ai-prompt / ai-consent / ai-run / ai-cancel | 模型和明确授权 |
+| ai-provider / ai-prompt / ai-consent / ai-run / ai-authorize / ai-cancel | 模型、授权预览与明确开始 |
 | ai-status / candidate-{change_id} / accept-selected / reject-selected | 候选、差异和决定 |
 | task-submit / review-approve / review-reject | 指定版本审核 |
 | snapshot-create / export-format / export-start / export-download | 固定快照导出 |
 | recovery-banner / conflict-banner / export-local-draft | 恢复与失败救援 |
 
-gpu-status 暴露文本/可测试属性 actual_backend=webgpu、adapter_kind=hardware/software/unknown、device_state=loading/ready/lost/recovering/unsupported；不以浏览器支持检查代替真实 device 创建。设备重建中显示recovering且Canvas只读，成功才恢复ready；失败保持lost和GPU_RECOVERY_FAILED诊断，gpu-retry显式重试renderer-only恢复。GPUDevice.destroy必须通过真实device.lost观测并自动触发重建，不调用simulate_device_loss。
+gpu-status 位于 canvas-renderer-status 独立正常流，不覆盖 annotation-canvas；暴露文本/可测试属性 actual_backend=webgpu、adapter_kind=hardware/software/unknown、device_state=loading/ready/lost/recovering/unsupported；不以浏览器支持检查代替真实 device 创建。
+
+布局验收须使用真实浏览器：同时验证 1099px 两侧及短屏、侧栏切换和双向跨断点焦点、对象虚拟滚动不拦截布局控件、原生 resize 与调节按钮的真实尺寸边界、保存与完成状态可达、数据集末行滚动后主操作仍可点击。合成 GET 拦截只证明布局；真实 API 保存、确认负样本和导出须另记实测证据。硬件 adapter ready 不等于 G4 通过。
+
+设备重建中显示recovering且Canvas只读，成功才恢复ready；失败保持lost和GPU_RECOVERY_FAILED诊断，gpu-retry显式重试renderer-only恢复。GPUDevice.destroy必须通过真实device.lost观测并自动触发重建，不调用simulate_device_loss。
 
 T00 软件工程 gate 使用实际 Rust WASM 创建 BrowserWebGpu device，并严格要求 ready 与 Cpu；Windows 的 inherited e2e 参数为 `--enable-unsafe-webgpu --use-webgpu-adapter=swiftshader --use-angle=d3d11-warp`，以 CPU WARP ANGLE compositor 配合 Dawn SwiftShader，而非依赖本机硬件 compositor。其他平台不加入 WARP；t05-render/chromium-webgpu 硬件项目继续覆盖完整 launch argument list，不继承软件 adapter/WARP。实际 Chromium 153 本地 WARP renderer 为 Microsoft Basic Render Driver，device 创建及真实 GPU pixel readback 已成功；这不反推历史 CI15 blocked 的未捕获原因，也不证明硬件/G4。CDP 的 unavailable_software 是硬件加速元数据，不能替代实际 device/pixel 结果判断。原 ready/backend/Cpu 断言、期限与重试设置不变。T00 在 strict ready 断言前写出 state/backend/device_type/error 四字段 JSON 和仅 gpu-status 的截图；CI always 仅上传当次 run/attempt 的这两个固定 T00 basename，保留7天，不上传整个 trace/test-results、业务库、T32或authority。
 
@@ -100,19 +109,21 @@ T00 软件工程 gate 使用实际 Rust WASM 创建 BrowserWebGpu device，并�
 
 ## 4. Provider fake-process 契约：T16建立
 
-`tests/support/fake-runtime.mjs` 是无网络子进程，接收环境变量 TEST_SCENARIO（normal / malformed / oversized / crash / slow / spawn_child），从stdio读版本化协议并发送确定性测试响应。它不能命名为真实 provider，不能被生产profile枚举。生产注册表在测试注入点之外永远不包含它。
+`tests/support/fake-runtime.mjs` 是无网络子进程，接收环境变量 TEST_SCENARIO（normal / malformed / oversized / crash / slow / spawn_child），从stdio读版本化协议并发送确定性测试响应。它不能命名为真实 provider，不能被生产profile枚举。
 
-`apps/agent-host/test/fixtures/` 保存带 `fixture_kind: "synthetic_protocol"` 标记的脱敏协议样本。不能声称是官方真实调用日志。T22/T23 同时保留从所固定 CLI 生成的真实协议schema和生成命令，JSON fixture不得代替schema验证。
+生产注册表在测试注入点之外永远不包含它。
+
+`apps/agent-host/test/fixtures/` 保存带 `fixture_kind: "synthetic_protocol"` 标记的脱敏协议样本，不能声称官方真实调用日志。仍活动的官方 runtime（T23 Claude）须按实际固定版本验证协议/schema与相应命令；JSON fixture 不替代真实验证。原 T22 schema/生成命令要求仅属冻结历史，当前 Codex 已退役，不安装/调用 CLI，不以旧要求恢复接入。
 
 ## 5. shared file 集成规则
 
 任务主写模块文件；新增模块声明、根router、导航和manifest变更放该任务 `integration.patch` 交主Agent。主Agent应用后复跑目标测试。T01生成 contracts 的 script由xtask负责；Node端只消费生成文件+JSON Schema，不另写一套不一致类型。
 
-新增小函数可由当前任务定义并测试；不得改变 C1–C8、上述公共 helper 或 HTTP/Editor/Provider契约而不提出 ADR。每个任务卡列出的“产生”签名是它负责实现的新接口，不是既有接口。
+小函数由当前任务定义并测试即可。C1–C8、公共 helper 和 HTTP/Editor/Provider 契约的变更须先提出 ADR。任务卡中的“产生”签名表示该任务要实现的接口，不保证基线中已经存在。
 
 ## 6. 保存与候选接受的事务补充（本计划明确新增）
 
-为避免“文档保存了，但预测接受记录丢了”，SaveRequest 增加 `suggestion_decisions` 数组和可空 `lease`；普通编辑传空数组和null。EditorDelta 同步返回该逻辑操作产生的 suggestion_decisions，保存队列不能丢掉它们。
+正式文档与候选决定必须一起保存。SaveRequest 的 `suggestion_decisions` 为数组，`lease` 可空；普通编辑传空数组和 null。EditorDelta 返回本次逻辑操作的 suggestion_decisions，保存队列必须完整保留。
 
 ```ts
 export interface SuggestionDecisionIntent {
@@ -131,9 +142,15 @@ export interface SaveRequest {
 
 T01将其合并进正式生成类型，不能生成两个SaveRequest。T11对普通空数组保存；T19/T25实现候选验证和同一事务内保存decision。T26对任务内编辑验证lease；无任务的本地项目可null。任务过期/权限不足不得仅凭CAS成功继续写入。
 
-POST suggestions/{id}/decision 仅用于 reject 和对已保存决定的查询/幂等确认，**不能脱离保存事务接受正式变更**。undo接受操作会产生revert intent；redo产生accept intent。提交/撤销对同一change的状态迁移按保存操作顺序记录，不能静默去重掉accept→revert。保存多个未同步逻辑操作时，保留有序intent journal；数据库校验最终文档及完整有效序列。源预测不可改。
+POST suggestions/{id}/decision 仅用于 reject 和对已保存决定的查询/幂等确认，**不能脱离保存事务接受正式变更**。undo接受操作会产生revert intent；redo产生accept intent。提交/撤销对同一change的状态迁移按保存操作顺序记录，不能静默去重掉accept→revert。
 
-新增管理路由：`POST /api/users {username,password}` 仅平台管理员，用于本地多角色审核；`GET /api/users` 仅管理员列出id/username，不返回密码hash。T10负责，密码Argon2id，返回一次性登录提示而非明文长期日志；v0.1不做公网注册和密码找回。
+保存多个未同步逻辑操作时，保留有序intent journal；数据库校验最终文档及完整有效序列。源预测不可改。
+
+新增管理路由：`POST /api/users {username,password}` 仅平台管理员，用于本地多角色审核；`GET /api/users` 仅管理员列出id/username，不返回密码hash。T10负责，密码Argon2id；v0.1不做公网注册和在线自助找回。本机已有管理员的一次性密码恢复是独立维护入口，见[运维](operations.md#管理员密码恢复)。
+
+管理员恢复回归使用项目内synthetic SQLite，不接触真实数据：原user_id/用户名/成员身份和其他用户凭证不变；目标sessions撤销与journal同事务；错误/过期码、UTF-8边界、限流/Retry-After、Host/Origin/普通CSRF隔离、故障回滚/重试、目标角色复核、空库/scrubbed拒绝、消费ID重启拒绝。覆盖POST先于GET的未知结果结算及GET先于POST的公平等待，不用固定延时掩盖race；直接二进制验证同库OS锁和退出后重启，根router验证完成后仍503维护。
+
+Web检查旧cookie覆盖、字段确认/单飞、明确无写入拒绝与未知结果分流、错请求ACK及只读核对，不自动重POST。最终真实buildRelease/startLocal+浏览器闭环与CLI消费ID拒绝另有证据，synthetic route/mock或页面能开不替代。截图清空/隐藏凭证，不存code/password/cookie/CSRF；不清IndexedDB来证明恢复。
 
 
 ## 7. BBoxInstance 的固定初版布局
@@ -142,4 +159,20 @@ T05的实例结构采用 `#[repr(C)]`：bounds:[f32;4]、color:[f32;4]、flags:u
 
 ## 8. 临时编辑导出不是数据集快照
 
-T14实现 `POST /api/annotation-revisions/{id}/exports`，以单个已保存不可变版本输出canonical图及检测标签，用于T15人工闭环；产物挂通用jobs并通过鉴权download读取。T27增加多图DatasetVersion冻结，不改变T14输出的坐标和信息损失语义。未保存草稿的救援下载是原生格式，明确标记unsynced，不能冒充审核数据集。
+T14实现 `POST /api/annotation-revisions/{id}/exports`，以单个已保存不可变版本输出canonical图及检测标签，用于T15人工闭环；产物挂通用jobs并通过鉴权download读取。T27增加多图DatasetVersion冻结，不改变T14输出的坐标和信息损失语义。
+
+未保存草稿的救援下载是原生格式，明确标记unsynced，不能冒充审核数据集。
+
+## 9. 活动验收输出隔离
+
+`tests/support/report-paths.mjs::taskReportPath(taskId,...segments)` 将输出放在 `WEBLABEL_TEST_REPORT_DIR/<taskId>`；未指定时使用进程唯一的项目内 `target/test-artifacts`。根及已有父目录先解析真实路径，不能经 junction 写到项目外。`WEBLABEL_T30_TEST_ROOT` 仍优先于通用报告根。历史 `reports/T29` 生产/assemble 和既有报告不属于新的输出目录。
+
+活动 T33 使用 `tests/support/active-host-shutdown.mjs::activeHostShutdown(mode,release,{reportDir,skipSecurity})`；`reportDir` 必填，fixture 位于 `tests/fixtures/active-host-shutdown`，私有运行数据与 fixture 分离。`skipSecurity=true` 只排除并记录 unauthenticated START/no-consent START 两项权限探测，不改变实际 Ctrl+C、进程回收或服务守卫。旧 `reports/T33/active-host-shutdown` helper/报告冻结，不再由活动测试导入。
+
+T31/T32 CLI 的 `--report-dir` 选择项目内本轮输出；T31 配置仍从 `reports/T31` 读取。未启动或缺测试报告时计数为 `null`，不能伪造零测试或复用旧结果。源码身份由 `scripts/evidence-identity.mjs::captureEvidenceIdentity()` 绑定实际文件集合与 SHA256，含未提交源码、migration、生成契约、检测 worker 和活动 T31 控制，不读取账号、权重或私人报告。
+
+## 10. 手动模型与生产媒体 worker 分离
+
+`WEBLABEL_TEST_MANUAL_MODEL_WORKER=1` 只暂停模型后台消费，媒体导入继续使用生产 worker。合成 fixture 用带真实 MIME 的上传与公开 canonical assets 列表等待，不调用模型 drain 充当媒体完成证明。T25 功能回归要求模型入队前后两张新合成图都实际完成 canonical，已入队 Engineering Mock 仍 queued 且无候选。
+
+浏览器种子保留 20 PNG + 两张方向 JPEG 共 22 资产；T31 再上传两张 2048×2048 图后等 24，并逐名称验证真实 canonical metadata。媒体准备成功不证明 GPU 性能通过；2000/10000 对象、seed 17、每场景 40 warmup + 1000 submission 和既有 P95 阈值不变，只有实际硬件样本可作性能证据。

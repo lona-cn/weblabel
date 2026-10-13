@@ -74,6 +74,8 @@ describe('T26 serialized review submission', () => {
       get_viewport: () => viewport,
       set_viewport: (next: typeof viewport) => { viewport = next; },
       fit_image: () => undefined,
+      focus_selection: unexpected, get_hit_stack_state: unexpected,
+      focus_region: unexpected,
       render: () => undefined,
       device_lost: () => loss,
       get_device_state: () => deviceState,

@@ -44,6 +44,7 @@ pub struct ModelProfile {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
+    // Historical snapshots and receipts still decode this identity; not executable.
     CodexLocal,
     ClaudeLocal,
     OpenaiApi,

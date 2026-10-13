@@ -7,6 +7,8 @@ use weblabel_api::{
     router, AppState,
 };
 
+mod startup;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     {
@@ -82,6 +84,47 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
     };
+    let restore_auth_requested = match env::var("WEBLABEL_RESTORE_AUTH") {
+        Ok(value) if value == "1" => true,
+        Ok(value) if value == "0" => false,
+        Err(env::VarError::NotPresent) => false,
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "WEBLABEL_RESTORE_AUTH must be exactly 0 or 1",
+            )
+            .into())
+        }
+    };
+    let recovery = startup::AdminRecoveryOptions::from_env()?;
+    if recovery.is_some() {
+        if !config.bind.ip().is_loopback() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "RECOVERY_REQUIRES_LOOPBACK",
+            )
+            .into());
+        }
+        let database = config
+            .database_url
+            .strip_prefix("sqlite:")
+            .unwrap_or(&config.database_url);
+        if !std::path::Path::new(database).is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "RECOVERY_REQUIRES_EXISTING_DATABASE: use first-time setup for a new installation",
+            )
+            .into());
+        }
+        if restore_auth_requested {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "RECOVERY_CONFLICTS_WITH_RESTORE: use restored-account setup",
+            )
+            .into());
+        }
+    }
+    let _database_owner = startup::lock_database(&config.database_url)?;
     let launch_code = {
         let mut bytes = [0_u8; 32];
         OsRng.fill_bytes(&mut bytes);
@@ -116,22 +159,33 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         launch_code: hash_launch_code(&launch_code),
         launch_code_expires_at: unix_now() + 600,
     };
+    if let Some(recovery) = recovery {
+        let mut state = AppState::open_for_password_recovery(&config, auth_config).await?;
+        state
+            .auth
+            .enable_password_recovery(
+                &recovery.request_id,
+                &recovery.username,
+                hash_launch_code(&launch_code),
+                unix_now() + 600,
+            )
+            .await
+            .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+        let listener = tokio::net::TcpListener::bind(config.bind).await?;
+        println!("WEBLABEL_ADMIN_RECOVERY_CODE={launch_code}");
+        println!("WEBLABEL_ADMIN_RECOVERY_TARGET={}", recovery.username);
+        tracing::info!(address = %config.bind, mode = "admin_password_recovery", "WebLabel API listening");
+        axum::serve(listener, router(state))
+            .with_graceful_shutdown(async {
+                let _ = tokio::signal::ctrl_c().await;
+            })
+            .await?;
+        return Ok(());
+    }
     let state = AppState::open_with_auth(&config, auth_config).await?;
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&state.auth.pool)
         .await?;
-    let restore_auth_requested = match env::var("WEBLABEL_RESTORE_AUTH") {
-        Ok(value) if value == "1" => true,
-        Ok(value) if value == "0" => false,
-        Err(env::VarError::NotPresent) => false,
-        _ => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "WEBLABEL_RESTORE_AUTH must be exactly 0 or 1",
-            )
-            .into())
-        }
-    };
     let restore_bootstrap = restore_auth_requested && state.auth.enable_restore_bootstrap().await?;
     if user_count == 0 || restore_bootstrap {
         println!("WEBLABEL_BOOTSTRAP_CODE={launch_code}");
@@ -246,10 +300,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let mut media_shutdown = shutdown_tx.subscribe();
     let media_worker = tokio::spawn(async move {
-        if manual_model_worker {
-            let _ = media_shutdown.changed().await;
-            return;
-        }
+        // Manual model control must not pause canonical media processing.
         loop {
             if *media_shutdown.borrow() {
                 break;

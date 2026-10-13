@@ -1,0 +1,10 @@
+import { realpath, stat } from 'node:fs/promises';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const root=await realpath('D:/workspace/src/weblabel');
+const temporary=await realpath(path.join(root,'target/build-cache/commercial-core/temp'));
+assert(temporary.toLowerCase().startsWith(root.toLowerCase()+path.sep));
+assert((await stat(temporary)).isDirectory());
+for(const key of ['TEMP','TMP','TMPDIR'])process.env[key]=temporary;
+process.env.PYTHON='C:/Python314/python.exe';
+await import('./formal-restart-runtime.mjs');

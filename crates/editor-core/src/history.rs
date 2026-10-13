@@ -5,8 +5,7 @@ pub(crate) const HISTORY_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 
 #[derive(Debug)]
 pub(crate) struct HistoryEntry {
-    pub before: AnnotationDocument,
-    pub after: AnnotationDocument,
+    documents: Option<(AnnotationDocument, AnnotationDocument)>,
     /// Suggestion decision intents produced by this logical operation. Undo
     /// flips them to `revert`, redo replays them as `accept`; the journal must
     /// keep the ordered accept/revert transitions without deduplication.
@@ -19,17 +18,28 @@ impl HistoryEntry {
         let bytes =
             document_memory_estimate(&before).saturating_add(document_memory_estimate(&after));
         Self {
-            before,
-            after,
+            documents: Some((before, after)),
             suggestion_decisions: Vec::new(),
             bytes,
         }
+    }
+
+    pub fn decision_only(suggestion_decisions: Vec<SuggestionDecisionIntent>) -> Self {
+        Self {
+            documents: None,
+            suggestion_decisions: Vec::new(),
+            bytes: std::mem::size_of::<Self>(),
+        }
+        .with_suggestion_decisions(suggestion_decisions)
     }
 
     pub fn with_suggestion_decisions(
         mut self,
         suggestion_decisions: Vec<SuggestionDecisionIntent>,
     ) -> Self {
+        self.bytes = self
+            .bytes
+            .saturating_add(decision_memory_estimate(&suggestion_decisions));
         self.suggestion_decisions = suggestion_decisions;
         self
     }
@@ -49,6 +59,18 @@ impl History {
 
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    pub fn undo_changes_document(&self) -> bool {
+        self.undo
+            .last()
+            .is_some_and(|entry| entry.documents.is_some())
+    }
+
+    pub fn redo_changes_document(&self) -> bool {
+        self.redo
+            .last()
+            .is_some_and(|entry| entry.documents.is_some())
     }
 
     pub fn push(&mut self, entry: HistoryEntry) {
@@ -75,11 +97,13 @@ impl History {
     pub fn undo(
         &mut self,
         current: &AnnotationDocument,
-    ) -> Option<(AnnotationDocument, Vec<SuggestionDecisionIntent>)> {
+    ) -> Option<(Option<AnnotationDocument>, Vec<SuggestionDecisionIntent>)> {
         let entry = self.undo.pop()?;
-        debug_assert_eq!(&entry.after, current);
+        let document = entry.documents.as_ref().map(|(before, after)| {
+            debug_assert_eq!(after, current);
+            before.clone()
+        });
         let decisions = crate::suggestions::revert_intents(&entry.suggestion_decisions);
-        let document = entry.before.clone();
         self.redo.push(entry);
         Some((document, decisions))
     }
@@ -87,14 +111,31 @@ impl History {
     pub fn redo(
         &mut self,
         current: &AnnotationDocument,
-    ) -> Option<(AnnotationDocument, Vec<SuggestionDecisionIntent>)> {
+    ) -> Option<(Option<AnnotationDocument>, Vec<SuggestionDecisionIntent>)> {
         let entry = self.redo.pop()?;
-        debug_assert_eq!(&entry.before, current);
+        let document = entry.documents.as_ref().map(|(before, after)| {
+            debug_assert_eq!(before, current);
+            after.clone()
+        });
         let decisions = entry.suggestion_decisions.clone();
-        let document = entry.after.clone();
         self.undo.push(entry);
         Some((document, decisions))
     }
+}
+
+fn decision_memory_estimate(decisions: &[SuggestionDecisionIntent]) -> usize {
+    decisions.iter().fold(0usize, |bytes, decision| {
+        bytes
+            .saturating_add(std::mem::size_of::<SuggestionDecisionIntent>())
+            .saturating_add(decision.suggestion_set_id.len())
+            .saturating_add(
+                decision
+                    .change_ids
+                    .len()
+                    .saturating_mul(std::mem::size_of::<annotation_domain::Id>()),
+            )
+            .saturating_add(decision.change_ids.iter().map(|id| id.len()).sum::<usize>())
+    })
 }
 
 fn document_memory_estimate(document: &AnnotationDocument) -> usize {

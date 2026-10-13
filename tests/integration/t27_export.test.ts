@@ -1,10 +1,133 @@
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
-import { bootstrap_admin_for_test, start_test_app, type ApiClient, type TestApp } from '../support/app';
+import { createHash, randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { bootstrap_admin_for_test, download_for_test, login_at_origin_for_test, start_test_app, type ApiClient, type TestApp } from '../support/app';
+import { createDeliveryFixture, exportAndVerifyDelivery, freezeDelivery, mutateDeliveryHead, pollDeliveryJob } from '../support/dataset-delivery';
+
+describe('multi-asset frozen delivery', () => {
+  let app: TestApp | undefined;
+  let delivery: { app: TestApp; fixture: Awaited<ReturnType<typeof createDeliveryFixture>>; frozen: Awaited<ReturnType<typeof freezeDelivery>> };
+  beforeEach(async () => {
+    try {
+      app = await start_test_app('false', 'background');
+      const fixture = await createDeliveryFixture(app, 9, 2);
+      const frozen = await freezeDelivery(fixture, [0, 1, 2, 3, 4, 5, 6], [7]);
+      delivery = { app, fixture, frozen };
+    } catch (error) {
+      await app?.stop(); app = undefined;
+      throw error;
+    }
+  });
+  afterEach(async () => { await app?.stop(); app = undefined; });
+
+it('delivers every frozen asset and full document through independently parsed native, YOLO and COCO background exports', async () => {
+  // Fresh fixture preconditions remain outside the behavior clock; every export
+  // assertion below still consumes the real background worker and frozen documents.
+  const { app, fixture, frozen } = delivery;
+  try {
+    const laterId = await mutateDeliveryHead(fixture, 1);
+    const later = await fixture.admin.request('POST', `/api/projects/${fixture.projectId}/dataset-versions`, { ...frozen.request, operation_id: randomUUID(), items: [{ ...frozen.request.items[1], annotation_revision_id: laterId }], excluded: [] });
+    expect(later.status).toBe(422);
+    expect(later.json).toMatchObject({ code: 'SNAPSHOT_NOT_APPROVED' });
+    const replay = await fixture.admin.request('POST', `/api/projects/${fixture.projectId}/dataset-versions`, frozen.request);
+    expect(replay.status).toBe(200); expect(replay.json).toMatchObject({ dataset_version_id: frozen.datasetId });
+    const conflicting = structuredClone(frozen.request); conflicting.items[0].split = 'val';
+    expect((await fixture.admin.request('POST', `/api/projects/${fixture.projectId}/dataset-versions`, conflicting)).status).toBe(409);
+    for (const format of ['native', 'yolo', 'coco'] as const) {
+      const receipt = await exportAndVerifyDelivery(frozen, format);
+      expect(receipt).toMatchObject({ format, datasetId: frozen.datasetId, assetCount: 7, pixelChecks: 7, negativeCount: 2 });
+      const result = await pollDeliveryJob(fixture.admin, receipt.jobId);
+      expect((await download_for_test(fixture.reviewer, result.download_url)).status).toBe(200);
+      const nonmember = await app.as_user('viewer');
+      const denied = await download_for_test(nonmember, result.download_url);
+      expect(denied.status).toBe(404); expect(JSON.parse(Buffer.from(denied.bytes).toString())).toMatchObject({ code: 'EXPORT_NOT_FOUND' });
+      const missing = await download_for_test(fixture.admin, `/api/exports/${randomUUID()}/download`);
+      expect(missing.status).toBe(404);
+      const unauthenticated = await fetch(new URL(result.download_url, app.base_url)); expect(unauthenticated.status).toBe(401);
+    }
+    const exportPath = `/api/dataset-versions/${frozen.datasetId}/exports`;
+    const intent = { operation_id: randomUUID(), format: 'native', loss_ack: false };
+    const first = await fixture.admin.request<Record<string, any>>('POST', exportPath, intent); expect(first.status).toBe(202);
+    const duplicate = await fixture.admin.request<Record<string, any>>('POST', exportPath, intent); expect(duplicate.status).toBe(200); expect(duplicate.json.job_id).toBe(first.json.job_id);
+    expect((await fixture.admin.request('POST', exportPath, { ...intent, format: 'yolo', loss_ack: true })).status).toBe(409);
+    const sameSnapshot = await fixture.admin.request<Record<string, any>>('POST', exportPath, { ...intent, operation_id: randomUUID() }); expect(sameSnapshot.status).toBe(202);
+    const firstResult = await pollDeliveryJob(fixture.admin, first.json.job_id); const secondResult = await pollDeliveryJob(fixture.admin, sameSnapshot.json.job_id);
+    expect(secondResult.object_sha256).toBe(firstResult.object_sha256);
+    const foreign = await fixture.admin.request<Record<string, any>>('POST', '/api/projects', { name: `Foreign ${randomUUID()}`, description: 'Replay and identity scope', allow_self_review: false }); expect(foreign.status).toBe(201);
+    expect((await fixture.admin.request('POST', `/api/projects/${foreign.json.project_id}/dataset-versions`, frozen.request)).status).toBe(409);
+    const changedOntology = await fixture.admin.request<Record<string, any>>('POST', `/api/projects/${fixture.projectId}/ontologies`, { guidelines_markdown: 'Unrelated later ontology', labels: fixture.ontology.labels }); expect(changedOntology.status).toBe(201);
+    const wrongOntology = await fixture.admin.request('POST', `/api/projects/${fixture.projectId}/dataset-versions`, { ...frozen.request, operation_id: randomUUID(), ontology_version_id: changedOntology.json.ontology_version_id });
+    expect(wrongOntology.status).toBe(422); expect(wrongOntology.json).toMatchObject({ code: 'SNAPSHOT_REVISION_INVALID' });
+  } finally { await app.stop(); }
+}, 180_000);
+});
+
+it('keeps authenticated JSON, multipart and binary transports on their exact owned origin without following redirects', async () => {
+  // Real ephemeral TCP servers model hostile URL/redirect destinations. This is
+  // transport isolation, not a substitute for the production API journey above.
+  const origins: string[] = ['', ''];
+  const hits: { path: string; cookie: string; csrf: string; body: string }[][] = [[], []];
+  const servers = [0, 1].map(index => createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const hit = { path: request.url ?? '', cookie: request.headers.cookie ?? '', csrf: String(request.headers['x-csrf-token'] ?? ''), body: Buffer.concat(chunks).toString() };
+    hits[index]!.push(hit);
+    if (hit.path === '/api/session/login') {
+      response.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'weblabel_session=owned-' + index + '; HttpOnly; Path=/' });
+      response.end(JSON.stringify({ csrf_token: 'csrf-' + index }));
+    } else if (hit.path === '/redirect-local' || hit.path === '/redirect-foreign') {
+      const destination = hit.path === '/redirect-local' ? index : 1 - index;
+      response.writeHead(307, { location: origins[destination]! + '/redirect-target' }); response.end();
+    } else {
+      response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(hit));
+    }
+  }));
+  try {
+    for (let index = 0; index < servers.length; index++) {
+      const ready = Promise.withResolvers<void>(); const server = servers[index]!;
+      server.once('error', ready.reject); server.listen(0, '127.0.0.1', ready.resolve); await ready.promise;
+      const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing TCP address');
+      origins[index] = 'http://127.0.0.1:' + address.port;
+    }
+    const clients = await Promise.all(origins.map(origin => login_at_origin_for_test(origin, { username: 'owned-synthetic', password: randomUUID() })));
+    for (let index = 0; index < clients.length; index++) {
+      const client = clients[index]!; const foreignIndex = 1 - index; const foreign = origins[foreignIndex]!;
+      const beforeForeign = hits[foreignIndex]!.length; const beforeOwn = hits[index]!.length;
+      for (const path of [foreign + '/forbidden', '//' + new URL(foreign).host + '/forbidden', origins[index]!.replace('http://', 'http://blocked:secret@') + '/forbidden']) {
+        await expect(client.request('POST', path, { secret: 'owned-body' })).rejects.toThrow('same-origin');
+        await expect(client.upload(path, new Uint8Array([1, 2, 3]), 'owned.bin')).rejects.toThrow('same-origin');
+        await expect(download_for_test(client, path)).rejects.toThrow('same-origin');
+      }
+      expect(hits[foreignIndex]!.length).toBe(beforeForeign); expect(hits[index]!.length).toBe(beforeOwn);
+      for (const path of ['/redirect-local', '/redirect-foreign']) {
+        await expect(client.request('POST', path, { secret: 'owned-body' })).rejects.toThrow();
+        await expect(client.upload(path, new Uint8Array([1, 2, 3]), 'owned.bin')).rejects.toThrow();
+        await expect(download_for_test(client, path)).rejects.toThrow();
+      }
+      expect(hits[foreignIndex]!.length).toBe(beforeForeign);
+      const redirects = hits[index]!.slice(beforeOwn);
+      expect(redirects.map(hit => hit.path)).toEqual(['/redirect-local', '/redirect-local', '/redirect-local', '/redirect-foreign', '/redirect-foreign', '/redirect-foreign']);
+      expect(redirects.map(hit => hit.cookie)).toEqual(Array(6).fill('weblabel_session=owned-' + index));
+      expect(redirects.map(hit => hit.csrf)).toEqual(['csrf-' + index, 'csrf-' + index, '', 'csrf-' + index, 'csrf-' + index, '']);
+      expect(hits.flat().filter(hit => hit.path === '/redirect-target' || hit.path === '/forbidden')).toEqual([]);
+      const json = await client.request<Record<string, string>>('POST', '/normal-json', { synthetic: index });
+      expect(json.status).toBe(200); expect(json.json).toMatchObject({ cookie: 'weblabel_session=owned-' + index, csrf: 'csrf-' + index, body: JSON.stringify({ synthetic: index }) });
+      const multipart = await client.upload<Record<string, string>>('/normal-upload', new TextEncoder().encode('owned-upload-' + index), 'owned.bin');
+      expect(multipart.status).toBe(200); expect(multipart.json).toMatchObject({ cookie: 'weblabel_session=owned-' + index, csrf: 'csrf-' + index }); expect(multipart.json.body).toContain('owned-upload-' + index);
+      const binary = await download_for_test(client, '/normal-download'); expect(binary.status).toBe(200);
+      expect(JSON.parse(Buffer.from(binary.bytes).toString())).toMatchObject({ cookie: 'weblabel_session=owned-' + index, csrf: '' });
+    }
+  } finally {
+    await Promise.all(servers.map(async server => {
+      if (!server.listening) return;
+      const closed = Promise.withResolvers<void>(); server.close(error => error ? closed.reject(error) : closed.resolve()); server.closeAllConnections(); await closed.promise;
+    }));
+  }
+}, 20_000);
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown, label: string): RecordValue {
@@ -35,8 +158,7 @@ async function setupApprovedRevision(admin: ApiClient): Promise<{ projectId: str
   const image = new Uint8Array(await readFile(new URL('../fixtures/media/orientation-1.jpg', import.meta.url)));
   const upload = await admin.upload(`/api/projects/${projectId}/assets`, image, 'T27 source.jpg', crypto.randomUUID(), 'image/jpeg');
   expect(upload.status).toBe(202);
-  const drained = await admin.request<RecordValue>('POST', '/internal/test/jobs/drain', {});
-  expect(drained.status, JSON.stringify(drained.json)).toBe(200);
+  await pollDeliveryJob(admin, requiredString(upload.json, 'import_job_id', 'import job'));
   const assetList = await admin.request<RecordValue>('GET', `/api/projects/${projectId}/assets?limit=100`);
   expect(assetList.status).toBe(200);
   const assetItems = record(assetList.json, 'asset list').items;
@@ -101,8 +223,7 @@ async function setupSecondApprovedAsset(admin: ApiClient, projectId: string, ont
   const image = new Uint8Array(await readFile(new URL('../fixtures/media/orientation-1.jpg', import.meta.url)));
   const upload = await admin.upload(`/api/projects/${projectId}/assets`, image, 'T27 second source.jpg', crypto.randomUUID(), 'image/jpeg');
   expect(upload.status).toBe(202);
-  const drained = await admin.request<RecordValue>('POST', '/internal/test/jobs/drain', {});
-  expect(drained.status).toBe(200);
+  await pollDeliveryJob(admin, requiredString(upload.json, 'import_job_id', 'import job'));
   const assets = await admin.request<RecordValue>('GET', `/api/projects/${projectId}/assets?limit=100`);
   expect(assets.status).toBe(200);
   const items = record(assets.json, 'second asset list').items;
@@ -145,6 +266,7 @@ async function setupSecondApprovedAsset(admin: ApiClient, projectId: string, ont
   return { assetId, revisionId };
 }
 
+describe('single frozen revision regression', () => {
 let app: TestApp | undefined;
 let scratch: string | undefined;
 let fixture: { app: TestApp; scratch: string; admin: ApiClient; approved: Awaited<ReturnType<typeof setupApprovedRevision>> };
@@ -163,7 +285,7 @@ async function cleanupFixture(): Promise<void> {
 
 beforeEach(async () => {
   try {
-    app = await start_test_app();
+    app = await start_test_app('false', 'background');
     scratch = await mkdtemp(resolve(tmpdir(), 'weblabel-t27-export-'));
     // Bootstrap and the initial approved revision are fresh fixture preconditions.
     // Snapshot/readiness and every export behavior remain in the original case.
@@ -218,10 +340,11 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
     expect(mismatch.status).toBe(409);
     const secondNative = await admin.request<RecordValue>('POST', `/api/dataset-versions/${datasetId}/exports`, { ...nativeRequest, operation_id: crypto.randomUUID() });
     expect(secondNative.status).toBe(202);
-    const nativeDrain = await admin.request<RecordValue>('POST', '/internal/test/jobs/drain', {});
-    expect(nativeDrain.status).toBe(200);
+
+    await pollDeliveryJob(admin, requiredString(nativeQueued.json, 'job_id', 'native job'));
     const nativeStatus = await admin.request<RecordValue>('GET', `/api/jobs/${requiredString(nativeQueued.json, 'job_id', 'native job')}`);
     expect(nativeStatus.json.state).toBe('succeeded');
+    await pollDeliveryJob(admin, requiredString(secondNative.json, 'job_id', 'second native job'));
     const secondNativeStatus = await admin.request<RecordValue>('GET', `/api/jobs/${requiredString(secondNative.json, 'job_id', 'second native job')}`);
     expect(secondNativeStatus.json.state).toBe('succeeded');
     expect(record(record(secondNativeStatus.json, 'second native status').result, 'second native result').object_sha256).toBe(record(record(nativeStatus.json, 'native status').result, 'native result').object_sha256);
@@ -283,8 +406,8 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
     expect(lossFields).toEqual(['annotation.attributes', 'annotation.object_ids']);
     const yoloStart = await admin.request<RecordValue>('POST', `/api/dataset-versions/${datasetId}/exports`, { format: 'yolo', loss_ack: true, operation_id: crypto.randomUUID() });
     expect(yoloStart.status).toBe(202);
-    const yoloDrain = await admin.request<RecordValue>('POST', '/internal/test/jobs/drain', {});
-    expect(yoloDrain.status).toBe(200);
+
+    await pollDeliveryJob(admin, requiredString(yoloStart.json, 'job_id', 'YOLO job'));
     const yoloStatus = await admin.request<RecordValue>('GET', `/api/jobs/${requiredString(yoloStart.json, 'job_id', 'YOLO job')}`);
     expect(yoloStatus.json.state).toBe('succeeded');
     const yolo = { json: record(yoloStatus.json.result, 'YOLO result') };
@@ -309,8 +432,8 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
     expect(record(cocoPreview.json, 'COCO loss preview').loss_report).toEqual(cocoLossReport);
     const cocoStart = await admin.request<RecordValue>('POST', `/api/dataset-versions/${datasetId}/exports`, { format: 'coco', loss_ack: true, operation_id: crypto.randomUUID() });
     expect(cocoStart.status).toBe(202);
-    const cocoDrain = await admin.request<RecordValue>('POST', '/internal/test/jobs/drain', {});
-    expect(cocoDrain.status).toBe(200);
+
+    await pollDeliveryJob(admin, requiredString(cocoStart.json, 'job_id', 'COCO job'));
     const cocoStatus = await admin.request<RecordValue>('GET', `/api/jobs/${requiredString(cocoStart.json, 'job_id', 'COCO job')}`);
     expect(cocoStatus.json.state).toBe('succeeded');
     const coco = record(cocoStatus.json.result, 'COCO result');
@@ -341,8 +464,8 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
       format: 'coco', loss_ack: true, operation_id: crypto.randomUUID(),
     });
     expect(multiExport.status).toBe(202);
-    const multiDrain = await admin.request<RecordValue>('POST', '/internal/test/jobs/drain', {});
-    expect(multiDrain.status).toBe(200);
+
+    await pollDeliveryJob(admin, requiredString(multiExport.json, 'job_id', 'two-image COCO job'));
     const multiStatus = await admin.request<RecordValue>('GET', `/api/jobs/${requiredString(multiExport.json, 'job_id', 'two-image COCO job')}`);
     expect(multiStatus.json.state).toBe('succeeded');
     const multiResult = record(multiStatus.json.result, 'two-image COCO result');
@@ -378,4 +501,6 @@ it('freezes approved r8, exports r8 after r9, retries hashes, reports loss and s
   } finally {
     await cleanupFixture();
   }
+});
+
 });

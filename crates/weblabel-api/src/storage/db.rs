@@ -1,7 +1,6 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-use tokio::sync::Mutex;
 
 use super::{transactions::begin_immediate, ObjectStore, ObjectWriteError, WriteTransaction};
 
@@ -10,7 +9,7 @@ pub struct Repository {
     pool: SqlitePool,
     objects: ObjectStore,
     write_timeout: Duration,
-    writer_admission: Arc<Mutex<()>>,
+    write_admission: Arc<tokio::sync::Semaphore>,
 }
 
 impl Repository {
@@ -30,7 +29,7 @@ impl Repository {
             .max_connections(5)
             .connect_with(options)
             .await?;
-        let writer_admission = Arc::new(Mutex::new(()));
+        let write_admission = Arc::new(tokio::sync::Semaphore::new(1));
         sqlx::raw_sql(include_str!("../../migrations/0001_core.sql"))
             .execute(&pool)
             .await?;
@@ -72,8 +71,16 @@ impl Repository {
                 "0013_activity_sessions",
                 include_str!("../../migrations/0013_activity_sessions.sql"),
             ),
+            (
+                "0014_admin_password_recovery",
+                include_str!("../../migrations/0014_admin_password_recovery.sql"),
+            ),
+            (
+                "0015_ux_ai",
+                include_str!("../../migrations/0015_ux_ai.sql"),
+            ),
         ] {
-            let mut tx = begin_immediate(&pool, write_timeout, Some(&writer_admission)).await?;
+            let mut tx = begin_immediate(&pool, write_timeout, Some(&write_admission)).await?;
             let applied: i64 = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)",
             )
@@ -95,7 +102,7 @@ impl Repository {
             pool,
             objects,
             write_timeout,
-            writer_admission,
+            write_admission,
         })
     }
 
@@ -103,8 +110,26 @@ impl Repository {
         &self.objects
     }
 
+    /// Read-only startup readiness: this does not certify write capacity or model/GPU support.
+    pub async fn readiness(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        let root = self.objects.root();
+        if !std::fs::metadata(root)?.is_dir() {
+            return Err(sqlx::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::NotADirectory, "Object store is not a directory",
+            )));
+        }
+        std::fs::read_dir(root)?;
+        Ok(())
+    }
+
     pub async fn begin_write(&self) -> Result<WriteTransaction, sqlx::Error> {
-        begin_immediate(&self.pool, self.write_timeout, Some(&self.writer_admission)).await
+        begin_immediate(&self.pool, self.write_timeout, Some(&self.write_admission)).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn close_for_test(&self) {
+        self.pool.close().await;
     }
 
     /// Short read-only borrow; release it before waiting for background work.
