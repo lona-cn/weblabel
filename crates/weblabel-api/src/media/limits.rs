@@ -53,6 +53,22 @@ pub enum MediaError {
     #[error("object storage or database operation failed")]
     Storage,
 }
+impl MediaError {
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Self::TooManyBytes => "TOO_MANY_BYTES",
+            Self::UnsupportedFormat => "UNSUPPORTED_FORMAT",
+            Self::EdgeLimit => "EDGE_LIMIT",
+            Self::PixelLimit => "PIXEL_LIMIT",
+            Self::FilenameTooLong => "FILENAME_TOO_LONG",
+            Self::InvalidImage => "INVALID_IMAGE",
+            Self::MultipleFrames => "MULTIPLE_FRAMES",
+            Self::UnsupportedColor => "UNSUPPORTED_COLOR",
+            Self::InvalidOrientation => "INVALID_ORIENTATION",
+            Self::Storage => "STORAGE_FAILED",
+        }
+    }
+}
 
 pub fn check_filename(filename: &str) -> Result<(), MediaError> {
     if filename.is_empty()

@@ -504,8 +504,15 @@ async fn execute_run_item(
         tx.commit().await?;
     }
 
-    let driver = build_driver(repository, record.clone()).await?;
-    let outcome = runner.execute(&driver).await;
+    let outcome = if record.provider_id == "codex_local" {
+        Ok(RunOutcome::Failed {
+            code: "PROVIDER_RETIRED".to_owned(),
+            message: "Codex is retained for historical records only".to_owned(),
+        })
+    } else {
+        let driver = build_driver(repository, record.clone()).await?;
+        runner.execute(&driver).await
+    };
 
     let mut tx = repository.begin_write().await?;
     let current = runs::load_record(tx.connection(), run_id)
@@ -839,6 +846,12 @@ impl RunRunner for ProductionRunner {
         Box::pin(async move {
             use crate::runtime::supervisor::{reclaim_process_tree, Supervisor};
             use crate::runtime::{EnvelopeKind, EnvelopeMethod, RuntimeEnvelope};
+            if driver.profile.provider_id == annotation_domain::ProviderId::CodexLocal {
+                return Err(RunnerError::new(
+                    "PROVIDER_RETIRED",
+                    "Codex is retained for historical records only",
+                ));
+            }
             let configured_host = self.host.as_ref().ok_or_else(|| {
                 RunnerError::new(
                     "NEEDS_CONFIGURATION",

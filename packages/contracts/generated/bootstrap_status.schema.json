@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BootstrapStatus",
+  "type": "object",
+  "required": [
+    "bootstrap_available",
+    "mode"
+  ],
+  "properties": {
+    "bootstrap_available": {
+      "type": "boolean"
+    },
+    "mode": {
+      "$ref": "#/definitions/BootstrapMode"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "BootstrapMode": {
+      "type": "string",
+      "enum": [
+        "initial",
+        "restore",
+        "login"
+      ]
+    }
+  }
+}

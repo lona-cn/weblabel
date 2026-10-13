@@ -1,4 +1,5 @@
 mod exports;
+mod heads;
 mod idempotency;
 mod imports;
 mod revision;
@@ -24,6 +25,14 @@ pub fn router(repository: Repository, auth: AuthState) -> Router {
         .route(
             "/api/assets/{asset_revision_id}/annotation",
             get(revision::head).put(save::put),
+        )
+        .route(
+            "/api/assets/{asset_revision_id}/annotation-heads",
+            get(heads::asset),
+        )
+        .route(
+            "/api/projects/{project_id}/annotation-heads",
+            get(heads::project),
         )
         .route(
             "/api/annotation-revisions/{annotation_revision_id}",

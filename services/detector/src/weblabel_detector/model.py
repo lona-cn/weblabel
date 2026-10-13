@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import importlib.metadata
 import io
 import json
 import math
@@ -217,7 +218,7 @@ def verify_weights(lock, weights_dir):
 
 def _missing_runtime(find_spec=None) -> tuple[str, ...]:
     spec_finder = find_spec if find_spec is not None else importlib.util.find_spec
-    return tuple(name for name in ("torch", "transformers") if spec_finder(name) is None)
+    return tuple(name for name in ("torch", "transformers", "PIL", "torchvision") if spec_finder(name) is None)
 
 
 def check_runtime(find_spec=None):
@@ -526,6 +527,7 @@ class Predictor:
         self._model = model
         self._torch = torch
         self._lock = lock
+        self._last_result = None
 
     @classmethod
     def load(cls, lock_path, weights_dir, *, find_spec=None):
@@ -544,6 +546,7 @@ class Predictor:
         return cls(processor=processor, model=model, torch=torch, lock=lock)
 
     def predict(self, image_path, *, label_mapping):
+        self._last_result = None
         from PIL import Image  # noqa: PLC0415 — comes with the real runtime
 
         from .transforms import LetterboxGeometry, ResizeGeometry  # noqa: PLC0415
@@ -570,9 +573,9 @@ class Predictor:
         # Raw tensors cross into the single shared decoder via tolist(); no
         # second inverse scaling (target_sizes) is applied anywhere.
         raw_boxes = outputs.pred_boxes[0].tolist()
-        raw_logits = outputs.pred_logits[0].tolist()
+        raw_logits = outputs.logits[0].tolist()
         postprocess = self._lock.get("postprocess", {})
-        return decode_detections(
+        result = decode_detections(
             raw_boxes=raw_boxes,
             raw_logits=raw_logits,
             id2label=self._model.config.id2label,
@@ -581,3 +584,29 @@ class Predictor:
             score_threshold=float(postprocess.get("score_threshold", SCORE_THRESHOLD)),
             max_detections=min(int(postprocess.get("max_detections", MAX_DETECTIONS)), MAX_DETECTIONS),
         )
+        self._last_result = result
+        return result
+
+    def execution_receipt(self, run_id):
+        """Worker observation after a successful forward, including empty output."""
+        if self._last_result is None:
+            raise ConfigurationError("forward_not_completed", "no successful forward to observe")
+        return {
+            "provider_id": "detector_local",
+            "requested_model_id": self._lock["model_id"],
+            "actual_model_id": self._lock["model_id"],
+            "auth_kind": "local_weights",
+            "response_id": run_id,
+            "runtime_version": (
+                f"CPython {platform.python_version()}; torch {self._torch.__version__}; "
+                f"transformers {importlib.metadata.version('transformers')}; "
+                f"torchvision {importlib.metadata.version('torchvision')}; "
+                f"Pillow {importlib.metadata.version('Pillow')}"
+            ),
+            "device": str(next(self._model.parameters()).device),
+            "weights_loaded": True,
+            "forward_completed": True,
+            "decoded_detection_count": len(self._last_result.detections),
+            "unsupported_detection_count": len(self._last_result.unsupported),
+            "queries": self._last_result.stats.queries,
+        }

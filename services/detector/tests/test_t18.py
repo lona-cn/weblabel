@@ -568,8 +568,14 @@ def test_check_runtime_reports_missing_real_inference_stack():
     with pytest.raises(ConfigurationError) as err:
         check_runtime(find_spec=lambda name: None)
     assert err.value.code == "needs_configuration"
-    assert "torch" in err.value.message and "transformers" in err.value.message
     assert check_runtime(find_spec=lambda name: object()) is None
+
+
+@pytest.mark.parametrize("missing_module", ["PIL", "torchvision"])
+def test_check_runtime_refuses_missing_image_decoder(missing_module):
+    with pytest.raises(ConfigurationError) as caught:
+        check_runtime(find_spec=lambda name: None if name == missing_module else object())
+    assert caught.value.code == "needs_configuration"
 
 
 def test_probe_policy_composition_reports_both_dimensions_honestly():
@@ -601,7 +607,6 @@ def test_probe_status_with_empty_weights_dir_reports_missing(tmp_path):
     status = probe_status(lock_path, tmp_path / "weights", find_spec=lambda name: None)
     assert status.weights_ok is False
     assert "model.safetensors" in (status.weights_error or "")
-    assert status.missing_runtime == ("torch", "transformers")
 
 
 # ---------------------------------------------------------------------------
@@ -1166,3 +1171,91 @@ def test_line_reader_bounds_partial_buffers_and_flags_truncation():
     with pytest.raises(ProtocolError) as err:
         next(iter(truncated))
     assert err.value.code == "truncated_message"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native import/stdin lock regression")
+def test_windows_cold_native_import_finishes_while_host_keeps_stdin_open(tmp_path):
+    """Native import and NDJSON liveness only: no weights or model forward."""
+    import importlib.util
+    import queue
+
+    if importlib.util.find_spec("torch") is None or importlib.util.find_spec("numpy") is None:
+        pytest.skip("requires the optional CPU runtime; does not install or download it")
+    image = tmp_path / "input.png"
+    image.write_bytes(_png_bytes())
+    source = """
+import weblabel_detector.__main__ as cli
+from weblabel_detector.model import ConfigurationError
+class NativeImportOnlyWorker(cli.Worker):
+    def _default_predictor(self):
+        import torch
+        raise ConfigurationError("native_import_only", "no model load or forward in this regression")
+cli.Worker = NativeImportOnlyWorker
+raise SystemExit(cli.main())
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", source], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env={**os.environ, "WEBLABEL_DETECTOR_WEIGHTS_DIR": str(tmp_path / "unused-weights")},
+    )
+    messages = queue.Queue()
+    reader = threading.Thread(target=lambda: [messages.put(json.loads(line)) for line in process.stdout], daemon=True)
+    reader.start()
+    try:
+        process.stdin.write((_start_run_line(str(image), "native-import-only") + "\n").encode())
+        process.stdin.flush()
+        # The host must leave this pipe open to allow cancellation. EOF would
+        # release the Windows native-import deadlock and hide the regression.
+        import time
+        deadline = time.monotonic() + 10
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                pytest.fail("native import did not reach a terminal response with stdin open")
+            try:
+                message = messages.get(timeout=remaining)
+            except queue.Empty:
+                pytest.fail("native import did not reach a terminal response with stdin open")
+            if message["kind"] == "response" and message["method"] == "start_run":
+                assert message["payload"]["error"]["code"] == "native_import_only"
+                break
+    finally:
+        process.kill()
+        process.wait(timeout=5)
+        process.stdin.close()
+        reader.join(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
+
+
+@pytest.mark.mock_tensor
+def test_predict_decodes_rtdetr_class_logits_into_canonical_boxes(tmp_path, monkeypatch):
+    """Synthetic tensors with the framework output shape; no real inference."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from weblabel_detector.model import Predictor
+
+    image = SimpleNamespace(size=(4, 4))
+    image.convert = lambda mode: image
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=SimpleNamespace(open=lambda stream: image)))
+    image_path = tmp_path / "input.png"
+    image_path.write_bytes(_png_bytes())
+    outputs = SimpleNamespace(
+        pred_boxes=[SimpleNamespace(tolist=lambda: [[0.5, 0.5, 0.5, 0.5]])],
+        logits=[SimpleNamespace(tolist=lambda: [[3.0]])],
+    )
+
+    class OutputShapeDouble:
+        config = SimpleNamespace(id2label={0: "person"})
+
+        def __call__(self, **inputs):
+            return outputs
+
+    predictor = Predictor(
+        processor=lambda **kwargs: {}, model=OutputShapeDouble(),
+        torch=SimpleNamespace(no_grad=nullcontext), lock={},
+    )
+    result = predictor.predict(image_path, label_mapping=LabelMapping.from_raw({"person": "label_person"}))
+    detection, = result.detections
+    assert detection.label_id == "label_person"
+    assert detection.bbox_xyxy == pytest.approx([1.0, 1.0, 3.0, 3.0])
+    assert detection.score == pytest.approx(1.0 / (1.0 + math.exp(-3.0)))

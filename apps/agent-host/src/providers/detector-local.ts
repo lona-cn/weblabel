@@ -72,6 +72,73 @@ const RUN_EVENT_TYPES: Record<string, true> = {
 const TERMINAL_EVENTS: Record<string, true> = { succeeded: true, failed: true, cancelled: true };
 const MAX_ID_LENGTH = 128;
 
+interface DetectorSupervision {
+  supervised: Promise<import('../security/spawn').SuperviseResult | null>;
+  readonly signal: AbortSignal;
+  readonly timedOut: boolean;
+  readonly failure: unknown;
+  fail(error: unknown): void;
+  observeStreams(): Promise<void>;
+  close(): Promise<void>;
+}
+
+/** Keep the deadline armed through streams, parsing and process reclamation. */
+function superviseDetector(child: SpawnedChild, timeoutMs: number | null, signal?: AbortSignal): DetectorSupervision {
+  const abort = new AbortController();
+  let timedOut = false;
+  let failure: unknown = null;
+  let exited = false;
+  let streamsObserved = false;
+  void child.wait().then(() => { exited = true; }).catch(failWait);
+  function failWait(error: unknown) { fail(error); }
+  const cancel = () => abort.abort();
+  const fail = (error: unknown) => { failure ??= error; cancel(); };
+  const supervised = superviseChild(child, { timeoutMs: null, signal: abort.signal }).catch((error: unknown) => { fail(error); return null; });
+  const timer = timeoutMs !== null && timeoutMs > 0 ? setTimeout(() => {
+    // Reclamation has its own bounded escalation. Do not relabel an already
+    // observed normal exit/complete stream as a timeout while awaiting it.
+    timedOut = !exited || !streamsObserved;
+    cancel();
+  }, timeoutMs) : null;
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
+  child.stdin.on('error', fail);
+  const stderr = (async () => { for await (const _chunk of child.stderr) { /* Drain without retaining buffers. */ } })().catch(fail);
+  return {
+    supervised, fail,
+    signal: abort.signal,
+    async observeStreams() { await stderr; streamsObserved = true; },
+    get timedOut() { return timedOut; },
+    get failure() { return failure; },
+    async close() {
+      cancel();
+      try {
+        if (await supervised === null) await child.killTree('detector cleanup');
+        child.stdin.end();
+        await stderr;
+      } finally {
+        if (timer !== null) clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
+        child.stdin.removeListener('error', fail);
+      }
+    },
+  };
+}
+
+/** Observe late rejection even when a context does not cooperate with abort. */
+async function submitBeforeAbort(ctx: RuntimeContext, candidate: unknown, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  const stopped = Promise.withResolvers<never>();
+  const onAbort = () => stopped.reject(signal.reason);
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const submission = Promise.resolve().then(() => { signal.throwIfAborted(); return ctx.submit_candidates(candidate, signal); });
+    await Promise.race([submission, stopped.promise]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 function composeProfile(modelId: string, availability: ModelProfile['availability'], runtimeVersion: string | null): ModelProfile {
   return {
     profile_id: 'detector_local',
@@ -165,49 +232,33 @@ export class DetectorLocalAdapter implements ProviderAdapter {
    */
   async probe(): Promise<ModelProfile[]> {
     const modelId = this.#modelId();
-    let child: SpawnedChild | null = null;
+    let lifecycle: DetectorSupervision | null = null;
     try {
-      child = spawnChild(this.#child, this.#options.spawnPolicy);
-      child.stdin.write(
-        `${serializeEnvelope({ protocol_version: PROTOCOL_VERSION, id: 'detector-probe', kind: 'request', method: 'probe', payload: {} })}\n`,
-      );
-      child.stdin.end();
+      const child = spawnChild(this.#child, this.#options.spawnPolicy);
+      lifecycle = superviseDetector(child, this.#options.probeTimeoutMs ?? 30000);
+      child.stdin.end(serializeEnvelope({ protocol_version: PROTOCOL_VERSION, id: 'detector-probe', kind: 'request', method: 'probe', payload: {} }) + '\n');
       const framer = new NdjsonFramer();
       let profile: Record<string, unknown> | null = null;
       for await (const chunk of child.stdout) {
-        const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8');
-        for (const line of framer.push(text)) {
+        for (const line of framer.push(Buffer.from(chunk).toString('utf8'))) {
           const envelope = parseEnvelope(line);
-          if (envelope.kind === 'response' && envelope.method === 'probe') {
-            const payload = envelope.payload as { ok?: unknown; profile?: unknown } | null;
-            if (payload?.ok === true && typeof payload.profile === 'object' && payload.profile !== null) {
-              profile = payload.profile as Record<string, unknown>;
-            }
-          }
+          if (envelope.kind !== 'response' || envelope.method !== 'probe' || envelope.id !== 'detector-probe' || profile !== null) throw new ProtocolError('invalid_envelope', 'unexpected probe response');
+          const payload = envelope.payload as { ok?: unknown; profile?: unknown } | null;
+          if (payload?.ok !== true || typeof payload.profile !== 'object' || payload.profile === null || Array.isArray(payload.profile)) throw new ProtocolError('invalid_envelope', 'invalid probe profile');
+          profile = payload.profile as Record<string, unknown>;
+          if (typeof profile.model_id !== 'string' || profile.model_id.length === 0 || profile.model_id.length > MAX_ID_LENGTH * 2 || !['ready', 'needs_configuration'].includes(String(profile.availability)) || (profile.runtime_version !== null && typeof profile.runtime_version !== 'string')) throw new ProtocolError('invalid_envelope', 'invalid probe profile');
         }
-        if (profile !== null) break;
       }
-      await superviseChild(child, { timeoutMs: this.#options.probeTimeoutMs ?? 30000 });
-      if (profile === null) return [composeProfile(modelId, 'needs_configuration', null)];
-      const availability = profile.availability === 'ready' ? 'ready' : 'needs_configuration';
-      const runtimeVersion = typeof profile.runtime_version === 'string' ? profile.runtime_version : null;
-      // Identity comes from what the worker actually verified, never from a
-      // separately configured path that may diverge from the worker's own.
-      const verifiedModelId =
-        typeof profile.model_id === 'string' &&
-        profile.model_id.length > 0 &&
-        profile.model_id.length <= MAX_ID_LENGTH * 2
-          ? profile.model_id
-          : modelId;
-      return [composeProfile(verifiedModelId, availability, runtimeVersion)];
-    } catch {
-      // Python missing, spawn policy refusal or a broken worker: report the
-      // unconfigured state instead of throwing. The workbench keeps working.
+      framer.flush();
+      await lifecycle.observeStreams();
+      const supervised = await lifecycle.supervised;
+      if (profile === null || lifecycle.timedOut || lifecycle.failure !== null || supervised?.outcome !== 'exited' || supervised.exit_code !== 0) return [composeProfile(modelId, 'needs_configuration', null)];
+      return [composeProfile(profile.model_id as string, profile.availability === 'ready' ? 'ready' : 'needs_configuration', profile.runtime_version as string | null)];
+    } catch (error) {
+      lifecycle?.fail(error);
       return [composeProfile(modelId, 'needs_configuration', null)];
     } finally {
-      if (child !== null) {
-        await child.killTree('probe cleanup').catch(() => undefined);
-      }
+      await lifecycle?.close();
     }
   }
 
@@ -223,11 +274,8 @@ export class DetectorLocalAdapter implements ProviderAdapter {
       return;
     }
     let stageDir: string | null = null;
-    let child: SpawnedChild | null = null;
-    const abortHandler = (): void => {
-      if (child !== null) void child.killTree('run aborted').catch(() => undefined);
-    };
-    signal.addEventListener('abort', abortHandler, { once: true });
+    let lifecycle: DetectorSupervision | null = null;
+    let result: RunEvent | null = null;
     try {
       if (input.intent !== 'detect') {
         yield terminal('failed', 'the detector only supports detect runs', { code: 'unsupported_intent' });
@@ -249,67 +297,56 @@ export class DetectorLocalAdapter implements ProviderAdapter {
         ontology_label_ids: ontology.labels.map((label) => label.label_id),
         canonical_size: { width: document.coordinate_space.width, height: document.coordinate_space.height },
       };
-      child = spawnChild(this.#child, this.#options.spawnPolicy);
+      if (signal.aborted) { yield terminal('cancelled', 'detector run cancelled'); return; }
+      const child = spawnChild(this.#child, this.#options.spawnPolicy);
+      lifecycle = superviseDetector(child, this.#options.runTimeoutMs ?? null, signal);
       child.stdin.write(
         `${serializeEnvelope({ protocol_version: PROTOCOL_VERSION, id: runId, kind: 'request', method: 'start_run', payload })}\n`,
       );
       // stdin stays open until the run reaches a terminal event: EOF is the
       // worker's shutdown signal and must never cancel an uncancelled run.
       const framer = new NdjsonFramer();
-      let sawTerminal = false;
+      let workerTerminal: RunEvent | null = null;
       for await (const chunk of child.stdout) {
         const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8');
         for (const line of framer.push(text)) {
           const envelope: RuntimeEnvelope = parseEnvelope(line);
           if (envelope.kind !== 'event' || envelope.method !== 'run_event') continue;
+          if (workerTerminal !== null) throw new ProtocolError('invalid_envelope', 'event after terminal');
           const event = assertRunEvent(envelope.payload, runId, lastSeq);
           lastSeq = event.seq;
           if (event.type === 'candidate') {
             // Candidates only ever enter through the candidate layer (C4).
-            await ctx.submit_candidates((event.data as { raw?: unknown } | null)?.raw);
+            await submitBeforeAbort(ctx, (event.data as { raw?: unknown } | null)?.raw, lifecycle.signal);
           }
           if (TERMINAL_EVENTS[event.type] === true) {
-            sawTerminal = true;
-            try {
-              child.stdin.end();
-            } catch {
-              // the child may already be gone
-            }
+            workerTerminal = event;
+            child.stdin.end();
+          } else {
+            yield event;
           }
-          yield event;
         }
       }
-      try {
-        child.stdin.end();
-      } catch {
-        // the child may already be gone
-      }
-      const supervised = await superviseChild(child, {
-        timeoutMs: this.#options.runTimeoutMs ?? null,
-        signal,
-      });
-      if (!sawTerminal) {
-        if (supervised.outcome === 'cancelled' || signal.aborted) {
-          yield terminal('cancelled', 'detector run cancelled');
-        } else if (supervised.outcome === 'timeout') {
-          yield terminal('failed', 'detector run timed out', { code: 'run_timeout' });
-        } else {
-          yield terminal('failed', 'detector worker ended without a terminal event', {
-            code: supervised.outcome === 'crashed' ? 'child_crashed' : 'missing_terminal_response',
-          });
-        }
-      }
+      framer.flush();
+      child.stdin.end();
+      await lifecycle.observeStreams();
+      const supervised = await lifecycle.supervised;
+      if (signal.aborted) result = terminal('cancelled', 'detector run cancelled');
+      else if (lifecycle.timedOut) result = terminal('failed', 'detector run timed out', { code: 'run_timeout' });
+      else if (lifecycle.failure !== null) throw lifecycle.failure;
+      else if (supervised?.outcome !== 'exited') result = terminal('failed', 'detector worker crashed', { code: 'child_crashed' });
+      else result = workerTerminal ?? terminal('failed', 'detector worker ended without a terminal event', { code: 'missing_terminal_response' });
     } catch (error) {
-      yield terminal(signal.aborted ? 'cancelled' : 'failed', safeMessage(error), signal.aborted ? null : { code: errorCode(error) });
+      lifecycle?.fail(error);
+      result = signal.aborted ? terminal('cancelled', 'detector run cancelled') : lifecycle?.timedOut ? terminal('failed', 'detector run timed out', { code: 'run_timeout' }) : terminal('failed', safeMessage(error), { code: errorCode(error) });
     } finally {
-      signal.removeEventListener('abort', abortHandler);
-      if (child !== null) {
-        await child.killTree('run cleanup').catch(() => undefined);
-      }
-      if (stageDir !== null) {
-        rmSync(stageDir, { recursive: true, force: true });
+      try {
+        await lifecycle?.close();
+      } finally {
+        if (stageDir !== null) rmSync(stageDir, { recursive: true, force: true });
       }
     }
+    if (result !== null) yield result;
   }
 }
 

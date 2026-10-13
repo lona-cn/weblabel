@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactElement } from 'react';
+import type { ReactElement, PointerEvent as ReactPointerEvent } from 'react';
 import { EditorHost } from '../../lib/editor/EditorHost';
 import { toApiError } from '../../lib/editor/loader';
 import type { ApiError, CanvasLabel, EditorAssetRequest, EditorHostOptions, EditorTool } from '../../lib/editor/types';
@@ -11,7 +11,9 @@ export interface CanvasViewProps {
   hostOptions?: Partial<EditorHostOptions>;
   activeTool: EditorTool;
   onDelta: (host: EditorHost, delta: EditorDelta) => void;
-  onHostReady: (host: EditorHost) => void;
+  onHostSettled: (host: EditorHost) => void;
+  objectNames?: Readonly<Record<string, string>>;
+  canInteract?: (host: EditorHost) => boolean;
 }
 
 function adapterKind(diagnostics: string): 'hardware' | 'software' | 'unknown' {
@@ -20,14 +22,17 @@ function adapterKind(diagnostics: string): 'hardware' | 'software' | 'unknown' {
   return 'unknown';
 }
 
-export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostReady, readOnly = false }: CanvasViewProps) {
+export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostSettled, objectNames, canInteract, readOnly = false }: CanvasViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef(request);
   const hostRef = useRef<EditorHost | null>(null);
   const optionsRef = useRef(hostOptions);
   const deltaRef = useRef(onDelta);
-  const readyRef = useRef(onHostReady);
+  const settledRef = useRef(onHostSettled);
   const toolRef = useRef(activeTool);
+  const namesRef = useRef<Readonly<Record<string, string>>>({});
+  const refreshLabelsRef = useRef<(() => void) | null>(null);
+  namesRef.current = objectNames ?? Object.fromEntries(request.document.objects.map((object, index) => [object.object_id, (request.ontology.labels.find(label => label.label_id === object.label_id)?.name ?? object.label_id) + ' #' + (index + 1)]));
   const [error, setError] = useState<ApiError | null>(null);
   const [deviceState, setDeviceState] = useState<'loading' | 'ready' | 'unsupported' | 'lost' | 'recovering'>('loading');
   const [adapter, setAdapter] = useState<'hardware' | 'software' | 'unknown'>('unknown');
@@ -35,7 +40,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
   requestRef.current = request;
   optionsRef.current = hostOptions;
   deltaRef.current = onDelta;
-  readyRef.current = onHostReady;
+  settledRef.current = onHostSettled;
   toolRef.current = activeTool;
 
   useEffect(() => {
@@ -44,7 +49,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
     let unsubscribe: (() => void) | undefined;
     let unsubscribeStatus: (() => void) | undefined;
     // Native CSS projection only; this cache lives for one asset/host effect.
-    const labelCache = new Map<string, Readonly<CanvasLabel> & { readonly element: ReactElement }>();
+    const labelCache = new Map<string, Readonly<CanvasLabel> & { readonly text: string; readonly element: ReactElement }>();
     let renderedLabels: readonly ReactElement[] = [];
     setLabels(renderedLabels);
     queueMicrotask(() => {
@@ -54,7 +59,7 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
         if (host !== null) deltaRef.current(host, delta);
       } });
       hostRef.current = host;
-      unsubscribe = host.subscribeRendered(() => {
+      const refreshLabels = () => {
         if (!active || !host) return;
         const nativeLabels = host.getCanvasLabels();
         const present = new Set<string>();
@@ -62,9 +67,10 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
         for (const label of nativeLabels) {
           present.add(label.object_id);
           let cached = labelCache.get(label.object_id);
-          if (!cached || cached.x_css !== label.x_css || cached.y_css !== label.y_css || cached.selected !== label.selected) {
-            const element = <span key={label.object_id} data-testid="canvas-label" data-object-id={label.object_id} data-selected={label.selected} style={{ position: 'absolute', transform: 'translate('+label.x_css+'px, '+label.y_css+'px)', fontSize: 11, color: label.selected ? '#fff' : '#f1d68a', background: '#17212be6', padding: '1px 3px' }}>{label.object_id}</span>;
-            cached = { ...label, element };
+          const text = namesRef.current[label.object_id] ?? '对象';
+          if (!cached || cached.text !== text || cached.x_css !== label.x_css || cached.y_css !== label.y_css || cached.selected !== label.selected) {
+            const element = <span key={label.object_id} data-testid="canvas-label" data-object-id={label.object_id} data-selected={label.selected} title={text} style={{ position: 'absolute', transform: 'translate('+label.x_css+'px, '+label.y_css+'px)', fontSize: 12, color: label.selected ? '#fff' : '#f3d45a', background: '#121a21ed', padding: '2px 4px' }}>{text}</span>;
+            cached = { ...label, text, element };
             labelCache.set(label.object_id, cached);
           }
           nextLabels.push(cached.element);
@@ -73,7 +79,9 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
         if (nextLabels.length === renderedLabels.length && nextLabels.every((element, index) => element === renderedLabels[index])) return;
         renderedLabels = nextLabels;
         setLabels(renderedLabels);
-      });
+      };
+      refreshLabelsRef.current = refreshLabels;
+      unsubscribe = host.subscribeRendered(refreshLabels);
       unsubscribeStatus = host.subscribeStatus(() => {
         if (!active || !host) return;
         const status = host.status;
@@ -89,48 +97,70 @@ export function CanvasView({ request, hostOptions, activeTool, onDelta, onHostRe
       host.mount(canvas);
       setError(null);
       setDeviceState('loading');
-      void host.loadAsset(requestRef.current).then(async () => {
-        if (!active || host?.status !== 'ready') return;
-        host.setTool(toolRef.current);
-        readyRef.current(host);
-        const kind = adapterKind(host.getAdapterDiagnostics());
-        if (!active) return;
-        setAdapter(kind);
-        setDeviceState('ready');
+      const loadRequest = requestRef.current;
+      let settled = false;
+      const currentLoad = () => active && host !== null && hostRef.current === host && requestRef.current === loadRequest && host.status !== 'disposed';
+      const settleHost = () => {
+        if (!currentLoad() || settled || !host || !['ready', 'error', 'lost'].includes(host.status)) return;
+        settled = true;
+        settledRef.current(host);
+      };
+      void host.loadAsset(loadRequest).then(() => {
+        if (!currentLoad() || !host) return;
+        if (host.status === 'ready') {
+          host.setTool(toolRef.current);
+          setAdapter(adapterKind(host.getAdapterDiagnostics()));
+          setDeviceState('ready');
+        } else if (host.status === 'error' || host.status === 'lost') {
+          setError(host.error);
+          setDeviceState(typeof navigator !== 'undefined' && 'gpu' in navigator ? 'lost' : 'unsupported');
+        }
+        settleHost();
       }).catch((reason: unknown) => {
-        if (!active) return;
+        if (!currentLoad()) return;
         setError(toApiError(reason, 'EDITOR_INIT_FAILED', () => globalThis.crypto?.randomUUID?.() ?? `canvas-view-${Date.now()}`));
         setDeviceState(typeof navigator !== 'undefined' && 'gpu' in navigator ? 'lost' : 'unsupported');
+        settleHost();
       });
     });
     return () => {
       active = false;
       unsubscribe?.();
+      refreshLabelsRef.current = null;
       unsubscribeStatus?.();
       host?.dispose();
       if (hostRef.current === host) hostRef.current = null;
     };
-  }, [request.media.asset_revision_id]);
+  }, [request]);
 
   useEffect(() => {
     if (canvasRef.current) canvasRef.current.inert = readOnly || deviceState !== 'ready';
     if (readOnly) hostRef.current?.cancelGesture();
   }, [readOnly, deviceState]);
+  useEffect(() => { refreshLabelsRef.current?.(); }, [objectNames, request.document, request.ontology]);
 
 
+  function guardPointer(event: ReactPointerEvent<HTMLDivElement>) {
+    const current = hostRef.current;
+    if (!current || readOnly || current.status !== 'ready' || (canInteract && !canInteract(current))) {
+      event.stopPropagation(); current?.cancelGesture();
+    }
+  }
   return <>
-    <div className="gpu-diagnostics" data-testid="gpu-status" data-actual-backend={deviceState === 'ready' ? 'webgpu' : 'none'} data-adapter-kind={adapter} data-device-state={deviceState} role="status" aria-live="polite">
-      {deviceState === 'ready' ? `WebGPU · ${adapter} adapter · 就绪` : deviceState === 'unsupported' ? 'WebGPU 不支持；仅可查看对象' : deviceState === 'recovering' ? 'WebGPU 设备丢失；正在重建渲染器，未保存内容和撤销历史已保留…' : deviceState === 'lost' ? 'WebGPU 不可用；仅可查看，CPU 文档和未保存内容已保留' : '正在初始化真实 WebGPU…'}
-    </div>
-    <div className="canvas-surface">
+    <div className="canvas-surface" onPointerDownCapture={guardPointer} onPointerMoveCapture={guardPointer} onPointerUpCapture={guardPointer} onPointerCancelCapture={guardPointer}>
       <canvas data-testid="annotation-canvas" ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%', touchAction: 'none' }} />
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
         {labels}
       </div>
     </div>
-    {error || deviceState === 'lost' ? <div className="canvas-state error">
-      {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
-      {deviceState === 'lost' && hostRef.current?.status === 'lost' ? <button type="button" data-testid="gpu-retry" onClick={() => { void hostRef.current?.retryRenderer(); }}>重试 WebGPU 渲染器</button> : null}
-    </div> : null}
+    <div className="canvas-renderer-status">
+      <div className="gpu-diagnostics" data-testid="gpu-status" data-actual-backend={deviceState === 'ready' ? 'webgpu' : 'none'} data-adapter-kind={adapter} data-device-state={deviceState} role="status" aria-live="polite">
+        {deviceState === 'ready' ? `WebGPU · ${adapter === 'hardware' ? '硬件加速' : adapter === 'software' ? '软件适配器' : '适配器类型未知'}` : deviceState === 'unsupported' ? '浏览器不支持 WebGPU，只能查看对象。' : deviceState === 'recovering' ? '正在恢复画布，未保存的标注和撤销记录仍在。' : deviceState === 'lost' ? '画布暂时不可用，标注已保留。' : '正在准备画布…'}
+      </div>
+      {error || deviceState === 'lost' ? <div className="canvas-state error">
+        {error ? <div role="alert">{`${error.code}: ${error.message}`}</div> : null}
+        {deviceState === 'lost' && hostRef.current?.status === 'lost' ? <button type="button" data-testid="gpu-retry" onClick={() => { void hostRef.current?.retryRenderer(); }}>重试画布</button> : null}
+      </div> : null}
+    </div>
   </>;
 }

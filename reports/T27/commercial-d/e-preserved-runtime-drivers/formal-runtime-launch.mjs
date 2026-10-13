@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const root=await realpath('D:/workspace/src/weblabel');
+const scalePath=path.join(root,'target/build-cache/commercial-d/formal-scale-smoke.mjs');
+const {rootPath}=await import(pathToFileURL(scalePath).href);
+const temp=await rootPath(path.join(root,'target/build-cache/commercial-d/formal-temp-d-1791652219845'),{createDirectory:true});
+for(const key of ['TEMP','TMP','TMPDIR'])process.env[key]=temp;
+process.env.PYTHON='C:/Python314/python.exe';
+for(const key of Object.keys(process.env))if(/^(?:WEBLABEL_)?(?:HOST_|MODEL_|TEST_MANUAL_MODEL_WORKER$|API_BINARY$|T33_RELEASE$)/.test(key))delete process.env[key];
+const controller=await rootPath(path.join(root,'target/build-cache/commercial-d/formal-runtime-controller.mjs'));
+assert.equal(Number(process.versions.node.split('.')[0]),24);
+process.argv=[process.execPath,controller,...process.argv.slice(2)];
+await import(pathToFileURL(controller).href);

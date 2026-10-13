@@ -22,6 +22,7 @@ import { Panel } from './src/features/ai/Panel';
 import { EditorHost } from './src/lib/editor/EditorHost';
 import { createEditorFacadeFactory, loadWasmBridge } from './src/lib/editor/loader';
 import { SaveQueue } from './src/lib/persistence/save-queue';
+import { InMemoryDraftStorage } from './src/lib/persistence/draft-store';
 
 const asset = 'asset_revision_golden';
 const ontologyId = 'ontology_v1';
@@ -67,11 +68,12 @@ const api = {
   suggestions: async () => [{ ...candidate, context: requestContext }],
   cancel: async () => undefined,
 };
-const records = new Map();
+const records = new InMemoryDraftStorage();
 const saves = [];
 const savedGenerations = [];
 const queue = new SaveQueue({
-  storage: { get: async (id) => records.get(id) ?? null, put: async (record) => { records.set(record.asset_revision_id, structuredClone(record)); }, delete: async (id) => { records.delete(id); } },
+  owner: { token: {}, actor_id: 'fixture', project_id: context.project_id, isCurrent: () => true, isWritable: () => true, canPrepareOperation: () => true, getLease: () => null },
+  storage: records,
   transport: {
     save: async (request) => {
       saves.push(structuredClone(request));
@@ -127,7 +129,7 @@ window.__t24 = {
   },
   snapshot() { return host.getSnapshot(); },
   acceptedJournal() { return saves.flatMap((request) => request.suggestion_decisions); },
-  savedState() { return { saves, savedGenerations, record: records.get(asset), status: queue.getStatus(asset) }; },
+  async savedState() { const branch = queue.getDraftBranchSnapshot(asset); return { saves, savedGenerations, record: (await records.get(asset, branch.envelope.draft_id))?.record, status: queue.getStatus(asset) }; },
   dispose() { root?.unmount(); host?.dispose(); },
 };
 `;
@@ -155,12 +157,12 @@ function buildWasmBundle(): void {
   const channel = /channel\s*=\s*"([^"]+)"/.exec(toolchain)?.[1];
   if (!channel) throw new Error('rust-toolchain.toml has no pinned channel');
   const env = { ...process.env, RUSTUP_TOOLCHAIN: channel };
-  const neutralCwd = path.parse(repoRoot).root;
+  const neutralCwd = process.env.WEBLABEL_CARGO_CWD ?? path.parse(repoRoot).root;
   const build = spawnSync('cargo', ['build', '--target', 'wasm32-unknown-unknown', '-p', 'wasm-bridge', '--manifest-path', path.join(repoRoot, 'Cargo.toml'), '--locked'], {
     cwd: neutralCwd, env, encoding: 'utf8', shell: false, windowsHide: true,
   });
   if (build.status !== 0) throw new Error(`cargo build for wasm32 failed:\n${build.stdout}\n${build.stderr}`);
-  const bindgen = spawnSync('wasm-bindgen', ['--target', 'web', '--out-dir', wasmOut, '--out-name', 'wasm_bridge', path.join(repoRoot, 'target', 'wasm32-unknown-unknown', 'debug', 'wasm_bridge.wasm')], {
+  const bindgen = spawnSync('wasm-bindgen', ['--target', 'web', '--out-dir', wasmOut, '--out-name', 'wasm_bridge', path.join(process.env.CARGO_TARGET_DIR ?? path.join(repoRoot, 'target'), 'wasm32-unknown-unknown', 'debug', 'wasm_bridge.wasm')], {
     cwd: neutralCwd, encoding: 'utf8', shell: false, windowsHide: true,
   });
   if (bindgen.status !== 0) throw new Error(`wasm-bindgen failed:\n${bindgen.stdout}\n${bindgen.stderr}`);
@@ -190,20 +192,20 @@ test.beforeAll(async () => {
 });
 type SavedFixtureState = { saves: Array<{ document: { objects: Array<{ object_id: string }> }; suggestion_decisions: Array<{ suggestion_set_id: string; decision: string; change_ids: string[] }> }>; savedGenerations: number[]; record: { generation: number; intent_journal: Array<{ seq: number; generation: number; intent: { decision: string } }> }; status: { synced_generation: number; dirty: boolean } };
 function savedFixtureState(page: Page): Promise<SavedFixtureState> {
-  return page.evaluate(() => (window as unknown as { __t24: { savedState(): SavedFixtureState } }).__t24.savedState());
+  return page.evaluate(() => (window as unknown as { __t24: { savedState(): Promise<SavedFixtureState> } }).__t24.savedState());
 }
 
 test('T24 selected-subset acceptance is one undo unit with reversible journal intents', async ({ page }) => {
   await bootPage(page);
   await page.getByTestId('ai-prompt').fill('Detect two objects and leave the third for review.');
   await page.getByTestId('ai-run').click();
-  await page.getByLabel('I reviewed this exact scope and authorize this run.').check();
-  await page.getByRole('button', { name: 'Authorize and run now' }).click();
+  await page.getByTestId('ai-consent').getByRole('checkbox').check();
+  await page.getByTestId('ai-authorize').click();
 
-  await expect(page.getByRole('checkbox', { name: 'Select change change-1' })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('checkbox', { name: 'Select change change-1' }).check();
-  await page.getByRole('checkbox', { name: 'Select change change-2' }).check();
-  await page.getByRole('button', { name: 'Accept selected changes' }).click();
+  await expect(page.getByTestId('candidate-change-1').getByRole('checkbox')).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('candidate-change-1').getByRole('checkbox').check();
+  await page.getByTestId('candidate-change-2').getByRole('checkbox').check();
+  await page.getByTestId('accept-selected').click();
   await expect.poll(async () => page.evaluate(() => (window as unknown as { __t24: { acceptedJournal(): Array<{ decision: string; change_ids: string[] }> } }).__t24.acceptedJournal())).toEqual([
     { suggestion_set_id: 'suggestion-t24', decision: 'accept', change_ids: ['change-1', 'change-2'] },
   ]);

@@ -1,0 +1,13 @@
+.import-export-panel { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.import-export-panel > :is(h3, p, label, button, details, section, ol) { margin: 8px 12px; }
+.import-export-panel fieldset { display: grid; gap: 12px; margin: 8px 12px; }
+.import-export-panel fieldset label { display: grid; gap: 6px; min-width: 0; }
+.import-export-panel :is(select, input[type='file']) { width: 100%; }
+.import-export-panel :is(dd, code, pre) { overflow-wrap: anywhere; }
+.import-export-panel dd { margin-inline-start: 12px; }
+.import-export-panel details { min-width: 0; }
+.import-export-panel summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
+.import-export-panel summary::before { content: '▸'; margin-inline-end: 8px; }
+.import-export-panel details[open] > summary::before { content: '▾'; }
+.import-export-panel pre { max-height: 280px; overflow: auto; white-space: pre-wrap; }
+.import-export-panel li { margin-block: 12px; }

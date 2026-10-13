@@ -1,9 +1,9 @@
 export type Tool = 'select' | 'box' | 'pan';
 
 const tools: { id: Tool; label: string; glyph: string }[] = [
-  { id: 'select', label: '选择工具', glyph: '↖' },
-  { id: 'box', label: '矩形工具', glyph: '□' },
-  { id: 'pan', label: '平移工具', glyph: '✋' },
+  { id: 'select', label: '选择', glyph: '↖' },
+  { id: 'box', label: '画框', glyph: '□' },
+  { id: 'pan', label: '平移', glyph: '↔' },
 ];
 
 export function Toolbar({ active, onChange, disabled = false }: { active: Tool; onChange: (tool: Tool) => void; disabled?: boolean }) {

@@ -2,9 +2,12 @@ use std::{error::Error, fs, path::Path};
 
 use annotation_domain::{
     ActivityCheckpoint, ActivityInterval, ActivityKind, ActivitySession, ActivitySessionPage,
-    AiApprovedGrants, AiConsentRequest, AiConsentResponse, AiPreviewRequest, AiPreviewResponse,
-    AnnotationDocument, AnnotationRevision, ApiError, EditorCommand, EditorDelta,
-    ExternalProcessingPolicy, MediaRevision, ModelProfile, OntologyVersion, RunEvent, SaveRequest,
+    AdminRecoveryRequest, AdminRecoveryState, AdminRecoveryStatus, AiApprovedGrants,
+    AiConsentRequest, AiConsentResponse, AiPreviewRequest, AiPreviewResponse, AnnotationDocument,
+    AnnotationHeadPage, AnnotationHeadSummary, AnnotationImportCommitRequest, AnnotationRevision,
+    ApiError, AssetAnnotationHead, AssetAnnotationHeadPage, BootstrapMode, BootstrapStatus,
+    EditorCommand, EditorDelta, ExternalProcessingPolicy, MediaRevision, ModelProfile,
+    OntologyVersion, ProjectMember, ProjectMemberPage, ProjectMemberRole, RunEvent, SaveRequest,
     SaveResponse, StartRunRequest, SuggestionSet,
 };
 use schemars::JsonSchema;
@@ -26,6 +29,14 @@ fn write_json<T: Serialize>(directory: &Path, file: &str, value: &T) -> Result<(
 /// Generate the committed wire artifacts exclusively from annotation-domain Rust declarations.
 pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(output)?;
+    BootstrapMode::export_all_to(output)?;
+    BootstrapStatus::export_all_to(output)?;
+    write_schema::<BootstrapStatus>(output, "bootstrap_status.schema.json")?;
+    AdminRecoveryState::export_all_to(output)?;
+    AdminRecoveryStatus::export_all_to(output)?;
+    AdminRecoveryRequest::export_all_to(output)?;
+    write_schema::<AdminRecoveryStatus>(output, "admin_recovery_status.schema.json")?;
+    write_schema::<AdminRecoveryRequest>(output, "admin_recovery_request.schema.json")?;
     ActivityKind::export_all_to(output)?;
     ActivityInterval::export_all_to(output)?;
     ActivityCheckpoint::export_all_to(output)?;
@@ -37,6 +48,14 @@ pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     AnnotationRevision::export_all_to(output)?;
     SaveRequest::export_all_to(output)?;
     SaveResponse::export_all_to(output)?;
+    AnnotationHeadSummary::export_all_to(output)?;
+    AnnotationHeadPage::export_all_to(output)?;
+    AssetAnnotationHead::export_all_to(output)?;
+    AssetAnnotationHeadPage::export_all_to(output)?;
+    ProjectMemberRole::export_all_to(output)?;
+    ProjectMember::export_all_to(output)?;
+    ProjectMemberPage::export_all_to(output)?;
+    AnnotationImportCommitRequest::export_all_to(output)?;
     ApiError::export_all_to(output)?;
     ModelProfile::export_all_to(output)?;
     StartRunRequest::export_all_to(output)?;
@@ -60,6 +79,17 @@ pub fn generate(output: &Path) -> Result<(), Box<dyn Error>> {
     write_schema::<AnnotationRevision>(output, "annotation_revision.schema.json")?;
     write_schema::<SaveRequest>(output, "save_request.schema.json")?;
     write_schema::<SaveResponse>(output, "save_response.schema.json")?;
+    write_schema::<AnnotationHeadSummary>(output, "annotation_head_summary.schema.json")?;
+    write_schema::<AnnotationHeadPage>(output, "annotation_head_page.schema.json")?;
+    write_schema::<AssetAnnotationHead>(output, "asset_annotation_head.schema.json")?;
+    write_schema::<AssetAnnotationHeadPage>(output, "asset_annotation_head_page.schema.json")?;
+    write_schema::<ProjectMemberRole>(output, "project_member_role.schema.json")?;
+    write_schema::<ProjectMember>(output, "project_member.schema.json")?;
+    write_schema::<ProjectMemberPage>(output, "project_member_page.schema.json")?;
+    write_schema::<AnnotationImportCommitRequest>(
+        output,
+        "annotation_import_commit_request.schema.json",
+    )?;
     write_schema::<ApiError>(output, "api_error.schema.json")?;
     write_schema::<ModelProfile>(output, "model_profile.schema.json")?;
     write_schema::<StartRunRequest>(output, "start_run_request.schema.json")?;

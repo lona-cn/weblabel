@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AnnotationImportCommitRequest",
+  "type": "object",
+  "required": [
+    "lease",
+    "loss_ack",
+    "operation_id"
+  ],
+  "properties": {
+    "lease": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SaveLease"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "loss_ack": {
+      "type": "boolean"
+    },
+    "operation_id": {
+      "$ref": "#/definitions/Id"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "SaveLease": {
+      "type": "object",
+      "required": [
+        "fencing_token",
+        "task_id"
+      ],
+      "properties": {
+        "fencing_token": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        },
+        "task_id": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

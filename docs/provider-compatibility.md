@@ -1,96 +1,94 @@
 # Provider compatibility and evidence status
 
-This register lets an integration engineer choose a provider channel without conflating model IDs, billing, authentication, or local-runtime behavior. It records official documentation available on 2026-09-25 and safe local version/help probes. It does not establish account entitlement, a valid credential, or a live request.
+供集成工程师核对型号、计费、认证和本地 runtime 的区别。本登记保存 2026-09-25 的历史研究，不证明账户权益、有效凭证或 live 请求。**当前 Codex 活动渠道已退役；下文 Codex 协议与命令仅为原研究归档，不是安装/调用入口，不执行其 CLI 探针。** 当前四必需渠道与可选 Anthropic 以 `tests/live/manifest.json` 为准；退役行为见 `providers/codex.md`。后续工程与 live 尝试查 verification.md 和任务报告。
 
 ## Evidence levels
 
-- **Docs verified:** a cited official page documents the behavior. Documentation is not a runtime test.
-- **Protocol fixture tested:** a pinned installed runtime produced protocol/schema evidence and the project validated it. None of the provider channels has this status yet.
-- **Live tested:** an authorized real model request was made and its result recorded. None has this status.
+- **Docs verified：**官方页面说明了相应行为，不是 runtime 测试。
+- **Protocol fixture tested：**固定安装版本产出协议/schema 证据，并由项目校验。此项研究时没有渠道达到该状态。
+- **Live tested：**实际执行了授权真实模型请求并记录结果。此项研究没有这类结果；后续尝试不能倒写为当时已通过。
 
-Unknown or account-specific values remain `null`; do not infer them from a marketing alias. Provider ID, auth/billing channel, and model ID are separate fields.
+未知或账户相关值保持 `null`，不从营销别名推断。provider ID、认证/计费通道、model ID 分别记录。
 
 ## Provider matrix
 
-| Application provider ID | Channel and auth/billing | Model identity | Documentation evidence | Runtime / live status |
+| provider ID | 通道与认证/计费 | 型号身份 | 文档依据 | 2026-09-25 的 runtime/live 状态 |
 |---|---|---|---|---|
-| `codex_local` | Official Codex CLI App Server on local stdio. ChatGPT subscription login, API-key billing, and enterprise access tokens are distinct documented modes. | `null`: App Server accepts a `model` parameter; the account-entitled model is not universal. | Codex App Server, Authentication, and MCP docs below. | Codex CLI is unavailable on this workstation; version/help and generated schemas were not run. Protocol fixture and live status: not tested. |
-| `claude_local` | Official Claude Code `-p` CLI with a user's Claude subscription login. Anthropic Console API-key use is a different billing channel and is not an acceptable silent substitute. | `null` for this installed runtime/account. The current documented `sonnet` alias maps to Sonnet 5 for Anthropic API, but Sonnet 5 requires Claude Code >=2.1.197; installed CLI is 2.1.183. Do not claim this runtime selects Sonnet 5. | Claude Code headless, CLI, auth, model and permission docs below. | `claude --version` and `claude --help` ran without starting a session: version `2.1.183`. No provider call, auth-status command, MCP startup, or schema fixture was run. Protocol fixture and live status: not tested. |
-| `openai_api` | Direct OpenAI Platform API, authenticated with a separately authorized API key; not Codex subscription access. | `gpt-6-luna` is the exact API model ID in the current official catalog. | OpenAI GPT-6 Luna model and API security docs below. | Docs verified only. No key inspection, API request, entitlement check, or live test. |
-| `anthropic_api` | Direct Anthropic Platform API with an Anthropic Console API key; not Claude subscription/CLI auth. | `claude-sonnet-5` is the current documented Anthropic API Sonnet ID at access time. | Anthropic Models overview below. | Docs verified only. No key inspection, API request, entitlement check, or live test. |
-| `mimo_api` | Direct Xiaomi MiMo API. Pay-as-you-go `sk-...` and Token Plan `tp-...` keys are different products; the latter's console-provided base URL is authoritative. | Documented IDs: `mimo-v2.6-flash`, `mimo-v2.6-pro`, `mimo-v2.6-pro-ultraspeed`, `mimo-v2.5-pro`, `mimo-v2.5`. | MiMo Chat Completions, image-understanding, and API-integration FAQ below. | Docs verified only. No key inspection, API request, account/plan check, or live test. |
+| `codex_local` | 官方 Codex CLI App Server，本地 stdio。ChatGPT 订阅登录、API-key 计费、enterprise access token 是不同模式。 | `null`；App Server 接收 model 参数，账户可用型号并不通用。 | Codex App Server、Authentication、MCP。 | 本机 CLI 不可用，未跑 version/help 或生成 schema；协议/live 未测。 |
+| `claude_local` | 官方 Claude Code -p，使用本人 Claude 订阅登录。Anthropic Console API key 是另一计费通道，不能暗中替换。 | 本机/账户值 `null`。官方当前 sonnet 在 Anthropic API 映射 Sonnet 5，但需 CLI >=2.1.197；已装 2.1.183 不能证明选择 Sonnet 5。 | Claude headless、CLI、auth、model、permission。 | version/help 显示 2.1.183；未启动 provider、auth-status、MCP、schema fixture 或 live。 |
+| `openai_api` | 直接 OpenAI Platform API，另行授权 API key，不是 Codex 订阅。 | 官方当前 API 精确 ID `gpt-6-luna`。 | GPT-6 Luna 和 API security。 | 只核文档，无 key 检查、请求、权益检查或 live。 |
+| `anthropic_api` | 直接 Anthropic Platform API，Console API key，不是 Claude 订阅/CLI。 | 核验时当前 API Sonnet ID `claude-sonnet-5`。 | Anthropic Models overview。 | 只核文档，无 key 检查、请求、权益检查或 live。 |
+| `mimo_api` | 直接 Xiaomi MiMo API。pay-as-you-go sk-... 与 Token Plan tp-... 是独立产品，后者以用户控制台 base URL 为准。 | `mimo-v2.6-flash`、`mimo-v2.6-pro`、`mimo-v2.6-pro-ultraspeed`、`mimo-v2.5-pro`、`mimo-v2.5`。 | Chat Completions、image-understanding、FAQ。 | 只核文档，无 key 检查、请求、账户/套餐检查或 live。 |
 
 ## Local Codex App Server
 
-Use the official CLI's `app-server` stdio transport only after pinning and probing the actual CLI version. The official protocol is JSONL, JSON-RPC 2.0 with the `jsonrpc` header omitted on the wire. Each connection requires exactly one `initialize` request followed by `initialized`; other requests before handshake and repeated initialization are rejected. Streaming notifications carry turn/item events. `turn/interrupt` is the documented turn-cancel request; terminal status must be read from the runtime response.
+先固定并探测实际 CLI 版本，再使用官方 app-server stdio。文档协议为 JSONL、JSON-RPC 2.0，但 wire 省略 jsonrpc header。每条连接恰好一次 initialize，再发送 initialized；握手前的其他请求和重复初始化都拒绝。流式通知携带 turn/item 事件；turn/interrupt 是文档取消请求，仍须读 runtime 返回的终态。
 
-The official CLI documents version-specific schema commands:
+固定版本支持的 schema 命令见下方。该次研究因 codex 不在 PATH，未执行它们，也没有项目 schema artifact 或 hash。不能手写替代品后称为已安装协议。版本可用时，生成两份工件，记录 CLI 版本/hash，并据此校验消息。
 
 ```text
 codex app-server generate-ts --out <dir>
 codex app-server generate-json-schema --out <dir>
 ```
 
-Those commands were not executed because `codex` is not installed/available on PATH. No schema artifact or schema hash exists for this project. Do not hand-author a substitute and call it the installed protocol. Generate both artifacts with the pinned runtime when available, record CLI version and hashes, and validate messages against that output.
+ChatGPT 订阅登录、API-key usage billing 和 enterprise access token 分开；后者是文档中的 trusted-automation 模式。项目不得检查或提取缓存认证、代理订阅凭证，也不能暗中切换计费。
 
-Codex documentation separates ChatGPT subscription login from API-key usage billing. An API key must not be presented as subscription access. Enterprise access tokens are a separate documented trusted-automation mode. This project must not inspect or extract cached auth data, proxy subscription credentials, or silently change billing modes.
+App Server 文档指出 thread/shellCommand 以完整权限在 thread sandbox 外运行，实验 process/spawn 也在沙箱外。adapter 不能暴露这些方法。client 方法允许列表必须窄，并配合 OS/process 隔离；sandbox 设置与审批不能替代服务端工具授权。默认不启用 experimentalApi。WebSocket 仍是实验/不受支持的生产路径，优先本地 stdio。
 
-The App Server docs say `thread/shellCommand` runs outside the thread sandbox with full access, and experimental `process/spawn` also runs outside it. Do not expose these methods to a provider adapter. Keep the client method allowlist narrow and use OS/process isolation; sandbox settings and approval prompts alone are not a substitute for server-side tool authorization. Do not enable `experimentalApi` by default. WebSocket is documented as experimental/unsupported for production; prefer local stdio.
+图片 URL/localImage 只是语法证据，不证明安装版本能安全读图，更不授权外发。有效 thread/start.model 要从授权 runtime 响应获取，不能猜账户权益。
 
-Image input docs list URL and `localImage` forms; that is syntax evidence only. It does not prove that an installed version can safely access a given image or that this product is authorized to transmit it. The account's effective `thread/start.model` remains unknown until an allowed local runtime response supplies it.
-
-**Status:** docs verified; local runtime, generated schema/protocol fixture, and live use not tested. Adapter is blocked until a version-pinned, safe local protocol probe is possible.
+**该次状态：**文档已核；本地 runtime、生成 schema/协议 fixture、live 未测。adapter 在固定版本安全协议探针之前 blocked。
 
 ## Local Claude Code
 
-The safe local probes were `claude --version` and `claude --help`; both completed without starting a model session. The installed version is `2.1.183`. Its help lists `-p`, `--output-format` (`text`, `json`, `stream-json`), `--json-schema`, `--mcp-config`, `--strict-mcp-config`, `--tools`, `--disallowedTools`, `--bare`, and `--permission-mode`.
+安全探针只跑 claude --version 和 claude --help，没有启动模型会话；安装版本为 2.1.183。help 列出 -p、--output-format（text/json/stream-json）、--json-schema、--mcp-config、--strict-mcp-config、--tools、--disallowedTools、--bare、--permission-mode。
 
-Current official headless docs describe `-p` non-interactive mode, JSON/stream-JSON results, and structured output with `--json-schema`. The `system/init` stream event may report model, tools, MCP servers and load errors; `mcp_server_errors` requires Claude Code >=2.1.219. Since the installed CLI is 2.1.183, do not rely on that field without observing the actual event. A missing field is not proof that no server failed to load. Local `--help` confirms flag presence, not actual runtime behavior, loaded tools, auth mode, or model access.
+当前 headless 文档说明 -p 非交互、JSON/stream-JSON 及 --json-schema。system/init 可能报告 model、tools、MCP server 和加载错误；mcp_server_errors 需 CLI >=2.1.219，不能默认 2.1.183 有该字段。缺字段不代表没有加载失败；help 有 flag 也不证明实际行为、加载工具、auth mode 或模型权限。
 
-Important auth and startup boundary: official docs and the installed help state `--bare` does not use subscription OAuth credentials; it accepts an API key or `apiKeyHelper` for Anthropic API access. Therefore `--bare` cannot be used to claim this is the user's subscription-authenticated Claude channel. In `-p` mode without `--bare`, Claude Code skips the workspace-trust dialog, runs project hooks and connects `.mcp.json` servers; an untrusted repository can therefore start commands before any human trust prompt. `--strict-mcp-config` can limit MCP loading to the explicitly supplied config but does not replace hook controls or OS sandboxing. Do not run an untrusted repository through the subscription CLI; verify an explicit minimal configuration and filesystem/network isolation before accepting untrusted model output.
+--bare 不使用订阅 OAuth，只接 API key 或 apiKeyHelper，因此不能用它证明订阅通道。-p 不带 --bare 时跳过 workspace-trust 对话，仍会运行项目 hooks 并连接 .mcp.json：不可信仓库可能在人工信任提示前启动命令。--strict-mcp-config 可限 MCP 来源，不能替代 hook 控制或 OS 沙箱。订阅 CLI 不应运行不可信仓库；任何真实运行前，要验证明确的最小配置和文件/进程边界。
 
-Tool controls are not interchangeable:
+工具控制并不等价：
 
-- `--tools` restricts built-in tools, not MCP tools.
-- `--allowedTools` auto-approves matching tools; it does not remove tools from the available set.
-- `--disallowedTools` and permission rules can deny tools; `mcp__*` is documented as a deny-all-MCP rule. CLI rules are not an OS filesystem/network sandbox.
-- `--strict-mcp-config` limits discovery to supplied MCP config, but a runtime fixture must still verify which servers/tools actually loaded and fail closed on errors.
+- --tools 只限制内建工具，不限制 MCP。
+- --allowedTools 自动批准匹配工具，不从可用集合删除其他工具。
+- --disallowedTools/permission rules 可拒绝工具；mcp__* 是文档的拒绝所有 MCP 规则。CLI 规则不是 OS 文件/网络沙箱。
+- --strict-mcp-config 只用明确 MCP 配置；runtime fixture 仍要验证实际加载 server/tools，加载错误时拒绝。
 
-The official current model config says `sonnet` is an alias for the latest Sonnet available for a provider and lists Sonnet 5 for Anthropic API; it also says Sonnet 5 requires Claude Code >=2.1.197. The installed CLI is 2.1.183. Thus the current docs do not establish that this installed runtime supports Sonnet 5 or that a subscription account can use it. Record the actual model from authorized result metadata when a safe runtime test is available; do not infer it from the alias or API catalog.
+sonnet 是依 provider 选择最新可用 Sonnet 的别名。当前文档列 Anthropic API Sonnet 5，并要求 Claude Code >=2.1.197；2.1.183 及当前目录都不证明本机/本订阅能用 Sonnet 5。安全实测后记录 result metadata 的实际型号，不从别名/API 目录推断。
 
-Claude model catalogs document image input, but the reviewed `claude -p` CLI documentation does not establish a dedicated local-image transport for this application. Treat image transport as unknown until a safe local fixture proves it. Do not use API mode to make the subscription path appear to work.
+模型目录说明图像输入，但已审查的 claude -p 文档没有建立本应用专用本地读图传输。安全 fixture 证明前，图像传输保持未知；不能用 API 模式假装订阅通道成功。
 
-**Status:** official docs and local version/help verified; no auth state read, session started, protocol fixture run, or live model call. Local CLI version/model/tool isolation are not accepted for production adapter use yet.
+**该次状态：**官方文档与 version/help 已核；未读 auth state、启动 session、跑协议 fixture 或 live。安装版本、型号和工具隔离还不能用于生产 adapter。
 
 ## Direct API channels
 
 ### OpenAI Platform
 
-The official catalog identifies the exact model ID `gpt-6-luna`, with text/image input and Responses API and Chat Completions support. The catalog recommends Responses for built-in tools and function calling; Chat Completions supports function calling only with `reasoning_effort=none`. This is an API model identity, not a Codex CLI or subscription model. Account availability, rate limits, billing and image authorization remain unverified. No API key was read or request made.
+官方目录精确 ID 为 gpt-6-luna，支持 text/image、Responses API 和 Chat Completions。内建工具/function calling 建议 Responses；Chat Completions 只在 reasoning_effort=none 时支持 function calling。这是 API 身份，不是 Codex CLI 或订阅型号。账户权限、额度、计费与图像授权未验；未读 key 或请求。
 
 ### Anthropic Platform
 
-The current official model catalog maps Anthropic API Sonnet to `claude-sonnet-5`, with image input and tool use. Claude Code's `sonnet` alias is provider- and runtime-dependent; the API ID must not be assigned to every local Claude account or a third-party deployment. No API key was read or request made.
+当前 API 目录为 claude-sonnet-5，支持图像和工具。Claude Code 的 sonnet 依 provider/runtime 变化，不能把 API ID 赋给所有本地账户或第三方部署。未读 key 或请求。
 
 ### Xiaomi MiMo API
 
-The documented pay-as-you-go OpenAI-compatible base is `https://api.xiaomimimo.com/v1`, with `POST /chat/completions`. MiMo documents `api-key` and Bearer authorization headers. Token Plan uses the exact OpenAI- or Anthropic-compatible base URL displayed in that user's console; do not guess it. Pay-as-you-go `sk-...` and Token Plan `tp-...` credentials are independent.
+文档中 pay-as-you-go 的 OpenAI-compatible base 是 https://api.xiaomimimo.com/v1，使用 POST /chat/completions；支持 api-key 和 Bearer。Token Plan 必须用该用户控制台给出的精确 OpenAI/Anthropic-compatible base，不猜地址；sk-... 和 tp-... 凭证独立。
 
-The OpenAI-compatible request requires `model` and `messages`; `stream: true` returns server-sent events. Documented response usage may be `null`; preserve missing usage as unknown, never zero. Function tools support only a subset of JSON Schema in strict mode, and server documentation warns that generated tool-call arguments can be invalid or include unknown fields. Validate all output server-side.
+请求要求 model/messages，stream: true 返回 SSE。usage 可为 null，缺失必须保持 unknown，不能写 0。strict function tool 只支持 JSON Schema 子集；生成参数仍可能非法或带未知字段，输出必须由服务端校验。
 
-Image understanding documents URL and Base64 data-URL input, a 50 MB maximum for a single image, and model support for v2.6 flash/pro/pro-ultraspeed and v2.5. Real-time local-file upload is not supported; Base64 encoding is still an outbound data request and requires policy/scope/consent checks. The endpoint docs do not define a real-time remote-cancellation guarantee or whether closing an SSE connection cancels backend work/billing. Do not report remote cancellation success or cost certainty based on client disconnect. Batch cancellation is a separate API and does not establish chat-completions cancellation behavior.
+图像文档支持 URL/Base64 data-URL，单图最大 50 MB，支持 v2.6 flash/pro/pro-ultraspeed 和 v2.5。不支持实时 local-file upload。Base64 仍属于外发，需 policy/scope/consent。文档未保证实时远端取消，也未说明 SSE 断连是否停止后台工作/计费；不能由断连宣称取消成功或费用确定。Batch cancellation 是独立 API，不证明 chat-completions 取消行为。
 
-**Status:** docs verified; no account/plan check, credential inspection, request, image upload, or live result.
+**该次状态：**文档已核，无账户/套餐检查、凭证检查、请求、上传或 live 结果。
 
 ## Required runtime gate
 
-Each adapter must keep three independent statuses: `docs_verified`, `protocol_fixture_tested`, and `live_tested`. Documentation never promotes the latter two. Before enabling an adapter, pin the actual runtime, generate and hash its real schemas where supported, test version-specific handshake/stream/cancel/error behavior without credentials, and verify the exposed tool set and filesystem/network isolation. All model/tool output is untrusted and remains subject to server-side schema/domain validation, project permission scopes, run budgets, and explicit human acceptance.
+adapter 分别维护 docs_verified、protocol_fixture_tested、live_tested，文档不能推进后两者。启用前固定 runtime，在支持时生成真实 schema 并记录 hash；无凭证测试版本相关握手、流、取消、错误，核实可用工具与文件/网络隔离。模型/工具输出仍受服务端 schema/domain、项目 scope、run 预算和人工明确接受约束。
 
-No provider was live-tested in this research. Codex is unavailable locally; Claude 2.1.183 is available but is below the documented minimum for the current Sonnet 5 model. Missing safe evidence is a blocked capability, not a reason to extract tokens, switch billing silently, widen tools, or claim compatibility.
+此项研究没有 live provider。Codex 当时不可用，Claude 2.1.183 低于当前 Sonnet 5 最低版本。缺安全证据就 blocked，不能提取 token、暗换计费、扩工具或宣称兼容。
 
 ## Official sources
 
-All sources below were read on 2026-09-25. Links support documentation claims only.
+以下来源读取于 2026-09-25，只支持文档事实，不是运行证明。
 
 | Source | Official URL |
 |---|---|

@@ -63,7 +63,8 @@ impl Editor {
         // gesture reaches this path only after the machine has already cleared
         // its state, so this is a no-op for gesture commits.
         self.gesture.cancel();
-        match command {
+        let metadata_changed = self.gesture.invalidate_hit_stack();
+        let mut delta = match command {
             EditorCommand::Undo => self.undo(),
             EditorCommand::Redo => self.redo(),
             other => {
@@ -96,7 +97,9 @@ impl Editor {
                 };
                 self.install_document_edit(after, suggestion_decisions)
             }
-        }
+        }?;
+        delta.repaint |= metadata_changed;
+        Ok(delta)
     }
 
     /// Thread-local cumulative objects supplied at actual logical validation boundaries.
@@ -146,6 +149,44 @@ impl Editor {
         self.viewport
     }
 
+    /// Last completed native click, zero-based index; no document scan or allocation.
+    pub fn hit_stack_state(&self) -> (Option<usize>, usize) {
+        self.gesture.hit_stack_state()
+    }
+
+    /// Focus visible canonical selection with ten percent total CSS breathing room.
+    pub fn focus_selection(&mut self) -> Result<bool, DomainError> {
+        let view = self.viewport;
+        if view.css_width <= 0.0 || view.css_height <= 0.0 || self.selection.ids().is_empty() {
+            return Ok(false);
+        }
+        let mut bounds: Option<annotation_domain::BBox> = None;
+        for object in &self.document.objects {
+            if !self.selection.ids().contains(&object.object_id)
+                || self.selection.flags(&object.object_id).hidden {
+                continue;
+            }
+            let bbox = &object.geometry;
+            bounds = Some(match bounds {
+                None => annotation_domain::BBox::new(bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max),
+                Some(previous) => annotation_domain::BBox::new(
+                    previous.x_min.min(bbox.x_min), previous.y_min.min(bbox.y_min),
+                    previous.x_max.max(bbox.x_max), previous.y_max.max(bbox.y_max),
+                ),
+            });
+        }
+        let Some(bounds) = bounds else { return Ok(false); };
+        let scale = 0.9 * (view.css_width / (bounds.x_max - bounds.x_min))
+            .min(view.css_height / (bounds.y_max - bounds.y_min));
+        let next = Viewport::try_new(
+            scale, view.css_width / 2.0 - (bounds.x_min + bounds.x_max) / 2.0 * scale,
+            view.css_height / 2.0 - (bounds.y_min + bounds.y_max) / 2.0 * scale,
+            view.css_width, view.css_height, view.dpr,
+        )?;
+        self.set_viewport(next)?;
+        Ok(true)
+    }
+
     pub fn can_undo(&self) -> bool {
         self.history.can_undo()
     }
@@ -156,6 +197,7 @@ impl Editor {
 
     pub fn set_tool(&mut self, tool: Tool) {
         self.gesture.cancel();
+        self.gesture.invalidate_hit_stack();
         self.tool = tool;
     }
 
@@ -179,6 +221,7 @@ impl Editor {
         viewport.validate()?;
         self.viewport = viewport;
         self.gesture.cancel();
+        self.gesture.invalidate_hit_stack();
         Ok(())
     }
 
@@ -196,10 +239,13 @@ impl Editor {
             ));
         }
         let previous = self.selection.ids().to_vec();
+        let metadata_changed = self.gesture.invalidate_hit_stack();
+        let preview_changed = self.gesture.preview().is_some();
+        self.gesture.cancel();
         self.selection.set(ids);
         Ok(self.delta(
             false,
-            previous != self.selection.ids(),
+            metadata_changed || preview_changed || previous != self.selection.ids(),
             Vec::new(),
             Vec::new(),
         ))
@@ -224,12 +270,15 @@ impl Editor {
             ));
         }
         let before: Vec<_> = ids.iter().map(|id| self.selection.flags(id)).collect();
+        let metadata_changed = self.gesture.invalidate_hit_stack();
+        let preview_changed = self.gesture.preview().is_some();
+        self.gesture.cancel();
         self.selection.update_flags(ids, hidden, locked);
         let changed = before
             .iter()
             .zip(ids)
             .any(|(old, id)| *old != self.selection.flags(id));
-        Ok(self.delta(false, changed, Vec::new(), Vec::new()))
+        Ok(self.delta(false, changed || metadata_changed || preview_changed, Vec::new(), Vec::new()))
     }
 
     pub fn local_flags(&self, id: &Id) -> LocalFlags {
@@ -270,6 +319,11 @@ impl Editor {
         match outcome.action {
             Action::None => Ok(self.delta(false, outcome.repaint, Vec::new(), Vec::new())),
             Action::SetSelection(ids) => self.set_selection(ids),
+            Action::ClickSelection(ids) => {
+                let changed = ids.as_slice() != self.selection.ids();
+                self.selection.set(ids);
+                Ok(self.delta(false, changed || outcome.repaint, Vec::new(), Vec::new()))
+            }
             Action::Pan(delta_css) => {
                 let tx = self.viewport.tx + delta_css[0];
                 let ty = self.viewport.ty + delta_css[1];
@@ -325,8 +379,12 @@ impl Editor {
         suggestion_decisions: Vec<SuggestionDecisionIntent>,
     ) -> Result<EditorDelta, DomainError> {
         if after == self.document {
-            // A value-equal accept still journals its decision without
-            // changing generation, history, or the installed document.
+            // Decision-only accepts are reversible without retaining document copies.
+            // Manual no-ops still leave both history branches untouched.
+            if !suggestion_decisions.is_empty() {
+                self.history
+                    .push(HistoryEntry::decision_only(suggestion_decisions.clone()));
+            }
             let mut delta = self.delta(false, false, Vec::new(), Vec::new());
             delta.suggestion_decisions = suggestion_decisions;
             return Ok(delta);
@@ -348,15 +406,21 @@ impl Editor {
         if !self.history.can_undo() {
             return Ok(self.delta(false, false, Vec::new(), Vec::new()));
         }
-        self.bump_generation()?;
+        if self.history.undo_changes_document() {
+            self.bump_generation()?;
+        }
         let (restored, suggestion_decisions) = self
             .history
             .undo(&self.document)
             .expect("undo availability was checked");
-        let before = std::mem::replace(&mut self.document, restored);
-        self.prune_transient_state();
-        let (changed, removed) = object_changes(&before, &self.document);
-        let mut delta = self.delta(true, true, changed, removed);
+        let mut delta = if let Some(restored) = restored {
+            let before = std::mem::replace(&mut self.document, restored);
+            self.prune_transient_state();
+            let (changed, removed) = object_changes(&before, &self.document);
+            self.delta(true, true, changed, removed)
+        } else {
+            self.delta(false, false, Vec::new(), Vec::new())
+        };
         delta.suggestion_decisions = suggestion_decisions;
         Ok(delta)
     }
@@ -364,15 +428,21 @@ impl Editor {
         if !self.history.can_redo() {
             return Ok(self.delta(false, false, Vec::new(), Vec::new()));
         }
-        self.bump_generation()?;
+        if self.history.redo_changes_document() {
+            self.bump_generation()?;
+        }
         let (restored, suggestion_decisions) = self
             .history
             .redo(&self.document)
             .expect("redo availability was checked");
-        let before = std::mem::replace(&mut self.document, restored);
-        self.prune_transient_state();
-        let (changed, removed) = object_changes(&before, &self.document);
-        let mut delta = self.delta(true, true, changed, removed);
+        let mut delta = if let Some(restored) = restored {
+            let before = std::mem::replace(&mut self.document, restored);
+            self.prune_transient_state();
+            let (changed, removed) = object_changes(&before, &self.document);
+            self.delta(true, true, changed, removed)
+        } else {
+            self.delta(false, false, Vec::new(), Vec::new())
+        };
         delta.suggestion_decisions = suggestion_decisions;
         Ok(delta)
     }

@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use annotation_domain::{
-    geometry::BBox, AnnotationObject, Id, OntologyVersion, Origin, OriginType,
+    geometry::BBox, ontology::LabelDef, AnnotationObject, Id, OntologyVersion, Origin, OriginType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    deterministic_object_id, import_document, validate_context, validate_document, FormatError,
-    ImportContext, ImportReport, LossReport,
+    deterministic_object_id, import_document, target_default_attributes, validate_context,
+    validate_document, FormatError, ImportContext, ImportReport, LossReport,
 };
 
 const MAX_OBJECTS: usize = 50_000;
@@ -240,10 +240,10 @@ pub fn import_coco(
         ));
     }
 
-    let ontology_by_id: HashMap<Id, &str> = ontology
+    let ontology_by_id: HashMap<&Id, &LabelDef> = ontology
         .labels
         .iter()
-        .map(|label| (label.label_id.clone(), label.name.as_str()))
+        .map(|label| (&label.label_id, label))
         .collect();
     let mut category_map = HashMap::with_capacity(source.categories.len());
     let mut category_ids = HashSet::with_capacity(source.categories.len());
@@ -253,20 +253,19 @@ pub fn import_coco(
                 "COCO category IDs must be unique".to_owned(),
             ));
         }
-        let label_id = match &category.label_id {
-            Some(label_id) if ontology_by_id.contains_key(label_id) => label_id.clone(),
-            Some(_) => {
-                return Err(FormatError::Invalid(
+        let label = match &category.label_id {
+            Some(label_id) => ontology_by_id.get(label_id).copied().ok_or_else(|| {
+                FormatError::Invalid(
                     "COCO category label_id is not in the target ontology".to_owned(),
-                ));
-            }
+                )
+            })?,
             None => {
                 return Err(FormatError::Invalid(
                     "COCO category requires an explicit target label_id".to_owned(),
                 ));
             }
         };
-        category_map.insert(category.id, label_id);
+        category_map.insert(category.id, label);
     }
 
     let mut losses = LossReport::default();
@@ -290,6 +289,7 @@ pub fn import_coco(
     }
     let mut seen_annotation_ids = HashSet::with_capacity(source.annotations.len());
     let mut objects = Vec::new();
+    let mut uses_attribute_defaults = false;
     for annotation in &source.annotations {
         if !image_ids.contains(&annotation.image_id) {
             return Err(FormatError::Invalid(
@@ -314,9 +314,9 @@ pub fn import_coco(
                 "COCO iscrowd must be 0 or 1".to_owned(),
             ));
         }
-        let label_id = category_map
+        let label = category_map
             .get(&annotation.category_id)
-            .cloned()
+            .copied()
             .ok_or_else(|| {
                 FormatError::Invalid("COCO annotation references an unknown category ID".to_owned())
             })?;
@@ -357,11 +357,13 @@ pub fn import_coco(
                 "COCO annotation fields outside bbox/category are not represented",
             );
         }
+        let attributes = target_default_attributes(label);
+        uses_attribute_defaults |= !attributes.is_empty();
         objects.push(AnnotationObject {
             object_id: deterministic_object_id(context, "coco", &annotation.id.to_string()),
-            label_id,
+            label_id: label.label_id.clone(),
             geometry: BBox::new(x, y, x + width, y + height),
-            attributes: Default::default(),
+            attributes,
             origin: Origin {
                 kind: OriginType::Import,
                 prediction_id: None,
@@ -371,6 +373,12 @@ pub fn import_coco(
         });
     }
     let document = import_document(context, ontology, objects)?;
+    if uses_attribute_defaults {
+        losses.add(
+            "attribute_defaults",
+            "Object attributes are initialized from the fixed target ontology defaults, not source annotations",
+        );
+    }
     Ok(ImportReport {
         document,
         loss_report: losses,

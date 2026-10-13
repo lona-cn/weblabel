@@ -2,6 +2,8 @@
 
 pub mod activity;
 pub mod ai_authorization;
+pub mod auth;
+pub mod core_workflows;
 pub mod document;
 pub mod geometry;
 pub mod hash;
@@ -11,10 +13,19 @@ pub mod revision;
 mod schema;
 pub mod suggestion_validation;
 
-pub use activity::{ActivityCheckpoint, ActivityInterval, ActivityKind, ActivitySession, ActivitySessionPage};
+pub use activity::{
+    ActivityCheckpoint, ActivityInterval, ActivityKind, ActivitySession, ActivitySessionPage,
+};
 pub use ai_authorization::{
     AiApprovedGrants, AiConsentRequest, AiConsentResponse, AiPreviewRequest, AiPreviewResponse,
     ExternalProcessingPolicy,
+};
+pub use auth::{
+    AdminRecoveryRequest, AdminRecoveryState, AdminRecoveryStatus, BootstrapMode, BootstrapStatus,
+};
+pub use core_workflows::{
+    AnnotationHeadPage, AnnotationHeadSummary, AnnotationImportCommitRequest, AssetAnnotationHead,
+    AssetAnnotationHeadPage, ProjectMember, ProjectMemberPage, ProjectMemberRole,
 };
 pub use document::{
     AnnotationDocument, AnnotationObject, Attrs, Completion, CoordinateSpace, CoordinateSpaceType,
@@ -23,7 +34,8 @@ pub use document::{
 pub use geometry::{validate_bbox, BBox, BBoxType};
 pub use hash::object_hash;
 pub use ontology::{
-    validate_document, AllowedGeometryType, AttributeDef, AttributeKind, LabelDef, OntologyVersion,
+    project_relabel, relabel_object, validate_document, AllowedGeometryType, AttributeDef,
+    AttributeKind, LabelDef, OntologyVersion,
 };
 pub use prediction::{
     AuthKind, Availability, Change, ModelCapabilities, ModelProfile, ProviderId, QualityIssue,

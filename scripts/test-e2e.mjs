@@ -8,9 +8,10 @@ const requireDevice = input.includes('--require-device');
 const args = input.filter((value) => value !== '--require-device');
 if (requireDevice) process.env.REQUIRE_WGPU_DEVICE = '1';
 
-const buildStatus = await runArgv(['node', 'scripts/build-wgpu-probe.mjs'], root);
+const buildStatus = await runArgv([process.execPath, 'scripts/build-wgpu-probe.mjs'], root);
 if (buildStatus !== 0) {
   process.exitCode = buildStatus;
 } else {
-  process.exitCode = await runArgv(['pnpm', 'exec', 'playwright', 'test', ...args], root);
+  const status = await runArgv(['pnpm', 'exec', 'playwright', 'test', ...args], root);
+  process.exitCode = [0, 130, 143].includes(status) ? status : 1;
 }

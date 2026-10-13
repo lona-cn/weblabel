@@ -1,9 +1,11 @@
 mod csrf;
 pub(crate) mod password;
 mod policy;
+mod recovery;
 mod session;
 pub use password::{hash as hash_password, verify as verify_password};
 pub use policy::{hash_launch_code, verify_launch_code, AuthConfig, AuthState, Principal, Role};
+pub use recovery::password_recovery_router;
 pub use session::router;
 
 use axum::{
@@ -63,10 +65,19 @@ pub(crate) async fn host_and_origin(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    if let Some(response) = policy::check_host_and_origin(&state, &request) {
-        return response;
+    let no_store = state.password_recovery_enabled();
+    let mut response = if let Some(response) = policy::check_host_and_origin(&state, &request) {
+        response
+    } else {
+        next.run(request).await
+    };
+    if no_store {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
     }
-    next.run(request).await
+    response
 }
 
 pub(crate) async fn csrf_and_origin(

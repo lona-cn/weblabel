@@ -12,6 +12,7 @@ matrix; detections are returned in canonical continuous pixels.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 import threading
@@ -317,6 +318,7 @@ class Worker:
         try:
             predictor = self._default_predictor() if self._predictor_factory is None else self._predictor_factory()
             result = predictor.predict(run.image_path, label_mapping=run.label_mapping)
+            receipt = predictor.execution_receipt(run.run_id) if self._predictor_factory is None else None
         except DetectorError as error:
             self._finish_failed(run, error.code, error.message)
             return
@@ -344,16 +346,17 @@ class Worker:
             return
         if raw is not None:
             self._emit(run, "candidate", "detector candidate batch", {"raw": raw})
-        self._finish_succeeded(run)
+        self._finish_succeeded(run, receipt)
 
     def _default_predictor(self):
         from .model import Predictor  # noqa: PLC0415 — lazy so the offline suite never loads the real stack
 
         return Predictor.load(self._lock_path, self._weights_dir, find_spec=self._find_spec)
 
-    def _finish_succeeded(self, run: _Run) -> None:
+    def _finish_succeeded(self, run: _Run, receipt=None) -> None:
         run.state = "succeeded"
-        self._emit(run, "succeeded", "model run succeeded", None)
+        observations = {"receipt": receipt, "receipts": [receipt]} if receipt is not None else None
+        self._emit(run, "succeeded", "model run succeeded", observations)
         self._respond(run.request_id, "start_run", {"ok": True, "run_id": run.run_id, "status": "succeeded"})
 
     def _finish_failed(self, run: _Run, code: str, message: str) -> None:
@@ -407,6 +410,12 @@ def main() -> int:
     default_lock, default_weights = default_paths()
     lock_path = os.environ.get("WEBLABEL_DETECTOR_MODELS_LOCK") or default_lock
     weights_dir = os.environ.get("WEBLABEL_DETECTOR_WEIGHTS_DIR") or default_weights
+    # On Windows a blocking CRT stdin read can stall NumPy native-module
+    # initialization in the model thread. Initialize it before reading stdin;
+    # do not import torch/transformers or load weights during a probe.
+    if sys.platform == "win32" and importlib.util.find_spec("numpy") is not None:
+        import numpy  # noqa: F401, PLC0415 — optional native initialization only
+
     worker = Worker(lock_path=lock_path, weights_dir=weights_dir, out=sys.stdout)
     worker.start()
     try:

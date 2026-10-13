@@ -1,0 +1,18 @@
+.draft-branch-fold {
+  min-width: 0;
+  max-width: 100%;
+}
+.draft-branch-fold fieldset {
+  min-width: 0;
+}
+.draft-branch-fold pre {
+  max-width: 100%;
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.draft-branch-fold code,
+.draft-branch-fold p {
+  overflow-wrap: anywhere;
+}

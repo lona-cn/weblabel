@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { root, pins, options, requireNode, validateEntries, checkedPath, mainGuard } from './build.mjs';
-
+import { storageDiagnostics, diagnoseLock, waitReady } from './ops-diagnostics.mjs';
 export const taskkillPath = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/taskkill.exe') : null;
 function proxyError(response, status, code, message) {
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -24,7 +24,7 @@ export async function stopTree(child) {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
   const closed = once(child, 'close');
   if (process.platform === 'win32') {
-    const killer = spawn(taskkillPath, ['/PID', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true, stdio: 'ignore' });
+    const killer = spawn(taskkillPath, ['/PID', String(child.pid), '/T', '/F'], { env: nonApiEnvironment(process.env), shell: false, windowsHide: true, stdio: 'ignore' });
     const [code] = await once(killer, 'close');
     if (code !== 0 && child.exitCode === null && child.signalCode === null) throw new Error('owned_tree_stop_failed');
   } else {
@@ -35,18 +35,60 @@ export async function stopTree(child) {
   }
   await closed;
 }
+export function nonApiEnvironment(parent) {
+  const env = { ...parent };
+  for (const key of Object.keys(env)) if (key.startsWith('WEBLABEL_ADMIN_RECOVERY_')) delete env[key];
+  return env;
+}
+
+export function validateAdminRecoveryEnvironment(env) {
+  const keys = ['WEBLABEL_ADMIN_RECOVERY_REQUEST_ID', 'WEBLABEL_ADMIN_RECOVERY_USERNAME'];
+  if (keys.every(key => env[key] === undefined)) return false;
+  for (const key of keys) {
+    if (env[key] === undefined) throw new Error('admin_recovery_invalid: ' + key + ' is required when recovery is configured');
+    if (typeof env[key] !== 'string' || env[key].trim() === '') throw new Error('admin_recovery_invalid: ' + key + ' must not be empty');
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(env[keys[0]]) || env[keys[0]] === '00000000-0000-0000-0000-000000000000') throw new Error('admin_recovery_invalid: WEBLABEL_ADMIN_RECOVERY_REQUEST_ID must be a canonical lowercase non-nil UUID');
+  if (!/^[A-Za-z0-9._-]{3,64}$/.test(env[keys[1]])) throw new Error('admin_recovery_invalid: WEBLABEL_ADMIN_RECOVERY_USERNAME must be 3..64 ASCII letters, digits, dots, underscores or hyphens');
+  if (env.WEBLABEL_RESTORE_AUTH !== undefined && !['0', '1'].includes(env.WEBLABEL_RESTORE_AUTH)) throw new Error('admin_recovery_invalid: WEBLABEL_RESTORE_AUTH must be 0 or 1');
+  if (env.WEBLABEL_RESTORE_AUTH === '1') throw new Error('admin_recovery_restore_conflict: remove recovery variables and use the original restore bootstrap flow');
+  return true;
+}
+
+export function localApiEnvironment(parent, { data, build, apiPort, restoreAuth }) {
+  const recovery = validateAdminRecoveryEnvironment(parent);
+  if (recovery && restoreAuth) throw new Error('admin_recovery_restore_conflict: remove recovery variables and use the original restore bootstrap flow');
+  const env = { ...parent, WEBLABEL_ENV: 'production', WEBLABEL_BIND: '127.0.0.1:' + apiPort, WEBLABEL_COOKIE_SECURE: 'false', WEBLABEL_DATABASE_URL: 'sqlite:' + path.join(data, 'api.sqlite'), WEBLABEL_OBJECT_ROOT: path.join(data, 'objects') };
+  delete env.WEBLABEL_RESTORE_AUTH;
+  if (restoreAuth) env.WEBLABEL_RESTORE_AUTH = '1';
+  // Recovery is maintenance-only, even with explicit private Host configuration.
+  if (!recovery && parent.WEBLABEL_HOST_CONFIG) {
+    env.WEBLABEL_HOST_EXECUTABLE = process.execPath;
+    env.WEBLABEL_HOST_CWD = data;
+    env.WEBLABEL_HOST_SCRIPT = path.join(build, 'host/runtime.mjs');
+  } else {
+    for (const key of ['WEBLABEL_HOST_EXECUTABLE', 'WEBLABEL_HOST_SCRIPT', 'WEBLABEL_HOST_CWD', 'WEBLABEL_HOST_ALLOWED_ENV']) delete env[key];
+    if (recovery) delete env.WEBLABEL_HOST_CONFIG;
+  }
+  return env;
+}
+
 export async function startLocal(argv = process.argv.slice(2)) {
   const args = options(argv, ['--build-dir', '--data-dir', '--port', '--api-port']);
   requireNode();
+  const recovery = validateAdminRecoveryEnvironment(process.env);
   const build = path.resolve(args['--build-dir'] ?? path.join(root, 'target/local-release'));
   const { manifest, api } = validateRelease(build);
   if (taskkillPath && !fs.existsSync(taskkillPath)) throw new Error('process_tree_tool_missing: Windows System32/taskkill.exe required');
   const port = Number(args['--port'] ?? 48100), apiPort = Number(args['--api-port'] ?? 48101);
   if (![port, apiPort].every(n => Number.isInteger(n) && n > 0 && n <= 65535) || port === apiPort) throw new Error('invalid_loopback_ports');
-  const data = path.resolve(args['--data-dir'] ?? path.join(root, 'data'));
+  let data = path.resolve(args['--data-dir'] ?? path.join(root, 'data'));
   fs.mkdirSync(data, { recursive: true });
+  data = fs.realpathSync.native(data);
+  console.log('WEBLABEL_DATA_DIR=' + data);
+  console.log(JSON.stringify({ format: 'weblabel-capacity', ...await storageDiagnostics(data) }));
   let restoreAuth = false;
-  if (fs.existsSync(path.join(data, 'restore.json'))) {
+  if (!recovery && fs.existsSync(path.join(data, 'restore.json'))) {
     const marker = JSON.parse(fs.readFileSync(checkedPath(data, 'restore.json'), 'utf8'));
     if (marker.format !== 'weblabel-restored-data' || marker.version !== 1 || marker.authentication !== 'scrubbed-fresh-local-bootstrap-required' || !/^[0-9a-f]{64}$/.test(marker.backup_manifest_sha256)) throw new Error('restore_marker_invalid');
     const { DatabaseSync } = await import('node:sqlite');
@@ -59,20 +101,15 @@ export async function startLocal(argv = process.argv.slice(2)) {
   }
   const lockPath = path.join(data, 'runtime.lock');
   let lock;
-  try { lock = fs.openSync(lockPath, 'wx'); } catch { throw new Error('data_in_use: runtime.lock exists; never remove it while a service is alive'); }
-  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, port, apiPort })); fs.closeSync(lock);
-  const base = `http://127.0.0.1:${port}`, apiBase = `http://127.0.0.1:${apiPort}`;
-  const env = { ...process.env, WEBLABEL_ENV: 'production', WEBLABEL_BIND: `127.0.0.1:${apiPort}`, WEBLABEL_COOKIE_SECURE: 'false', WEBLABEL_DATABASE_URL: `sqlite:${path.join(data, 'api.sqlite')}`, WEBLABEL_OBJECT_ROOT: path.join(data, 'objects') };
-  delete env.WEBLABEL_RESTORE_AUTH;
-  if (restoreAuth) env.WEBLABEL_RESTORE_AUTH = '1';
-  // AI is optional. Only explicit private configuration activates the packaged Host.
-  if (process.env.WEBLABEL_HOST_CONFIG) {
-    env.WEBLABEL_HOST_EXECUTABLE = process.execPath;
-    env.WEBLABEL_HOST_CWD = data;
-    env.WEBLABEL_HOST_SCRIPT = path.join(build, 'host/runtime.mjs');
-  } else {
-    for (const key of ['WEBLABEL_HOST_EXECUTABLE', 'WEBLABEL_HOST_SCRIPT', 'WEBLABEL_HOST_CWD', 'WEBLABEL_HOST_ALLOWED_ENV']) delete env[key];
+  try { lock = fs.openSync(lockPath, 'wx'); } catch {
+    console.error(JSON.stringify({ format: 'weblabel-lock-diagnostic', ...diagnoseLock(data) }));
+    throw new Error('data_in_use: runtime.lock exists; inspect only, never remove or kill an unknown PID');
   }
+  const lockToken = randomUUID();
+  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, port, apiPort, token: lockToken })); fs.closeSync(lock);
+  const base = `http://127.0.0.1:${port}`, apiBase = `http://127.0.0.1:${apiPort}`;
+  // Rust alone checks recovery database eligibility; do not inspect or reset it here.
+  const env = localApiEnvironment(process.env, { data, build, apiPort, restoreAuth });
   const allowed = new Set(manifest.files.filter(item => item.path.startsWith('web/')).map(item => item.path));
   const server = http.createServer((request, response) => {
     if (request.headers.host !== `127.0.0.1:${port}` || (request.headers.origin && request.headers.origin !== base)) { proxyError(response, 403, 'LOOPBACK_ORIGIN_DENIED', 'Host or Origin is not the configured local entrypoint'); return; }
@@ -101,10 +138,18 @@ export async function startLocal(argv = process.argv.slice(2)) {
   let child;
   let stopping;
   const stop = () => stopping ??= (async () => {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-    if (child) await stopTree(child);
-    fs.unlinkSync(lockPath);
+    let processStatus = 'unknown', lockStatus = 'preserved';
+    try {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+      if (child) await stopTree(child);
+      processStatus = 'stopped';
+      const current = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+      if (current.token !== lockToken || current.pid !== process.pid) throw new Error('lock_identity_changed_preserved');
+      fs.unlinkSync(lockPath); lockStatus = 'owned-runtime-lock-released';
+    } finally {
+      console.log(JSON.stringify({ format: 'weblabel-shutdown-receipt', version: 1, owned_processes: child?.pid ? [{ pid: child.pid, status: processStatus }] : [], lock: lockStatus, interrupted_paid_runs: 'unknown', cost: 'unknown', cancellation: 'not-confirmed', data: 'preserved' }));
+    }
   })();
   const interrupt = () => { stop().then(() => { process.exitCode = 130; }).catch(error => { console.error(error.message); process.exitCode = 1; }); };
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
@@ -113,7 +158,11 @@ export async function startLocal(argv = process.argv.slice(2)) {
     child = spawn(api, [], { cwd: data, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'inherit', 'inherit'] });
     child.once('error', error => { console.error(error.message); process.exitCode = 1; void stop(); });
     child.once('exit', code => { if (!stopping) { process.exitCode = code ?? 1; void stop(); } });
+    const readiness = await waitReady(apiBase, { maintenance: recovery, child });
+    if (stopping) throw new Error('startup_interrupted');
+    console.log('WEBLABEL_API_STATE=' + readiness.status);
     console.log(`WEBLABEL_LOCAL_URL=${base}`);
+    if (recovery) console.log('WEBLABEL_ADMIN_RECOVERY_MODE=maintenance\nWEBLABEL_DATA_DIR=' + data + '\nHost and ordinary business routes are disabled. Remove recovery variables and restart after completion.');
   } catch (error) { await stop(); throw error; }
   return { stop, child, base_url: base, data };
 }

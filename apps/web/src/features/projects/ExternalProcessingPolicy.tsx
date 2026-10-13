@@ -48,14 +48,14 @@ export function ExternalProcessingPolicy({ projectId, canManage }: Props) {
 
   return <section className="external-policy" aria-labelledby={headingId}>
     <div className="external-policy-summary">
-      <h2 id={headingId}>项目外发策略</h2>
-      <p role="status">{policy === null ? '策略未确认，不能据此授权外发。' : policy.allow_external_processing ? '服务端已允许外部处理。' : '服务端已禁止外部处理。'}</p>
-      <p id={helpId}>API 与 Codex / Claude 官方运行时均可能外发。项目策略不替代每次运行对图像、裁剪范围和对象上下文的明确授权。关闭后服务端拒绝后续读取并请求异步停止已有外发运行；已传输数据无法撤回，费用不保证退回。</p>
+      <h2 id={headingId}>数据外发</h2>
+      <p role="status">{policy === null ? '尚未确认服务器策略，不能授权外发。' : policy.allow_external_processing ? '服务器已允许外部处理。' : '服务器已禁止外部处理。'}</p>
+      <p id={helpId}>API 和 Claude 官方运行均可能外发数据。每次运行仍需确认图片、裁剪范围和对象详情。关闭后，服务器会拒绝后续读取并请求停止已开始的外发运行；已传输数据无法撤回，费用不保证退回。</p>
     </div>
     {canManage ? <form onSubmit={event => { event.preventDefault(); void save(); }} aria-busy={saving}>
       <label className="external-policy-toggle"><input type="checkbox" checked={draft} disabled={policy === null || saving} aria-describedby={helpId} onChange={event => setDraft(event.currentTarget.checked)} />允许本项目外部处理</label>
       <button type="submit" disabled={policy === null || saving || draft === policy.allow_external_processing}>{saving ? '保存中…' : '保存外发策略'}</button>
-      <small>修改后需保存；以上方服务端确认状态为准。</small>
+      <small>修改后请保存，以上方服务器状态为准。</small>
     </form> : <p className="external-policy-role">仅项目管理员可修改此策略。</p>}
     {error ? <p className="api-error" role="alert">{error}</p> : null}
   </section>;

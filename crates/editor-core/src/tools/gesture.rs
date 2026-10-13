@@ -39,6 +39,7 @@ pub(crate) enum Commit {
 pub(crate) enum Action {
     None,
     SetSelection(Vec<Id>),
+    ClickSelection(Vec<Id>),
     /// Commits one atomic edit. `selection` applies in the same delta when the
     /// drag staged a selection change at pointerdown, so one interaction is at
     /// most one selection change and exactly one committed edit.
@@ -101,6 +102,7 @@ struct ActiveGesture {
 pub(crate) struct GestureMachine {
     active: Option<ActiveGesture>,
     preview: Option<Preview>,
+    hit_stack_state: (Option<usize>, usize),
 }
 
 impl GestureMachine {
@@ -108,11 +110,37 @@ impl GestureMachine {
         Self {
             active: None,
             preview: None,
+            hit_stack_state: (None, 0),
         }
     }
 
     pub(crate) fn preview(&self) -> Option<&Preview> {
         self.preview.as_ref()
+    }
+
+    pub(crate) fn hit_stack_state(&self) -> (Option<usize>, usize) {
+        self.hit_stack_state
+    }
+
+    pub(crate) fn invalidate_hit_stack(&mut self) -> bool {
+        let changed = self.hit_stack_state != (None, 0);
+        self.hit_stack_state = (None, 0);
+        changed
+    }
+
+    fn resolve_click(&mut self, ctx: &GestureContext<'_>, gesture: &ActiveGesture) -> EventOutcome {
+        let mut outcome = click_outcome(ctx, gesture);
+        let ids = match &outcome.action {
+            Action::ClickSelection(ids) => ids.as_slice(),
+            _ => ctx.selection.ids(),
+        };
+        let next = (
+            gesture.click_stack.iter().position(|id| ids.contains(id)),
+            gesture.click_stack.len(),
+        );
+        outcome.repaint |= next != self.hit_stack_state;
+        self.hit_stack_state = next;
+        outcome
     }
 
     pub(crate) fn cancel(&mut self) {
@@ -315,6 +343,12 @@ impl GestureMachine {
             });
         }
         self.active.as_mut().expect("checked").current = point;
+        let gesture = self.active.as_ref().expect("checked");
+        if (point[0] - gesture.start[0]).abs() * ctx.viewport.scale >= CLICK_THRESHOLD_CSS
+            || (point[1] - gesture.start[1]).abs() * ctx.viewport.scale >= CLICK_THRESHOLD_CSS
+        {
+            self.invalidate_hit_stack();
+        }
         self.refresh_preview(ctx);
         Ok(EventOutcome {
             repaint: true,
@@ -347,6 +381,9 @@ impl GestureMachine {
         let dx_css = (gesture.current[0] - gesture.start[0]) * scale;
         let dy_css = (gesture.current[1] - gesture.start[1]) * scale;
         let click = dx_css.abs() < CLICK_THRESHOLD_CSS && dy_css.abs() < CLICK_THRESHOLD_CSS;
+        if !click || !matches!(gesture.kind, GestureKind::Move | GestureKind::PendingClick) {
+            self.invalidate_hit_stack();
+        }
         match gesture.kind {
             GestureKind::Draw => {
                 if click {
@@ -374,7 +411,7 @@ impl GestureMachine {
             }
             GestureKind::Move => {
                 if click {
-                    return Ok(click_outcome(ctx, &gesture));
+                    return Ok(self.resolve_click(ctx, &gesture));
                 }
                 let delta = clamp_translate(
                     &gesture.targets,
@@ -448,7 +485,7 @@ impl GestureMachine {
             }),
             GestureKind::PendingClick => {
                 if click {
-                    return Ok(click_outcome(ctx, &gesture));
+                    return Ok(self.resolve_click(ctx, &gesture));
                 }
                 let rect = BBox::new(
                     gesture.start[0].min(gesture.current[0]),
@@ -524,9 +561,9 @@ impl GestureMachine {
 
 /// Click resolution: a plain click cycles the dense stack from the selection as
 /// it was before the pointer went down; an additive click adds the topmost
-/// candidate to that selection. A click that resolves to the selection the
-/// pointerdown already staged publishes nothing: one click is one selection
-/// change at most.
+/// candidate to that selection. An unchanged selection publishes no selection
+/// action; `resolve_click` still requests repaint when the completed click
+/// receipt changes, without touching document generation.
 fn click_outcome(ctx: &GestureContext<'_>, gesture: &ActiveGesture) -> EventOutcome {
     let ids: Vec<Id> = if gesture.additive {
         let Some(topmost) = gesture.click_stack.first() else {
@@ -558,7 +595,7 @@ fn click_outcome(ctx: &GestureContext<'_>, gesture: &ActiveGesture) -> EventOutc
     }
     EventOutcome {
         repaint: true,
-        action: Action::SetSelection(ids),
+        action: Action::ClickSelection(ids),
     }
 }
 

@@ -2,6 +2,17 @@ import Ajv from 'ajv';
 import { readFileSync } from 'node:fs';
 
 const schemaFiles = {
+  bootstrap_status: 'bootstrap_status.schema.json',
+  admin_recovery_status: 'admin_recovery_status.schema.json',
+  admin_recovery_request: 'admin_recovery_request.schema.json',
+  annotation_head_summary: 'annotation_head_summary.schema.json',
+  annotation_head_page: 'annotation_head_page.schema.json',
+  asset_annotation_head: 'asset_annotation_head.schema.json',
+  asset_annotation_head_page: 'asset_annotation_head_page.schema.json',
+  project_member_role: 'project_member_role.schema.json',
+  project_member: 'project_member.schema.json',
+  project_member_page: 'project_member_page.schema.json',
+  annotation_import_commit_request: 'annotation_import_commit_request.schema.json',
   annotation_document: 'annotation_document.schema.json',
   ontology_version: 'ontology_version.schema.json',
   media_revision: 'media_revision.schema.json',

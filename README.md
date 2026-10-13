@@ -1,62 +1,58 @@
 # WebLabel
 
-Windows 本地图片标注与 AI 审校工作台：React 业务 UI、Rust/WASM 编辑内核与真实 wgpu 画布、Axum API、SQLite WAL 和不可变内容寻址媒体。人工编辑不需要 Python、模型权重、API key 或官方订阅 CLI。
+本地服务 + 浏览器的图片标注与 AI 审校工作台：导入图片、编辑检测框和属性、审核固定版本，再导出数据集。人工标注不需要 Python、模型权重、API key 或订阅账号。
 
-**发行边界：可重复源码构建与 loopback 启动；未提供签名 exe/安装器。五种必需真实模型渠道仍 blocked，不能宣称完整 G4 发布。**
+本页供使用者判断适用范围并启动应用；完整操作见[入门指南](docs/getting-started.md)，当前能力与验收边界见[能力说明](docs/current-capabilities.md)。
 
-## 本地启动
+## 标注界面
 
-需要固定 Node **24.16.0**、pnpm **10.34.5**、Rust **1.96.0**（Windows MSVC 与 WASM target）、wasm-bindgen **0.2.128**、wasm-pack **0.15.0**，以及真实 WebGPU 的桌面 Chrome/Edge。
+以下为仓库已有的真实界面截图，使用合成示例图，不含业务数据；展示此前实测界面，不代表最新控件或本轮验收。
 
-先按[当前终端选择 Node](docs/getting-started.md#当前终端选择-node)校验并选择官方独立 ZIP 中的 Node；以下命令须在该终端运行。只改当前进程的 PATH，不全局安装或改配置；仅用绝对路径启动父 Node 不足以切换子命令中的裸 `node`。结束后还原原 PATH。旧 Node 24.15.0 发行应保留，改用新目录构建，不能改写旧 manifest。
+画布工作台：图片与对象列表、框选编辑、类别属性、几何输入和服务器保存确认。
 
-```powershell
+![标注工作台：选中的检测框、右侧属性与几何面板，以及“已同步到服务器”状态](docs/images/readme/04-editor-saved.png)
+
+<details>
+<summary>查看类别与属性配置截图</summary>
+
+![项目标注规范：类别名称、颜色、快捷键、枚举属性与标注指南](docs/images/readme/02-project-ontology.png)
+
+</details>
+
+## 快速开始
+
+当前需从源码构建，尚无签名 exe 或安装器。已启动服务可直接打开终端显示的 `WEBLABEL_LOCAL_URL`（默认 `http://127.0.0.1:48100`）。
+
+构建已验证环境为 Windows x64；编辑需要桌面 Chrome/Edge 和真实可用的 WebGPU device。先按[构建与启动](docs/getting-started.md#构建与启动)准备固定工具版本，并按[当前终端选择 Node](docs/getting-started.md#当前终端选择-node)设置当前进程 PATH，不修改全局配置。
+
+在仓库根目录依次执行，任一步失败先停止并处理：
+
+```text
 pnpm install --frozen-lockfile
 pnpm build
+pnpm run doctor
 pnpm start:local
 ```
 
-根 `build` 和 `start:local` 分别执行 `scripts/build.mjs` 与 `scripts/start-local.mjs`，`backup`/`restore` 也已注册真实CLI入口。首次空库从本地终端的一次性启动码设置新密码；默认网页 `http://127.0.0.1:48100`。服务只监听loopback，媒体、revision和导出仍须身份/项目权限。Ctrl+C清理受管进程树，保留SQLite已提交事务。
+默认发行目录为 `target/local-release`，数据目录为 `data`。重复构建拒绝已有发行目录；另建发行目录的方法见[入门指南](docs/getting-started.md#构建与启动)，不要覆盖旧发行或删除业务数据。`doctor` 只做诊断，不证明浏览器 GPU 或模型可用。
 
-- [从零构建、登录、人工编辑](docs/getting-started.md)
-- [只读 doctor 与本地运维](docs/operations.md)
-- [一致性备份、认证 scrub 与新目录恢复](docs/backup-restore.md)
-- [已知限制与模型证据矩阵](docs/known-limitations.md)
+首次启动后，在网页粘贴终端中的一次性 `WEBLABEL_BOOTSTRAP_CODE`，设置并确认密码；普通新库用户名为 `local-admin`。启动码十分钟有效、仅能兑换一次，不要分享启动码或密码。后续使用实际用户名和密码登录。
 
-## 已提交证据，不等同于完整发布
+## 使用边界
 
-| 范围 | 实际证据 | 结论边界 |
-|---|---|---|
-| 保存/审核/快照/权限 | T27/T29 已集成报告 | 不可变版本与鉴权导出工程验收，不是公网部署 |
-| 崩溃/设备恢复 | [T30 result](reports/T30/result.json)：注册 integration 7 + 真实硬件 browser 9；受影响 T09 5 | 实际源码与浏览器交互证据；不是模型调用或 T31 所有性能阈值 |
-| 真实模型诊断 | [T32 result](reports/T32/result.json)：注册 exit 2，工程 consumer 35 passed，五渠道 blocked，外发 0 | 实际 loopback API/Host/worker 工程 proof，不是官方账户/型号支持 |
-| 本地发行/备份恢复 | [T33 Main closure](reports/T33/main-final-closure.json)：Root全产品构建、注册16/16、真实PowerShell首次bootstrap与浏览器密码登录；实际active Host物理Ctrl+C及新目录数据恢复 | manifest源码与最终解释型CLI源码分别记录；已闭合受管子孙退出、portable DB及已配置密钥在业务TEXT/JSON碰撞时拒绝备份；不是签名安装包/live证明 |
-| 自愿工时/试点分析 | [T34 Main closure](reports/T34/main-final-closure.json)：API7/7、受影响Web75/75、真实Workbench显式PUT200、20张完整GT合成图JSON/CSV | 默认关闭/无后台外传；费用未知=null；实际人工试点0，ROI/结论null，30%仅目标 |
-| 最终发布 | 主 Agent T35 | 仍需 G4 独立真实条件，不能由 pnpm build/doctor 替代 |
+- **本机部署**：默认只监听 loopback，不提供公网部署；支持静态 PNG/JPEG 的框与属性标注，本轮不含 Mask、视频和云端。
+- **真实画布**：React 界面、Rust/WASM 编辑内核与 wgpu 渲染；无可用 WebGPU 时仅提供诊断或只读界面，不用 Canvas2D 替代。
+- **保存与交付**：以“已同步到服务器”为保存确认，本地待同步不等于服务器已保存。空文档不是负样本；审核绑定不可变版本，导出先固定快照并明确确认信息损失。
+- **独立审核**：项目默认禁止自审核，团队交付需另一具有项目审核权限的账号；单账号仍可人工编辑和保存。
+- **可选 AI**：模型只生成候选，采纳需明确操作且可撤销；外发图片需项目策略、服务端 scope 和用户授权同时满足。Codex 已退役，必需模型渠道尚未全部通过完整验收。
+- **未正式发布**：T32 为 blocked，T35 最终发布审查为 pending。仓库为 **UNLICENSED，未授予再分发许可**；构建成功不等于发布验收通过。
 
-### 五个必需 live 渠道
+## 文档入口
 
-| 渠道 | 当前状态 | 必要但尚未满足的实际条件 |
-|---|---|---|
-| Codex 本人订阅 | blocked / 生产 UNSUPPORTED_RUNTIME | 官方登录、完整型号、固定 runtime 内建工具/文件边界证明、图像/预算授权 |
-| Claude 本人订阅 / Sonnet | blocked | 官方登录、完整 Sonnet 型号、固定协议/边界、图像/预算授权 |
-| Luna API | blocked | 用户授权账户、当前完整型号/官方端点、收费及合成图预算 |
-| MiMo API | blocked | 用户授权账户、完整多模态型号/官方端点、收费及合成图预算 |
-| 本地实际 detector | blocked | 公开固定权重/runtime/标签映射、授权真实 forward 与两张合成图人审 |
+[文档总入口](docs/README.md)维护完整专题目录；按当前动作选择：
 
-这张表来自 T32 已提交报告，不读取私人凭证，不以 mock、配置型号或替代通道产生“supported”。Anthropic API 源码也不能替代 Claude 订阅关卡。模型只能产候选；接受必须明确、可撤销、事务保存；外发须项目策略、服务端 scope 与用户授权。
-
-## 数据保护
-
-先在当前终端选择同一 Node 24.16.0，再执行：
-
-```powershell
-node scripts/backup.mjs --data-dir "data" --backup-dir "backups/新的备份"
-node scripts/restore.mjs --backup-dir "backups/新的备份" --data-dir "新的恢复目录"
-```
-
-备份使用真实 SQLite backup API 包含 WAL 提交，并验证引用对象 hash。认证、私有 provider 配置、官方登录凭证不搬运；历史业务用户/审计身份保留，恢复后创建新的授权本地管理员。恢复只接受完整、hash/schema 兼容的备份并拒绝已有目录，无清空/覆盖开关。备份包含敏感业务数据且不加密，请参照操作指南设置本地 ACL 和保管策略。
-
-## 维护与验收
-
-`pnpm test:task T33` 实际注册运行发行 CLI 与 SQLite/HTTP 行为验收；没有发行 override 时从当前源码构建专用发行。固定版本、契约、任务 DAG 和集成状态分别以项目计划与任务报告为准。根 manifest/router/migration 由主 Agent 串行集成；本文不把工程源码提交自行标记为 STATUS done。
+- [入门指南](docs/getting-started.md)：登录、规范、导入、编辑、审核与导出。
+- [开发指南](docs/development.md) / [恢复入口](START_HERE.md)：准备环境、定位模块、继续开发。
+- [运维手册](docs/operations.md) / [备份恢复](docs/backup-restore.md)：账号、服务与数据维护。
+- [故障指南](docs/troubleshooting.md) / [已知限制](docs/known-limitations.md)：保全草稿并处理异常。
+- [验证说明](docs/verification.md) / [报告索引](reports/index.md)：核对实际证据及未完成的验收条件。

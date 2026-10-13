@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
 use crate::FormatError;
+const MAX_ZIP_BYTES: u64 = 96 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +34,13 @@ pub fn extract_safe_zip(
         return Err(FormatError::Invalid(
             "archive limits must be positive".to_owned(),
         ));
+    }
+    if bytes.len() as u64 > MAX_ZIP_BYTES {
+        return Err(FormatError::SizeLimit {
+            budget: "ZIP bytes",
+            limit: MAX_ZIP_BYTES,
+            observed: bytes.len() as u64,
+        });
     }
     let mut archive = ZipArchive::new(Cursor::new(bytes))?;
     if archive.len() > limits.max_entries {
@@ -73,10 +81,14 @@ pub fn extract_safe_zip(
         let declared_size = file.size();
         total_size = total_size
             .checked_add(declared_size)
-            .filter(|size| *size <= limits.max_uncompressed_bytes)
-            .ok_or_else(|| {
-                FormatError::Invalid("archive exceeds its uncompressed size limit".to_owned())
-            })?;
+            .ok_or_else(|| FormatError::Invalid("archive size overflow".to_owned()))?;
+        if total_size > limits.max_uncompressed_bytes {
+            return Err(FormatError::SizeLimit {
+                budget: "uncompressed archive members",
+                limit: limits.max_uncompressed_bytes,
+                observed: total_size,
+            });
+        }
         let capacity = usize::try_from(declared_size).map_err(|_| {
             FormatError::Invalid("archive entry is too large for this platform".to_owned())
         })?;
@@ -104,13 +116,22 @@ pub fn create_safe_zip(
     let total_size = files.iter().try_fold(0_u64, |total, (_, bytes)| {
         total.checked_add(bytes.len() as u64)
     });
-    if files.is_empty()
+    if limits.max_entries == 0
+        || limits.max_uncompressed_bytes == 0
+        || files.is_empty()
         || files.len() > limits.max_entries
-        || total_size.is_none_or(|size| size > limits.max_uncompressed_bytes)
+        || total_size.is_none()
     {
         return Err(FormatError::Invalid(
             "archive output exceeds its limits".to_owned(),
         ));
+    }
+    if total_size.unwrap() > limits.max_uncompressed_bytes {
+        return Err(FormatError::SizeLimit {
+            budget: "uncompressed archive members",
+            limit: limits.max_uncompressed_bytes,
+            observed: total_size.unwrap(),
+        });
     }
     let mut names = HashSet::with_capacity(files.len());
     let cursor = Cursor::new(Vec::new());
@@ -127,10 +148,12 @@ pub fn create_safe_zip(
         writer.write_all(bytes)?;
     }
     let bytes = writer.finish()?.into_inner();
-    if bytes.len() as u64 > limits.max_uncompressed_bytes {
-        return Err(FormatError::Invalid(
-            "archive output exceeds its limits".to_owned(),
-        ));
+    if bytes.len() as u64 > MAX_ZIP_BYTES {
+        return Err(FormatError::SizeLimit {
+            budget: "ZIP bytes",
+            limit: MAX_ZIP_BYTES,
+            observed: bytes.len() as u64,
+        });
     }
     Ok(bytes)
 }
@@ -163,4 +186,162 @@ fn validate_archive_path(name: &str, is_dir: bool) -> Result<(), FormatError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod commercial_d_private_tests {
+    use super::*;
+    use std::io::Write;
+    use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+
+    const ZIP_CAP: usize = 96 * 1024 * 1024;
+
+    fn raw_zip(files: &[(String, Vec<u8>)], directories: usize, compressed: bool) -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let method = if compressed {
+            CompressionMethod::Deflated
+        } else {
+            CompressionMethod::Stored
+        };
+        let options = SimpleFileOptions::default().compression_method(method);
+        for index in 0..directories {
+            writer
+                .add_directory(format!("dir-{index}/"), options)
+                .unwrap();
+        }
+        for (name, bytes) in files {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    // A gap before the relocated central directory, not trailing garbage.
+    // The directory still points at the valid local record at offset zero.
+    fn padded_zip(total: usize) -> Vec<u8> {
+        let mut bytes = raw_zip(&[("a.bin".into(), vec![7])], 0, false);
+        let eocd = bytes.len() - 22;
+        assert_eq!(&bytes[eocd..eocd + 4], b"PK\x05\x06");
+        let central = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+        let tail = bytes.split_off(central);
+        let relocated = total - tail.len();
+        bytes.resize(relocated, 0);
+        bytes.extend_from_slice(&tail);
+        let eocd = bytes.len() - 22;
+        bytes[eocd + 16..eocd + 20].copy_from_slice(&(relocated as u32).to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn zip_input_budget_is_independent_of_tiny_unpacked_content() {
+        let limits = ArchiveLimits::default();
+        let expected = BTreeMap::from([("a.bin".to_owned(), vec![7])]);
+        assert_eq!(
+            extract_safe_zip(&padded_zip(1024), &limits).unwrap(),
+            expected
+        );
+        let bytes = padded_zip(ZIP_CAP);
+        assert_eq!(bytes.len(), ZIP_CAP);
+        assert_eq!(extract_safe_zip(&bytes, &limits).unwrap(), expected);
+        drop(bytes);
+        let bytes = padded_zip(ZIP_CAP + 1);
+        let mut reader = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut contents = Vec::new();
+        reader
+            .by_index(0)
+            .unwrap()
+            .read_to_end(&mut contents)
+            .unwrap();
+        assert_eq!(contents, vec![7]);
+        assert!(matches!(
+            extract_safe_zip(&bytes, &limits),
+            Err(FormatError::SizeLimit { .. })
+        ));
+    }
+
+    #[test]
+    fn small_unpacked_cap_does_not_charge_zip_metadata() {
+        let limits = ArchiveLimits {
+            max_entries: 1,
+            max_uncompressed_bytes: 1,
+        };
+        let files = [("a.bin".into(), vec![7])];
+        let bytes = create_safe_zip(&files, &limits)
+            .expect("metadata belongs to the independent ZIP budget");
+        assert!(bytes.len() > 1 && bytes.len() < ZIP_CAP);
+        assert_eq!(extract_safe_zip(&bytes, &limits).unwrap()["a.bin"], vec![7]);
+    }
+
+    #[test]
+    fn stored_output_exact_zip_byte_boundary() {
+        let overhead = raw_zip(&[("a.bin".into(), Vec::new())], 0, false).len();
+        for extra in [0, 1] {
+            let files = [("a.bin".into(), vec![7; ZIP_CAP - overhead + extra])];
+            let result = create_safe_zip(&files, &ArchiveLimits::default());
+            if extra == 0 {
+                let bytes = result.unwrap();
+                assert_eq!(bytes.len(), ZIP_CAP);
+                assert_eq!(
+                    extract_safe_zip(&bytes, &ArchiveLimits::default()).unwrap()["a.bin"],
+                    files[0].1
+                );
+            } else {
+                assert!(matches!(result, Err(FormatError::SizeLimit { .. })));
+            }
+        }
+    }
+
+    #[test]
+    fn unpacked_boundary_uses_compression_to_stay_below_zip_cap() {
+        for extra in [0, 1] {
+            let bytes = raw_zip(&[("a.bin".into(), vec![7; ZIP_CAP + extra])], 0, true);
+            assert!(bytes.len() < ZIP_CAP);
+            let result = extract_safe_zip(&bytes, &ArchiveLimits::default());
+            if extra == 0 {
+                assert_eq!(result.unwrap()["a.bin"], vec![7; ZIP_CAP]);
+            } else {
+                assert!(matches!(result, Err(FormatError::SizeLimit { .. })));
+            }
+        }
+    }
+
+    #[test]
+    fn member_boundary_counts_directories_and_creation_files() {
+        let limits = ArchiveLimits::default();
+        let mut files: Vec<_> = (0..4096)
+            .map(|index| (format!("file-{index}"), vec![7]))
+            .collect();
+        let bytes = create_safe_zip(&files, &limits).unwrap();
+        assert_eq!(
+            extract_safe_zip(&bytes, &limits).unwrap(),
+            files.iter().cloned().collect()
+        );
+        files.push(("file-4096".into(), vec![7]));
+        assert!(create_safe_zip(&files, &limits).is_err());
+        let one = [("a.bin".into(), vec![7])];
+        assert_eq!(
+            extract_safe_zip(&raw_zip(&one, 4095, false), &limits).unwrap()["a.bin"],
+            vec![7]
+        );
+        assert!(extract_safe_zip(&raw_zip(&one, 4096, false), &limits).is_err());
+    }
+
+    #[test]
+    fn zero_limits_reject_empty_members_on_both_paths() {
+        let files = [("a.bin".into(), Vec::new())];
+        let bytes = raw_zip(&files, 0, false);
+        for limits in [
+            ArchiveLimits {
+                max_entries: 0,
+                max_uncompressed_bytes: 1,
+            },
+            ArchiveLimits {
+                max_entries: 1,
+                max_uncompressed_bytes: 0,
+            },
+        ] {
+            assert!(create_safe_zip(&files, &limits).is_err());
+            assert!(extract_safe_zip(&bytes, &limits).is_err());
+        }
+    }
 }

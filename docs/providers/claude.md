@@ -1,6 +1,6 @@
 # Claude 官方订阅运行时（`claude_local`）— T23
 
-主Agent集成记录（依据实现、测试与命令日志撰写；本文与 `reports/T23/*` 只引用可核实事实）。
+供维护者检查 claude_local 的订阅身份、启动参数和协议假设。实现与运行证据见 `reports/T23/*`；合成子进程只能证明工程行为，不能证明本人订阅、真实图像或官方隔离已经通过。
 
 ## 渠道定位
 
@@ -15,7 +15,9 @@ apiKeyHelper 计费）从不出现在启动参数里，凭证类环境变量（`
 **缺少或未知 `auth_mode` 一律按 `needs_login` 失败**（绝不当作订阅成功），没有任何 init 的
 result 按 `claude_protocol_violation` 失败。
 
-## 本机状态（如实）
+## 本机状态（T23 / 2.1.183 历史观察）
+
+本节保存 T23 当时的安装与帮助输出，不是本轮重新探测；后文“本机”和 flags 核验均指该历史环境，不能据此判断现在的安装或账号。
 
 - **Claude Code 2.1.183 已安装**。本任务只执行了 `claude --version`（exit 0，
   `2.1.183 (Claude Code)`）与 `claude --help`（exit 0，224 行）；完整原文存
@@ -34,7 +36,7 @@ result 按 `claude_protocol_violation` 失败。
 
 ## 启动计划（全部 flags 来自本机 `claude --help` 逐字核验）
 
-启动参数由 `buildClaudeLaunchPlan` 生成，除下列已核验 flags 外不传任何参数：
+先核对固定版本 help，再生成启动计划。`buildClaudeLaunchPlan` 只传下面已核验的 flags，不凭当前网站增添安装版本没有的参数：
 
 | 参数 | 作用 | 证据 |
 |---|---|---|
@@ -58,14 +60,13 @@ result 按 `claude_protocol_violation` 失败。
 `--betas`、`--fallback-model`、`--plugin-*`、`--add-dir`、`--remote-control`、`--worktree`。
 未核验语义的 `--permission-mode dontAsk` 也不作为安全控制使用：权威限制是
 `--tools ""` + allow/deny 规则 + `--strict-mcp-config`（CLI 规则不是 OS 文件系统/网络沙箱，
-T16 hardened spawn 与 run cwd 隔离才是）。
+T16 hardened spawn 和 run cwd 只限制本应用启动边界，也不等于 OS 文件系统/网络沙箱；真实 runtime 的限制仍须 T32 证明）。
 
 ## 固定 schema 与 T32 再生成清单
 
 Claude Code **没有** CLI 侧 schema 生成命令（`--help` 全文核验；与 Codex `app-server
 generate-ts/generate-json-schema` 不同），因此协议事实只能来自文档 + 真实运行时抓取。
-以下符号是**项目固定 pin**，未经真实运行时证实，T32 必须用版本固定的官方 CLI 抓取真实
-`stream-json` fixture 并用其校验/替换本解析器：
+以下符号是**项目固定 pin**，不是已验证的真实 runtime 协议。T32 必须从固定官方 CLI 抓取真实 `stream-json` fixture，逐项校验或替换解析器：
 
 - 事件族：`system`(subtype `init`) / `assistant` / `user` / `result`（文档确认
   stream-json 输出与 `system/init` 元数据事件；其余为 pin）
@@ -79,7 +80,7 @@ generate-ts/generate-json-schema` 不同），因此协议事实只能来自文�
   insufficient_quota | api_auth_not_subscription`（产品状态 pin，精确匹配）
 - MCP 配置文件形状 `mcpServers.<name>.{command,args,env}`；工具命名 `mcp__<server>__<tool>`
 
-**T32 步骤**：以安装的官方 CLI 在授权环境抓取真实 `stream-json` 输出（init/工具/结果各一），
+**补真实证据的步骤**：在授权环境用安装的官方 CLI 抓取真实 `stream-json` 输出（init/工具/结果各一），
 固定版本与哈希，作为 `apps/agent-host/test/fixtures/` 的 `fixture_kind: synthetic_protocol`
 以外的**真实**协议 fixture，校验上述每个 pin；再跑真实订阅登录与真实图像运行。未完成该步
 之前，本适配器的解析**不是**真实 CLI 兼容证据。
@@ -126,7 +127,7 @@ generate-ts/generate-json-schema` 不同），因此协议事实只能来自文�
 
 ## 验证记录
 
-实现者记录（`reports/T23/tests.log` 为完整真实输出与退出码）：
+下面是实现者的历史记录，完整输出和退出码在 `reports/T23/tests.log`。合成测试、工具诊断和真实订阅验收分别判读：
 
 - RED：骨架模块 35 collected / 34 真实行为失败（`reports/T23/red-phase.txt`）。
 - `pnpm exec vitest run apps/agent-host/test/t23_claude.test.ts` → exit 0，**35/35**；
@@ -139,6 +140,6 @@ generate-ts/generate-json-schema` 不同），因此协议事实只能来自文�
   相对路径正确解析）→ exit 0；同命令附加故意 TS2322 文件的负对照 → exit 1，
   证明诊断真实生效（不是 TS6053 空跑）。
 
-**未验证（T32）**：真实订阅登录、真实图像运行、真实 stream-json 协议 fixture 与
+**未验证（T32）**：本人订阅登录、真实图像运行、真实 stream-json 协议 fixture 与
 pin 复核、`--setting-sources`/`--permission-mode` 在固定版本上的真实语义、
 `mcp_server_errors` 字段（本机版本无此字段）。

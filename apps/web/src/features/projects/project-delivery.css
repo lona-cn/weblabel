@@ -1,0 +1,11 @@
+.projects-page .member-manager { border: 1px solid var(--border, #494949); padding: 12px 16px; margin-block: 16px; }
+.projects-page .member-manager summary { cursor: pointer; font-weight: 650; min-height: 32px; }
+.projects-page .member-manager fieldset { display: grid; gap: 12px; margin-block: 12px; min-width: 0; }
+.projects-page .member-manager label { display: grid; gap: 6px; }
+.projects-page .member-manager input, .projects-page .member-manager select, .projects-page .member-manager button { min-height: 44px; max-width: 100%; }
+.projects-page .member-manager li, .projects-page pre, .dataset-export li { overflow-wrap: anywhere; }
+.projects-page [aria-label='首次人工交付四步'] { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; padding-inline-start: 24px; }
+.projects-page [aria-label='默认对象属性只读预览'], .projects-page [aria-label='发布版本差异'], .dataset-export [aria-label='冻结确认摘要'], .dataset-export [aria-label='分批交付计划'] { border-inline-start: 3px solid var(--accent, #ffce45); padding: 12px 16px; margin-block: 16px; background: var(--panel, #242424); }
+.projects-page pre { white-space: pre-wrap; }
+.projects-page .field-error { color: var(--error, #ff988d); }
+.dataset-export [aria-label='分批交付计划'] button, .dataset-export [aria-label='分批交付计划'] select, .dataset-export [aria-label='分批交付计划'] input { min-height: 44px; margin: 8px; }

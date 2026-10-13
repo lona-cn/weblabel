@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import { captureEvidenceIdentity } from '../../../scripts/evidence-identity.mjs';
+const R="reports/T35/defect-repair/2026-10-11T13-21-39-234Z";
+const collect=async name=>{const j=JSON.parse(await readFile(R+'/'+name+'-vitest.json','utf8'));const result={collected:j.numTotalTests,passed:j.numPassedTests,failed:j.numFailedTests,skipped:j.numPendingTests};assert.equal(result.failed,0);assert.ok(result.passed>0);return result};
+const host=await collect('retirement-main-host-fresh'); assert.equal(host.collected,10);assert.equal(host.passed,6);assert.equal(host.skipped,4);
+const media=await collect('shared-base-media');assert.equal(media.collected,4);assert.equal(media.passed,3);assert.equal(media.skipped,1);
+const panel=await collect('retirement-panel-green');assert.equal(panel.collected,panel.passed);assert.equal(panel.skipped,0);
+const red=JSON.parse(await readFile(R+'/retirement-panel-red-vitest.json','utf8'));const failed=red.testResults.flatMap(t=>t.assertionResults).filter(t=>t.status==='failed');assert.equal(failed.length,1);assert.equal(failed[0].title,'does not replace a retired profile selection when active profiles refresh');
+const proof={schema_version:1,evidence_kind:'scoped_shared_prerequisite_proof',retirement_integrated_commit:'bff345f8e68788dae1f14df84590336262b6d53a',identity:captureEvidenceIdentity(),host,media,panel,panel_red:{collected:red.numTotalTests,passed:red.numPassedTests,failed:red.numFailedTests,skipped:red.numPendingTests},skipped_scope:['Host denied/changed-model/changed-budget/private-execution-configuration','T25 preview approval permission topic','all security/live scenes'],actual_model_calls:0,full_release_ready:false,limitations:['T31 24-assets fixture corrected but no new full hardware performance claim here','Real model channels remain blocked without actual invocation authorization','Main Host initial failed run used old default compiled artifact; fresh build + explicit artifact passed']};
+await writeFile(R+'/shared-base-proof.json',JSON.stringify(proof,null,2));console.log(JSON.stringify({host,media,panel,panel_red:proof.panel_red,actual_model_calls:0,full_release_ready:false}));

@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
-import { test as fixtureTest, expect } from '../e2e/fixtures';
+import { test as fixtureTest, expect, waitForCanonicalAssets } from '../e2e/fixtures';
 import type { Page } from '@playwright/test';
-import type { MediaRevision } from '../../packages/contracts/generated/MediaRevision';
+
 import type { T28Stats } from '../../apps/web/src/features/workbench/perf';
 import { gate, hardwareKind } from '../../scripts/verify-gpu.mjs';
 
@@ -103,9 +103,16 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
     });
     const png = await sharp({ create: { width: 2048, height: 2048, channels: 4, background: { r: 28, g: 37, b: 49, alpha: 1 } } }).png().toBuffer();
     for (const name of ['a', 'b']) expect((await seededProject.api.upload(`/api/projects/${seededProject.project_id}/assets`, png, `t31-${name}.png`, crypto.randomUUID(), 'image/png')).status).toBe(202);
-    expect((await seededProject.api.request('POST', '/internal/test/jobs/drain', {})).status).toBe(200);
-    const assets = (await seededProject.api.request<{ items: MediaRevision[] }>('GET', `/api/projects/${seededProject.project_id}/assets`)).json.items;
-    const media = assets.find(asset => asset.original_name === 't31-a.png')!;
+    const assets = await waitForCanonicalAssets(seededProject.api, seededProject.project_id, 24);
+    const canonicalMedia = ['a', 'b'].map(name => {
+      const asset = assets.find(item => item.original_name === `t31-${name}.png`);
+      if (!asset) throw new Error(`T31 canonical image ${name} was not imported`);
+      expect(asset).toMatchObject({ original_name: `t31-${name}.png`, canonical_width: 2048, canonical_height: 2048 });
+      expect(typeof asset.asset_revision_id).toBe('string');
+      return asset;
+    });
+    evidence.canonical_media = canonicalMedia;
+    const media = canonicalMedia[0];
     await page.goto(`${origin}/test-harness/dense?count=${count}&seed=17&project_id=${seededProject.project_id}&asset_revision_id=${media.asset_revision_id}`);
     await page.waitForFunction(() => window.__wl_test?.ready === true || document.querySelector('[role="alert"]') !== null);
     await expect(page.getByRole('alert')).toHaveCount(0);

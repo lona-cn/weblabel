@@ -13,6 +13,7 @@ registerHooks({
     }
   },
   load(url, context, nextLoad) {
+    if (url.endsWith('.json')) return nextLoad(url, { ...context, importAttributes: { ...context.importAttributes, type: 'json' } });
     if (!url.endsWith('.ts')) return nextLoad(url, context);
     const source = readFileSync(new URL(url), 'utf8');
     // Deliberate negative control, without editing the production source:
@@ -71,6 +72,7 @@ for (const count of [2000, 10000]) {
   const inputWire = JSON.stringify(fresh);
   const queueStorage = new InMemoryDraftStorage();
   const queue = new SaveQueue({
+    owner: { token: {}, actor_id: 'producer', project_id: 'owned_project', isCurrent: () => true, isWritable: () => true, canPrepareOperation: () => true, getLease: () => null },
     storage: queueStorage,
     transport: { save() { throw new Error('remote send is outside this producer probe'); },
       fetchHead() { throw new Error('not used'); }, fetchRevision() { throw new Error('not used'); } },
@@ -84,11 +86,10 @@ for (const count of [2000, 10000]) {
       base_revision_id: 'owned_r0', generation: 1, document: fresh });
     enqueueScans = scans;
   } finally { Object.values = values; }
-  assert.deepEqual(queueStorage.log, [{ method: 'put', asset_revision_id: 'owned_asset' }]);
-  const persistedBeforeAwait = queueStorage.get('owned_asset');
   fresh.objects[0].geometry.x_min = 99;
-  assert.equal(JSON.stringify((await persistedBeforeAwait).document), inputWire);
   await queue.whenPersisted('owned_asset');
+  const persisted = await queueStorage.get('owned_asset');
+  assert.equal(JSON.stringify(persisted.document), inputWire);
   assert.equal(queue.getStatus('owned_asset').phase, 'saved_local');
   assert.throws(() => { queue.toRecord('owned_asset').document.objects[0].geometry.x_min = 99; }, TypeError);
   const external = Object.freeze(record(Object.freeze(document(1))));
@@ -96,7 +97,7 @@ for (const count of [2000, 10000]) {
   assert.throws(() => { external.document.objects[0].attributes.text = 'tampered'; }, TypeError);
   results.push({ count, initial_scans: initialScans, certified_document_wrapper_scans: wrapperScans,
     repeated_document_wrapper_scans: repeatScans, enqueue_scans: enqueueScans,
-    wire_equal: true, immediate_local_put: true, caller_isolated: true, exposed_geometry_immutable: true,
+    wire_equal: true, local_store_commit_awaited: true, caller_isolated: true, exposed_geometry_immutable: true,
     shallow_external_descendant_immutable: true, phase: 'saved_local' });
 }
 const evidence = { node: process.version, scope: 'actual Node producer only; no browser/GPU/full-consumer timing', results };

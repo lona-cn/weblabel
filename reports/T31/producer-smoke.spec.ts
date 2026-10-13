@@ -21,7 +21,7 @@ interface ProducerObservation {
 }
 declare global { interface Window { __producer: ProducerObservation } }
 const root = path.resolve(import.meta.dirname, '../..');
-const report = path.join(root, 'reports/T31/producer');
+const report = process.env.WEBLABEL_T31_REPORT_ROOT ?? path.join(root, 'reports/T31/producer');
 const origin = process.env.WEBLABEL_T31_ORIGIN!;
 const test = fixtureTest.extend({ adminPage: async ({ page, seededProject }, use) => {
   await page.addInitScript(() => {
@@ -69,8 +69,14 @@ test('actual unchanged dense consumer shares immutable commits and persists comp
   });
   const png = await sharp({ create: { width: 2048, height: 2048, channels: 4, background: { r: 28, g: 37, b: 49, alpha: 1 } } }).png().toBuffer();
   expect((await seededProject.api.upload(`/api/projects/${seededProject.project_id}/assets`, png, 'producer-dense.png', crypto.randomUUID(), 'image/png')).status).toBe(202);
-  expect((await seededProject.api.request('POST', '/internal/test/jobs/drain', {})).status).toBe(200);
-  const assets = (await seededProject.api.request<{ items: MediaRevision[] }>('GET', `/api/projects/${seededProject.project_id}/assets`)).json.items;
+  let assets: MediaRevision[] = [];
+  await expect.poll(async () => {
+    const response = await seededProject.api.request<{ items: MediaRevision[] }>('GET', `/api/projects/${seededProject.project_id}/assets`);
+    expect(response.status).toBe(200);
+    assets = response.json.items;
+    const uploaded = assets.find(asset => asset.original_name === 'producer-dense.png');
+    return uploaded && { width: uploaded.canonical_width, height: uploaded.canonical_height, source_hash: uploaded.original_sha256 };
+  }, { timeout: 30_000 }).toEqual({ width: 2048, height: 2048, source_hash: createHash('sha256').update(png).digest('hex') });
   const media = assets.find(asset => asset.original_name === 'producer-dense.png')!;
   await page.goto(`${origin}/test-harness/dense?count=2000&seed=17&project_id=${seededProject.project_id}&asset_revision_id=${media.asset_revision_id}`);
   await page.waitForFunction(() => window.__wl_test?.ready === true || document.querySelector('[role="alert"]') !== null);
@@ -183,7 +189,9 @@ test('real WASM mirror retains all headers, exact numbers, restored order and de
     };
     // This separate edge journal never schedules HTTP during the bounded smoke;
     // every enqueue still immediately invokes the production full-record IDB put.
-    const queue = new SaveQueue({ storage, transport, debounceMs: 60_000 });
+    const queue = new SaveQueue({ storage, transport, debounceMs: 60_000,
+      owner: { token: {}, actor_id: 'producer-edge', project_id: projectId, isCurrent: () => true, isWritable: () => true, canPrepareOperation: () => true, getLease: () => null },
+    });
     const canvas = window.document.createElement('canvas');
     canvas.style.width = '640px'; canvas.style.height = '480px';
     window.document.body.append(canvas);

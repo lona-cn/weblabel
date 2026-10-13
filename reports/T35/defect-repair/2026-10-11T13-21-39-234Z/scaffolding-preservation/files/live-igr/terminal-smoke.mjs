@@ -1,0 +1,3 @@
+import {createInterface} from 'node:readline/promises';import {askLiveQuestion} from './verify-live.mjs';
+const terminal=createInterface({input:process.stdin,output:process.stdout});const controller=new AbortController();const abort=()=>controller.abort(new Error('CAPTURE_INTERRUPTED'));process.on('SIGINT',abort);process.on('SIGTERM',abort);
+let error;try {await askLiveQuestion(terminal,process.argv[2],controller.signal);throw new Error('PROMPT_DID_NOT_ABORT');}catch(e){error=e.message;if(!/abort|interrupt/i.test(error))process.exitCode=1;}finally{terminal.close();process.off('SIGINT',abort);process.off('SIGTERM',abort);console.log(JSON.stringify({error,resources:{terminal:'closed'},model_calls:0}));}

@@ -231,4 +231,116 @@ async fn expired_lease_blocks_annotation_put_even_when_cas_head_matches() {
         unchanged["annotation_revision_id"],
         imported.annotation_revision_id
     );
+    let (status, renewed, _) = send(
+        &app,
+        "POST",
+        &format!("/api/tasks/{task_id}/lease"),
+        Some(json!({"action":"acquire"})),
+        Some(&annotator_cookie),
+        Some(&annotator_csrf),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let mut document = head["document"].clone();
+    document["completion"] = json!("confirmed_negative");
+    let (status, saved, _) = send(&app, "PUT", &path, Some(json!({"operation_id":"t26-submission-save","base_revision_id":imported.annotation_revision_id,"document":document,"lease":{"task_id":task_id,"fencing_token":renewed["fencing_token"]},"suggestion_decisions":[]})), Some(&annotator_cookie), Some(&annotator_csrf)).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let revision_id = &saved["revision"]["annotation_revision_id"];
+    sqlx::query("UPDATE task_leases SET fencing_token=9007199254740991 WHERE task_id=?")
+        .bind(&task_id)
+        .execute(&state.auth.pool)
+        .await
+        .unwrap();
+    let (overflow_status, overflow, _) = send(
+        &app,
+        "POST",
+        &format!("/api/tasks/{task_id}/submit"),
+        Some(json!({"annotation_revision_ids":[revision_id]})),
+        Some(&annotator_cookie),
+        Some(&annotator_csrf),
+    )
+    .await;
+    assert_eq!(overflow_status, StatusCode::CONFLICT);
+    assert_eq!(overflow["code"], "FENCING_LIMIT_REACHED");
+    let pending: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM review_submissions WHERE task_id=?")
+            .bind(&task_id)
+            .fetch_one(&state.auth.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        pending, 0,
+        "overflow rolls back both task state and submission"
+    );
+    sqlx::query("UPDATE task_leases SET fencing_token=? WHERE task_id=?")
+        .bind(renewed["fencing_token"].as_i64().unwrap())
+        .bind(&task_id)
+        .execute(&state.auth.pool)
+        .await
+        .unwrap();
+    let (status, submitted, _) = send(
+        &app,
+        "POST",
+        &format!("/api/tasks/{task_id}/submit"),
+        Some(json!({"annotation_revision_ids":[revision_id]})),
+        Some(&annotator_cookie),
+        Some(&annotator_csrf),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{submitted}");
+    assert_eq!(submitted["lease_ended"], true);
+    let ended: (Option<String>, i64, i64) = sqlx::query_as(
+        "SELECT holder_id,expires_at,fencing_token FROM task_leases WHERE task_id=?",
+    )
+    .bind(&task_id)
+    .fetch_one(&state.auth.pool)
+    .await
+    .unwrap();
+    assert_eq!(ended.0, None);
+    assert_eq!(ended.1, 0);
+    assert_eq!(ended.2, renewed["fencing_token"].as_i64().unwrap() + 1);
+    for index in 0..102 {
+        sqlx::query("INSERT INTO review_tasks(task_id,project_id,asset_revision_id,ontology_version_id,assignee_id,created_by,state,created_at) VALUES(?,?,?,?,?,?,'closed','2026-10-13T00:00:00Z')")
+            .bind(format!("paging-{index:03}")).bind(&project_id).bind(&imported.asset_revision_id).bind(&ontology_id).bind(&annotator_id).bind(&annotator_id).execute(&state.auth.pool).await.unwrap();
+    }
+    let (_, first, _) = send(
+        &app,
+        "GET",
+        &format!("/api/projects/{project_id}/tasks?limit=100"),
+        None,
+        Some(&annotator_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(first["items"].as_array().unwrap().len(), 100);
+    let cursor = first["next_cursor"].as_str().unwrap();
+    let (_, second, _) = send(
+        &app,
+        "GET",
+        &format!("/api/projects/{project_id}/tasks?limit=100&cursor={cursor}"),
+        None,
+        Some(&annotator_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(second["items"].as_array().unwrap().len(), 3);
+    assert_eq!(second["next_cursor"], Value::Null);
+    let ids: std::collections::HashSet<_> = first["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(second["items"].as_array().unwrap())
+        .map(|item| item["task_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 103);
+    let (invalid, _, _) = send(
+        &app,
+        "GET",
+        &format!("/api/projects/{project_id}/tasks?limit=101"),
+        None,
+        Some(&annotator_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(invalid, StatusCode::BAD_REQUEST);
 }

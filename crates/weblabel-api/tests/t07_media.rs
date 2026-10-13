@@ -1,4 +1,17 @@
 use std::time::Duration;
+#[test]
+fn import_result_preserves_position_and_machine_error_without_message_parsing() {
+    use weblabel_api::media::ingest::{job_result, ImportError};
+    let result = job_result(&[
+        Err(ImportError::Media(MediaError::UnsupportedFormat)),
+        Err(ImportError::Media(MediaError::MultipleFrames)),
+        Err(ImportError::InvalidMetadata),
+    ]);
+    assert_eq!(result["items"][0]["item_index"], 0);
+    assert_eq!(result["items"][0]["error_code"], "UNSUPPORTED_FORMAT");
+    assert_eq!(result["items"][1]["error_code"], "MULTIPLE_FRAMES");
+    assert_eq!(result["items"][2]["error_code"], "INVALID_METADATA");
+}
 
 use image::{codecs::jpeg::JpegEncoder, ImageFormat, RgbImage};
 use serde_json::json;
@@ -243,10 +256,21 @@ async fn decoding_item_failures_do_not_hide_later_successes() {
 #[tokio::test]
 async fn import_commits_media_preview_coordinates_and_unprocessed_initial_revision() {
     let temp = tempdir().unwrap();
+    #[cfg(windows)]
+    let object_root = {
+        use std::os::windows::ffi::OsStrExt;
+        let base = temp.path().join("long-media-root");
+        let padding = 191usize
+            .saturating_sub(base.as_os_str().encode_wide().count() + 1)
+            .max(1);
+        base.join("r".repeat(padding))
+    };
+    #[cfg(not(windows))]
+    let object_root = temp.path().join("objects");
     let config = ServerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
         database_url: format!("sqlite:{}", temp.path().join("media.sqlite").display()),
-        object_root: temp.path().join("objects"),
+        object_root,
         write_timeout: Duration::from_secs(2),
         production: true,
     };
@@ -356,7 +380,20 @@ async fn import_commits_media_preview_coordinates_and_unprocessed_initial_revisi
         .unwrap();
     assert_eq!(status.state, "failed");
     assert_eq!(status.result.as_ref().unwrap()["succeeded"], 1);
-    assert_eq!(status.result.unwrap()["items"][1]["state"], "failed");
+    let result = status.result.unwrap();
+    assert_eq!(result["items"][1]["state"], "failed");
+    assert_eq!(result["items"][1]["item_index"], 1);
+    assert_eq!(result["items"][1]["error_code"], "UNSUPPORTED_FORMAT");
+    assert!(result["items"][0]
+        .as_object()
+        .unwrap()
+        .contains_key("error"));
+    assert!(result["items"][0]
+        .as_object()
+        .unwrap()
+        .contains_key("error_code"));
+    assert!(result["items"][0]["error"].is_null());
+    assert!(result["items"][0]["error_code"].is_null());
 }
 
 #[tokio::test]

@@ -68,6 +68,24 @@ pub enum ImportError {
     #[error("invalid persisted media metadata")]
     InvalidMetadata,
 }
+impl ImportError {
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Self::Media(error) => error.error_code(),
+            Self::Storage(_) => "STORAGE_FAILED",
+            Self::Object(_) => "OBJECT_STORAGE_FAILED",
+            Self::Queue(QueueError::InvalidRequest) => "INVALID_JOB_REQUEST",
+            Self::Queue(QueueError::IdempotencyConflict) => "IDEMPOTENCY_CONFLICT",
+            Self::Queue(QueueError::QueueFull) => "QUEUE_FULL",
+            Self::Queue(QueueError::Storage(_)) => "STORAGE_FAILED",
+            Self::EmptyBatch => "EMPTY_BATCH",
+            Self::TooManyItems => "TOO_MANY_ITEMS",
+            Self::NotFound => "MEDIA_NOT_FOUND",
+            Self::ObjectUnavailable => "OBJECT_UNAVAILABLE",
+            Self::InvalidMetadata => "INVALID_METADATA",
+        }
+    }
+}
 
 pub async fn enqueue_import_job(
     repository: &Repository,
@@ -87,10 +105,10 @@ pub async fn enqueue_import_job(
         if input.project_id != project_id {
             return Err(ImportError::InvalidMetadata);
         }
-        let pre_error = if check_filename(&input.original_name).is_err() {
-            Some("FILENAME_TOO_LONG")
+        let pre_error = if let Err(error) = check_filename(&input.original_name) {
+            Some(error.error_code())
         } else if input.bytes.len() > MAX_UPLOAD_BYTES {
-            Some("TOO_MANY_BYTES")
+            Some(MediaError::TooManyBytes.error_code())
         } else {
             None
         };
@@ -358,20 +376,21 @@ pub async fn process_import_job(
         if item_index != position as u64 {
             return Err(QueueError::InvalidRequest);
         }
-        let result = if let Some(code) = item.get("pre_error").and_then(Value::as_str) {
-            Err(code.to_owned())
-        } else {
-            process_import_item(repository, worker, lease, &item_index.to_string(), item)
-                .await
-                .map_err(|error| error.to_string())
+        let result = match item.get("pre_error").and_then(Value::as_str) {
+            Some("FILENAME_TOO_LONG") => Err(ImportError::Media(MediaError::FilenameTooLong)),
+            Some("TOO_MANY_BYTES") => Err(ImportError::Media(MediaError::TooManyBytes)),
+            Some(_) => Err(ImportError::InvalidMetadata),
+            None => {
+                process_import_item(repository, worker, lease, &item_index.to_string(), item).await
+            }
         };
         match &result {
             Ok(media) => {
                 succeeded += 1;
-                item_results.push(json!({"item_index":item_index,"state":"succeeded","asset_id":media.asset_id,"asset_revision_id":media.asset_revision_id}));
+                item_results.push(json!({"item_index":item_index,"state":"succeeded","asset_id":media.asset_id,"asset_revision_id":media.asset_revision_id,"error":null,"error_code":null}));
             }
             Err(error) => {
-                item_results.push(json!({"item_index":item_index,"state":"failed","error":error}))
+                item_results.push(json!({"item_index":item_index,"state":"failed","error":error.to_string(),"error_code":error.error_code()}))
             }
         }
         queue
@@ -528,9 +547,9 @@ pub async fn load_canonical_png(
 }
 
 pub fn job_result(items: &[Result<ImportedMedia, ImportError>]) -> serde_json::Value {
-    let results = items.iter().map(|item| match item {
-        Ok(media) => json!({"state":"succeeded", "asset_id":media.asset_id, "asset_revision_id":media.asset_revision_id}),
-        Err(error) => json!({"state":"failed", "error": error.to_string()}),
+    let results = items.iter().enumerate().map(|(item_index, item)| match item {
+        Ok(media) => json!({"item_index":item_index,"state":"succeeded", "asset_id":media.asset_id, "asset_revision_id":media.asset_revision_id,"error":null,"error_code":null}),
+        Err(error) => json!({"item_index":item_index,"state":"failed", "error": error.to_string(),"error_code":error.error_code()}),
     });
     json!({"items": results.collect::<Vec<_>>()})
 }

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
 import { bootstrap_admin_for_test, database_path_for_test, start_test_app } from '../support/app';
@@ -91,3 +93,35 @@ it('root background worker produces isolated predictions without a debug model d
     try { expect(db.prepare('SELECT COUNT(*) AS n FROM suggestion_decisions').get()?.n).toBe(0); } finally { db.close(); }
   } finally { await app.stop(); }
 }, 25_000);
+
+it('manual model control does not stop public canonical media processing', async () => {
+  const app = await start_test_app();
+  try {
+    const admin = await bootstrap_admin_for_test(app);
+    const pins = await seed(admin, app);
+    const importPublicImage = async (name: string, background: string) => {
+      const png = await sharp({ create: { width: 32, height: 24, channels: 3, background } }).png().toBuffer();
+      const uploaded = await admin.upload(`/api/projects/${pins.projectId}/assets`, png, name, crypto.randomUUID(), 'image/png');
+      expect(uploaded.status, JSON.stringify(uploaded.json)).toBe(202);
+      let imported: JsonObject | null = null;
+      await expect.poll(async () => {
+        const listed = await admin.request<{ items: JsonObject[] }>('GET', `/api/projects/${pins.projectId}/assets`);
+        expect(listed.status).toBe(200);
+        imported = listed.json.items.find(asset => asset.original_name === name) ?? null;
+        return imported !== null;
+      }, { timeout: 10_000, message: 'Production media worker must canonicalize without a debug drain' }).toBe(true);
+      expect(imported).toMatchObject({ original_name: name, canonical_width: 32, canonical_height: 24, exif_orientation: 1, original_sha256: createHash('sha256').update(png).digest('hex') });
+    };
+    await importPublicImage('manual-model-before.png', '#c04420');
+    const authorized = await authorize(admin, startRunBody(pins, crypto.randomUUID(), 'Engineering Mock stays manually queued', { intent: 'detect' }));
+    const queued = await admin.request<JsonObject>('POST', '/api/ai/runs', authorized);
+    expect(queued.status, JSON.stringify(queued.json)).toBe(202);
+    await importPublicImage('manual-model-after.png', '#2044c0');
+    const suggestions = await admin.request<JsonObject>('GET', `/api/ai/runs/${queued.json.run_id}/suggestions`);
+    expect(suggestions.status).toBe(200);
+    expect(object(suggestions.json.run, 'manually controlled run').state).toBe('queued');
+    expect(suggestions.json.items).toEqual([]);
+    const db = new DatabaseSync(database_path_for_test(app));
+    try { expect(db.prepare('SELECT state FROM model_runs WHERE run_id=?').get(String(queued.json.run_id))?.state).toBe('queued'); } finally { db.close(); }
+  } finally { await app.stop(); }
+}, 30_000);

@@ -24,14 +24,21 @@ pub fn router(repository: Repository, auth: AuthState) -> Router {
         auth: auth.clone(),
     };
     Router::new()
-        .route("/api/projects/{project_id}/activity-sessions", get(metrics::list))
-        .route("/api/projects/{project_id}/activity-sessions/{session_id}", axum::routing::put(metrics::checkpoint))
+        .route(
+            "/api/projects/{project_id}/activity-sessions",
+            get(metrics::list),
+        )
+        .route(
+            "/api/projects/{project_id}/activity-sessions/{session_id}",
+            axum::routing::put(metrics::checkpoint),
+        )
         .route(
             "/api/projects/{project_id}/tasks",
             get(tasks::list).post(tasks::create),
         )
         .route("/api/tasks/{task_id}/lease", post(leases::lease))
         .route("/api/tasks/{task_id}/submit", post(submissions::submit))
+        .route("/api/tasks/{task_id}/submission", get(submissions::latest))
         .route("/api/reviews/{review_id}/decision", post(decisions::decide))
         .route(
             "/api/reviews/{review_id}/issues",

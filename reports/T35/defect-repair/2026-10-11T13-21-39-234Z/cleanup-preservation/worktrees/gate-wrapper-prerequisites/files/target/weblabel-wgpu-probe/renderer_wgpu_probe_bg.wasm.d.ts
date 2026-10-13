@@ -1,0 +1,35 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_renderer_free: (a: number, b: number) => void;
+export const initialize_browser_device_probe: () => any;
+export const renderer_adapter_diagnostics: (a: number) => [number, number];
+export const renderer_device_lost: (a: number) => any;
+export const renderer_device_state: (a: number) => [number, number];
+export const renderer_dispose: (a: number) => void;
+export const renderer_is_device_lost: (a: number) => number;
+export const renderer_new: (a: any, b: number, c: number, d: number, e: number) => any;
+export const renderer_recover: (a: number) => any;
+export const renderer_render: (a: number) => [number, number];
+export const renderer_resize: (a: number, b: number, c: number, d: number) => [number, number];
+export const renderer_update_objects: (a: number, b: any) => [number, number];
+export const renderer_update_scene: (a: number, b: any) => [number, number];
+export const renderer_update_viewport: (a: number, b: any) => [number, number];
+export const wasm_bindgen__convert__closures_____invoke__h43b53cc557bf6e42: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen__convert__closures_____invoke__h5c2c9a75a6746f64: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen__convert__closures_____invoke__h920b1d6c4a49b2c0: (a: number, b: number, c: any, d: any) => void;
+export const wasm_bindgen__convert__closures_____invoke__hb52fd36053a2e8eb: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen__convert__closures_____invoke__hc52328d8cde8c446: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen__convert__closures_____invoke__hf91c2a62bb24aec0: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen__convert__closures_____invoke__hbb31a206cd0bdb79: (a: number, b: number, c: any) => void;
+export const wasm_bindgen__convert__closures_____invoke__hcfc1dc1a875adce5: (a: number, b: number, c: any) => void;
+export const wasm_bindgen__convert__closures_____invoke__hd4a907be06eb37af: (a: number, b: number) => number;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_destroy_closure: (a: number, b: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_start: () => void;

@@ -1,6 +1,6 @@
 # 架构与范围冻结：WebLabel v0.1
 
-日期：2026-09-25。本文中的技术选择和预算是本执行计划的决策，不是已完成能力或实测结论。
+供维护者判断模块职责、数据边界和首版范围。本文冻结设计，不证明实现或性能已经通过验收。设计日期：2026-09-25。
 
 ## 1. 目标与演示路径
 
@@ -14,7 +14,7 @@
 
 ## 2. 相对原草案的明确变更
 
-原草案存于 docs/reference/original-proposal.md。保留其坐标、不变量、预测隔离、保存、审核和快照语义。以下是本计划新增/调整的决策：
+最初的用户草案作为[原始归档](reference/original-proposal.md)保留，不是当前实现说明。坐标、预测隔离、保存、审核和快照的不变量继续有效；本版作出以下取舍：
 
 | 项目 | 本次冻结决定 |
 |---|---|
@@ -22,23 +22,23 @@
 | 首期部署 | 本地服务 + 浏览器；不是纯静态网页，也不是先建设多租户 SaaS |
 | 默认环境 | Windows 11 的桌面 Chrome/Edge 为首要人工验收平台；Linux 用于无凭证自动化；其他平台分别报告验证状态 |
 | 存储 | Rust 服务 + SQLite WAL + 内容寻址文件存储；不要求 Docker/PostgreSQL/Redis/S3 才能启动 |
-| AI 集成 | Codex/Claude 官方本地运行时；OpenAI、Anthropic、MiMo API 适配器；一个实际检测适配器 |
+| AI 集成 | Claude 官方本地运行时；OpenAI、Anthropic、MiMo API 适配器；一个实际检测适配器。Codex 活动通道退役，历史身份仍可解码 |
 | 协作 | 基础项目角色、任务占用、版本冲突和审核；不做实时共同编辑 |
 | 大图与分割 | v0.1 不做金字塔、Polygon、Mask；以准入限制保护内存，后续另立任务 |
 | 本地推理 | 检测可用独立 Python CPU Worker；浏览器 wgpu 推理和自研 ONNX 引擎不进入关键路径 |
 
-这些取舍是为了从空目录交付可验证软件，不代表永久排除云端部署。普通图片编辑不应被 Python、模型权重、官方 CLI 或订阅登录阻塞。
+首版先交付可验证的本地软件，云端部署须另行设计。普通图片编辑不依赖 Python、模型权重、官方 CLI 或订阅登录。
 
 ## 3. 技术栈与固定版本策略
 
 - UI：React + TypeScript + Vite；DOM 承担表单、列表、属性和 AI 面板。使用 TanStack Query 管理服务器缓存、TanStack Virtual 管理长列表；表单状态与编辑几何分开。
 - 内核：Rust 2021 edition；geometry、annotation-domain、editor-core 都能在无 GPU 的 native 单元测试中运行。
-- 渲染：wgpu 30.0.1 作为初始化候选，WGSL；wasm-bindgen/wasm-pack 构建浏览器模块。T00 必须验证组合后精确固定，不盲信旧教程 API。
+- 渲染：wgpu 30.0.1、WGSL；wasm-bindgen/wasm-pack 构建浏览器模块。版本组合与历史验证见 compatibility.md，不用旧教程推断当前 API。
 - 服务：Rust、Tokio、Axum、SQLx SQLite、tracing；单个模块化服务，内部持久化作业队列。
 - Agent Host：Node.js 24 LTS + TypeScript；官方 CLI 子进程、API 请求和 MCP 适配集中在这一边界。它不是第二份业务数据库。
 - 检测：Python 3.12 + uv，Transformers/PyTorch CPU；首选 PekingU/rtdetr_v2_r18vd，T18 固定权重 revision 和文件哈希。
 - 测试：cargo test/proptest、Vitest、Playwright、pytest；无凭证测试与真实 provider/GPU 测试分开。
-- JS 包管理：pnpm。T00 查询一次稳定版本，写 packageManager 的精确版本并提交 pnpm-lock.yaml；不假设 Corepack 预装。
+- JS 包管理：pnpm，packageManager 与 pnpm-lock.yaml 固定精确版本。工具安装情况须单独检查，不假设 Corepack 预装。
 
 T00 的版本选择算法：读取已安装版本 → 查官方稳定版/MSRV/兼容要求 → 先编译最小 Rust→WASM→wgpu 画布及 Node 子进程探针 → 把成功组合记录在 docs/compatibility.md、rust-toolchain.toml、package.json 和 lockfiles。Node 固定 24.x 的实际补丁号；Rust 固定实际通过的稳定补丁号且不低于 wgpu/MSRV；禁止写 latest、*、浮动 Git HEAD 或仅写 stable 作为交付工具链。
 
@@ -54,17 +54,22 @@ Rust API: auth/project/media/revision/jobs/review/export
       |-- media/import/export workers (bounded concurrency)
       |-- private stdio NDJSON --> Node Agent Host
                                     |-- OpenAI / Anthropic / MiMo APIs
-                                    |-- unmodified Codex App Server (stdio)
                                     |-- unmodified Claude Code (official headless interface)
                                     |-- project-scoped MCP tool bridge
       |-- private stdio NDJSON --> optional Python detector
 ```
 
-生产本地端口默认 127.0.0.1:48100；开发 Vite 127.0.0.1:5173，经 /api 代理到本地 API。端口可用环境变量覆盖，不硬编码进客户端契约。浏览器不直接连 Codex/Claude，不把官方运行时端口暴露给网络。
+正式本地启动器默认浏览器入口为 `http://127.0.0.1:48100`，私有 Rust API 为 `127.0.0.1:48101`；通过 `--port`/`--api-port` 配置，并以 WEBLABEL_LOCAL_URL 输出精确入口。开发 Vite 为 `127.0.0.1:5173`，`/api` proxy 固定指向 API 默认 `127.0.0.1:48100`。修改 WEBLABEL_BIND 不会自动修改 Vite proxy；pnpm dev 的 Web predev 先构建 WASM，且不会自动设置 WEBLABEL_ENV=development。配置与数据目录差异见[开发指南](development.md)和[配置参考](configuration.md)。
 
-正式本地启动只绑定 loopback。Host 与 Origin 精确白名单，不允许 `*`。服务必须有本地启动认证，不可认为“localhost 就不需要认证”。初始管理员通过一次性启动码换取 session；启动码从本地终端交给用户，不放 URL query、日志或前端包。会话用 HttpOnly、SameSite=Strict cookie；HTTPS 时设置 Secure，loopback HTTP 单独明确配置。写操作要求 CSRF token/Origin 验证，登出撤销会话。生产拒绝测试认证开关。
+正式本地启动只绑定 loopback。Host 与 Origin 精确白名单，不允许 `*`。服务必须有本地启动认证，不可认为“localhost 就不需要认证”。初始管理员通过一次性启动码换取 session；启动码从本地终端交给用户，不放 URL query、日志或前端包。会话用 HttpOnly、SameSite=Strict cookie；HTTPS 时设置 Secure，loopback HTTP 单独明确配置。
 
-API启动必须显式提供 `WEBLABEL_COOKIE_SECURE=true|false`；`scripts/dev.mjs` 对 loopback HTTP 设置 `false`，通过 HTTPS 访问时设置 `true`。首次空数据库启动时，API仅向本地终端输出 `WEBLABEL_BOOTSTRAP_CODE`，有效期10分钟且只能换取一次初始管理员 session；bootstrap 同时要求用户设置不少于12字节的初始密码，密码只存 Argon2id 哈希，使管理员可在 session 撤销/过期后重新登录。已有用户时不输出启动码。Host/Origin 白名单按绑定 loopback 地址、API端口和 Vite 开发端口精确生成。
+写操作要求 CSRF token/Origin 验证，登出撤销会话。生产拒绝测试认证开关。
+
+API启动必须显式提供 `WEBLABEL_COOKIE_SECURE=true|false`；`scripts/dev.mjs` 对 loopback HTTP 设置 `false`，通过 HTTPS 访问时设置 `true`。首次空数据库启动时，API仅向本地终端输出 `WEBLABEL_BOOTSTRAP_CODE`，有效期10分钟且只能换取一次初始管理员 session；bootstrap 同时要求用户设置不少于12字节的初始密码，密码只存 Argon2id 哈希，使管理员可在 session 撤销/过期后重新登录。
+
+已有用户时不输出启动码。Host/Origin 白名单按绑定 loopback 地址、API端口和 Vite 开发端口精确生成。
+
+管理员密码恢复采用独立exclusive maintenance，不复用bootstrap或正常session。可信启动输入固定request UUID与已有platform_admin；终端随机code600秒一次，Web投递code及不trim的新密码，strict Origin授权不依赖旧cookie。原user_id/成员/历史不变，Argon2id更新、目标session撤销、immutable completion同事务；消费ID跨重启拒绝。完成仍维护，清环境并正常重启才登录。所有API持规范化数据库旁OS锁；维护不启动workers/Host或恢复业务运行。GET与POST公平等同一门，授权操作断连仍持门直到结算，未知结果只读核对。详见[运维](operations.md#管理员密码恢复)与[HTTP参考](api-reference.md#管理员密码恢复维护)。
 
 v0.1 的订阅模式仅供本机最终用户本人运行。把服务改为非 loopback 监听不是受支持的上线方式。团队/远程 SaaS 的本地伴随程序配对、租户计费和公网运维另立方案，不可让远端用户消耗服务器所有者的订阅凭证。
 
@@ -79,46 +84,28 @@ v0.1 的订阅模式仅供本机最终用户本人运行。把服务改为非 lo
 | 本地待同步草稿 | IndexedDB，包含业务文档而非 GPU 数据 |
 | Provider 密钥、认证状态 | 最终用户的官方运行时或本地 secret store；不属于项目数据 |
 
-React 不得复制一套可以自行修改的 bbox 真相。所有创建/修改/接受 AI/撤销通过同一 EditorCommand 入口。服务器重新验证每一份保存文档，不能信任 WASM 客户端。
+Rust EditorCore 拥有可编辑几何。React 只能读取投影，不得维护第二套可修改的 bbox。创建、修改、接受 AI 和撤销都走同一 EditorCommand 入口；每次保存仍由服务器重新验证，WASM 客户端不构成信任依据。
+
+实体引用、原图/canonical、分支作者与真实提交证据见[数据生命周期](data-model.md)；精确 wire 与当前恢复增量见[共享契约](contracts.md)。
 
 ## 6. 目录职责
 
-```text
-apps/web/src/
-  app/                  页面路由与装配
-  features/projects/    项目、规范、导入
-  features/workbench/   画布容器、列表、属性、工具栏
-  features/ai/          运行、候选、差异、来源与权限
-  features/review/      任务与审核
-  features/datasets/    快照与导出
-  lib/editor/           WASM facade，不重写几何
-  lib/persistence/      IndexedDB 与保存队列
-apps/api/src/
-  auth/ projects/ media/ annotations/ jobs/ ai/ review/ datasets/
-  storage/              DB 与不可变文件存储
-  runtime/              host 子进程监管与有限能力 RPC
-apps/api/migrations/    仅后端主写任务修改，编号由主 Agent 分配
-apps/agent-host/src/
-  providers/            openai-api / anthropic-api / mimo-api / codex / claude
-  mcp/                  只读上下文与提交候选工具
-  security/             进程、路径、环境、外发策略
-crates/annotation-domain/src/
-crates/geometry/src/
-crates/editor-core/src/
-crates/renderer-wgpu/src/
-crates/renderer-wgpu/shaders/
-crates/wasm-bridge/src/
-crates/dataset-formats/src/
-crates/xtask/src/
-packages/contracts/generated/   从 Rust 类型生成，禁止手改
-packages/wasm-editor/            生成的 WASM 包与 facade 类型
-services/detector/
-tests/fixtures/ tests/integration/ tests/e2e/ tests/live/ tests/perf/
-scripts/                         跨平台开发与验收入口
-reports/Txx/                     任务证据，不存敏感媒体和密钥
-```
+| 实际 package/crate 或模块 | 职责与边界 |
+|---|---|
+| @weblabel/web（apps/web） | React 页面、项目/工作台/AI/审核/数据集；只读 Native 投影、IDB 与 HTTP 保存队列，不重写几何 |
+| weblabel-api（crates/weblabel-api） | Rust Axum 服务：认证、项目、媒体、标注、作业、AI、审核、数据集；SQLite migrations、对象存储、私有 Host 监管 |
+| @weblabel/agent-host（apps/agent-host） | Node provider、stdio/MCP、进程与外发边界；不是第二份数据库 |
+| annotation-domain | Rust 领域类型、验证、JSON schema/TS 生成来源及内容 hash |
+| geometry | bbox、命中与坐标变换；无 GPU native 能力 |
+| editor-core | 可编辑文档、命令/工具状态机、undo/redo 与候选接受 |
+| renderer-wgpu | GPU 资源、实例投影和 WGSL；只保存缓存，不拥有业务文档 |
+| wasm-bridge | Rust 编辑/渲染浏览器 facade 与 Native 装配 |
+| dataset-formats | native/COCO/YOLO 解析、转换与信息损失报告 |
+| xtask / @weblabel/contracts | 从 Rust 生成及检查 wire TS/JSON Schema；生成物禁止手改 |
+| detector service | 独立 Python CPU Worker、锁定模型与显式类别映射；不在浏览器推理 |
+| scripts / tests / reports | 跨平台入口、隔离测试与绑定运行条件的证据；历史报告不可倒写 |
 
-T00 创建 workspace 必需的 package/crate 空壳和脚本，不创建几十个未使用抽象类。一个 crate 可以有少量文件；模块按实际依赖新增。
+workspace 只保留实际需要的 package、crate 和脚本。一个 crate 可以很小；新增模块应有真实调用者，不预建未使用的抽象类。
 
 ## 7. 坐标、输入、渲染约定
 
@@ -128,16 +115,26 @@ T00 创建 workspace 必需的 package/crate 空壳和脚本，不创建几十�
 
 视图公式：canvas_css=(image*scale)+translation；指针先减 Canvas bounding rect；DPR 只用于后备像素尺寸，不能再次乘进图像坐标。缩放锚点保持鼠标处 image 坐标不变。控制点 8 CSS px、命中半径 6 CSS px，变焦不改变屏幕触控大小。
 
-工具：选择、框选、拖动创建矩形、四边/四角 resize、移动、多选、重复、删除、改类别/属性、平移、缩放。Esc 取消预览；pointercancel、失焦和切图都不生成半成品；pointer capture 与释放必须配对。中文输入法 composition 和文本框聚焦时禁用编辑快捷键。一次拖动/批量接受=一个撤销单元。最小交互框边长 2 CSS px，提交还需图像空间正面积。
+工具：选择、框选、拖动创建矩形、四边/四角 resize、移动、多选、重复、删除、改类别/属性、平移、缩放。Esc 取消预览；pointercancel、失焦和切图都不生成半成品；pointer capture 与释放必须配对。中文输入法 composition 和文本框聚焦时禁用编辑快捷键。一次拖动/批量接受=一个撤销单元。
 
-正式 Workbench 复用单个 Keyboard 路由，目标限真实 workbench-grid；项目导航、审核和 AI 控件、文本输入及 IME 不触发编辑快捷键，原生控件保留 Space 激活。SelectionStore 只消费当前 session 已接受的 Native delta，列表/属性/AI 选择都是该投影；applyDelta 仍是唯一完整快照/IDB/保存 producer。命令、工具切换和取消在事件时重新检查 host/session/asset、真实 ready、只读 preview 与同步 submission ref fence，不能仅依赖 DOM inert 或渲染时状态。ToolState 的有效/base 工具只在 Native boolean ACK 后改变；设备或审核阻塞期间被拒绝的 Space 松开/blur 只记录有界用户意图，在 ready/解锁后协调该意图，不在一般恢复时重置工具或取消保留的预览。
+最小交互框边长 2 CSS px，提交还需图像空间正面积。
+
+正式 Workbench 复用单个 Keyboard 路由，目标限真实 workbench-grid；项目导航、审核和 AI 控件、文本输入及 IME 不触发编辑快捷键，原生控件保留 Space 激活。SelectionStore 只消费当前 session 已接受的 Native delta，列表/属性/AI 选择都是该投影；applyDelta 仍是唯一完整快照/IDB/保存 producer。
+
+命令、工具切换和取消在事件时重新检查 host/session/asset、真实 ready、只读 preview 与同步 submission ref fence，不能仅依赖 DOM inert 或渲染时状态。ToolState 的有效/base 工具只在 Native boolean ACK 后改变；设备或审核阻塞期间被拒绝的 Space 松开/blur 只记录有界用户意图，在 ready/解锁后协调该意图，不在一般恢复时重置工具或取消保留的预览。
 
 Renderer 用批量实例矩形、缓存 image texture、增量更新、按需重绘。预览与正式对象分层。画布标签只显示选中/悬停及视口前 100 个对象，其余通过 DOM 虚拟列表查看，不能生成万级 DOM 标签。CPU 空间索引 + 明确排序实现重叠循环选择，不做同步 GPU 回读命中。
 WASM Renderer 的 `update_viewport` 专供 pan/zoom/resize，仅更新 uniform；`update_objects` 只接收 objects/overlays projection，并将连续差异写入 instance buffer；`update_scene` 用于完整 scene/image 替换，不应被普通 pointermove 调用。
 
-CanvasView 每次原生 rendered 通知仍读取完整标签投影，在单资产 effect 内按 object_id 缓存只读 CSS 标量和实际 ReactElement；仅当文本（当前为 object_id）、selected、x_css、y_css 完全相同才复用 span，保留原生顺序并剪除消失 ID。整个有序元素列表不变时不发布 React state；切换资产清空标签，失活旧 host 不再发布。元素在订阅事件中创建而非 render 中修改缓存；该显示缓存不编辑或持久化几何，不减少原生 render/GPU 提交、历史或草稿保存，也不代表性能关卡通过。
+CanvasView 每次原生 rendered 通知仍读取完整标签投影，在单资产 effect 内按 object_id 缓存只读 CSS 标量和实际 ReactElement；仅当文本（当前为 object_id）、selected、x_css、y_css 完全相同才复用 span，保留原生顺序并剪除消失 ID。
 
-Rust Core 的 dispatch/Undo/Redo 共用对象差异 producer：只有对象数量与每个位置的 ID 顺序均相等时，才逐对象做完整领域值比较并按 canonical 顺序输出 replacements；成员/顺序变化保留通用按 ID 的比较与移除路径。全部文档 validation、前后 snapshot history 和预算不因快速路径减少。临时 selection 与 flags 都为空才免建 membership 集合，否则以借用的当前 ID 过滤两者；临时状态不进入文档。Native projection 缓存实际选中 ID 列表，只有列表相同且 entry topology 未变化才免重复同步；插入/移除 entry 必须失效，bounds/color 更新与整 entry 排序保留 flags。该缓存不把 canonical 文档位置当作紧凑 GPU instance slot。
+整个有序元素列表不变时不发布 React state；切换资产清空标签，失活旧 host 不再发布。元素在订阅事件中创建而非 render 中修改缓存；该显示缓存不编辑或持久化几何，不减少原生 render/GPU 提交、历史或草稿保存，也不代表性能关卡通过。
+
+Rust Core 的 dispatch/Undo/Redo 共用对象差异 producer：只有对象数量与每个位置的 ID 顺序均相等时，才逐对象做完整领域值比较并按 canonical 顺序输出 replacements；成员/顺序变化保留通用按 ID 的比较与移除路径。全部文档 validation、前后 snapshot history 和预算不因快速路径减少。
+
+临时 selection 与 flags 都为空才免建 membership 集合，否则以借用的当前 ID 过滤两者；临时状态不进入文档。Native projection 缓存实际选中 ID 列表，只有列表相同且 entry topology 未变化才免重复同步；插入/移除 entry 必须失效，bounds/color 更新与整 entry 排序保留 flags。
+
+该缓存不把 canonical 文档位置当作紧凑 GPU instance slot。
 
 无 WebGPU 显示诊断和导出/查看列表入口，不静默换 Canvas2D 并宣称完成 wgpu；WebGL 降级不在 v0.1。设备丢失时保留 CPU 文档、本地保存与错误状态，重建资源成功才恢复编辑；零尺寸 Canvas 暂停 configure/render。
 
@@ -153,21 +150,27 @@ v0.1 接收静态 PNG 和 JPEG，单文件 ≤64 MiB、宽高分别 ≤4096、�
 
 AnnotationRevision 不可变，head 单独引用。保存携带 operation_id、base_revision_id、document；服务器在单事务中先核查幂等，再比较 head，写新 revision 并原子替换 head。相同 operation_id + 相同请求哈希返回原结果；不同负载复用 operation_id 返回 409 IDEMPOTENCY_KEY_REUSE；版本不匹配返回 409 REVISION_CONFLICT。
 
-`GET /api/assets/{asset_revision_id}/annotation` 必须显式指定 `ontology_version_id`；历史 revision 通过 `GET /api/annotation-revisions/{id}` 只读访问。PUT 在 SQLite 写事务内以 actor/operation/kind 查询幂等记录，再检查项目写权限、canonical 尺寸、ontology、几何/负样本和来源；非空 suggestion_decisions 与非空 lease 在对应事务能力落地前明确拒绝。revision、CAS head 更新和幂等 ACK 同事务提交，冲突不留下半写 revision。
+`GET /api/assets/{asset_revision_id}/annotation` 必须显式指定 `ontology_version_id`；历史 revision 通过 `GET /api/annotation-revisions/{id}` 只读访问。当前普通 PUT 在 SQLite 写事务内以 actor/operation/kind 查询幂等记录；新操作核验项目写权限、固定任务 asset/ontology 的 lease/holder/expiry/fencing、canonical 尺寸、规范、几何/负样本与来源。suggestion_decisions 的接受/撤销与 revision、CAS head 和幂等 ACK 同事务提交，冲突不留半写。
 
-客户端每 asset 只有一个保存请求在途；本地事务成功后才显示“已保存本地”。收到旧 generation 的 ACK 不能把更新中的文档显示为已同步。逻辑操作结束后防抖 400ms；提交审核、AI 启动、切图前执行 flush；失败时保留草稿和可下载恢复包。切图可以完成，但不得丢弃原图片的保存队列。
+已成功普通 save 的原请求回执重放仍需当前 actor 的项目写权限，但不要求原 lease 仍未过期；这不是 fresh 写入资格。annotation import 也先核对原 preview actor 与当前项目写权限；相同原请求已成功时返回存储 ACK，不重新验证当前 lease/fence/base，新提交才检查这些资格。历史 unknown 必须保留原 operation/body/base/lease/journal，不能借新 lease 包装原请求；明确新鲜 lease 拒绝才可按当前 Native/context 显式 reprepare。完整成功/未知/冲突时序见[数据模型](data-model.md#保存候选-journalcas幂等与-lease-的一次事务)，当前恢复约束以[共享契约增量](contracts.md)为准。
 
-IndexedDB 保存 {asset_revision_id, ontology_version_id, base_revision_id, draft_generation, document, pending_operation_id}。恢复时只有 base=head 才自动恢复；否则进入比较/另存分支/显式舍弃流程，不执行 last-write-wins。浏览器配额失败必须可见。撤销已同步变更会保存新 revision，不删除历史。
+客户端每个标签页的 writer 队列对同一 asset 只允许一个保存请求在途；跨标签页各自保留分支，服务端 CAS/lease/fencing 仍是提交边界。只有当前 branch/write_token 的完整本地事务证据才能显示“已保存本地”。旧 generation 或旧分支 ACK 不能把更新中的文档显示为已同步。逻辑操作结束后防抖 400ms；提交审核、AI 启动、切图前执行 flush；失败时保留草稿和可下载恢复包。切图不得丢弃原图片的保存队列。
+
+IndexedDB v2 的 draft_branches 使用 [asset_revision_id,draft_id] 复合键，envelope 保存 write_token、原始 DraftRecord 与 sources；完整 Native document、base/generation、pending 原 payload/operation、owner/outcome、有序 decision journal 都保留。v1 升级在同一事务复制原值；失败整笔回滚，blocked 明确失败，原 v1 可只读救援。多个分支必须显式选择，不用“最近更新时间”替用户选胜者，不合并几何，不自动 replay 旧 CAS。未知格式只允许原文救援；JSON 编码失败必须报告且不能删数据或生成假恢复包。
+
+恢复/fork 使用新的 writer/draft/token；recover/use_server 引用精确来源 token，以固定点分类 active/archive/rescue_only。recover 只有目标真实同步后才完成来源处理；显式 use_server 在目标分支本地完整提交后将来源留档，archive 不等于上传/采纳原草稿。过期、缺失或循环来源引用不能悄悄消除未解决状态。新任务必须在创建/claim 前后异步重读该 asset 全部分支与当前组件上下文；只有已认证 paused fork 对完全相同 owner/asset/fixed task/ontology/base 的窄重新 claim 可恢复原任务，不能借此创建新任务。IDB 与 HTTP 不假称原子；校验失败必须释放取得的 lease，且不能安装新 Native。
+
+浏览器配额失败必须可见。撤销已同步变更会保存新 revision，不删除历史。
 
 ## 10. AI：结构、语义与权限
 
-Provider 是通道，不是模型；Profile 固定 provider、完整 model_id、认证类型、能力与验证状态。必须分别列出：codex_local、claude_local、openai_api、anthropic_api、mimo_api、detector_local。一个通道通过不代表其他通道通过。
+Provider 是通道，不是模型；Profile 固定 provider、完整 model_id、认证类型、能力与验证状态。活动通道为 claude_local、openai_api、anthropic_api、mimo_api、detector_local；Anthropic API 可选，其他四项是 T32 必需。codex_local 仅保留历史解码，不提供活动执行兼容路径。一个通道通过不代表其他通道通过。
 
-Codex/Claude 使用官方未修改运行时及其认证流程。不得复制 OAuth token、伪造客户端、调用未公开的订阅后端、将用户令牌发到自己的中转。具体合法使用边界和套餐能力由 T02/T32 结合官方资料与实际账号核实；不把“能登录”当成“允许任意商用代理”。
+Claude 使用官方未修改运行时及其认证流程。不得复制 OAuth token、伪造客户端、调用未公开的订阅后端、将用户令牌发到自己的中转。具体合法使用边界和套餐能力由 T02/T32 结合官方资料与实际账号核实；不把“能登录”当成“允许任意商用代理”。
 
 OpenAI API 可将 gpt-6-luna 作为当前候选型号，但选择器以实际授权和输入能力为准，不写死所有账号都能使用。Sonnet 也必须显示完整 model_id。MiMo 具体多模态型号、端点和输出限制在 T02 从官方平台核验；配置缺失时 unavailable，不冒充 OpenAI 全兼容。
 
-API Key 首期由启动环境或本地 OS secret store 提供，不落 IndexedDB/localStorage、项目导出、报告、日志和 Git。只有设置界面显示已配置/尾部掩码，不回传原值。
+API Key 的边界是启动环境或本地 secret store，不落 IndexedDB/localStorage、项目导出、报告、日志和 Git；公开界面不得回传原值。平台管理员可在“账号、成员与模型配置”中选择操作者已准备的固定 Host 预设，经服务端校验配置哈希和真实 provider/model/auth/capabilities 后明确保存；不接收密钥、任意路径或启动命令，不登录、不下载、不调用模型。没有预设仍可人工标注；静态配置不授予 live_passed。私有 JSON/credential 环境、持久配置、公开投影、项目策略和逐次 consent 是不同层，见[配置参考](configuration.md)。
 
 运行前：flush 当前文档 → 固定 revision、ontology、媒体 hash 和作用对象 → 显示外发预览与目标提供方 → 用户授权 → 入队。确认绑定 input_fingerprint，不得确认后增加其他图片。每次运行记录成本/用量可用字段；未知费用显示未知，不显示为 0。
 
@@ -189,14 +192,20 @@ Node Host 与 Rust 父进程通过私有 stdio 消息交换，浏览器无法指
 
 ## 12. 任务、审核与交付
 
-项目角色：admin、annotator、reviewer、viewer。服务器对每一个媒体/标注/候选/导出请求检查 project membership；新项目是否允许自审是显式设置。任务固定媒体 revision 与 ontology；任务租约 60 秒、心跳 20 秒，服务端时钟判断。被分配任务的每次新 SaveRequest 必须在 CAS 同一 SQLite 事务内携带当前 holder 与 fencing token；CAS 成功不能绕过租约。提交期间编辑面锁定，flush、读取服务端head并提交必须作为一个不可插入本地修改的序列；head/队列 generation不一致时中止。审核必须查看已提交不可变revision相对其parent的对象/geometry/attribute差异后，才能绑定精确revision与理由批准/退回；批准关闭任务，退回重新开放该任务供修订，旧决定与旧问题保留。
+项目角色：admin、annotator、reviewer、viewer。服务器对每一个媒体/标注/候选/导出请求检查 project membership；新项目是否允许自审是显式设置。任务固定媒体 revision 与 ontology；任务租约 60 秒、心跳 20 秒，服务端时钟判断。被分配任务的每次新 SaveRequest 必须在 CAS 同一 SQLite 事务内携带当前 holder 与 fencing token；CAS 成功不能绕过租约。
+
+提交期间编辑面锁定，flush、读取服务端head并提交必须作为一个不可插入本地修改的序列；head/队列 generation不一致时中止。审核必须查看已提交不可变revision相对其parent的对象/geometry/attribute差异后，才能绑定精确revision与理由批准/退回；批准关闭任务，退回重新开放该任务供修订，旧决定与旧问题保留。
 
 空文档不是负样本。完成状态区分 unprocessed/in_progress/complete/confirmed_negative；negative 要求 objects=[]。已通过版本产生新 head 后，新 head 不能继承批准。
 
-DatasetVersion 在事务中固定媒体 revision、标注 revision、ontology、类别映射和 split。首期由用户明确指定 train/val/test；辅助确定性划分按 source_group_id，不把同来源组拆散。导出只读快照，不读“最新”。YOLO class index 从 0 开始；COCO 使用固定映射。原生格式无损；YOLO/COCO detection 对属性/审核丢失必须报告并要求用户确认。COCO segmentation 非空时不能静默降级为检测；导入必须显式选择“仅 bbox”并保留损失报告。
+DatasetVersion 在事务中固定媒体 revision、标注 revision、ontology、类别映射和 split。首期由用户明确指定 train/val/test；辅助确定性划分按 source_group_id，不把同来源组拆散。导出只读快照，不读“最新”。YOLO class index 从 0 开始；COCO 使用固定映射。
+
+原生格式无损；YOLO/COCO detection 对属性/审核丢失必须报告并要求用户确认。COCO segmentation 非空时不能静默降级为检测；导入必须显式选择“仅 bbox”并保留损失报告。
 
 导入先 dry-run 报告，再原子提交一个媒体/标签单元，不能一半创建一半丢失。ZIP 防 Zip Slip、symlink、压缩炸弹；输出路径用稳定资产 ID 避免同名覆盖。数据包必须能由独立解析器读取并做回显比对。
 
+审核版本、快照与导出 hash 的不同含义见[数据生命周期](data-model.md#固定审核快照与信息损失)，字段与当前任务/lease/恢复增量见[共享契约](contracts.md)。设计目标不因文档补齐成为本轮发布验收。
+
 ## 13. 不在本轮执行的项目
 
-Mask/Polygon、瓦片大图、视频/3DGS/点云、移动端/小程序、CRDT、模型训练、自研推理引擎、计费、SSO、公共插件市场、自动免审均不属于本轮。保留模块边界即可，不写假实现或空 UI。后续触发条件见 docs/after-mvp.md。
+Mask/Polygon、瓦片大图、视频/3DGS/点云、移动端/小程序、CRDT、模型训练、自研推理引擎、计费、SSO、公共插件市场、自动免审均不属于本轮。保留模块边界即可，不写假实现或空 UI。后续范围见[需求边界](requirement-map.md#后续范围不得自动派工)，须重新明确范围后才能启动。

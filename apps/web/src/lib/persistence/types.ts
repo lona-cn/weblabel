@@ -42,8 +42,7 @@ export interface IntentJournalEntry {
 
 /**
  * A prepared save request. Prepared at send time and then immutable: a retry
- * re-sends exactly this request, and any new local modification replaces the
- * pending operation with a brand-new operation_id instead of mutating it.
+ * re-sends exactly this request. New edits wait behind its actual ACK.
  */
 export interface PendingOperation {
   operation_id: Id;
@@ -51,7 +50,7 @@ export interface PendingOperation {
   generation: number;
   /** Journal length at preparation; intents [0, journal_seq_end) ride in the request. */
   journal_seq_end: number;
-  /** Local edit counter at preparation: a retry reuses the operation only when no new edit happened. */
+  /** Local edit counter captured at preparation; later edits do not replace this operation. */
   edit_seq: number;
   prepared_at: string;
   request: SaveRequest;
@@ -63,6 +62,9 @@ export interface PendingOperation {
  * / intent journal, plus the sync markers needed to restore dirty state.
  */
 export interface DraftRecord {
+  /** Original author of outstanding document and journal work. */
+  draft_owner?: { actor_id: string; project_id: string } | null;
+  pending_owner?: { actor_id: string; project_id: string } | null;
   schema_version: typeof DRAFT_SCHEMA_VERSION;
   asset_revision_id: Id;
   ontology_version_id: Id;
@@ -77,6 +79,12 @@ export interface DraftRecord {
   /** Journal entries [0, synced_intent_seq) were acknowledged with a save. */
   synced_intent_seq: number;
   updated_at: string;
+  /** Additive schema-1 metadata; legacy pending without an outcome is unknown. */
+  pending_outcome?: 'prepared' | 'unknown' | 'rejected';
+  used_operation_ids?: Id[];
+  edit_seq?: number;
+  writes_paused?: boolean;
+  save_error?: { kind: TransportFailureKind; code: string; message: string; status: number | null; request_id: string | null } | null;
 }
 
 /** Injectable clock: tests drive debounce timing deterministically. */
@@ -98,9 +106,21 @@ export const realClock: Clock = {
 
 /** Injectable local persistence (IndexedDB in production). Failures throw. */
 export interface DraftStorage {
-  get(asset_revision_id: Id): Promise<DraftRecord | null>;
-  put(record: DraftRecord): Promise<void>;
-  delete(asset_revision_id: Id): Promise<void>;
+  list(asset_revision_id: Id, guard?: SaveSyncGuard): Promise<readonly DraftBranchEnvelope[]>;
+  get(asset_revision_id: Id, draft_id: Id, guard?: SaveSyncGuard): Promise<DraftBranchEnvelope | null>;
+  put(envelope: DraftBranchEnvelope, guard?: SaveSyncGuard): Promise<DraftCommitReceipt | false>;
+  delete(asset_revision_id: Id, draft_id: Id, guard?: SaveSyncGuard): Promise<boolean>;
+}
+export interface SourceRef { draft_id: Id; write_token: Id; action: 'recover' | 'use_server' }
+export interface DraftBranchEnvelope {
+  asset_revision_id: Id; draft_id: Id; write_token: Id; record: unknown; sources: readonly SourceRef[];
+}
+export interface DraftCommitReceipt { asset_revision_id: Id; draft_id: Id; write_token: Id }
+export interface LocalCommitEvidence {
+  draft_id: Id; write_token: Id; persist_seq: number; edit_seq: number; generation: number;
+}
+export interface DraftBranchSnapshot {
+  envelope: DraftBranchEnvelope; local_commit: LocalCommitEvidence | null; ack_local_barrier: boolean;
 }
 
 /**
@@ -168,6 +188,7 @@ export type SavePhase =
   | 'synced'
   | 'save_failed'
   | 'storage_error'
+  | 'paused'
   | 'conflict';
 
 export interface SaveStatusSnapshot {
@@ -181,7 +202,9 @@ export interface SaveStatusSnapshot {
   base_revision_id: Id | null;
   /** A draft exists in memory and can always be downloaded, even when storage failed. */
   draft_exportable: boolean;
-  last_error: { kind: TransportFailureKind | 'storage'; code: string; message: string } | null;
+  last_error: { kind: TransportFailureKind | 'storage'; code: string; message: string; request_id?: string | null } | null;
+  local_commit?: LocalCommitEvidence | null;
+  last_ack?: { revision_id: Id; generation: number; at: string } | null;
 }
 
 export interface EnqueueInput {
@@ -197,7 +220,10 @@ export interface EnqueueInput {
 }
 
 /** How the user resolved an HTTP 409 (or a recovery conflict). Never automatic. */
-export type ConflictAction = 'keep_local_export' | 'view_server' | 'adopt_server';
+export type ConflictAction = 'keep_local_export' | 'view_server';
+
+/** Synchronous currency proof. retryOwnedFuture requires separate initial and reconciliation proofs. */
+export type SaveSyncGuard = () => boolean;
 
 /** Result of an explicit user conflict resolution. */
 export type ConflictResolution =
@@ -209,21 +235,35 @@ export type ConflictResolution =
       /** False when the server head could not be observed: writes stay paused. */
       resumed: boolean;
     }
-  | { action: 'view_server'; server_head: AnnotationRevision | null }
-  | { action: 'adopt_server'; base_revision_id: Id };
+  | { action: 'view_server'; server_head: AnnotationRevision | null };
+
+export type SaveLease = NonNullable<SaveRequest['lease']>;
+export interface SaveQueueOwner {
+  token: object;
+  actor_id: string;
+  project_id: string;
+  isCurrent(): boolean;
+  isWritable(): boolean;
+  /** Fresh-operation permission, independent of retained receipt reconciliation. */
+  canPrepareOperation(asset_revision_id: string, ontology_version_id: string): boolean;
+  getLease(asset: string): SaveLease | null;
+}
 
 /** Construction seams of SaveQueue (storage / HTTP / clock are injectable). */
 export interface SaveQueueOptions {
   transport: SaveTransport;
   storage: DraftStorage;
   clock?: Clock;
-  getLease?: (asset_revision_id: Id) => SaveRequest['lease'];
+  owner: SaveQueueOwner;
   debounceMs?: number;
   newOperationId?: () => Id;
+  newDraftId?: () => Id;
 }
 
 /** Rescue download for an unsynced draft (testing-contracts §8: marked unsynced). */
 export interface NativeDraftExport {
+  draft_owner: DraftRecord['draft_owner'];
+  pending_owner: DraftRecord['pending_owner'];
   format: 'weblabel-native-draft';
   schema_version: typeof DRAFT_SCHEMA_VERSION;
   /** Explicit: an unsynced rescue draft must never masquerade as review data. */
@@ -234,6 +274,9 @@ export interface NativeDraftExport {
   generation: number;
   document: AnnotationDocument;
   pending_operation_id: Id | null;
+  pending: PendingOperation | null;
+  pending_outcome: DraftRecord['pending_outcome'];
+  used_operation_ids: Id[];
   intent_journal: IntentJournalEntry[];
   exported_at: string;
 }

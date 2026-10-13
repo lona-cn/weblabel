@@ -9,7 +9,7 @@ dependencies = []
 # by default: the offline test suite exercises transforms, label mapping and
 # post-processing only. Executing the pinned weights is T32's gate.
 [project.optional-dependencies]
-real = ["torch>=2.4", "transformers>=4.47"]
+real = ["torch>=2.4", "transformers[vision]>=4.47"]
 
 [dependency-groups]
 dev = ["pytest>=8"]

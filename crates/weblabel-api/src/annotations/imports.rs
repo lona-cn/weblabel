@@ -29,11 +29,7 @@ use std::collections::HashSet;
 
 const MAX_IMPORT_BYTES: usize = 32 * 1024 * 1024;
 
-#[derive(Deserialize)]
-pub(super) struct CommitRequest {
-    loss_ack: bool,
-    operation_id: String,
-}
+use annotation_domain::AnnotationImportCommitRequest;
 
 #[derive(Serialize)]
 struct PreviewResponse {
@@ -508,8 +504,18 @@ pub(super) async fn commit(
     State(state): State<AnnotationState>,
     Path(import_batch_id): Path<String>,
     Extension(principal): Extension<Principal>,
-    Json(request): Json<CommitRequest>,
+    request: Result<Json<AnnotationImportCommitRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(_) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_IMPORT_COMMIT",
+                "Import commit request is invalid",
+            )
+        }
+    };
     if Uuid::parse_str(&request.operation_id).is_err() {
         return error(
             StatusCode::BAD_REQUEST,
@@ -562,14 +568,17 @@ pub(super) async fn commit(
     }
     let request_hash = format!(
         "{:x}",
-        Sha256::digest(format!("{import_batch_id}:{}", request.loss_ack).as_bytes())
+        Sha256::digest(
+            serde_json::to_vec(&(import_batch_id.as_str(), &request))
+                .expect("wire request serialization")
+        )
     );
     let existing = sqlx::query(
         "SELECT request_hash, response_json FROM idempotency_keys \
          WHERE actor_id=? AND operation_id=? AND operation_kind='annotation_import_commit'",
     )
     .bind(&principal.user_id)
-    .bind(&request.operation_id)
+    .bind(&*request.operation_id)
     .fetch_optional(transaction.connection())
     .await;
     match existing {
@@ -653,6 +662,19 @@ pub(super) async fn commit(
     let project_id: String = row.try_get("project_id").unwrap_or_default();
     let asset_revision_id: String = row.try_get("asset_revision_id").unwrap_or_default();
     let ontology_version_id: String = row.try_get("ontology_version_id").unwrap_or_default();
+    if let Err(failure) = super::save::validate_task_lease(
+        transaction.connection(),
+        &project_id,
+        &asset_revision_id,
+        &ontology_version_id,
+        &principal,
+        request.lease.as_ref(),
+    )
+    .await
+    {
+        return rollback_error(transaction, failure.status, failure.code, failure.message).await;
+    }
+
     let base_revision_id: Option<String> = row.try_get("base_revision_id").unwrap_or(None);
     let base_revision_no: i64 = row.try_get("base_revision_no").unwrap_or(0);
     let current_head = sqlx::query("SELECT h.annotation_revision_id, r.revision_no FROM annotation_heads h JOIN annotation_revisions r ON r.project_id=h.project_id AND r.annotation_revision_id=h.annotation_revision_id WHERE h.project_id=? AND h.asset_revision_id=? AND h.ontology_version_id=?")
@@ -799,7 +821,7 @@ pub(super) async fn commit(
         }
     };
     if sqlx::query("INSERT INTO idempotency_keys(actor_id, operation_id, operation_kind, request_hash, response_json, created_at) VALUES (?, ?, 'annotation_import_commit', ?, ?, ?)")
-        .bind(&principal.user_id).bind(&request.operation_id).bind(request_hash).bind(response_json).bind(&response.revision.created_at).execute(transaction.connection()).await.is_err() {
+        .bind(&principal.user_id).bind(&*request.operation_id).bind(request_hash).bind(response_json).bind(&response.revision.created_at).execute(transaction.connection()).await.is_err() {
         return rollback_error(transaction, StatusCode::CONFLICT, "IDEMPOTENCY_CONFLICT", "operation_id was already used").await;
     }
     match transaction.commit().await {

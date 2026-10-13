@@ -224,8 +224,9 @@ fn validate_change(
             let object = find_object(context.document, object_id)?;
             verify_before_hash(object, before_hash)?;
             let label = find_label(context.ontology, label_id)?;
-            // The relabeled object must satisfy the new label's definitions.
-            validate_attributes(label, &object.attributes, true)?;
+            let mut projected = object.clone();
+            crate::ontology::relabel_object(&mut projected, label);
+            validate_attributes(label, &projected.attributes, true)?;
         }
     }
     Ok(())
@@ -345,48 +346,8 @@ fn validate_attributes(
                     "attribute is not defined for the label",
                 )
             })?;
-        match (&definition.kind, value) {
-            (_, Scalar::Null) => {}
-            (crate::AttributeKind::Enum, Scalar::String(text)) => {
-                if !definition.enum_values.iter().any(|entry| entry == text) {
-                    return Err(DomainError::new(
-                        "INVALID_ATTRIBUTE_VALUE",
-                        "attribute must be one of the declared enum values",
-                    ));
-                }
-            }
-            (crate::AttributeKind::Boolean, Scalar::Boolean(_)) => {}
-            (crate::AttributeKind::Number, Scalar::Number(number)) => {
-                if !number.is_finite() {
-                    return Err(DomainError::new(
-                        "INVALID_ATTRIBUTE_VALUE",
-                        "attribute must be finite",
-                    ));
-                }
-                if definition.min.is_some_and(|min| *number < min)
-                    || definition.max.is_some_and(|max| *number > max)
-                {
-                    return Err(DomainError::new(
-                        "INVALID_ATTRIBUTE_VALUE",
-                        "attribute is outside its declared range",
-                    ));
-                }
-            }
-            (crate::AttributeKind::Text, Scalar::String(text)) => {
-                if text.chars().count() > 4096 {
-                    return Err(DomainError::new(
-                        "INVALID_ATTRIBUTE_VALUE",
-                        "attribute exceeds 4096 characters",
-                    ));
-                }
-            }
-            _ => {
-                return Err(DomainError::new(
-                    "INVALID_ATTRIBUTE_VALUE",
-                    "attribute does not match its declared kind",
-                ))
-            }
-        }
+        crate::ontology::validate_attribute_value(definition, value)
+            .map_err(|error| DomainError::new("INVALID_ATTRIBUTE_VALUE", error.message))?;
     }
     if require_complete {
         for definition in &label.attributes {

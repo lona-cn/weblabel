@@ -1,0 +1,18 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { taskReportPath, projectOutputPath, projectRoot } from '../../../tests/support/report-paths.mjs';
+import { captureEvidenceIdentity } from '../../../scripts/evidence-identity.mjs';
+const actual = taskReportPath('T30','observations','owned-smoke.json');
+fs.writeFileSync(actual, JSON.stringify({ scope:'synthetic_owned_output', uploaded:false }));
+assert.deepEqual(JSON.parse(fs.readFileSync(actual)), { scope:'synthetic_owned_output', uploaded:false });
+assert.equal(actual, path.join(process.env.WEBLABEL_TEST_REPORT_DIR,'T30/observations/owned-smoke.json'));
+assert.throws(()=>taskReportPath('T30','..','T33','wrong.json'), /OUTPUT_OUTSIDE_TASK/);
+assert.throws(()=>projectOutputPath(path.dirname(projectRoot)), /OUTPUT_OUTSIDE_PROJECT/);
+assert.throws(()=>taskReportPath('T30','../../../../../../../../wrong.json'), /OUTPUT_OUTSIDE_PROJECT|OUTPUT_OUTSIDE_TASK/);
+const before = captureEvidenceIdentity();
+assert.ok(before.source_hashes['crates/weblabel-api/migrations/0001_initial.sql'] || Object.keys(before.source_hashes).some(p=>p.includes('/migrations/')&&p.endsWith('.sql')));
+assert.ok(before.source_hashes['services/detector/src/weblabel_detector/__main__.py']);
+assert.ok(before.source_hashes['reports/T31/native-controls.ts']);
+assert.deepEqual(before, captureEvidenceIdentity());
+console.log(JSON.stringify({ output: path.relative(projectRoot,actual), source_snapshot_sha256:before.source_snapshot_sha256, manifest_sha256:before.manifest_sha256, source_files:Object.keys(before.source_hashes).length, rejected_escapes:3, model_calls:0 }));

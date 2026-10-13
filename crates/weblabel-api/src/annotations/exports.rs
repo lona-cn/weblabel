@@ -233,13 +233,23 @@ pub(super) async fn create(
         _ => unreachable!(),
     };
     if loss_report.requires_ack() && !request.loss_ack {
-        return rollback_error(
-            transaction,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "LOSS_ACK_REQUIRED",
-            "Loss acknowledgement is required before creating this export",
-        )
-        .await;
+        if transaction.rollback().await.is_err() {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "EXPORT_ROLLBACK_FAILED",
+                "Could not close export transaction",
+            );
+        }
+        let failure = annotation_domain::ApiError {
+            code: "LOSS_ACK_REQUIRED".to_owned(),
+            message: "Loss acknowledgement is required before creating this export".to_owned(),
+            request_id: Id::from(Uuid::new_v4().to_string()),
+            details: Some(std::collections::BTreeMap::from([(
+                "loss_report".to_owned(),
+                serde_json::json!(loss_report),
+            )])),
+        };
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(failure)).into_response();
     }
     let request_hash = format!(
         "{:x}",
@@ -367,7 +377,7 @@ pub(super) async fn download(
     Path(export_id): Path<String>,
     Extension(principal): Extension<Principal>,
 ) -> Response {
-    let row = sqlx::query("SELECT e.object_sha256,e.format,e.byte_size,e.loss_report_json,0 AS dataset_package FROM annotation_exports e JOIN memberships m ON m.project_id=e.project_id AND m.user_id=? WHERE e.export_id=? AND NOT EXISTS(SELECT 1 FROM dataset_exports d WHERE d.export_id=e.export_id) UNION ALL SELECT d.object_sha256,d.format,d.byte_size,d.loss_report_json,1 AS dataset_package FROM dataset_exports d JOIN memberships m ON m.project_id=d.project_id AND m.user_id=? WHERE d.export_id=?")
+    let row = sqlx::query("SELECT e.object_sha256,e.format,e.byte_size,e.loss_report_json,0 AS dataset_package FROM annotation_exports e JOIN memberships m ON m.project_id=e.project_id AND m.user_id=? WHERE e.export_id=? AND NOT EXISTS(SELECT 1 FROM dataset_exports d WHERE d.export_id=e.export_id) UNION ALL SELECT d.object_sha256,d.format,d.byte_size,d.loss_report_json,1 AS dataset_package FROM dataset_exports d JOIN jobs j ON j.job_id=d.export_id AND j.project_id=d.project_id AND j.kind='dataset_export' AND j.state='succeeded' JOIN memberships m ON m.project_id=d.project_id AND m.user_id=? WHERE d.export_id=?")
         .bind(&principal.user_id).bind(&export_id).bind(&principal.user_id).bind(&export_id).fetch_optional(&state.auth.pool).await;
     let row = match row {
         Ok(Some(row)) => row,

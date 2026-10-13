@@ -2,8 +2,8 @@
   "schema_version": 1,
   "contract_version": "1.0.0",
   "evidence_kind": "required_channel_contract_not_response_evidence",
+  "optional": [{ "provider_id": "anthropic_api", "auth_kind": "api_key", "full_model_required": true, "official_runtime_required": false }],
   "required": [
-    { "provider_id": "codex_local", "auth_kind": "official_user_login", "model_family": null, "full_model_required": true, "official_runtime_required": true },
     { "provider_id": "claude_local", "auth_kind": "official_user_login", "model_family": "sonnet", "full_model_required": true, "official_runtime_required": true },
     { "provider_id": "openai_api", "auth_kind": "api_key", "model_family": "luna", "full_model_required": true, "official_runtime_required": false },
     { "provider_id": "mimo_api", "auth_kind": "api_key", "model_family": null, "full_model_required": true, "official_runtime_required": false },
@@ -11,6 +11,7 @@
   ],
   "samples": ["clear", "occluded"],
   "required_evidence": ["actual_provider", "full_model_id", "auth_kind", "runtime_version", "canonical_sha256", "input_fingerprint", "execution_configuration_hash", "response_id", "human_visual_review", "candidate_diff", "accept_save", "undo_save", "quota_error", "cancel", "unsupported_image", "tool_restriction"],
+  "evidence_scopes": { "tool_restriction": "security" },
   "detector": { "lock_path": "services/detector/models.lock.json", "load_and_forward_required": true, "precomputed_predictions_allowed": false },
   "missing_prerequisite_result": "blocked",
   "blocked_exit_code": 2,

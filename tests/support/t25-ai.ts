@@ -42,13 +42,7 @@ export interface Seeded {
   canonicalSha256: string;
 }
 
-async function drainJobs(client: ApiClient): Promise<number> {
-  const response = await client.request<JsonObject>('POST', '/internal/test/jobs/drain', {});
-  expect(response.status, JSON.stringify(response.json)).toBe(200);
-  const processed = object(response.json, 'drain').processed;
-  if (typeof processed !== 'number') throw new Error('drain.processed must be numeric');
-  return processed;
-}
+
 
 // The shared harness upload helper sends untyped blobs (application/octet-stream)
 // which the media decode-header policy rejects at processing time; a browser
@@ -111,13 +105,18 @@ export async function seed(admin: ApiClient, app: TestApp): Promise<Seeded> {
   const image = new Uint8Array(await readFile(new URL('../fixtures/media/orientation-1.jpg', import.meta.url)));
   const upload = await uploadImage(baseUrl, uploader, projectId, image, `t25-import-${crypto.randomUUID()}`);
   expect(upload.status).toBe(202);
-  expect(await drainJobs(admin)).toBe(1);
-
-  const listed = await admin.request<JsonObject>('GET', `/api/projects/${projectId}/assets`);
-  expect(listed.status).toBe(200);
-  const items = object(listed.json, 'assets').items;
-  if (!Array.isArray(items)) throw new Error('asset items must be an array');
-  expect(items).toHaveLength(1);
+  let items: JsonObject[] = [];
+  const canonicalDeadline = Date.now() + 10_000;
+  for (;;) {
+    const listed = await admin.request<JsonObject>('GET', `/api/projects/${projectId}/assets`);
+    expect(listed.status).toBe(200);
+    const rawItems = object(listed.json, 'assets').items;
+    if (!Array.isArray(rawItems)) throw new Error('asset items must be an array');
+    items = rawItems.map(item => object(item, 'asset'));
+    if (items.length === 1) break;
+    if (Date.now() >= canonicalDeadline) throw new Error(`Production media worker did not canonicalize the synthetic fixture: ${items.length} assets after 10s`);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
   const assetRevisionId = stringField(items[0], 'asset_revision_id', 'asset');
   const canonicalSha256 = stringField(items[0], 'canonical_sha256', 'asset');
 

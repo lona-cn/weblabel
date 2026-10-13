@@ -1,11 +1,15 @@
-import { spawn, execFileSync } from 'node:child_process';
-import { mkdir, writeFile, appendFile, readFile, stat, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdir, writeFile, appendFile, readFile, stat } from 'node:fs/promises';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { createServer } from 'node:net';
+import { createHash, randomUUID } from 'node:crypto';
+import { createServer, createConnection } from 'node:net';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { ownedReportRoot, projectOutputPath } from '../tests/support/report-paths.mjs';
+import { captureEvidenceIdentity } from './evidence-identity.mjs';
+import { resolveArgv, runArgv } from './task.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export function hardwareKind(info) {
@@ -25,117 +29,241 @@ export function gate(count, scenarios) {
   return { summaries, failures };
 }
 
-async function main() {
-  const report = path.join(root, 'reports/T31');
-  const run = path.join(report, 'runs', new Date().toISOString().replaceAll(':', '-'));
-  await mkdir(run, { recursive: true });
+const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+const relative = file => path.relative(root, file).replaceAll('\\', '/');
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const settleWithin = (done, ms) => new Promise(resolve => {
+  const timer = setTimeout(() => resolve(false), ms);
+  done.then(() => { clearTimeout(timer); resolve(true); });
+});
+const portClosed = port => new Promise((resolve, reject) => {
+  const socket = createConnection({ host: '127.0.0.1', port });
+  socket.once('connect', () => { socket.destroy(); resolve(false); });
+  socket.once('error', error => { socket.destroy(); if (error.code === 'ECONNREFUSED') resolve(true); else reject(error); });
+  socket.setTimeout(1000, () => { socket.destroy(); reject(new Error('Owned Vite port close observation timed out')); });
+});
+class Prerequisite extends Error {}
+export function parseGpuArgs(args) {
+  if (!args.length) return null;
+  if (args.length !== 2 || args[0] !== '--report-dir' || !args[1] || args[1].startsWith('--') || path.isAbsolute(args[1])) throw new Error('INVALID_ARGUMENTS');
+  return args[1];
+}
+export function parseBrowserReport(text) {
+  if (text === null) return { tests: null, parse_status: 'missing', status: 'blocked', blocker: 'Current Playwright JSON is missing' };
+  try {
+    const report = JSON.parse(text), stats = report.stats;
+    const names = ['expected', 'unexpected', 'skipped', 'flaky'];
+    if (!stats || names.some(key => !Number.isSafeInteger(stats[key]) || stats[key] < 0) || !Array.isArray(report.suites)) throw new Error('Invalid native Playwright stats/suites');
+    const cases = [];
+    function visit(suite) {
+      if ((suite.specs !== undefined && !Array.isArray(suite.specs)) || (suite.suites !== undefined && !Array.isArray(suite.suites))) throw new Error('Invalid native Playwright suite');
+      for (const spec of suite.specs ?? []) {
+        if (!Array.isArray(spec.tests)) throw new Error('Invalid native Playwright tests');
+        for (const test of spec.tests) cases.push({ title: spec.title, status: test.status });
+      }
+      (suite.suites ?? []).forEach(visit);
+    }
+    report.suites.forEach(visit);
+    const tests = { collected: names.reduce((n, key) => n + stats[key], 0), passed: stats.expected, failed: stats.unexpected, skipped: stats.skipped, flaky: stats.flaky };
+    if (cases.length !== tests.collected || names.some(name => cases.filter(test => test.status === name).length !== stats[name])) throw new Error('Playwright stats do not match native test cases');
+    const required = [2000, 10000].map(count => count + ' fixed release WASM hardware: four warmed 1000-sample scenarios and lifecycle');
+    required.push('software and unknown adapters cannot pass the hardware classifier (not hardware evidence)');
+    if (report.errors !== undefined && (!Array.isArray(report.errors) || report.errors.length)) return { tests, parse_status: 'parsed', status: 'failed', blocker: 'Playwright reported global errors' };
+    const passed = tests.collected === 3 && tests.passed === 3 && !tests.failed && !tests.skipped && !tests.flaky && required.every(title => cases.filter(test => test.title === title).length === 1);
+    return { tests, parse_status: 'parsed', status: passed ? 'passed' : 'failed', blocker: passed ? null : 'Require exactly the three T31 tests, all passed without skips/retries' };
+  } catch (error) { return { tests: null, parse_status: 'malformed', status: 'failed', blocker: error.message }; }
+}
+function safeEnvironment(runtime, target) {
+  const env = {};
+  for (const key of ['PATH','PATHEXT','SystemRoot','WINDIR','COMSPEC','USERPROFILE','HOME','APPDATA','LOCALAPPDATA','PNPM_HOME','COREPACK_HOME','CARGO_HOME','RUSTUP_HOME','RUSTUP_TOOLCHAIN','RUSTC','RUSTDOC','VCINSTALLDIR','WindowsSdkDir','INCLUDE','LIB','LIBPATH']) if (process.env[key] !== undefined) env[key] = process.env[key];
+  Object.assign(env, { TEMP: runtime, TMP: runtime, TMPDIR: runtime, CARGO_TARGET_DIR: target, CARGO_NET_OFFLINE: 'true', RUSTUP_AUTO_INSTALL: '0', COREPACK_ENABLE_NETWORK: '0', WEBLABEL_SKIP_SECURITY: '1' });
+  return env;
+}
+function executable(name, env) {
+  if (path.isAbsolute(name)) { if (fs.existsSync(name)) return name; throw new Prerequisite('Installed executable missing: ' + name); }
+  const extensions = process.platform === 'win32' ? (env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';') : [''];
+  for (const directory of (env.PATH ?? '').split(path.delimiter)) for (const extension of ['', ...extensions]) {
+    const candidate = path.join(directory, name + extension.toLowerCase());
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  }
+  throw new Prerequisite('Installed executable unavailable: ' + name);
+}
+async function optionalText(file) {
+  try { return await readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+export async function main(args = process.argv.slice(2)) {
+  let report;
+  try {
+    const requested = parseGpuArgs(args);
+    report = ownedReportRoot(requested ?? ('reports/T31/verification/' + new Date().toISOString().replaceAll(':','-') + '-' + randomUUID()));
+    if (fs.existsSync(path.join(report, 'result.json'))) throw new Error('EXISTING_RESULT_REFUSED');
+  } catch (error) { console.error(error.message); return 1; }
+  const run = path.join(report, 'runs', randomUUID());
   const runtime = path.join(run, 'runtime');
-  await mkdir(runtime);
-  const commands = [];
-  const env = { ...process.env, WEBLABEL_T31_RUN_DIR: run, TEMP: runtime, TMP: runtime, TMPDIR: runtime };
-  const target = path.join(root, 'target/t31');
-  const win = process.platform === 'win32';
-  const neutral = win ? 'D:/cache/cargo/bin' : root;
-  const cargo = win ? path.join(neutral, 'bin/cargo.exe') : 'cargo';
-  const rustc = win ? 'D:/cache/cargo/toolchains/1.96.0-x86_64-pc-windows-msvc/bin/rustc.exe' : 'rustc';
-  Object.assign(env, { RUSTUP_TOOLCHAIN: '1.96.0', RUSTC: rustc, CARGO_TARGET_DIR: target });
-  if (win) Object.assign(env, { CARGO_HOME: neutral, RUSTUP_HOME: 'D:/cache/cargo' });
-  env.WEBLABEL_API_BINARY = path.join(target, 'debug', win ? 'weblabel-api.exe' : 'weblabel-api');
-  const pnpm = win ? path.join(process.env.APPDATA ?? '', 'npm/node_modules/pnpm/bin/pnpm.cjs') : null;
-  let service;
-  let serviceClosed;
-  let serviceCommand;
-  let status = 'blocked';
-  let blocker = null;
-  let source;
-  async function execute(name, argv, cwd = root) {
-    const log = path.join(run, `${name}.log`);
+  await mkdir(runtime, { recursive: true });
+  const configRoot = path.join(root, 'reports/T31');
+  const commands = [], blockers = [], evidence_refs = [];
+  let status = 'blocked', before = null, after = null, environment = null, browser = { tests: null, parse_status: 'not_started' }, service = null, serviceDone = null, serviceRecord = null;
+  let interrupted = false;
+  const onSignal = () => { interrupted = true; };
+  process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal);
+  let env;
+  async function reference(file) {
+    const bytes = await readFile(file);
+    const ref = { path: relative(file), sha256: sha(bytes), bytes: bytes.length };
+    evidence_refs.push(ref); return ref;
+  }
+  async function execute(name, input, cwd = root, cleanup = false) {
+    if (interrupted && !cleanup) throw new Prerequisite('Cancelled before ' + name);
+    const argv = resolveArgv(input);
+    argv[0] = executable(argv[0], env);
+    const log = path.join(run, name + '.log');
     await writeFile(log, JSON.stringify({ argv, cwd }) + '\n');
-    const child = spawn(argv[0], argv.slice(1), { cwd, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let writes = Promise.resolve();
-    for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { process.stdout.write(chunk); writes = writes.then(() => appendFile(log, chunk)); });
-    const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', code => resolve(code ?? 1)); });
-    await writes;
-    await appendFile(log, `\nEXIT_CODE=${code}\n`);
-    commands.push({ argv, cwd, exit_code: code, tests: null, log_path: path.relative(root, log).replaceAll('\\', '/') });
-    if (code !== 0) throw new Error(`${name} exited ${code}; see ${log}`);
+    const tee = chunk => { writes = writes.then(() => appendFile(log, chunk)); };
+    const record = { argv, cwd, exit_code: null, signal: null, signal_observation: 'not_spawned_or_close_unobserved', runner_exit_code: null, log_path: relative(log), tests: null, parse_status: 'non_test' };
+    commands.push(record);
+    try { record.runner_exit_code = await runArgv(argv, cwd, { env, onStdout: tee, onStderr: tee, onClose: (exitCode, signal) => { record.exit_code = exitCode; record.signal = signal; record.signal_observation = 'native_close'; } }); }
+    finally { await writes; await reference(log); }
+    if (record.runner_exit_code !== 0) {
+      const output = await readFile(log,'utf8');
+      if (['cargo-version','bindgen-version','release-wasm','release-bindgen','api','host'].includes(name) && /no matching package named|attempting to make an HTTP request|failed to download|target may not be installed|toolchain[^\n]*not installed|Cannot find (?:module|package)/i.test(output)) throw new Prerequisite(name + ' missing installed/offline prerequisite; see ' + relative(log));
+      throw new Error(name + ' exited ' + record.runner_exit_code + ' (native exit=' + record.exit_code + ', signal=' + record.signal + ')');
+    }
+    return record;
   }
   try {
-    const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-    const files = execFileSync('git', ['ls-files', 'apps/web/src', 'crates', 'Cargo.toml', 'Cargo.lock', 'scripts/verify-gpu.mjs', 'tests/perf/t31_hardware.spec.ts'], { cwd: root, encoding: 'utf8' }).trim().split(/\r?\n/);
-    const sourceFiles = [...new Set([...files.filter(Boolean), 'scripts/verify-gpu.mjs', 'tests/perf/t31_hardware.spec.ts', 'reports/T31/native-controls.ts', 'reports/T31/playwright.config.ts', 'reports/T31/vite.config.ts'])];
-    source = { commit, files: Object.fromEntries(sourceFiles.map(file => [file, createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex')])) };
-    await writeFile(path.join(run, 'source.json'), JSON.stringify(source, null, 2));
-    let driver = 'unknown';
-    if (win) {
-      try { driver = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,AdapterCompatibility | ConvertTo-Json -Compress'], { encoding: 'utf8', timeout: 20_000 })); } catch { /* Unreadable hardware fields remain unknown. */ }
+    env = safeEnvironment(runtime, projectOutputPath(process.env.CARGO_TARGET_DIR ?? path.join(root,'target/build-cache/defect-repair/gpu',path.basename(run))));
+    before = captureEvidenceIdentity({ env });
+    await writeFile(path.join(run, 'source-before.json'), JSON.stringify(before, null, 2));
+    const supplied = process.env.CARGO_TARGET_DIR;
+    const target = projectOutputPath(supplied ?? path.join(root, 'target/build-cache/defect-repair/gpu', path.basename(run)));
+    const buildTarget = path.join(target, 't31-' + path.basename(run));
+    env = safeEnvironment(runtime, buildTarget);
+    const cargoCwd = process.env.WEBLABEL_CARGO_CWD ? fs.realpathSync(process.env.WEBLABEL_CARGO_CWD) : root;
+    const cargo = executable('cargo', env), bindgen = executable('wasm-bindgen', env);
+    resolveArgv(['pnpm','exec','playwright','--version']);
+    const require = createRequire(path.join(root, 'apps/web/package.json'));
+    for (const dependency of ['@playwright/test','vite','sharp']) { try { require.resolve(dependency); } catch { throw new Prerequisite('Installed dependency missing: ' + dependency); } }
+    environment = { os: { platform: os.platform(), release: os.release(), version: os.version(), arch: os.arch() }, cpu: os.cpus()[0]?.model ?? 'unknown', driver: 'unknown', browser: 'unknown', gpu: 'unknown', dpr: 'unknown', seed: 17, target_dimensions: [2048,2048], wasm_profile: 'release', credential_environment: 'not_forwarded', account_state: 'not_inspected' };
+    if (process.platform === 'win32') {
+      await execute('driver', ['powershell.exe','-NoProfile','-Command','Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,AdapterCompatibility | ConvertTo-Json -Compress']);
+      const raw = await readFile(path.join(run, 'driver.log'), 'utf8');
+      try { environment.driver = JSON.parse(raw.slice(raw.indexOf('\n') + 1)); } catch (error) { environment.driver_error = error.message; }
     }
-    const environment = { os: { platform: os.platform(), release: os.release(), version: os.version(), arch: os.arch() }, cpu: os.cpus()[0]?.model ?? 'unknown', driver, source_commit: commit, rust: '1.96.0', wgpu: '30.0.1', wasm_profile: 'release', browser: 'unknown', gpu: 'unknown', dpr: 'unknown', target_dimensions: [2048, 2048], seed: 17 };
     await writeFile(path.join(run, 'environment.json'), JSON.stringify(environment, null, 2));
-    // Build from the checked-out source, never consume the historical debug bridge.
-    await execute('release-wasm', [cargo, 'build', '--locked', '--release', '--manifest-path', path.join(root, 'Cargo.toml'), '--target-dir', target, '-p', 'wasm-bridge', '--target', 'wasm32-unknown-unknown'], neutral);
-    const wasm = path.join(target, 'wasm32-unknown-unknown/release/wasm_bridge.wasm');
-    const output = path.join(root, 'crates/wasm-bridge/target/weblabel-web-public/wasm');
-    await execute('release-bindgen', [win ? path.join(neutral, 'bin/wasm-bindgen.exe') : 'wasm-bindgen', wasm, '--target', 'web', '--out-dir', output, '--out-name', 'wasm_bridge'], neutral);
-    const outputWasm = path.join(output, 'wasm_bridge_bg.wasm');
-    environment.wasm = { path: path.relative(root, outputWasm), sha256: createHash('sha256').update(await readFile(outputWasm)).digest('hex'), bytes: (await stat(outputWasm)).size };
-    await writeFile(path.join(run, 'environment.json'), JSON.stringify(environment, null, 2));
-    await execute('api', [cargo, 'build', '--locked', '--manifest-path', path.join(root, 'Cargo.toml'), '--target-dir', target, '-p', 'weblabel-api', '--bin', 'weblabel-api'], neutral);
+    await execute('cargo-version', [cargo,'--version'], cargoCwd);
+    await execute('bindgen-version', [bindgen,'--version'], cargoCwd);
+    await execute('release-wasm', [cargo,'build','--locked','--offline','--release','--manifest-path',path.join(root,'Cargo.toml'),'--target-dir',buildTarget,'-p','wasm-bridge','--target','wasm32-unknown-unknown'], cargoCwd);
+    const wasmOutput = path.join(runtime, 'wasm');
+    await execute('release-bindgen', [bindgen,path.join(buildTarget,'wasm32-unknown-unknown/release/wasm_bridge.wasm'),'--target','web','--out-dir',wasmOutput,'--out-name','wasm_bridge'], cargoCwd);
+    const wasmFile = path.join(wasmOutput, 'wasm_bridge_bg.wasm');
+    environment.wasm = { ...(await reference(wasmFile)), bytes: (await stat(wasmFile)).size };
+    env.WEBLABEL_WASM_BRIDGE_DIR = wasmOutput;
+    await writeFile(path.join(run, 'environment.json'), JSON.stringify(environment,null,2));
+    await execute('api', [cargo,'build','--locked','--offline','--manifest-path',path.join(root,'Cargo.toml'),'--target-dir',buildTarget,'-p','weblabel-api','--bin','weblabel-api'], cargoCwd);
+    env.WEBLABEL_API_BINARY = path.join(buildTarget,'debug',process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
+    environment.api = await reference(env.WEBLABEL_API_BINARY);
+    const host = path.join(runtime,'agent-host');
+    await execute('host', [process.execPath,path.join(root,'scripts/build-agent-host.mjs'),'--out-dir',host]);
+    env.WEBLABEL_T30_HOST_SCRIPT = path.join(host,'runtime.mjs');
+    environment.host = await reference(env.WEBLABEL_T30_HOST_SCRIPT);
+    await writeFile(path.join(run,'environment.json'),JSON.stringify(environment,null,2));
     const reserve = createServer();
-    await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
+    await new Promise((resolve,reject) => { reserve.once('error',reject); reserve.listen(0,'127.0.0.1',resolve); });
     const port = reserve.address().port;
     await new Promise(resolve => reserve.close(resolve));
-    env.WEBLABEL_T31_ORIGIN = `http://127.0.0.1:${port}`;
-    const viteArgs = ['--filter', '@weblabel/web', 'exec', 'vite', '--config', path.join(report, 'vite.config.ts'), '--host', '127.0.0.1', '--port', String(port), '--strictPort', '--mode', 'test'];
-    const argv = win ? [process.execPath, pnpm, ...viteArgs] : ['pnpm', ...viteArgs];
-    const serviceLog = fs.openSync(path.join(run, 'vite.log'), 'w');
-    service = spawn(argv[0], argv.slice(1), { cwd: root, env, shell: false, windowsHide: true, stdio: ['ignore', serviceLog, serviceLog] });
-    serviceCommand = { argv, cwd: root, exit_code: null, tests: null, service: true, log_path: path.relative(root, path.join(run, 'vite.log')).replaceAll('\\', '/') };
-    commands.push(serviceCommand);
-    serviceClosed = new Promise(resolve => service.once('close', code => resolve(code)));
-    fs.closeSync(serviceLog);
-    let serviceError;
-    service.once('error', error => { serviceError = error; });
-    const deadline = Date.now() + 30_000;
+    env.WEBLABEL_T31_ORIGIN = 'http://127.0.0.1:' + port;
+    env.WEBLABEL_T31_RUN_DIR = run;
+    const viteConfig = path.join(runtime,'vite.config.mjs');
+    await writeFile(viteConfig, 'import config from ' + JSON.stringify(path.join(configRoot,'vite.config.ts').replaceAll('\\','/')) + ';\nexport default {...config, cacheDir:' + JSON.stringify(path.join(runtime,'vite-cache')) + '};\n');
+    const argv = [process.execPath,path.join(root,'scripts/owned-vite-service.mjs'),require.resolve('vite'),viteConfig,path.join(root,'apps/web'),String(port)];
+    const log = path.join(run,'vite.log');
+    await writeFile(log, JSON.stringify({argv,cwd:root}) + '\n');
+    let writes = Promise.resolve();
+    serviceRecord = { argv,cwd:root,exit_code:null,signal:null,signal_observation:'close_unobserved',log_path:relative(log),tests:null,parse_status:'non_test',service:true,port,cleanup:null };
+    commands.push(serviceRecord);
+    service = spawn(argv[0],argv.slice(1),{cwd:root,env,shell:false,windowsHide:true,detached:process.platform !== 'win32',stdio:['pipe','pipe','pipe']});
+    service.stdin.on('error',error => { serviceRecord.stdin_error=error.message; });
+    let spawnError = null;
+    service.once('error',error => { spawnError = error; });
+    for (const stream of [service.stdout,service.stderr]) stream.on('data',chunk => { process.stdout.write(chunk); writes = writes.then(() => appendFile(log,chunk)); });
+    serviceDone = new Promise(resolve => service.once('close',(code,signal) => { serviceRecord.exit_code=code; serviceRecord.signal=signal; serviceRecord.signal_observation='native_close'; resolve(); })).then(async () => { await writes; await reference(log); });
+    const deadline = Date.now()+30000;
     while (true) {
-      if (serviceError) throw serviceError;
-      if (service.exitCode !== null) throw new Error(`Vite exited ${service.exitCode}`);
-      try { if ((await fetch(env.WEBLABEL_T31_ORIGIN)).ok) break; } catch { /* Bounded readiness, not a test retry. */ }
-      if (Date.now() >= deadline) throw new Error('Vite readiness timed out');
-      await new Promise(resolve => setTimeout(resolve, 100));
+      if (interrupted) throw new Prerequisite('Cancelled during readiness');
+      if (spawnError) throw spawnError;
+      if (service.exitCode !== null) throw new Error('Vite exited before readiness: '+service.exitCode);
+      try { if ((await fetch(env.WEBLABEL_T31_ORIGIN,{signal:AbortSignal.timeout(1000)})).ok) break; } catch {}
+      if (Date.now()>deadline) throw new Error('Vite readiness timed out');
+      await pause(100);
     }
-    status = 'failed';
-    const testArgs = ['exec', 'playwright', 'test', '--config=reports/T31/playwright.config.ts', '--project=target-hardware'];
-    await execute('hardware', win ? [process.execPath, pnpm, ...testArgs] : ['pnpm', ...testArgs]);
-    status = 'passed';
+    status='failed';
+    await execute('hardware',['pnpm','exec','playwright','test','--config='+path.join(configRoot,'playwright.config.ts'),'--project=target-hardware']);
+    status='passed';
   } catch (error) {
-    blocker = error.message;
-    console.error(blocker);
+    if (!(error instanceof Prerequisite) && error.code !== 'ENOENT') status='failed';
+    blockers.push(error.message);
   } finally {
-    if (service?.pid) {
-      if (win) { try { execFileSync('taskkill.exe', ['/PID', String(service.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* Already exited. */ } }
-      else if (service.exitCode === null) service.kill('SIGTERM');
-      serviceCommand.exit_code = await serviceClosed;
+    if (serviceDone) {
+      const unexpectedExit = service.exitCode !== null || service.signalCode !== null;
+      if (unexpectedExit) { status='failed'; blockers.push('Owned Vite exited before cleanup'); }
+      serviceRecord.cleanup = { requested: !unexpectedExit, unexpected_exit_before_cleanup: unexpectedExit, backstop: null };
+      if (!unexpectedExit) {
+        serviceRecord.cleanup.method='owned_stdin_eof';
+        service.stdin.end();
+        const settled = await settleWithin(serviceDone,5000);
+        if (!settled) {
+          status='failed'; blockers.push('Owned Vite failed bounded cleanup; forced backstop required');
+          serviceRecord.cleanup.backstop='forced_owned_tree';
+          if (process.platform === 'win32') { try { await execute('vite-backstop',['taskkill.exe','/PID',String(service.pid),'/T','/F'],root,true); } catch(error) { blockers.push(error.message); } }
+          else { try { process.kill(-service.pid,'SIGKILL'); } catch(error) { blockers.push(error.message); } }
+        }
+      }
+      const closed = await settleWithin(serviceDone,5000);
+      serviceRecord.cleanup.close_observed=closed;
+      if (!closed) { status='failed'; blockers.push('Owned Vite native close unobserved after forced backstop'); }
+      else if (serviceRecord.exit_code !== 0 || serviceRecord.signal !== null || serviceRecord.stdin_error) { status='failed'; blockers.push('Owned Vite cleanup did not close normally: exit='+serviceRecord.exit_code+', signal='+serviceRecord.signal+(serviceRecord.stdin_error ? ', stdin='+serviceRecord.stdin_error : '')); }
+      try {
+        serviceRecord.cleanup.port_closed=await portClosed(serviceRecord.port);
+        if (!serviceRecord.cleanup.port_closed) { status='failed'; blockers.push('Owned Vite listener remained open after cleanup'); }
+      } catch (error) { status='failed'; blockers.push(error.message); }
     }
-    let browserResults;
-    try { browserResults = JSON.parse(await readFile(path.join(run, 'browser-results.json'), 'utf8')); } catch { /* Build/launch failure has zero exercised tests. */ }
-    const tests = browserResults ? { passed: browserResults.stats.expected, failed: browserResults.stats.unexpected, skipped: browserResults.stats.skipped, flaky: browserResults.stats.flaky } : { passed: 0, failed: 0, skipped: 0, flaky: 0 };
-    if (status === 'passed' && (tests.passed !== 3 || tests.failed || tests.skipped || tests.flaky)) { status = 'failed'; blocker = 'Require exactly three hardware tests without skips/retries'; }
-    const hardwareCommand = commands.find(command => command.log_path.endsWith('/hardware.log'));
-    if (hardwareCommand) hardwareCommand.tests = tests;
-    const samples = {};
-    for (const count of [2000, 10000]) { try { samples[count] = JSON.parse(await readFile(path.join(run, `samples-${count}.json`), 'utf8')); } catch { /* Never fabricate missing samples. */ } }
-    await rm(runtime, { recursive: true, force: true });
-    const baseline = JSON.parse(await readFile(path.join(root, 'reports/T28/main-final-metrics.json'), 'utf8'));
-    await writeFile(path.join(run, 'baseline-debug-T28.json'), JSON.stringify(baseline, null, 2));
-    const result = { task_id: 'T31', status, base_commit: source?.commit ?? 'unknown', run_dir: path.relative(root, run).replaceAll('\\', '/'), commands, tests, blocker, thresholds: { boxes: 2000, cpu_p95_ms: 8, pointer_double_raf_proxy_p95_ms: 33 }, baseline_debug: { path: 'reports/T28/main-final-metrics.json', committed_edit_p95_ms: { 2000: 28.3, 10000: 110.8 }, certified_hardware_gate: false }, known_limits: ['double-rAF scheduling proxy, not physical photon latency', 'CPU = conservative max of CDP main-thread TaskDuration and synchronous+rAF; includes measurement instrumentation', 'Logical texture bytes are application estimates, not physical VRAM', 'GPU timestamps not measured: renderer does not expose timestamp query results'] };
-    await writeFile(path.join(run, 'result.json'), JSON.stringify(result, null, 2));
-    await writeFile(path.join(report, 'result.json'), JSON.stringify(result, null, 2));
-    await writeFile(path.join(report, 'samples.json'), JSON.stringify({ run: result.run_dir, samples }, null, 2));
-    await writeFile(path.join(report, 'environment.json'), await readFile(path.join(run, 'environment.json')).catch(() => Buffer.from('{"unavailable":true}')));
-    await appendFile(path.join(report, 'tests.log'), JSON.stringify(result) + '\n');
-    console.log(JSON.stringify({ status, tests, run: result.run_dir, blocker }, null, 2));
-    process.exitCode = status === 'passed' ? 0 : status === 'blocked' ? 2 : 1;
+    try {
+      browser = parseBrowserReport(await optionalText(path.join(run,'browser-results.json')));
+      const command = commands.find(command => command.log_path.endsWith('/hardware.log'));
+      if (command) { command.tests=browser.tests; command.parse_status=browser.parse_status; }
+      if (browser.status==='failed') { status='failed'; blockers.push(browser.blocker); }
+      else if (browser.status==='blocked' && status!=='failed') { status='blocked'; blockers.push(browser.blocker); }
+      if (browser.parse_status==='parsed') await reference(path.join(run,'browser-results.json'));
+      for (const count of [2000,10000]) {
+        const file=path.join(run,'samples-'+count+'.json'), text=await optionalText(file);
+        if (text===null) { if(status!=='failed') status='blocked'; blockers.push('Missing current raw samples: '+count); continue; }
+        await reference(file);
+        const sample=JSON.parse(text);
+        if (browser.status !== 'passed') continue; // Partial failure samples stay preserved, never promoted.
+        if(sample.count!==count || sample.seed!==17 || sample.warmup_per_scenario!==40 || sample.sample_count_per_scenario!==1000 || JSON.stringify(sample.canonical_dimensions)!=='[2048,2048]') throw new Error('Invalid fixed workload metadata: '+count);
+        if(!Array.isArray(sample.adapters) || !sample.adapters.length || hardwareKind(sample.adapters.at(-1))!=='hardware') throw new Prerequisite('No actual non-software adapter proof: '+count);
+        if(JSON.stringify(sample.loaded_wasm_sha256)!==JSON.stringify([environment?.wasm?.sha256])) throw new Error('Actual loaded WASM hash mismatch: '+count);
+        const performance=gate(count,sample.scenarios);
+        for(const rows of Object.values(sample.scenarios)) if(rows.length!==1000 || rows.some(row=>row.native_submissions!==1)) throw new Error('Invalid actual native submissions: '+count);
+        if(performance.failures.length) throw new Error(performance.failures.join('; '));
+      }
+      const environmentText=await optionalText(path.join(run,'environment.json'));
+      if(environmentText!==null) { environment=JSON.parse(environmentText); await reference(path.join(run,'environment.json')); }
+      if(status==='passed' && (!environment?.browser?.version || environment.driver==='unknown' || !Number.isFinite(environment.dpr))) throw new Prerequisite('Actual browser/driver/DPR provenance unavailable');
+      after=captureEvidenceIdentity({ env: env ?? safeEnvironment(runtime, runtime) });
+      if(before && ['source_snapshot_sha256','manifest_sha256','runner_sha256'].some(key=>before[key]!==after[key])) throw new Prerequisite('Source changed during GPU collection; current evidence not certifiable');
+    } catch(error) { if(error instanceof Prerequisite || error.code === 'ENOENT') { if(status!=='failed') status='blocked'; } else status='failed'; blockers.push(error.message); }
+    if (!after) { try { after=captureEvidenceIdentity({ env: env ?? safeEnvironment(runtime, runtime) }); } catch(error) { if(status!=='failed') status='blocked'; blockers.push('Final identity unavailable: '+error.message); } }
+    if(before && after && ['source_snapshot_sha256','manifest_sha256','runner_sha256'].some(key=>before[key]!==after[key])) { if(status!=='failed') status='blocked'; if(!blockers.includes('Source changed during GPU collection; current evidence not certifiable')) blockers.push('Source changed during GPU collection; current evidence not certifiable'); }
+    if(interrupted) { if(status!=='failed') status='blocked'; blockers.push('Cancelled; hardware gate not certified'); }
+    process.removeListener('SIGINT',onSignal); process.removeListener('SIGTERM',onSignal);
+    const result={schema_version:1,task_id:'T31',gate:'gpu',status,base_commit:before?.source_commit??null,source_hashes:before?.source_hashes??null,manifest_sha256:before?.manifest_sha256??null,identity:before,identity_after:after,time:{finished_at:new Date().toISOString()},run_dir:relative(run),environment,commands,tests:browser.tests,parse_status:browser.parse_status,evidence_refs,blockers,skipped_scope:['security'],thresholds:{boxes:2000,cpu_p95_ms:8,pointer_double_raf_proxy_p95_ms:33},workload:{counts:[2000,10000],seed:17,warmup_per_scenario:40,sample_count_per_scenario:1000,scenarios:['pointer_drag','pan','zoom','committed_edit']},baseline_debug:{status:'not_verified',available:false,certified_hardware_gate:false,reason:'No current-source debug baseline collected; historical T28 reports are not current proof'},known_limits:['double-rAF scheduling proxy, not physical photon latency','CPU includes measurement instrumentation','Logical texture bytes are not physical VRAM','GPU timestamps not measured']};
+    await writeFile(path.join(run,'result.json'),JSON.stringify(result,null,2),{flag:'wx'});
+    await writeFile(path.join(report,'result.json'),JSON.stringify(result,null,2),{flag:'wx'});
+    console.log(JSON.stringify({status,tests:result.tests,run:result.run_dir,blockers},null,2));
   }
+  return status==='passed'?0:status==='blocked'?2:1;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) process.exitCode=await main();

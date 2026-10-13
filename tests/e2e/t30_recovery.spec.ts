@@ -6,12 +6,13 @@ import { expect, test as fixtureTest } from './fixtures';
 import type { SeededAsset } from './fixtures';
 import type { Page, TestInfo } from '@playwright/test';
 import { database_path_for_test, start_test_app } from '../support/app';
-import { actualResponse, cpuSnapshot, head, id, installBrowserFaults, loginClient, observeEditor, persistentCopy, privateOrigin, proxyPage, seededRandom, viewport } from '../support/faults';
+import { actualResponse, cpuSnapshot, head, id, installBrowserFaults, loginClient, observeEditor, persistentCopy, privateOrigin, proxyPage, seededRandom, t30RuntimeRoot, viewport } from '../support/faults';
 import type { AnnotationDocument } from '../../packages/contracts/generated/AnnotationDocument';
 import type { AnnotationObject } from '../../packages/contracts/generated/AnnotationObject';
 import type { SaveResponse } from '../../packages/contracts/generated/SaveResponse';
+import type { SaveRequest } from '../../packages/contracts/generated/SaveRequest';
 import type { SuggestionSet } from '../../packages/contracts/generated/SuggestionSet';
-import type { NativeDraftExport } from '../../apps/web/src/lib/persistence/types';
+import type { DraftBranchEnvelope, DraftRecord, NativeDraftExport } from '../../apps/web/src/lib/persistence/types';
 import type { Viewport } from '../../apps/web/src/lib/editor/types';
 
 interface CanvasObservation {
@@ -41,7 +42,7 @@ const test=fixtureTest.extend({
     await page.getByTestId('login-username').fill(seededProject.login.username);
     await page.getByTestId('login-password').fill(seededProject.login.password);
     await page.getByTestId('login-submit').click();await expect(page.getByTestId('login-submit')).toHaveCount(0);
-    await page.goto(`${privateOrigin}/?project_id=${seededProject.project_id}`);await expect(page.getByTestId('asset-grid')).toBeVisible();
+    await page.goto(`${privateOrigin}/?project_id=${seededProject.project_id}&ontology_version_id=${seededProject.ontology_version_id}`);await expect(page.getByTestId('asset-grid')).toBeVisible();
     await observeEditor(page);await use(page);
   },
 });
@@ -113,10 +114,16 @@ test('F08/F09 generation8 late ACK cannot synchronize generation9; failed networ
   expect((await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).document).toEqual(ack8.revision.document);
   const rescue=await draft(page,info);expect(rescue.generation).toBe(9);expect(rescue.document).toEqual(local9);
   await evidence(page,info,'late-ack-network',{ack8,rescue,requests:count});
+  const branchId = await page.getByTestId('save-certificate').locator('dt').filter({ hasText: /^local_commit.draft_id$/ }).evaluate(element => { const id = element.nextElementSibling?.textContent; if (!id) throw new Error('Expected genuine source branch certificate'); return id; });
   await page.reload();await observeEditor(page);await openAsset(page,asset);
-  await expect(page.getByTestId('recovery-banner')).toBeVisible();expect(await cpuSnapshot(page)).toEqual(local9);
+  const sourceRadio = page.getByTestId('draft-branches').getByRole('radio', { name: new RegExp(branchId) });
+  await sourceRadio.check();
+  await page.getByTestId('draft-branches').locator(':scope > div').filter({ has: page.getByRole('radio', { name: new RegExp(branchId) }) }).getByRole('button', { name: '恢复选中分支', exact: true }).click();
+  await expect(page.getByTestId('recovery-banner')).toBeVisible();
+  await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state','ready');
+  await expect.poll(() => page.evaluate(() => window.__t30Faults.hosts.at(-1)?.getSnapshot())).toEqual(local9);
   await expect(page.getByTestId('save-status')).not.toHaveAttribute('data-phase','synced');
-  fail=false;await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('attribute-helmet_state').selectOption('unknown');await synced(page);
+  fail=false;await page.getByTestId('save-retry').click();await synced(page);await page.getByTestId("object-item-"+objectId).click();await page.getByTestId('attribute-helmet_state').selectOption('unknown');await synced(page);
   const recovered=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id);expect(recovered.document.objects[0].attributes.helmet_state).toBe('unknown');
   await evidence(page,info,'late-ack-recovered',{rescue,recovered});
 });
@@ -136,25 +143,26 @@ test('F09 actual IndexedDB quota rejection remains visible and exact unsaved CPU
 });
 
 test('F07 late runA at assetB cannot overwrite either asset or newer before_hash attributes',async({adminPage:page,seededProject,app},info)=>{
-  const db=new DatabaseSync(database_path_for_test(app));try{db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES('profile_mock_local','mock','weblabel-mock-source-v1','none',?,'ready','mock_only','builtin-mock-1',NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(JSON.stringify({image_input:true,tools:false,structured_output:true,bbox_output:true,attributes:true}));}finally{db.close();}
+  const db=new DatabaseSync(database_path_for_test(app));try{db.exec('PRAGMA busy_timeout=5000');db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES('profile_mock_local','mock','weblabel-mock-source-v1','none',?,'ready','mock_only','builtin-mock-1',NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(JSON.stringify({image_input:true,tools:false,structured_output:true,bbox_output:true,attributes:true}));}finally{db.close();}
   await page.reload();await observeEditor(page);
   const [asset,other]=seededProject.assets.filter(item=>item.width===320).slice(0,2);await openAsset(page,asset);await createBox(page);await synced(page);
   const original=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id),objectId=original.document.objects[0].object_id;
   const otherBefore=await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id);
-  await page.getByTestId(`object-item-${objectId}`).click();await page.getByLabel('Run intent').selectOption('audit_attributes');await page.getByTestId('ai-prompt').fill('Engineering Mock attribute boundary; no live inference');
+  await page.getByRole('button', { name: 'AI 审校', exact: true }).click();
+  await page.getByTestId(`object-item-${objectId}`).click();await page.locator('#ai-intent').selectOption('audit_attributes');await page.getByTestId('ai-prompt').fill('Engineering Mock attribute boundary; no live inference');
   const release=Promise.withResolvers<void>(),held=Promise.withResolvers<{items:SuggestionSet[];run:{run_id:string}}>();
   await page.route('**/api/ai/runs/*/suggestions*',async route=>{const response=await actualResponse(route,seededProject.apiBaseUrl);const body=await response.json();if(body.items.length){held.resolve(body);await release.promise;}await route.fulfill({response});});
   const previewResponse=page.waitForResponse(response=>response.url().includes('/api/ai/previews')&&response.request().method()==='POST');
   await page.getByTestId('ai-run').click();const preview=await previewResponse;
   await evidence(page,info,'audit-preview-boundary',{cpu:await cpuSnapshot(page),saved:original,request:preview.request().postDataJSON(),status:preview.status(),preview:await preview.json()});
   expect(preview.status()).toBe(201);
-  await page.getByTestId('ai-consent').getByRole('checkbox').check();await page.getByRole('button',{name:'Authorize and run now'}).click();
+  await page.getByTestId('ai-consent').getByRole('checkbox').check();await page.getByTestId('ai-authorize').click();
   const result=await held.promise;expect(result.items[0].context.asset_revision_id).toBe(asset.asset_revision_id);expect(result.items[0].changes[0].kind).toBe('set_attributes');
   await openAsset(page,other);release.resolve();
   await expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(0);
   for(const button of await page.getByTestId('accept-selected').all())await expect(button).toBeDisabled();
   expect(await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id)).toEqual(otherBefore);
-  await openAsset(page,asset);await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('attribute-helmet_state').selectOption('wearing');await synced(page);
+  await openAsset(page,asset);await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('toggle-attributes').click();await expect(page.getByTestId('toggle-attributes')).toHaveAttribute('aria-expanded','true');await page.getByTestId('attribute-helmet_state').selectOption('wearing');await synced(page);
   const newer=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id);
   for(const button of await page.getByTestId('accept-selected').all())await expect(button).toBeDisabled();
   const stale=await seededProject.api.request('PUT',`/api/assets/${asset.asset_revision_id}/annotation`,{operation_id:crypto.randomUUID(),base_revision_id:newer.annotation_revision_id,document:newer.document,lease:null,suggestion_decisions:[{suggestion_set_id:result.items[0].suggestion_set_id,change_ids:result.items[0].changes.map(change=>change.change_id),decision:'accept'}]});
@@ -171,12 +179,14 @@ test('F11 two actual pages sharing head and lease have exactly one complete save
   const session=await page.evaluate(async()=>await(await fetch('/api/session')).json());
   const task=await seededProject.api.request<{task_id:string}>('POST',`/api/projects/${seededProject.project_id}/tasks`,{asset_revision_id:asset.asset_revision_id,ontology_version_id:seededProject.ontology_version_id,assignee_id:session.user_id});expect(task.status).toBe(200);
   await page.reload();await observeEditor(page);await openAsset(page,asset);
-  await page.getByTestId(`review-task-${task.json.task_id}`).getByRole('button',{name:'领取 60 秒任务'}).click();
+  await page.getByTestId('review-options').locator(':scope > summary').click();
+  await page.getByTestId(`review-task-${task.json.task_id}`).getByRole('button', { name: '领取任务' }).click();
   const secondContext=await browser.newContext({viewport:{width:1440,height:1000}}),second=await secondContext.newPage();try{
     await installBrowserFaults(second);await proxyPage(second,seededProject.apiBaseUrl);await second.goto(privateOrigin);
     await second.getByTestId('login-username').fill(seededProject.login.username);await second.getByTestId('login-password').fill(seededProject.login.password);await second.getByTestId('login-submit').click();await expect(second.getByTestId('login-submit')).toHaveCount(0);
     await second.goto(`${privateOrigin}/?project_id=${seededProject.project_id}`);await observeEditor(second);await openAsset(second,asset);
-    await second.getByTestId(`review-task-${task.json.task_id}`).getByRole('button',{name:'领取 60 秒任务'}).click();
+    await second.getByTestId('review-options').locator(':scope > summary').click();
+    await second.getByTestId(`review-task-${task.json.task_id}`).getByRole('button', { name: '领取任务' }).click();
     const gate=Promise.withResolvers<void>();let ready=0;const bodies:unknown[]=[];
     for(const tab of [page,second])await tab.route(`**/api/assets/${asset.asset_revision_id}/annotation`,async route=>{if(route.request().method()!=='PUT'){await route.fallback();return;}bodies.push(route.request().postDataJSON());ready+=1;await gate.promise;await route.fallback();});
     await createBox(page,30,40,90,110);await createBox(second,120,60,180,140);await expect.poll(()=>ready).toBe(2);gate.resolve();
@@ -210,6 +220,163 @@ test('F14 actual hardware device loss keeps CPU hash and unsaved history, rebuil
   const rescue=await draft(page,info);expect(rescue.document).toEqual(await cpuSnapshot(page));await evidence(page,info,'device-rebuilt-history',{beforeHash,rescue,lost,navigations});
 });
 
+interface HeldReceiptEntry { envelope: DraftBranchEnvelope; physically_read: DraftBranchEnvelope | null; completed: boolean; aborted: boolean; released: boolean }
+declare global { interface Window { __heldAckReceipt: { held: boolean; entries: HeldReceiptEntry[]; restore(): void } } }
+
+// Keep the actual readwrite transaction alive with real IDB requests. No forged receipt,
+// delayed success callback, application queue patch, or mutation of the submitted record.
+async function holdActualDraftReceipts(page:Page,asset:string){
+  await page.evaluate(asset=>{
+    const original=IDBObjectStore.prototype.put;
+    const control={held:true,entries:[] as HeldReceiptEntry[],restore(){control.held=false;IDBObjectStore.prototype.put=original;}};
+    window.__heldAckReceipt=control;
+    IDBObjectStore.prototype.put=function(...args:Parameters<IDBObjectStore['put']>){
+      const request=Reflect.apply(original,this,args) as IDBRequest;
+      const envelope=args[0] as DraftBranchEnvelope;
+      if(this.name!=='draft_branches'||envelope.asset_revision_id!==asset)return request;
+      const entry:HeldReceiptEntry={envelope:structuredClone(envelope),physically_read:null,completed:false,aborted:false,released:false};
+      control.entries.push(entry);
+      this.transaction.addEventListener('complete',()=>{entry.completed=true;});
+      this.transaction.addEventListener('abort',()=>{entry.aborted=true;});
+      const store=this;
+      const pump=()=>{
+        const read=store.get([envelope.asset_revision_id,envelope.draft_id]);
+        read.addEventListener('success',()=>{
+          entry.physically_read=structuredClone(read.result);
+          if(control.held&&!entry.released)pump();
+        });
+      };
+      pump();return request;
+    };
+  },asset);
+}
+
+async function committedBranch(page:Page,asset:string,draftId:string):Promise<DraftBranchEnvelope>{
+  return page.evaluate(async({asset,draftId})=>{
+    const db=await new Promise<IDBDatabase>((resolve,reject)=>{const open=indexedDB.open('weblabel-drafts',2);open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
+    try{return await new Promise<DraftBranchEnvelope>((resolve,reject)=>{
+      const tx=db.transaction('draft_branches','readonly'),read=tx.objectStore('draft_branches').get([asset,draftId]);
+      tx.oncomplete=()=>{if(!read.result)reject(new Error('Actual committed branch missing'));else resolve(read.result);};
+      tx.onabort=tx.onerror=()=>reject(tx.error);
+    });}finally{db.close();}
+  },{asset,draftId});
+}
+
+test('R1 held prior HTTP ACK during real Native gesture preserves one commit through physical IndexedDB receipt barrier',async({adminPage:page,seededProject},info)=>{
+  test.setTimeout(120000);
+  const asset=seededProject.assets.find(item=>item.width===320)!;
+  await openAsset(page,asset);const empty=await cpuSnapshot(page);expect(empty.objects).toEqual([]);
+  const initialStart=await canonicalPointer(page,30,40),initialEnd=await canonicalPointer(page,90,110);
+  await createBox(page);await synced(page);
+  const original=await cpuSnapshot(page),objectId=original.objects[0].object_id;
+  const initialObject:AnnotationObject={object_id:objectId,label_id:'label_person',geometry:{type:'bbox_xyxy',x_min:initialStart[0],y_min:initialStart[1],x_max:initialEnd[0],y_max:initialEnd[1]},attributes:{helmet_state:'unknown'},origin:{type:'manual',prediction_id:null,model_run_id:null,import_batch_id:null}};
+  expect({...original,objects:[]}).toEqual(empty);expect(original.objects).toHaveLength(1);
+  expect({...original.objects[0],geometry:initialObject.geometry}).toEqual(initialObject);
+  for(const key of ['x_min','y_min','x_max','y_max'] as const)expect(Math.abs(original.objects[0].geometry[key]-initialObject.geometry[key])).toBeLessThanOrEqual(1e-6);
+  const released=Promise.withResolvers<void>(),held=Promise.withResolvers<SaveResponse>(),finalAck=Promise.withResolvers<SaveResponse>();
+  const requests:SaveRequest[]=[];
+  await page.route(`**/api/assets/${asset.asset_revision_id}/annotation`,async route=>{
+    if(route.request().method()!=='PUT'){await route.fallback();return;}
+    requests.push(route.request().postDataJSON() as SaveRequest);
+    const response=await actualResponse(route,seededProject.apiBaseUrl);expect(response.status()).toBe(200);
+    const ack=await response.json() as SaveResponse;
+    if(requests.length===1){held.resolve(ack);await released.promise;}else finalAck.resolve(ack);
+    await route.fulfill({response});
+  });
+  try{
+    await page.getByTestId(`object-item-${objectId}`).click();
+    await page.getByTestId('attribute-helmet_state').selectOption('wearing');
+    const prior=await held.promise;
+    const before:AnnotationDocument={...original,objects:original.objects.map(object=>({...object,attributes:{...object.attributes,helmet_state:'wearing'}}))};
+    expect(await cpuSnapshot(page)).toEqual(before);expect(prior.revision.document).toEqual(before);
+    expect((await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).document).toEqual(before);
+    const generation=await page.evaluate(()=>window.__t30Faults.hosts.at(-1)!.getGeneration());
+    if(generation===null)throw new Error('Native generation missing');
+    await holdActualDraftReceipts(page,asset.asset_revision_id);
+    const start=await canonicalPointer(page,160,40),end=await canonicalPointer(page,220,110);
+    await page.getByTestId('tool-box').click();
+    await page.mouse.move(...await point(page,160,40));await page.mouse.down();
+    await page.mouse.move(...await point(page,180,60),{steps:3});
+    expect(await cpuSnapshot(page)).toEqual(before);
+    expect(await page.evaluate(()=>window.__t30Faults.hosts.at(-1)!.getGeneration())).toBe(generation);
+    await page.screenshot({path:info.outputPath('native-preview-before-ack.png')});
+    released.resolve();
+    await expect.poll(()=>page.evaluate(()=>window.__heldAckReceipt.entries[0]?.physically_read!==null&&window.__heldAckReceipt.entries.length>0)).toBe(true);
+    const receipt=await page.evaluate(()=>window.__heldAckReceipt.entries[0]);
+    const receiptRecord=receipt.envelope.record as DraftRecord;
+    expect(receipt.physically_read).toEqual(receipt.envelope);
+    expect(receiptRecord.document).toEqual(before);expect(receiptRecord.base_revision_id).toBe(prior.revision.annotation_revision_id);
+    expect(receiptRecord.pending).toBeNull();expect(receipt.completed).toBe(false);expect(receipt.aborted).toBe(false);
+    await page.mouse.move(...await point(page,200,85),{steps:4});
+    await page.mouse.move(...await point(page,220,110),{steps:4});
+    expect(await cpuSnapshot(page)).toEqual(before);
+    await page.screenshot({path:info.outputPath('native-preview-during-idb-hold.png')});
+    await page.mouse.up();
+    const actual=await cpuSnapshot(page),added=actual.objects.find(object=>object.object_id!==objectId);
+    if(!added)throw new Error('R1 admitted Native gesture was cancelled across ACK receipt');
+    const expected:AnnotationDocument={...before,objects:[...before.objects,{object_id:added.object_id,label_id:'label_person',geometry:{type:'bbox_xyxy',x_min:start[0],y_min:start[1],x_max:end[0],y_max:end[1]},attributes:{helmet_state:'unknown'},origin:{type:'manual',prediction_id:null,model_run_id:null,import_batch_id:null}}]};
+    const assertDocument=(observed:AnnotationDocument)=>{
+      expect({...observed,objects:expected.objects}).toEqual(expected);
+      expect(observed.objects.map(object=>object.object_id)).toEqual(expected.objects.map(object=>object.object_id));
+      for(let index=0;index<expected.objects.length;index++){
+        const object=expected.objects[index],seen=observed.objects[index];expect({...seen,geometry:object.geometry}).toEqual(object);
+        for(const key of ['x_min','y_min','x_max','y_max'] as const)expect(Math.abs(seen.geometry[key]-object.geometry[key])).toBeLessThanOrEqual(1e-6);
+      }
+    };
+    assertDocument(actual);expect(await page.evaluate(()=>window.__t30Faults.hosts.at(-1)!.getGeneration())).toBe(generation+1);
+    // One undo removes the entire gesture; one redo restores it, both while the real receipt is held.
+    await page.getByTestId('undo').click();expect(await cpuSnapshot(page)).toEqual(before);
+    expect(await page.evaluate(()=>window.__t30Faults.hosts.at(-1)!.getGeneration())).toBe(generation+2);
+    await page.getByTestId('redo').click();assertDocument(await cpuSnapshot(page));
+    expect(await page.evaluate(()=>window.__t30Faults.hosts.at(-1)!.getGeneration())).toBe(generation+3);
+    await page.waitForTimeout(800); // More than the production debounce: transport must remain blocked.
+    expect(requests).toHaveLength(1);
+    const during=await page.evaluate(()=>window.__heldAckReceipt.entries);
+    expect(during.every(entry=>!entry.completed&&!entry.aborted)).toBe(true);
+    // Drain superseded physical receipts individually. Each completion must stay
+    // non-authoritative while a newer complete document is waiting in the lane.
+    let latest=receipt;
+    while((latest.envelope.record as DraftRecord).generation!==generation+3){
+      const index=await page.evaluate(()=>window.__heldAckReceipt.entries.length-1);
+      await page.evaluate(index=>{window.__heldAckReceipt.entries[index].released=true;},index);
+      await expect.poll(()=>page.evaluate(index=>window.__heldAckReceipt.entries.length>index+1&&window.__heldAckReceipt.entries[index+1].physically_read!==null,index)).toBe(true);
+      latest=await page.evaluate(index=>window.__heldAckReceipt.entries[index+1],index);
+      expect(requests).toHaveLength(1);expect(latest.completed).toBe(false);expect(latest.aborted).toBe(false);
+    }
+    const latestRecord=latest.envelope.record as DraftRecord;
+    expect(latest.physically_read).toEqual(latest.envelope);assertDocument(latestRecord.document);
+    expect(latestRecord.base_revision_id).toBe(prior.revision.annotation_revision_id);
+    expect(latestRecord.pending).toBeNull();expect(latestRecord.intent_journal).toEqual(receiptRecord.intent_journal);
+    await page.waitForTimeout(800);expect(requests).toHaveLength(1);
+    expect(await page.evaluate(()=>window.__heldAckReceipt.entries.at(-1)!.completed)).toBe(false);
+    await page.evaluate(()=>window.__heldAckReceipt.held=false);
+    const final=await finalAck.promise;await synced(page);
+    expect(requests).toHaveLength(2);assertDocument(requests[1].document);
+    expect(requests[1]).toEqual({operation_id:requests[1].operation_id,base_revision_id:prior.revision.annotation_revision_id,document:requests[1].document,lease:requests[0].lease,suggestion_decisions:[]});
+    expect(requests[1].operation_id).not.toBe(requests[0].operation_id);
+    assertDocument(final.revision.document);
+    const writes=await page.evaluate(()=>window.__heldAckReceipt.entries);
+    const prepared=writes.find(entry=>(entry.envelope.record as DraftRecord).pending?.operation_id===requests[1].operation_id);
+    expect(prepared).toBeDefined();expect((prepared!.envelope.record as DraftRecord).pending!.request).toEqual(requests[1]);expect(prepared!.completed).toBe(true);
+    const branch=await committedBranch(page,asset.asset_revision_id,receipt.envelope.draft_id),record=branch.record as DraftRecord;
+    assertDocument(record.document);expect(record.generation).toBe(generation+3);expect(record.synced_generation).toBe(generation+3);
+    expect(record.pending).toBeNull();expect(record.intent_journal).toEqual(receiptRecord.intent_journal);
+    expect(record.base_revision_id).toBe(final.revision.annotation_revision_id);
+    expect(branch.write_token).not.toBe(receipt.envelope.write_token);
+    expect(branch).toEqual(writes.at(-1)!.envelope);expect(writes.at(-1)!.completed).toBe(true);
+    const certificate=page.getByTestId('save-certificate');
+    for(const [key,value] of [['draft_id',branch.draft_id],['write_token',branch.write_token],['generation',String(generation+3)]]){
+      const observed=await certificate.locator('dt').filter({hasText:new RegExp('^local_commit\\.'+key+'$')}).evaluate(element=>element.nextElementSibling?.textContent);
+      expect(observed).toBe(value);
+    }
+    await evidence(page,info,'held-ack-native',{prior,expected,actual,requests,during,writes,branch});
+    await page.evaluate(()=>window.__heldAckReceipt.restore());
+    await page.reload();await observeEditor(page);await openAsset(page,asset);assertDocument(await cpuSnapshot(page));
+    expect((await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).document).toEqual(final.revision.document);
+  }finally{released.resolve();if(!page.isClosed())await page.evaluate(()=>window.__heldAckReceipt?.restore());}
+});
+
+
 test('fixed seed create/move/undo/save/reload matches independent document reference on actual WASM',async({adminPage:page,seededProject},info)=>{
   test.setTimeout(120000);
   const asset=seededProject.assets.find(item=>item.width===320)!;await openAsset(page,asset);
@@ -224,9 +391,15 @@ test('fixed seed create/move/undo/save/reload matches independent document refer
       await createBox(page,x,y,x+width,y+height);const actual=await cpuSnapshot(page);const added=actual.objects.find(object=>!model.objects.some(existing=>existing.object_id===object.object_id));if(!added)throw new Error('Committed create missing');
       const expected:AnnotationObject={object_id:added.object_id,label_id:'label_person',geometry:{type:'bbox_xyxy',x_min:xMin,y_min:yMin,x_max:xMax,y_max:yMax},attributes:{helmet_state:'unknown'},origin:{type:'manual',prediction_id:null,model_run_id:null,import_batch_id:null}};model={...model,objects:[...model.objects,expected]};
     }else if(action==='move'){
+      // Keep this independent geometry oracle separate from receipt-interleaving scenarios.
+      // The held-ACK gesture regression covers continuous editing across the durability barrier.
+      await synced(page);
       const object=model.objects.at(-1)!;history.push(structuredClone(model));const dx=3+Math.floor(random()*9),dy=2+Math.floor(random()*8);await page.getByTestId('tool-select').click();
       // The real object list is virtualized; End selects and scrolls its last row through its public keyboard interface.
       await page.getByTestId('object-list').focus();await page.keyboard.press('End');await page.getByTestId(`object-item-${object.object_id}`).click();
+      await page.getByRole('button', { name: '适配画布', exact: true }).click();
+      const view=await viewport(page);
+      expect(Math.min(object.geometry.x_max-object.geometry.x_min,object.geometry.y_max-object.geometry.y_min)*view.scale/2,'body center must lie outside the 6 CSS px resize grab band').toBeGreaterThan(6);
       const x=(object.geometry.x_min+object.geometry.x_max)/2,y=(object.geometry.y_min+object.geometry.y_max)/2;
       const start=await canonicalPointer(page,x,y),end=await canonicalPointer(page,x+dx,y+dy),deliveredDx=end[0]-start[0],deliveredDy=end[1]-start[1];
       await page.mouse.move(...await point(page,x,y));await page.mouse.down();await page.mouse.move(...await point(page,x+dx,y+dy),{steps:5});await page.mouse.up();
@@ -251,7 +424,7 @@ test('fixed seed create/move/undo/save/reload matches independent document refer
 });
 
 test('F09/F17 actual API crash never claims a dirty native edit saved; same database restart keeps prior head and manual work continues',async({adminPage:page,seededProject,app},info)=>{
-  const service=await persistentCopy(app,path.resolve(`reports/T30/runtime/browser-crash-${crypto.randomUUID()}`));
+  const service=await persistentCopy(app,path.join(t30RuntimeRoot,`browser-crash-${crypto.randomUUID()}`));
   try{
     await service.start();let client=(await loginClient(service.base,seededProject.login.username,seededProject.login.password)).api;
     await page.unroute(`${privateOrigin}/api/**`);await proxyPage(page,service.base);await page.reload();await observeEditor(page);
@@ -260,27 +433,39 @@ test('F09/F17 actual API crash never claims a dirty native edit saved; same data
     await service.crash();
     await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('attribute-helmet_state').selectOption('wearing');
     await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','save_failed');await expect(page.getByTestId('save-status')).toHaveAttribute('data-dirty','true');
-    await expect(page.getByTestId('save-status')).not.toContainText('已同步到服务器');const rescue=await draft(page,info);expect(rescue.document).toEqual(await cpuSnapshot(page));expect(rescue.document.objects[0].attributes).toEqual({helmet_state:'wearing'});
+    await expect(page.getByTestId('save-status')).not.toHaveAttribute('data-phase', 'synced');const rescue=await draft(page,info);expect(rescue.document).toEqual(await cpuSnapshot(page));expect(rescue.document.objects[0].attributes).toEqual({helmet_state:'wearing'});
     await evidence(page,info,'killed-api-unsynced',{original,rescue,api_port:new URL(service.base).port});
     await service.start();client=(await loginClient(service.base,seededProject.login.username,seededProject.login.password)).api;
     expect(await head(client,asset.asset_revision_id,seededProject.ontology_version_id)).toEqual(original);
     await page.unroute(`${privateOrigin}/api/**`);await proxyPage(page,service.base);
+    // An unknown original request is retained, not overwritten by a fresh autosave.
+    expect(rescue.pending_outcome).toBe('unknown');expect(rescue.pending).not.toBeNull();
+    await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','save_failed');
+    const replayResponse=page.waitForResponse(response=>response.url().endsWith(`/api/assets/${asset.asset_revision_id}/annotation`)&&response.request().method()==='PUT');
+    await page.getByTestId('save-retry').click();const replay=await replayResponse;
+    expect(replay.request().postDataJSON()).toEqual(rescue.pending!.request);expect(replay.status()).toBe(200);
+    const replayReceipt:SaveResponse=await replay.json();await synced(page);
+    const replayed=await head(client,asset.asset_revision_id,seededProject.ontology_version_id);
+    expect(replayed.annotation_revision_id).toBe(replayReceipt.revision.annotation_revision_id);
+    expect(replayed.parent_revision_id).toBe(original.annotation_revision_id);expect(replayed.document).toEqual(rescue.document);
     await page.getByTestId('attribute-helmet_state').selectOption('not_wearing');await synced(page);
     const recovered=await head(client,asset.asset_revision_id,seededProject.ontology_version_id);
-    expect(recovered.parent_revision_id).toBe(original.annotation_revision_id);expect(recovered.revision_no).toBe(3);
+    expect(recovered.parent_revision_id).toBe(replayed.annotation_revision_id);expect(recovered.revision_no).toBe(original.revision_no+2);
     expect(recovered.document).toEqual({...original.document,objects:original.document.objects.map(object=>({...object,attributes:{helmet_state:'not_wearing'}}))});
-    await evidence(page,info,'restarted-api-manual',{original,recovered,rescue,api_port:new URL(service.base).port});
+    const prior=await client.request('GET',`/api/annotation-revisions/${original.annotation_revision_id}`);expect(prior.status).toBe(200);expect(prior.json).toEqual(original);
+    await evidence(page,info,'restarted-api-manual',{original,replayed,replayReceipt,recovered,rescue,api_port:new URL(service.base).port});
   }finally{await service.stop();}
 });
 
 test('F07 late actual engineering Mock detect result is scoped to A while B is open',async({adminPage:page,seededProject,app},info)=>{
-  const db=new DatabaseSync(database_path_for_test(app));try{db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES('profile_mock_local','mock','weblabel-mock-source-v1','none',?,'ready','mock_only','builtin-mock-1',NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(JSON.stringify({image_input:true,tools:false,structured_output:true,bbox_output:true,attributes:true}));}finally{db.close();}
+  const db=new DatabaseSync(database_path_for_test(app));try{db.exec('PRAGMA busy_timeout=5000');db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES('profile_mock_local','mock','weblabel-mock-source-v1','none',?,'ready','mock_only','builtin-mock-1',NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(JSON.stringify({image_input:true,tools:false,structured_output:true,bbox_output:true,attributes:true}));}finally{db.close();}
   await page.reload();await observeEditor(page);const [asset,other]=seededProject.assets.filter(item=>item.width===320).slice(0,2);await openAsset(page,asset);
   const first=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id),second=await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id);
-  await page.getByLabel('Run intent').selectOption('detect');await page.getByTestId('ai-prompt').fill('Explicit engineering Mock late result; no live inference');
+  await page.getByRole('button', { name: 'AI 审校', exact: true }).click();
+  await page.locator('#ai-intent').selectOption('detect');await page.getByTestId('ai-prompt').fill('Explicit engineering Mock late result; no live inference');
   const gate=Promise.withResolvers<void>(),held=Promise.withResolvers<{items:SuggestionSet[]}>();
   await page.route('**/api/ai/runs/*/suggestions*',async route=>{const response=await actualResponse(route,seededProject.apiBaseUrl),body=await response.json();if(body.items.length){held.resolve(body);await gate.promise;}await route.fulfill({response});});
-  await page.getByTestId('ai-run').click();await page.getByTestId('ai-consent').getByRole('checkbox').check();await page.getByRole('button',{name:'Authorize and run now'}).click();
+  await page.getByTestId('ai-run').click();await page.getByTestId('ai-consent').getByRole('checkbox').check();await page.getByTestId('ai-authorize').click();
   const result=await held.promise;expect(result.items[0].context.asset_revision_id).toBe(asset.asset_revision_id);expect(result.items[0].changes[0].kind).toBe('create');
   await openAsset(page,other);gate.resolve();await expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(0);
   for(const button of await page.getByTestId('accept-selected').all())await expect(button).toBeDisabled();

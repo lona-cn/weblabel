@@ -1,0 +1,6 @@
+import path from 'node:path';
+const root="D:/workspace/src/weblabel";
+process.env.WEBLABEL_API_BINARY=path.join(root,"target/defect-repair/2026-10-11T13-21-39-234Z/fixed-release/api/weblabel-api.exe");
+process.env.WEBLABEL_WASM_BRIDGE_DIR=path.join(root,"target/defect-repair/2026-10-11T13-21-39-234Z/fixed-release/web/wasm");
+process.argv=[process.execPath,path.join(root,"target/defect-repair/2026-10-11T13-21-39-234Z/main-browser-service.mjs"),root,path.join(root,"target/defect-repair/2026-10-11T13-21-39-234Z/main-ui-runtime-6"),path.join(root,"reports/T35/defect-repair/2026-10-11T13-21-39-234Z/main-ui-smoke-6")];
+await import('./main-browser-service.mjs');

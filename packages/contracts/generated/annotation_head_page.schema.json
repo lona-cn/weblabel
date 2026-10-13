@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AnnotationHeadPage",
+  "type": "object",
+  "required": [
+    "items",
+    "next_cursor"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AnnotationHeadSummary"
+      }
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "AnnotationHeadSummary": {
+      "type": "object",
+      "required": [
+        "annotation_revision_id",
+        "approved_review_id",
+        "completion",
+        "content_hash",
+        "object_count",
+        "ontology_version_id",
+        "revision_no"
+      ],
+      "properties": {
+        "annotation_revision_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "approved_review_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completion": {
+          "$ref": "#/definitions/Completion"
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "object_count": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        },
+        "ontology_version_id": {
+          "$ref": "#/definitions/Id"
+        },
+        "revision_no": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 9007199254740991.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Completion": {
+      "type": "string",
+      "enum": [
+        "unprocessed",
+        "in_progress",
+        "complete",
+        "confirmed_negative"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1
+    }
+  }
+}

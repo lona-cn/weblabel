@@ -62,8 +62,15 @@ pub(crate) fn apply(
         } => {
             ensure_targets(document, object_ids)?;
             ensure_editable(selection, object_ids)?;
+            let target = ontology
+                .labels
+                .iter()
+                .find(|label| label.label_id == *label_id)
+                .ok_or_else(|| {
+                    DomainError::new("UNKNOWN_LABEL", "object label_id is not in the ontology")
+                })?;
             for object_id in object_ids {
-                find_object_mut(document, object_id)?.label_id = label_id.clone();
+                annotation_domain::relabel_object(find_object_mut(document, object_id)?, target);
             }
         }
         EditorCommand::Delete { object_ids } => {

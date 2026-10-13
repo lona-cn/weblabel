@@ -52,9 +52,11 @@ export class ServerRuntimeContext implements RuntimeContext {
     const facts = await callTool(this.binding, this.signal, 'get_context', {}) as Facts;
     return facts.ontology;
   }
-  async submit_candidates(candidate: unknown): Promise<SuggestionSet> {
+  async submit_candidates(candidate: unknown, operationSignal?: AbortSignal): Promise<SuggestionSet> {
     const draft = candidate as Pick<SuggestionSet, 'changes' | 'issues' | 'score'>;
-    const result = await callTool(this.binding, this.signal, 'propose_changes', draft) as Pick<SuggestionSet, 'suggestion_set_id' | 'prediction_id' | 'state'>;
+    const signal = operationSignal === undefined ? this.signal : AbortSignal.any([this.signal, operationSignal]);
+    // Cancelling HTTP observation is not proof that the server rolled back.
+    const result = await callTool(this.binding, signal, 'propose_changes', draft) as Pick<SuggestionSet, 'suggestion_set_id' | 'prediction_id' | 'state'>;
     return { ...draft, ...result, model_run_id: this.run_id, context: this.binding.request.context };
   }
   async report_issues(issues: unknown): Promise<void> { await callTool(this.binding, this.signal, 'report_issues', { issues }); }

@@ -26,6 +26,7 @@ test('T25 unavailable real-profile gate remains on the actual hardware WebGPU wo
   await expect(gpu).toHaveAttribute('data-actual-backend', 'webgpu', { timeout: 30_000 });
   await expect(gpu).toHaveAttribute('data-device-state', 'ready', { timeout: 30_000 });
   await expect(gpu).toHaveAttribute('data-adapter-kind', 'hardware');
+  await page.getByRole('button', { name: 'AI 审校', exact: true }).click();
   await page.getByTestId('ai-prompt').fill('Real unavailable provider cannot use a mock fallback');
   await page.getByTestId('ai-run').click();
   await expect(page.getByTestId('ai-panel').getByRole('alert')).toBeVisible();
@@ -68,7 +69,8 @@ test('T25 Engineering Mock G2: actual flush/freeze, consent, background predicti
   await page.mouse.move(...point(90, 110), { steps: 5 });
   await page.mouse.up();
   await expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(1);
-  await page.getByLabel('Run intent').selectOption('detect');
+  await page.getByRole('button', { name: 'AI 审校', exact: true }).click();
+  await page.locator('#ai-intent').selectOption('detect');
   await page.getByTestId('ai-prompt').fill('Engineering Mock only: add synthetic candidate for G2, not real inference');
   const runPosts: unknown[] = [];
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/ai/runs') runPosts.push(request.postDataJSON()); });
@@ -88,10 +90,10 @@ test('T25 Engineering Mock G2: actual flush/freeze, consent, background predicti
   expect(originalDocument.objects).toHaveLength(1);
   expect(runPosts).toEqual([]);
   await expect(page.getByTestId('ai-consent')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Authorize and run now' })).toBeDisabled();
+  await expect(page.getByTestId('ai-authorize')).toBeDisabled();
   await page.getByTestId('ai-consent').getByRole('checkbox').check();
   const queuedResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/ai/runs' && response.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Authorize and run now' }).click();
+  await page.getByTestId('ai-authorize').click();
   const queuedHttp = await queuedResponse;
   expect(queuedHttp.status()).toBe(202);
   const queued = await queuedHttp.json();
@@ -145,7 +147,7 @@ test('T25 Engineering Mock G2: actual flush/freeze, consent, background predicti
   await page.getByTestId('ai-prompt').fill('Engineering Mock delayed result remains pinned to the original asset');
   await page.getByTestId('ai-run').click();
   await page.getByTestId('ai-consent').getByRole('checkbox').check();
-  await page.getByRole('button', { name: 'Authorize and run now' }).click();
+  await page.getByTestId('ai-authorize').click();
   await expect.poll(() => replyHeld).toBe(true);
   await page.getByTestId(`asset-item-${other.asset_revision_id}`).click();
   await expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(0);

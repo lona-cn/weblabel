@@ -104,7 +104,7 @@ pub(super) async fn publish(
             "labels must be an array",
         );
     };
-    if labels.len() > 512 || !unique_valid_labels(labels) {
+    if labels.is_empty() || labels.len() > 512 || !unique_valid_labels(labels) {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "INVALID_ONTOLOGY",
@@ -201,7 +201,7 @@ fn valid_attribute(attribute: &Value) -> bool {
     let Some(kind) = attribute.get("kind").and_then(Value::as_str) else {
         return false;
     };
-    let Some(required) = attribute.get("required").and_then(Value::as_bool) else {
+    let Some(_) = attribute.get("required").and_then(Value::as_bool) else {
         return false;
     };
     let Some(default_value) = attribute.get("default_value") else {
@@ -236,7 +236,7 @@ fn valid_attribute(attribute: &Value) -> bool {
             .len()
             == enum_values.len();
     let default_valid = if default_value.is_null() {
-        !required
+        true
     } else {
         match kind {
             "enum" => default_value

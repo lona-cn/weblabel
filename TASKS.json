@@ -44,7 +44,7 @@
         [
           "node",
           "--test",
-          "tests/bootstrap/t00.test.mjs"
+          "tests/bootstrap/t00_cli.test.mjs"
         ],
         [
           "node",
@@ -503,7 +503,43 @@
       ],
       "external_gate": false,
       "card": "tasks/T13.md",
-      "report_dir": "reports/T13"
+      "report_dir": "reports/T13",
+      "repair_defects": [
+        "WL-01",
+        "WL-08"
+      ],
+      "repair_locks": [
+        "draft-branches-workbench"
+      ],
+      "repair_write_set": [
+        "apps/web/src/lib/persistence/types.ts",
+        "apps/web/src/lib/persistence/draft-store.ts",
+        "apps/web/src/lib/persistence/save-queue.ts",
+        "apps/web/src/lib/persistence/recovery.ts",
+        "apps/web/src/features/workbench/Workbench.tsx",
+        "apps/web/src/features/workbench/SaveStatus.tsx",
+        "apps/web/src/features/workbench/DenseHarness.tsx",
+        "apps/web/src/features/workbench/fixed-ontology.ts",
+        "apps/web/src/lib/persistence/t13_queue.test.ts",
+        "apps/web/src/lib/persistence/save-owner.test.ts",
+        "apps/web/src/lib/persistence/raw-draft-admission.test.ts",
+        "apps/web/src/features/workbench/save-feedback.test.tsx",
+        "apps/web/src/features/workbench/import-cutover.test.tsx",
+        "apps/web/src/features/workbench/outbox-guard.test.tsx",
+        "apps/web/src/features/workbench/t34_model_wait.test.tsx",
+        "apps/web/src/features/projects/commercial-core.test.tsx",
+        "apps/web/src/features/review/commercial_task_context.test.tsx",
+        "apps/web/src/features/ai/t24_ui.test.tsx",
+        "tests/e2e/t15_vertical.spec.ts",
+        "tests/e2e/t24_acceptance.spec.ts",
+        "tests/e2e/t30_recovery.spec.ts",
+        "apps/web/src/styles/tokens.css",
+        "apps/web/src/lib/persistence/t13_branches.test.ts",
+        "tests/e2e/t13_draft_branches.spec.ts",
+        "apps/web/src/features/review/api.ts",
+        "apps/web/src/features/review/ReviewPanel.tsx",
+        "apps/web/src/features/review/t26_review_ui.test.tsx"
+      ]
     },
     {
       "id": "T14",
@@ -550,7 +586,10 @@
       ],
       "external_gate": false,
       "card": "tasks/T14.md",
-      "report_dir": "reports/T14"
+      "report_dir": "reports/T14",
+      "repair_defects": ["WL-07"],
+      "repair_locks": ["yolo-format"],
+      "repair_write_set": ["crates/dataset-formats/src/yolo.rs", "crates/dataset-formats/tests/t14_formats.rs"]
     },
     {
       "id": "T15",
@@ -703,6 +742,19 @@
       ],
       "external_gate": false,
       "card": "tasks/T18.md",
+      "repair_defects": [
+        "WL-06"
+      ],
+      "repair_locks": [
+        "detector-lifecycle"
+      ],
+      "repair_write_set": [
+        "apps/agent-host/src/providers/detector-local.ts",
+        "apps/agent-host/test/t18_detector.test.ts",
+        "apps/agent-host/test/fixtures/detector-worker.mjs",
+        "apps/agent-host/src/registry.ts",
+        "apps/agent-host/src/runtime/context.ts"
+      ],
       "report_dir": "reports/T18"
     },
     {
@@ -809,28 +861,44 @@
     },
     {
       "id": "T22",
-      "title": "官方Codex订阅运行时适配",
+      "title": "Codex 活动渠道退役与历史身份保全",
       "owner": "wl-ai",
       "depends_on": [
         "T02",
         "T21"
       ],
       "locks": [
-        "native-runtime",
-        "codex-adapter"
+        "provider-retirement"
       ],
       "files": [
-        "apps/agent-host/src/providers/codex/{adapter,protocol,session,permissions}.ts",
-        "apps/agent-host/test/t22_codex.test.ts",
+        "apps/agent-host/src/runtime/{dispatch,main}.ts",
+        "crates/annotation-domain/src/prediction.rs",
+        "crates/weblabel-api/src/ai/{profiles,runs}.rs",
+        "crates/weblabel-api/src/jobs/model_jobs.rs",
+        "crates/weblabel-api/tests/t22_provider_retirement.rs",
+        "apps/agent-host/test/t25_runtime.test.ts",
+        "apps/web/src/features/ai/{Panel,ProviderPicker,Consent,useRun}.*",
+        "apps/web/src/features/ai/t24_ui.test.tsx",
         "docs/providers/codex.md"
       ],
       "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t22_provider_retirement",
+          "--locked"
+        ],
         [
           "pnpm",
           "exec",
           "vitest",
           "run",
-          "apps/agent-host/test/t22_codex.test.ts"
+          "apps/agent-host/test/t25_runtime.test.ts",
+          "--project",
+          "agent-host"
         ]
       ],
       "external_gate": false,
@@ -929,7 +997,7 @@
       "depends_on": [
         "T18",
         "T20",
-        "T22",
+
         "T23",
         "T24"
       ],
@@ -1189,6 +1257,8 @@
       ],
       "external_gate": false,
       "card": "tasks/T30.md",
+      "repair_defects": ["WL-01"],
+      "repair_group": "T13 draft-branches-workbench",
       "report_dir": "reports/T30"
     },
     {

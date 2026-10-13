@@ -4,7 +4,7 @@ use crate::{
     projects::now_rfc3339,
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Extension, Json,
 };
@@ -106,10 +106,18 @@ pub(super) async fn create(
     ))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TaskPageQuery {
+    cursor: Option<String>,
+    limit: Option<u32>,
+}
+
 pub(super) async fn list(
     State(state): State<ReviewState>,
     Path(project_id): Path<String>,
     Extension(actor): Extension<Principal>,
+    Query(page): Query<TaskPageQuery>,
 ) -> Result<Json<Value>, axum::response::Response> {
     require_project_role(
         &state.auth,
@@ -118,8 +126,27 @@ pub(super) async fn list(
         &[Role::Admin, Role::Annotator, Role::Reviewer, Role::Viewer],
     )
     .await?;
-    let rows=sqlx::query("SELECT t.task_id,t.project_id,t.asset_revision_id,t.ontology_version_id,t.assignee_id,t.state,t.created_at,s.review_id,s.revision_ids_json,d.decision AS review_decision,d.reason AS review_reason FROM review_tasks t LEFT JOIN review_submissions s ON s.review_id=(SELECT s2.review_id FROM review_submissions s2 WHERE s2.task_id=t.task_id ORDER BY CASE WHEN s2.state='pending' THEN 0 ELSE 1 END,s2.created_at DESC,s2.review_id DESC LIMIT 1) LEFT JOIN review_decisions d ON d.review_id=s.review_id WHERE t.project_id=? ORDER BY t.created_at,t.task_id").bind(&project_id).fetch_all(&state.auth.pool).await.map_err(|_|error(StatusCode::SERVICE_UNAVAILABLE,"REVIEW_UNAVAILABLE","Could not list tasks"))?;
+    let limit = page.limit.unwrap_or(100);
+    if !(1..=100).contains(&limit)
+        || page
+            .cursor
+            .as_deref()
+            .is_some_and(|id| annotation_domain::document::validate_id(id).is_err())
+    {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_TASK_PAGE",
+            "Invalid task pagination",
+        ));
+    }
+    let rows=sqlx::query("SELECT t.task_id,t.project_id,t.asset_revision_id,t.ontology_version_id,t.assignee_id,t.state,t.created_at,s.review_id,s.revision_ids_json,d.decision AS review_decision,d.reason AS review_reason FROM review_tasks t LEFT JOIN review_submissions s ON s.review_id=(SELECT s2.review_id FROM review_submissions s2 WHERE s2.task_id=t.task_id ORDER BY CASE WHEN s2.state='pending' THEN 0 ELSE 1 END,s2.created_at DESC,s2.review_id DESC LIMIT 1) LEFT JOIN review_decisions d ON d.review_id=s.review_id WHERE t.project_id=? AND (? IS NULL OR t.task_id>?) ORDER BY t.task_id LIMIT ?").bind(&project_id).bind(&page.cursor).bind(&page.cursor).bind(i64::from(limit)+1).fetch_all(&state.auth.pool).await.map_err(|_|error(StatusCode::SERVICE_UNAVAILABLE,"REVIEW_UNAVAILABLE","Could not list tasks"))?;
+    let more = rows.len() > limit as usize;
     use sqlx::Row;
-    let items:Vec<Value>=rows.into_iter().map(|r|json!({"task_id":r.get::<String,_>("task_id"),"project_id":r.get::<String,_>("project_id"),"asset_revision_id":r.get::<String,_>("asset_revision_id"),"ontology_version_id":r.get::<String,_>("ontology_version_id"),"assignee_id":r.get::<String,_>("assignee_id"),"state":r.get::<String,_>("state"),"created_at":r.get::<String,_>("created_at"),"review_id":r.get::<Option<String>,_>("review_id"),"revision_ids":r.get::<Option<String>,_>("revision_ids_json").and_then(|v|serde_json::from_str::<Value>(&v).ok()),"review_decision":r.get::<Option<String>,_>("review_decision"),"review_reason":r.get::<Option<String>,_>("review_reason")})).collect();
-    Ok(Json(json!({"items":items,"next_cursor":null})))
+    let items:Vec<Value>=rows.into_iter().take(limit as usize).map(|r|json!({"task_id":r.get::<String,_>("task_id"),"project_id":r.get::<String,_>("project_id"),"asset_revision_id":r.get::<String,_>("asset_revision_id"),"ontology_version_id":r.get::<String,_>("ontology_version_id"),"assignee_id":r.get::<String,_>("assignee_id"),"state":r.get::<String,_>("state"),"created_at":r.get::<String,_>("created_at"),"review_id":r.get::<Option<String>,_>("review_id"),"revision_ids":r.get::<Option<String>,_>("revision_ids_json").and_then(|v|serde_json::from_str::<Value>(&v).ok()),"review_decision":r.get::<Option<String>,_>("review_decision"),"review_reason":r.get::<Option<String>,_>("review_reason")})).collect();
+    let next_cursor = if more {
+        items.last().and_then(|item| item.get("task_id")).cloned()
+    } else {
+        None
+    };
+    Ok(Json(json!({"items":items,"next_cursor":next_cursor})))
 }

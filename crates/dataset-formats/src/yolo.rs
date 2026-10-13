@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write};
 
 use annotation_domain::{
-    geometry::BBox, AnnotationObject, Id, OntologyVersion, Origin, OriginType,
+    geometry::BBox, ontology::LabelDef, AnnotationObject, Id, OntologyVersion, Origin, OriginType,
 };
 
 use crate::{
-    deterministic_object_id, import_document, validate_context, validate_document, FormatError,
-    ImportContext, ImportReport, LossReport,
+    deterministic_object_id, import_document, target_default_attributes, validate_context,
+    validate_document, FormatError, ImportContext, ImportReport, LossReport,
 };
 
 const MAX_OBJECTS: usize = 50_000;
@@ -48,9 +48,16 @@ pub fn export_yolo(
         let center_y = (bbox.y_min + bbox.y_max) / (2.0 * height);
         let box_width = (bbox.x_max - bbox.x_min) / width;
         let box_height = (bbox.y_max - bbox.y_min) / height;
-        annotations.push_str(&format!(
-            "{index} {center_x:.17} {center_y:.17} {box_width:.17} {box_height:.17}\n"
-        ));
+        if box_width == 0.0 || box_height == 0.0 {
+            return Err(FormatError::Unsupported(
+                "YOLO normalized box dimensions underflow to zero".to_owned(),
+            ));
+        }
+        writeln!(
+            annotations,
+            "{index} {center_x} {center_y} {box_width} {box_height}"
+        )
+        .expect("writing to a String cannot fail");
         if !object.attributes.is_empty() {
             losses.add(
                 "attributes",
@@ -98,23 +105,27 @@ pub fn import_yolo(
             "YOLO class mapping is empty".to_owned(),
         ));
     }
-    let ontology_labels: HashMap<Id, ()> = ontology
+    let ontology_labels: HashMap<&Id, &LabelDef> = ontology
         .labels
         .iter()
-        .map(|label| (label.label_id.clone(), ()))
+        .map(|label| (&label.label_id, label))
         .collect();
     let mut seen_labels = HashMap::with_capacity(label_ids.len());
+    let mut mapped_labels = Vec::with_capacity(label_ids.len());
     for label_id in label_ids {
-        if !ontology_labels.contains_key(label_id)
-            || seen_labels.insert(label_id.clone(), ()).is_some()
-        {
-            return Err(FormatError::Invalid(
-                "YOLO class mapping contains an unknown or duplicate label".to_owned(),
-            ));
-        }
+        let label = match ontology_labels.get(label_id) {
+            Some(label) if seen_labels.insert(label_id, ()).is_none() => *label,
+            _ => {
+                return Err(FormatError::Invalid(
+                    "YOLO class mapping contains an unknown or duplicate label".to_owned(),
+                ))
+            }
+        };
+        mapped_labels.push(label);
     }
 
     let mut objects = Vec::new();
+    let mut uses_attribute_defaults = false;
     for (line_index, line) in annotations.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
@@ -134,14 +145,11 @@ pub fn import_yolo(
         let class_index = values[0]
             .parse::<usize>()
             .map_err(|_| FormatError::Invalid("YOLO class index is invalid".to_owned()))?;
-        let label_id = label_ids
-            .get(class_index)
-            .ok_or_else(|| {
-                FormatError::Invalid(
-                    "YOLO class index is outside the explicit class mapping".to_owned(),
-                )
-            })?
-            .clone();
+        let label = mapped_labels.get(class_index).ok_or_else(|| {
+            FormatError::Invalid(
+                "YOLO class index is outside the explicit class mapping".to_owned(),
+            )
+        })?;
         let center_x = parse_finite(values[1])?;
         let center_y = parse_finite(values[2])?;
         let width = parse_finite(values[3])?;
@@ -165,11 +173,13 @@ pub fn import_yolo(
             (center_x + width / 2.0) * image_width,
             (center_y + height / 2.0) * image_height,
         );
+        let attributes = target_default_attributes(label);
+        uses_attribute_defaults |= !attributes.is_empty();
         objects.push(AnnotationObject {
             object_id: deterministic_object_id(context, "yolo", &format!("{line_index}:{line}")),
-            label_id,
+            label_id: label.label_id.clone(),
             geometry: bbox,
-            attributes: Default::default(),
+            attributes,
             origin: Origin {
                 kind: OriginType::Import,
                 prediction_id: None,
@@ -179,9 +189,16 @@ pub fn import_yolo(
         });
     }
     let document = import_document(context, ontology, objects)?;
+    let mut losses = LossReport::default();
+    if uses_attribute_defaults {
+        losses.add(
+            "attribute_defaults",
+            "Object attributes are initialized from the fixed target ontology defaults, not source annotations",
+        );
+    }
     Ok(ImportReport {
         document,
-        loss_report: LossReport::default(),
+        loss_report: losses,
     })
 }
 

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { root, options, requireNode, sha, entries, checkedPath, mainGuard } from './build.mjs';
+import { backupBoundary } from './ops-diagnostics.mjs';
 requireNode();
 const { DatabaseSync, backup } = await import('node:sqlite');
 
@@ -116,6 +117,7 @@ export async function createBackup(argv = process.argv.slice(2)) {
   const args = options(argv, ['--data-dir', '--backup-dir']);
   requireNode();
   if (!args['--data-dir'] || !args['--backup-dir']) throw new Error('required: --data-dir --backup-dir');
+  console.log(JSON.stringify({ format: 'weblabel-backup-boundary', ...backupBoundary }));
   const data = path.resolve(args['--data-dir']), destination = path.resolve(args['--backup-dir']);
   if (destination === data || destination.startsWith(data + path.sep)) throw new Error('backup_destination_inside_data');
   if (fs.existsSync(destination)) throw new Error('backup_directory_exists');
@@ -144,7 +146,7 @@ export async function createBackup(argv = process.argv.slice(2)) {
       fs.copyFileSync(sourceObject, path.join(destination, relative));
     }
     db.close();
-    const manifest = { format: 'weblabel-backup', version: 1, created_at: new Date().toISOString(), schema_hash: originalSchema, migrations: applied, authentication: 'scrubbed-fresh-local-bootstrap-required', files: entries(destination) };
+    const manifest = { format: 'weblabel-backup', version: 1, created_at: new Date().toISOString(), schema_hash: originalSchema, migrations: applied, authentication: 'scrubbed-fresh-local-bootstrap-required', boundary: backupBoundary, files: entries(destination) };
     fs.writeFileSync(path.join(destination, 'backup.json'), JSON.stringify(manifest, null, 2));
     console.log(`backup_created: ${destination}`);
     return manifest;

@@ -1,12 +1,15 @@
-use axum::{extract::State, http::StatusCode, Extension, Json};
+use axum::{extract::{State, Query}, http::StatusCode, Extension, Json};
 use serde_json::{json, Value};
 use sqlx::Row;
 
 use crate::auth::{error, password, AuthState, Principal};
+#[derive(serde::Deserialize)]
+pub(super) struct UserQuery { limit: Option<usize>, cursor: Option<String> }
 
 pub(super) async fn list_users(
     State(state): State<AuthState>,
     Extension(principal): Extension<Principal>,
+    Query(query): Query<UserQuery>,
 ) -> axum::response::Response {
     if !principal.platform_admin {
         return error(
@@ -15,8 +18,13 @@ pub(super) async fn list_users(
             "Platform administrator required",
         );
     }
-    match sqlx::query("SELECT user_id,username,created_at FROM users ORDER BY created_at,user_id").fetch_all(&state.pool).await {
-        Ok(rows) => (StatusCode::OK, Json(json!({"items": rows.iter().map(|r| json!({"user_id": r.get::<String,_>("user_id"), "username": r.get::<String,_>("username"), "created_at": r.get::<String,_>("created_at")})).collect::<Vec<_>>(), "next_cursor": null}))).into_response(),
+    let limit = query.limit.unwrap_or(100);
+    if !(1..=100).contains(&limit) { return error(StatusCode::BAD_REQUEST, "INVALID_LIMIT", "limit must be 1–100"); }
+    match sqlx::query("SELECT user_id,username,created_at FROM users WHERE (? IS NULL OR user_id>?) ORDER BY user_id LIMIT ?").bind(&query.cursor).bind(&query.cursor).bind((limit + 1) as i64).fetch_all(&state.pool).await {
+        Ok(rows) => {
+            let next_cursor = if rows.len() > limit { rows[limit - 1].get::<String,_>("user_id").into() } else { None };
+            (StatusCode::OK, Json(json!({"items": rows.iter().take(limit).map(|r| json!({"user_id": r.get::<String,_>("user_id"), "username": r.get::<String,_>("username"), "created_at": r.get::<String,_>("created_at")})).collect::<Vec<_>>(), "next_cursor": next_cursor}))).into_response()
+        },
         Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "USER_LIST_FAILED", "Could not list users"),
     }
 }

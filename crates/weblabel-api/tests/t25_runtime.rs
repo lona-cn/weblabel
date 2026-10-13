@@ -140,7 +140,7 @@ async fn scenario(scenario: &'static str) {
     let (status, ontology, _) = call(
         &app,
         &format!("/api/projects/{project}/ontologies"),
-        json!({"labels":[],"guidelines_markdown":"Synthetic engineering smoke"}),
+        json!({"labels":[{"label_id":"runtime-bbox","name":"Synthetic runtime bbox","color":"#33AA66","shortcut":null,"allowed_geometry_types":["bbox_xyxy"],"attributes":[]}],"guidelines_markdown":"Synthetic engineering smoke"}),
         Some(&cookie),
         Some(csrf),
     )

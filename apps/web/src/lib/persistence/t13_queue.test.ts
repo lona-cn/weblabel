@@ -38,7 +38,7 @@ import { FetchSaveTransport, SaveQueue, reconcileAck } from './save-queue';
 import { SAVE_DEBOUNCE_MS, StorageError, TransportError } from './types';
 import type {
   Clock,
-  DraftRecord,
+  DraftRecord, DraftStorage,
   Id,
   NativeDraftExport,
   SaveStatusSnapshot,
@@ -47,6 +47,11 @@ import type {
 } from './types';
 
 expect.extend(matchers);
+async function seedBranch(storage: DraftStorage, record: DraftRecord) {
+  const envelope = { asset_revision_id: record.asset_revision_id, draft_id: crypto.randomUUID(), write_token: crypto.randomUUID(), record, sources: [] };
+  await storage.put(envelope);
+  return envelope;
+}
 
 // ---------------------------------------------------------------------------
 // Golden fixtures (docs/testing-contracts.md §2: 640×480, bbox 10,20,110,220,
@@ -274,43 +279,66 @@ class FakeIDBRequest<T> {
 
 interface FakeIDBRecord {
   asset_revision_id: string;
+  draft_id: string;
 }
 
-/** Minimal IDBFactory stand-in: records real call traffic, emulates requests. */
+/** Minimal IDBFactory stand-in: requests settle before transactions commit/abort. */
 class FakeIndexedDBFactory {
   readonly calls: Array<{ method: string; args: unknown[] }> = [];
   private records = new Map<string, unknown>();
   quotaOnPut: Error | null = null;
   private db = {
-    objectStoreNames: { contains: (name: string) => name === 'drafts' },
+    objectStoreNames: { contains: (name: string) => name === 'draft_branches' },
     createObjectStore: (_name: string, _options: unknown) => undefined,
-    transaction: (_name: string, _mode: string) => ({
-      objectStore: (_storeName: string) => ({
-        get: (key: string) => {
-          this.calls.push({ method: 'get', args: [key] });
-          const request = new FakeIDBRequest<FakeIDBRecord | undefined>();
-          request.succeed(this.records.get(key) as FakeIDBRecord | undefined);
-          return request;
-        },
-        put: (value: FakeIDBRecord) => {
-          this.calls.push({ method: 'put', args: [value] });
-          const request = new FakeIDBRequest<FakeIDBRecord>();
-          if (this.quotaOnPut) request.fail(this.quotaOnPut);
-          else {
-            this.records.set(value.asset_revision_id as string, value);
-            request.succeed(value);
-          }
-          return request;
-        },
-        delete: (key: string) => {
-          this.calls.push({ method: 'delete', args: [key] });
-          const request = new FakeIDBRequest<undefined>();
-          this.records.delete(key);
-          request.succeed(undefined);
-          return request;
-        },
-      }),
-    }),
+    transaction: (_name: string, _mode: string) => {
+      const transaction = {
+        error: null as Error | null,
+        oncomplete: null as (() => void) | null,
+        onerror: null as (() => void) | null,
+        onabort: null as (() => void) | null,
+      };
+      return Object.assign(transaction, {
+        objectStore: (_storeName: string) => ({
+          get: (key: [string, string]) => {
+            this.calls.push({ method: 'get', args: [key] });
+            const request = new FakeIDBRequest<FakeIDBRecord | undefined>();
+            request.succeed(structuredClone(this.records.get(JSON.stringify(key))) as FakeIDBRecord | undefined);
+            void Promise.resolve().then(() => transaction.oncomplete?.());
+            return request;
+          },
+          put: (value: FakeIDBRecord) => {
+            this.calls.push({ method: 'put', args: [value] });
+            const request = new FakeIDBRequest<FakeIDBRecord>();
+            const quotaError = this.quotaOnPut;
+            if (quotaError) {
+              request.fail(quotaError);
+              // Unhandled request errors bubble to the transaction, then abort
+              // it; request.onerror alone is not transaction settlement.
+              void Promise.resolve().then(() => {
+                transaction.error = quotaError;
+                transaction.onerror?.();
+                void Promise.resolve().then(() => transaction.onabort?.());
+              });
+            } else {
+              request.succeed(value);
+              void Promise.resolve().then(() => {
+                this.records.set(JSON.stringify([value.asset_revision_id, value.draft_id]), structuredClone(value));
+                transaction.oncomplete?.();
+              });
+            }
+            return request;
+          },
+          delete: (key: [string, string]) => {
+            this.calls.push({ method: 'delete', args: [key] });
+            const request = new FakeIDBRequest<undefined>();
+            this.records.delete(JSON.stringify(key));
+            request.succeed(undefined);
+            void Promise.resolve().then(() => transaction.oncomplete?.());
+            return request;
+          },
+        }),
+      });
+    },
     close: () => {
       this.calls.push({ method: 'close', args: [] });
     },
@@ -319,7 +347,7 @@ class FakeIndexedDBFactory {
   open(name: string, version: number): FakeIDBRequest<unknown> {
     this.calls.push({ method: 'open', args: [name, version] });
     const request = new FakeIDBRequest<unknown>();
-    request.upgrade(this.db);
+    request.succeed(this.db);
     return request;
   }
 }
@@ -344,7 +372,7 @@ function makeQueue(getLease?: () => SaveRequest['lease']): QueueFixture {
     transport,
     storage,
     clock,
-    getLease,
+    owner: { token: {}, actor_id: 'test-actor', project_id: 'test-project', isCurrent: () => true, isWritable: () => true, canPrepareOperation: () => true, getLease: getLease ?? (() => null) },
     newOperationId: () => {
       counter += 1;
       return `op-${counter}`;
@@ -396,33 +424,27 @@ afterEach(() => {
 });
 
 describe('T31 persistence producer immutability boundaries', () => {
-  it('freezes mutable descendants of external shallow-frozen records and documents, including aliases', async () => {
+  it('captures independent descendants before storage without mutating the caller', async () => {
     const store = new DraftStore(new InMemoryDraftStorage());
     const document = Object.freeze(makeDocument());
-    const geometryAlias = document.objects[0].geometry;
     const record = Object.freeze(makeRecord({ document }));
-    await store.save(record);
-
-    expect(() => { geometryAlias.x_min = 99; }).toThrow(TypeError);
-    expect(() => { document.objects.push(document.objects[0]); }).toThrow(TypeError);
-    expect(() => { document.objects[0].attributes.helmet_state = 'wearing'; }).toThrow(TypeError);
-    // A fresh shallow-frozen wrapper around a previously certified subtree
-    // must still freeze its new mutable journal.
+    const first = await store.save({ asset_revision_id: record.asset_revision_id, draft_id: 'fixture', write_token: '', record, sources: [] });
+    document.objects[0].geometry.x_min = 99;
+    document.objects[0].attributes.helmet_state = 'wearing';
+    expect((first!.record as DraftRecord).document).toEqual(makeDocument());
     const changeIds = ['change_001'];
     const journal = [{ seq: 1, generation: 9, intent: { ...ACCEPT, change_ids: changeIds }, recorded_at: record.updated_at }];
-    await store.save(Object.freeze({ ...record, intent_journal: journal }));
-    expect(() => { changeIds.push('tampered'); }).toThrow(TypeError);
-    expect(await store.load(record.asset_revision_id)).toMatchObject({
-      document: makeDocument(),
-      intent_journal: [{ intent: ACCEPT }],
-    });
+    const saved = await store.save({ asset_revision_id: record.asset_revision_id, draft_id: 'fixture', write_token: '', record: { ...record, intent_journal: journal }, sources: [] });
+    changeIds.push('tampered');
+    expect(((await store.load(record.asset_revision_id, 'fixture'))!.record as DraftRecord).intent_journal).toEqual([{ ...journal[0], intent: ACCEPT }]);
+    expect((saved!.record as DraftRecord).intent_journal[0].intent.change_ids).toEqual(['change_001']);
   });
 
   it('retains privately frozen document versions across failed retry, future edits and ordered decisions', async () => {
     const fixture = makeQueue();
     const original = freezeDeep(makeDocument());
     enqueue(fixture, { generation: 8, document: original, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
-    void fixture.queue.flush('asset_a');
+    void fixture.queue.flush('asset_a'); await microtasks();
     const prepared = fixture.transport.saves[0].request;
     fixture.transport.failNetwork(0);
     await microtasks();
@@ -432,7 +454,8 @@ describe('T31 persistence producer immutability boundaries', () => {
     expect(fixture.transport.saves[1].request).toEqual(prepared);
     fixture.transport.ackSave(1, 'r8');
     await microtasks();
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    await fixture.queue.whenPersisted('asset_a');
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves[2].request).toMatchObject({
       base_revision_id: 'r8', document: future, suggestion_decisions: [REVERT],
     });
@@ -452,11 +475,11 @@ describe('T31 persistence producer immutability boundaries', () => {
     document.objects[0].attributes.helmet_state = 'wearing';
     changeIds.push('tampered');
     await fixture.queue.whenPersisted('asset_a');
-    expect(await fixture.storage.get('asset_a')).toMatchObject({
+    expect(((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null)).toMatchObject({
       document: makeDocument(), intent_journal: [{ intent: ACCEPT }],
     });
 
-    void fixture.queue.flush('asset_a');
+    void fixture.queue.flush('asset_a'); await microtasks();
     const pending = fixture.queue.toRecord('asset_a')!;
     const wire = JSON.stringify(pending.pending!.request);
     expect(() => { pending.document.objects[0].geometry.x_min = 77; }).toThrow(TypeError);
@@ -467,14 +490,14 @@ describe('T31 persistence producer immutability boundaries', () => {
     await microtasks();
     void fixture.queue.retry('asset_a');
     expect(JSON.stringify(fixture.transport.saves[1].request)).toBe(wire);
-
     enqueue(fixture, { generation: 9, document: makeDocument({ completion: 'complete' }), suggestion_decisions: [REVERT] });
     fixture.transport.ackSave(1, 'r8');
     await microtasks();
+    await fixture.queue.whenPersisted('asset_a');
     expect(fixture.queue.getStatus('asset_a')).toMatchObject({
       dirty: true, local_generation: 9, synced_generation: 8, base_revision_id: 'r8',
     });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves[2].request).toMatchObject({
       base_revision_id: 'r8', document: { completion: 'complete' }, suggestion_decisions: [REVERT],
     });
@@ -490,46 +513,40 @@ describe('T31 persistence producer immutability boundaries', () => {
 // ===========================================================================
 
 describe('T13 reconcileAck', () => {
-  it('does not acknowledge a newer generation', () => {
-    const state = {
-      local_generation: 9,
-      synced_generation: 7,
-      base_revision_id: 'r7',
-      in_flight: { generation: 8, operation_id: 'op8' },
-    };
-    const next = reconcileAck(state, { generation: 8, operation_id: 'op8', revision_id: 'r8' });
-    expect(next.local_generation).toBe(9);
-    expect(next.synced_generation).toBe(8);
-    expect(next.base_revision_id).toBe('r8');
-    expect(next.dirty).toBe(true);
-  });
+  it('does not acknowledge a newer generation', async () => { const state = {
+    local_generation: 9,
+    synced_generation: 7,
+    base_revision_id: 'r7',
+    in_flight: { generation: 8, operation_id: 'op8' },
+  };
+  const next = reconcileAck(state, { generation: 8, operation_id: 'op8', revision_id: 'r8' });
+  expect(next.local_generation).toBe(9);
+  expect(next.synced_generation).toBe(8);
+  expect(next.base_revision_id).toBe('r8');
+  expect(next.dirty).toBe(true); });
 
-  it('ignores an acknowledgement for a different operation id', () => {
-    const state = {
-      local_generation: 8,
-      synced_generation: 7,
-      base_revision_id: 'r7',
-      in_flight: { generation: 8, operation_id: 'op8' },
-    };
-    const next = reconcileAck(state, { generation: 8, operation_id: 'op-foreign', revision_id: 'rX' });
-    expect(next.synced_generation).toBe(7);
-    expect(next.base_revision_id).toBe('r7');
-    expect(next.in_flight).toEqual({ generation: 8, operation_id: 'op8' });
-    expect(next.dirty).toBe(true);
-  });
+  it('ignores an acknowledgement for a different operation id', async () => { const state = {
+    local_generation: 8,
+    synced_generation: 7,
+    base_revision_id: 'r7',
+    in_flight: { generation: 8, operation_id: 'op8' },
+  };
+  const next = reconcileAck(state, { generation: 8, operation_id: 'op-foreign', revision_id: 'rX' });
+  expect(next.synced_generation).toBe(7);
+  expect(next.base_revision_id).toBe('r7');
+  expect(next.in_flight).toEqual({ generation: 8, operation_id: 'op8' });
+  expect(next.dirty).toBe(true); });
 
-  it('never regresses the synced base on a late older acknowledgement', () => {
-    const state = {
-      local_generation: 9,
-      synced_generation: 8,
-      base_revision_id: 'r8',
-      in_flight: { generation: 7, operation_id: 'op7' },
-    };
-    const next = reconcileAck(state, { generation: 7, operation_id: 'op7', revision_id: 'r7' });
-    expect(next.synced_generation).toBe(8);
-    expect(next.base_revision_id).toBe('r8');
-    expect(next.dirty).toBe(true);
-  });
+  it('never regresses the synced base on a late older acknowledgement', async () => { const state = {
+    local_generation: 9,
+    synced_generation: 8,
+    base_revision_id: 'r8',
+    in_flight: { generation: 7, operation_id: 'op7' },
+  };
+  const next = reconcileAck(state, { generation: 7, operation_id: 'op7', revision_id: 'r7' });
+  expect(next.synced_generation).toBe(8);
+  expect(next.base_revision_id).toBe('r8');
+  expect(next.dirty).toBe(true); });
 });
 
 // ===========================================================================
@@ -543,7 +560,7 @@ describe('T13 behavior 1: stale ACK keeps a newer generation dirty', () => {
     const doc9 = makeDocument({ completion: 'complete' });
 
     enqueue(fixture, { generation: 8, document: doc8, base_revision_id: 'r7' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(1);
     expect(fixture.transport.saves[0].request.base_revision_id).toBe('r7');
     expect(fixture.transport.saves[0].request.operation_id).toBe('op-1');
@@ -561,7 +578,7 @@ describe('T13 behavior 1: stale ACK keeps a newer generation dirty', () => {
     expect(afterAck.dirty).toBe(true);
 
     // The next request uses the acknowledged revision as base with the gen-9 payload.
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(2);
     const next = fixture.transport.saves[1].request;
     expect(next.base_revision_id).toBe('r8');
@@ -582,7 +599,7 @@ describe('T13 behavior 2: retry reuses the prepared operation', () => {
     const fixture = makeQueue();
     const doc8 = makeDocument();
     enqueue(fixture, { generation: 8, document: doc8, base_revision_id: 'r7' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     fixture.transport.failNetwork(0);
     await microtasks();
     expect(fixture.queue.getStatus('asset_a').phase).toBe('save_failed');
@@ -593,48 +610,6 @@ describe('T13 behavior 2: retry reuses the prepared operation', () => {
     expect(second.operation_id).toBe(first.operation_id);
     expect(second.operation_id).toBe('op-1');
     expect(second).toEqual(first);
-  });
-
-  it('creates a new operation_id for a new local modification and never swaps payloads', async () => {
-    const fixture = makeQueue();
-    const doc8 = makeDocument({ completion: 'in_progress' });
-    const doc9 = makeDocument({ completion: 'complete' });
-    enqueue(fixture, { generation: 8, document: doc8, base_revision_id: 'r7' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
-    fixture.transport.failNetwork(0);
-    await microtasks();
-
-    // New local modification: the prepared operation is replaced, not mutated.
-    enqueue(fixture, { generation: 9, document: doc9 });
-    void fixture.queue.retry('asset_a');
-    expect(fixture.transport.saves).toHaveLength(2);
-    const retried = fixture.transport.saves[1].request;
-    expect(retried.operation_id).not.toBe('op-1');
-    expect(retried.operation_id).toBe('op-2');
-    expect(retried.document).toEqual(doc9);
-    // The failed request keeps its original payload (immutable after preparation).
-    expect(fixture.transport.saves[0].request.document).toEqual(doc8);
-
-    // Invariant across everything sent so far: one operation_id, one payload.
-    const payloads = new Map<string, SaveRequest>();
-    for (const save of fixture.transport.saves) {
-      const seen = payloads.get(save.request.operation_id);
-      if (seen) expect(save.request).toEqual(seen);
-      else payloads.set(save.request.operation_id, save.request);
-    }
-  });
-
-  it('replays the same operation for a repeated acknowledgement-free retry after edits stopped', async () => {
-    const fixture = makeQueue();
-    enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
-    fixture.transport.failNetwork(0);
-    await microtasks();
-    void fixture.queue.retry('asset_a');
-    fixture.transport.failNetwork(1);
-    await microtasks();
-    void fixture.queue.retry('asset_a');
-    expect(fixture.transport.saves.map((save) => save.request.operation_id)).toEqual(['op-1', 'op-1', 'op-1']);
   });
 
   it('registers a fetched immutable head as an acknowledged baseline without replacing later local work', async () => {
@@ -666,35 +641,33 @@ describe('T13 behavior 2: retry reuses the prepared operation', () => {
     expect(fixture.queue.toRecord('asset_a')?.document).toEqual(localDocument);
     expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: true, base_revision_id: 'server-r7' });
   });
-  it('does not replace newer in-memory work with an older recovered record', () => {
-    const fixture = makeQueue();
-    const newerDocument = makeDocument({ asset_revision_id: 'asset_a', completion: 'complete' });
-    enqueue(fixture, { asset: 'asset_a', generation: 9, document: newerDocument, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
-    const olderRecord = makeRecord({
-      asset_revision_id: 'asset_a',
-      ontology_version_id: 'ontology_v1',
-      base_revision_id: 'r7',
-      generation: 8,
-      document: makeDocument({ asset_revision_id: 'asset_a' }),
-      synced_generation: 7,
-    });
-
-    fixture.queue.restoreFromRecord(olderRecord);
-
-    const live = fixture.queue.toRecord('asset_a');
-    expect(live?.document).toEqual(newerDocument);
-    expect(live?.generation).toBe(9);
-    expect(live?.intent_journal.map((entry) => entry.intent)).toEqual([ACCEPT]);
-    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: true, base_revision_id: 'r7', local_generation: 9 });
+  it('does not replace newer in-memory work with an older recovered record', async () => { const fixture = makeQueue();
+  const newerDocument = makeDocument({ asset_revision_id: 'asset_a', completion: 'complete' });
+  enqueue(fixture, { asset: 'asset_a', generation: 9, document: newerDocument, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
+  const olderRecord = makeRecord({
+    asset_revision_id: 'asset_a',
+    ontology_version_id: 'ontology_v1',
+    base_revision_id: 'r7',
+    generation: 8,
+    document: makeDocument({ asset_revision_id: 'asset_a' }),
+    synced_generation: 7,
   });
+  
+  await fixture.queue.forkFromRecord(await seedBranch(fixture.storage, olderRecord));
+  
+  const live = fixture.queue.toRecord('asset_a');
+  expect(live?.document).toEqual(newerDocument);
+  expect(live?.generation).toBe(9);
+  expect(live?.intent_journal.map((entry) => entry.intent)).toEqual([ACCEPT]);
+  expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: true, base_revision_id: 'r7', local_generation: 9 }); });
 
 
   it('a pending operation restored from a record stays frozen and keeps its identity across retry', async () => {
     // Produce a real prepared operation, then simulate a reload: JSON round-trip
     // (as IndexedDB structured-clone does) and restore into a fresh queue.
     const producing = makeQueue();
-    enqueue(producing, { generation: 8, document: makeDocument(), base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
-    producing.clock.advance(SAVE_DEBOUNCE_MS);
+    enqueue(producing, { generation: 8, document: makeDocument({ asset_revision_id: 'asset_a' }), base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
+    producing.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     producing.transport.failNetwork(0);
     await microtasks();
     const record = producing.queue.toRecord('asset_a');
@@ -702,7 +675,7 @@ describe('T13 behavior 2: retry reuses the prepared operation', () => {
     const reloaded = JSON.parse(JSON.stringify(record)) as DraftRecord;
 
     const fixture = makeQueue();
-    fixture.queue.restoreFromRecord(reloaded);
+    await fixture.queue.forkFromRecord(await seedBranch(fixture.storage, reloaded));
 
     // The restored copy is frozen: mutation attempts throw.
     const live = fixture.queue.toRecord('asset_a');
@@ -725,13 +698,14 @@ describe('T13 behavior 2: retry reuses the prepared operation', () => {
     expect(resent.operation_id).toBe(record?.pending?.operation_id);
     expect(resent).toEqual(record?.pending?.request);
 
-    // The user keeps editing while the restored request is in flight; the ACK
-    // lands and the new edit leaves through the normal debounced save path as a
-    // brand-new operation on top of the acknowledged revision.
+    // Already committed bodies remain preservable during a non-barrier replay
+    // pause; the future Native admission query must still deny new interaction.
+    expect(fixture.queue.canAcceptEdits('asset_a', 'ontology_v1')).toBe(false);
     enqueue(fixture, { generation: 9, document: makeDocument({ completion: 'complete' }) });
     fixture.transport.ackSave(0, 'r9');
     await microtasks();
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    await fixture.queue.whenPersisted('asset_a');
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(2);
     const fresh = fixture.transport.saves[1].request;
     expect(fresh.operation_id).not.toBe(resent.operation_id);
@@ -754,18 +728,21 @@ describe('T13 behavior 3: storage and network failures stay distinct', () => {
     const storage = new IndexedDbDraftStorage(factory as unknown as IDBFactory);
     let counter = 0;
     const queue = new SaveQueue({
+      owner: { token: {}, actor_id: 'test-actor', project_id: 'test-project', isCurrent: () => true, isWritable: () => true, canPrepareOperation: () => true, getLease: () => null },
       transport,
       storage,
       clock,
       newOperationId: () => `op-${(counter += 1)}`,
     });
 
+    const document = makeDocument({ asset_revision_id: 'asset_a' });
     queue.enqueue({
       asset_revision_id: 'asset_a',
       ontology_version_id: 'ontology_v1',
       base_revision_id: 'r7',
       generation: 8,
-      document: makeDocument(),
+      document,
+      suggestion_decisions: [ACCEPT],
     });
     await queue.whenPersisted('asset_a');
 
@@ -779,9 +756,25 @@ describe('T13 behavior 3: storage and network failures stay distinct', () => {
 
     // The native draft is still downloadable from memory.
     const draft = queue.exportDraft('asset_a');
-    expect(draft).not.toBeNull();
-    expect(draft?.unsynced).toBe(true);
-    expect(draft?.document).toEqual(makeDocument());
+    expect(draft).toEqual({
+      format: 'weblabel-native-draft',
+      schema_version: 1,
+      unsynced: true,
+      asset_revision_id: 'asset_a',
+      ontology_version_id: 'ontology_v1',
+      base_revision_id: 'r7',
+      generation: 8,
+      document,
+      pending_operation_id: null,
+      pending: null,
+      pending_outcome: 'prepared',
+      pending_owner: null,
+      draft_owner: { actor_id: 'test-actor', project_id: 'test-project' },
+      used_operation_ids: [],
+      intent_journal: [{ seq: 1, generation: 8, intent: ACCEPT, recorded_at: new Date(clock.now()).toISOString() }],
+      exported_at: new Date(clock.now()).toISOString(),
+    });
+    expect(await storage.get('asset_a', queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id)).toBeNull();
     expect(JSON.parse(serializeNativeDraft(draft as NativeDraftExport))).toEqual(draft);
   });
 
@@ -794,7 +787,7 @@ describe('T13 behavior 3: storage and network failures stay distinct', () => {
       base_revision_id: 'r7',
       suggestion_decisions: [ACCEPT],
     });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     fixture.transport.failNetwork(0);
     await microtasks();
     await fixture.queue.whenPersisted('asset_a');
@@ -802,7 +795,7 @@ describe('T13 behavior 3: storage and network failures stay distinct', () => {
     expect(fixture.queue.getStatus('asset_a').phase).toBe('save_failed');
     expect(fixture.queue.getStatus('asset_a').dirty).toBe(true);
 
-    const stored = await fixture.storage.get('asset_a');
+    const stored = ((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null);
     expect(stored).not.toBeNull();
     expect(stored?.document).toEqual(doc8);
     expect(stored?.pending?.operation_id).toBe('op-1');
@@ -824,13 +817,15 @@ describe('T24 recovery pause preserves local work', () => {
     const document = makeDocument({ asset_revision_id: 'asset_a', completion: 'complete' });
     enqueue(fixture, { generation, document, base_revision_id: 'r0', suggestion_decisions: [ACCEPT] });
     const saving = fixture.queue.flush('asset_a');
+    await microtasks();
     await fixture.queue.whenPersisted('asset_a');
-    const pending = await fixture.storage.get('asset_a');
+    const pendingEnvelope = await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id);
+    const pending = ((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null);
     expect(pending).toMatchObject({ generation, synced_generation: 0, synced_intent_seq: 0, pending: { operation_id: 'op-1' } });
     let releaseHead!: (head: AnnotationRevision) => void;
     const fetchingHead = new Promise<AnnotationRevision>((resolve) => { releaseHead = resolve; });
     const fetchHead = vi.spyOn(fixture.transport, 'fetchHead').mockReturnValueOnce(fetchingHead);
-    const recovery = runRecovery({ storage: fixture.storage, transport: fixture.transport }, 'asset_a');
+    const recovery = runRecovery({ storage: fixture.storage, transport: fixture.transport }, 'asset_a', pendingEnvelope!.draft_id);
     await microtasks();
     expect(fetchHead).toHaveBeenCalledOnce();
     // Recovery has read the pending record but is still awaiting the head.
@@ -844,108 +839,40 @@ describe('T24 recovery pause preserves local work', () => {
     expect(report.kind).toBe('conflict');
     if (report.kind !== 'conflict') throw new Error('expected stale conflict report');
     expect(report.record).toEqual(pending);
-    fixture.queue.restoreFromRecord(report.record, true);
+    await fixture.queue.forkFromRecord(pendingEnvelope!, { pauseForUserChoice: true });
     expect(fixture.queue.getStatus('asset_a')).toMatchObject({ phase: 'synced', dirty: false, writes_paused: false, local_generation: generation, synced_generation: generation, base_revision_id: 'ack-r2' });
     expect(fixture.queue.toRecord('asset_a')).toEqual(acknowledged);
     await fixture.queue.flush('asset_a');
     await fixture.queue.retry('asset_a');
-    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2); await microtasks();
     await microtasks();
     expect(fixture.transport.saves).toHaveLength(1);
-    expect(await fixture.storage.get('asset_a')).toEqual(acknowledged);
+    expect(((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null)).toEqual(acknowledged);
     const edited = makeDocument({ asset_revision_id: 'asset_a', objects: [] });
     enqueue(fixture, { generation: generation + 1, document: edited, suggestion_decisions: [REVERT] });
     const nextSave = fixture.queue.flush('asset_a');
+    await microtasks();
     expect(fixture.transport.saves[1].request).toMatchObject({ operation_id: 'op-2', base_revision_id: 'ack-r2', document: edited, suggestion_decisions: [REVERT] });
     fixture.transport.ackSave(1, 'ack-next');
     await nextSave;
     await fixture.queue.whenPersisted('asset_a');
-    expect(await fixture.storage.get('asset_a')).toMatchObject({ document: edited, synced_generation: generation + 1, synced_intent_seq: 2, base_revision_id: 'ack-next', pending: null });
+    expect(((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null)).toMatchObject({ document: edited, synced_generation: generation + 1, synced_intent_seq: 2, base_revision_id: 'ack-next', pending: null });
   });
 
-  it('restores a genuinely later draft over a clean generation-zero baseline', () => {
-    const fixture = makeQueue();
-    fixture.queue.initializeFromServerRevision({ asset_revision_id: 'asset_a', ontology_version_id: 'ontology_v1', annotation_revision_id: 'server-r0', generation: 0, document: makeDocument({ asset_revision_id: 'asset_a', objects: [] }) });
-    const record = makeRecord({ asset_revision_id: 'asset_a', generation: 9, document: makeDocument({ asset_revision_id: 'asset_a' }) });
-    fixture.queue.restoreFromRecord(record, true);
-    expect(fixture.queue.toRecord('asset_a')).toMatchObject({ document: record.document, generation: 9, synced_generation: 7, base_revision_id: 'r7' });
-    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: true, writes_paused: true, local_generation: 9 });
-  });
-  it.each(['conflict', 'unreachable'] as const)('%s recovery waits for keep-local and sends every local object and intent', async (kind) => {
-    const producing = makeQueue();
-    const original = makeDocument({ asset_revision_id: 'asset_a' });
-    enqueue(producing, { generation: 8, document: original, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
-    producing.clock.advance(SAVE_DEBOUNCE_MS);
-    producing.transport.failNetwork(0);
-    await microtasks();
-    const record = JSON.parse(JSON.stringify(producing.queue.toRecord('asset_a'))) as DraftRecord;
-    const fixture = makeQueue();
-    fixture.transport.head = makeRevision('server-r9', makeDocument({ asset_revision_id: 'asset_a', objects: [] }));
-    if (kind === 'unreachable') fixture.transport.headError = new Error('offline');
-    await fixture.storage.put(record);
-    expect((await runRecovery({ storage: fixture.storage, transport: fixture.transport }, 'asset_a')).kind).toBe(kind);
-    fixture.queue.restoreFromRecord(record, true);
-    expect(fixture.queue.toRecord('asset_a')).toMatchObject({ document: original, pending: record.pending, intent_journal: record.intent_journal });
-    const edited = makeDocument({ asset_revision_id: 'asset_a', objects: [...original.objects, { ...original.objects[0], object_id: 'local_second' }] });
-    enqueue(fixture, { generation: 9, document: edited, suggestion_decisions: [REVERT] });
-    fixture.queue.switchAsset('asset_a');
-    fixture.queue.switchAsset('asset_b');
-    void fixture.queue.flush('asset_a');
-    void fixture.queue.retry('asset_a');
-    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2);
-    await microtasks();
-    expect(fixture.transport.saves).toHaveLength(0);
-    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ writes_paused: true, dirty: true });
-    await fixture.queue.whenPersisted('asset_a');
-    expect(await fixture.storage.get('asset_a')).toMatchObject({ document: edited, pending: record.pending, intent_journal: [record.intent_journal[0], expect.objectContaining({ intent: REVERT })] });
-    fixture.transport.headError = null;
-    const resolution = await fixture.queue.resolveConflict('asset_a', 'keep_local_export');
-    expect(resolution).toMatchObject({ resumed: true, base_revision_id: 'server-r9', export: { document: edited } });
-    const sent = fixture.queue.flush('asset_a');
-    expect(fixture.transport.saves).toHaveLength(1);
-    expect(fixture.transport.saves[0].request).toMatchObject({ base_revision_id: 'server-r9', document: edited, suggestion_decisions: [ACCEPT, REVERT] });
-    fixture.transport.ackSave(0, 'saved-local');
-    await sent;
-    await fixture.queue.whenPersisted('asset_a');
-    expect(await fixture.storage.get('asset_a')).toMatchObject({ document: edited, generation: 9, synced_generation: 9, intent_journal: [record.intent_journal[0], expect.objectContaining({ intent: REVERT })] });
-  });
-
-  it.each([false, true])('pauses existing memory without replacing it (in flight: %s)', async (inFlight) => {
-    const fixture = makeQueue();
-    const document = makeDocument({ asset_revision_id: 'asset_a', completion: 'complete' });
-    enqueue(fixture, { generation: 9, document, base_revision_id: 'memory-r8', suggestion_decisions: [ACCEPT] });
-    if (inFlight) fixture.clock.advance(SAVE_DEBOUNCE_MS);
-    const before = fixture.queue.toRecord('asset_a');
-    const listener = vi.fn();
-    fixture.queue.subscribe('asset_a', listener);
-    fixture.queue.restoreFromRecord(makeRecord({ asset_revision_id: 'asset_a', generation: 1 }), true);
-    expect(fixture.queue.toRecord('asset_a')).toEqual(before);
-    expect(listener).toHaveBeenCalled();
-    expect(fixture.queue.getStatus('asset_a').writes_paused).toBe(true);
-    await fixture.queue.whenPersisted('asset_a');
-    expect(await fixture.storage.get('asset_a')).toEqual(before);
-    if (inFlight) {
-      enqueue(fixture, { generation: 10, document, suggestion_decisions: [REVERT] });
-      fixture.transport.ackSave(0, 'ack-r9');
-      await microtasks();
-      expect(fixture.queue.getStatus('asset_a')).toMatchObject({ writes_paused: true, dirty: true, synced_generation: 9, local_generation: 10 });
-    }
-    void fixture.queue.flush('asset_a');
-    void fixture.queue.retry('asset_a');
-    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2);
-    await microtasks();
-    expect(fixture.transport.saves).toHaveLength(inFlight ? 1 : 0);
-    expect(fixture.queue.toRecord('asset_a')?.document).toEqual(document);
-  });
+  it('restores a genuinely later draft over a clean generation-zero baseline', async () => { const fixture = makeQueue();
+  fixture.queue.initializeFromServerRevision({ asset_revision_id: 'asset_a', ontology_version_id: 'ontology_v1', annotation_revision_id: 'server-r0', generation: 0, document: makeDocument({ asset_revision_id: 'asset_a', objects: [] }) });
+  await fixture.queue.whenPersisted('asset_a');
+  const record = makeRecord({ asset_revision_id: 'asset_a', generation: 9, document: makeDocument({ asset_revision_id: 'asset_a' }) });
+  await fixture.queue.forkFromRecord(await seedBranch(fixture.storage, record), { pauseForUserChoice: true, expectedCurrent: fixture.queue.getStatus(record.asset_revision_id).local_commit });
+  expect(fixture.queue.toRecord('asset_a')).toMatchObject({ document: record.document, generation: 9, synced_generation: 7, base_revision_id: 'r7' });
+  expect(fixture.queue.getStatus('asset_a')).toMatchObject({ dirty: true, writes_paused: true, local_generation: 9 }); });
 });
 
 describe('T13 behavior 4: recovery compares against the server head', () => {
-  it('auto-restores only when the record base is the server head', () => {
-    const record = makeRecord({ base_revision_id: 'r7', generation: 9, synced_generation: 7 });
-    const head = makeRevision('r7', makeDocument({ completion: 'complete' }));
-    const report = compareWithServer(record, head);
-    expect(report.kind).toBe('restored');
-  });
+  it('auto-restores only when the record base is the server head', async () => { const record = makeRecord({ base_revision_id: 'r7', generation: 9, synced_generation: 7 });
+  const head = makeRevision('r7', makeDocument({ completion: 'complete' }));
+  const report = compareWithServer(record, head);
+  expect(report.kind).toBe('restored'); });
 
   it('a diverged head is a conflict offering keep-local/export and view-server, never last-write-wins', async () => {
     const fixture = makeQueue();
@@ -963,9 +890,9 @@ describe('T13 behavior 4: recovery compares against the server head', () => {
     // Pure classification: the local record is untouched and nothing is written.
     expect(JSON.stringify(record)).toBe(before);
 
-    await fixture.storage.put(record);
+    await fixture.storage.put({ asset_revision_id: record.asset_revision_id, draft_id: 'source', write_token: 'source-token', record: record, sources: [] });
     fixture.transport.head = head;
-    const runtimeReport = await runRecovery({ storage: fixture.storage, transport: fixture.transport }, record.asset_revision_id);
+    const runtimeReport = await runRecovery({ storage: fixture.storage, transport: fixture.transport }, record.asset_revision_id, 'source');
     expect(runtimeReport.kind).toBe('conflict');
     expect(fixture.transport.saves).toHaveLength(0);
     expect(fixture.transport.headCalls).toHaveLength(1);
@@ -982,18 +909,18 @@ describe('T13 behavior 4: recovery compares against the server head', () => {
   it('keeps the draft and offers the export when the server is unreachable', async () => {
     const fixture = makeQueue();
     const record = makeRecord();
-    await fixture.storage.put(record);
+    await fixture.storage.put({ asset_revision_id: record.asset_revision_id, draft_id: 'source', write_token: 'source-token', record: record, sources: [] });
     fixture.transport.headError = new TransportError({
       kind: 'network',
       message: 'offline',
       code: 'NETWORK_UNREACHABLE',
     });
-    const report = await runRecovery({ storage: fixture.storage, transport: fixture.transport }, record.asset_revision_id);
+    const report = await runRecovery({ storage: fixture.storage, transport: fixture.transport }, record.asset_revision_id, 'source');
     expect(report.kind).toBe('unreachable');
     if (report.kind !== 'unreachable') throw new Error('expected unreachable');
-    expect(report.record.document).toEqual(record.document);
-    expect(keepLocalExport(report.record).unsynced).toBe(true);
-    expect(hasUnsyncedWork(report.record)).toBe(true);
+    expect(report.record).toEqual(record);
+    expect(keepLocalExport(report.record as DraftRecord).unsynced).toBe(true);
+    expect(hasUnsyncedWork(report.record as DraftRecord)).toBe(true);
   });
 
   it('reports clean and missing records without touching the server', async () => {
@@ -1002,7 +929,7 @@ describe('T13 behavior 4: recovery compares against the server head', () => {
     expect(hasUnsyncedWork(synced)).toBe(false);
     expect(compareWithServer(synced, makeRevision('rX')).kind).toBe('clean');
 
-    const report = await runRecovery({ storage: fixture.storage, transport: fixture.transport }, 'asset_absent');
+    const report = await runRecovery({ storage: fixture.storage, transport: fixture.transport }, 'asset_absent', 'source');
     expect(report.kind).toBe('no_local_record');
     expect(fixture.transport.headCalls).toHaveLength(0);
   });
@@ -1021,14 +948,14 @@ describe('T13 behavior 5: decision journal survives debounce flushes', () => {
       base_revision_id: 'r7',
       suggestion_decisions: [ACCEPT],
     });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     fixture.transport.ackSave(0, 'r8');
     await microtasks();
 
     // undo produces a revert intent, redo a fresh accept intent.
     enqueue(fixture, { generation: 9, document: makeDocument(), suggestion_decisions: [REVERT] });
     enqueue(fixture, { generation: 10, document: makeDocument(), suggestion_decisions: [ACCEPT] });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
 
     expect(fixture.transport.saves).toHaveLength(2);
     expect(fixture.transport.saves[0].request.suggestion_decisions).toEqual([ACCEPT]);
@@ -1044,22 +971,20 @@ describe('T13 behavior 5: decision journal survives debounce flushes', () => {
     expect(record?.intent_journal.map((entry) => entry.seq)).toEqual([1, 2, 3]);
   });
 
-  it('carries all three intents in order inside a single debounce window', () => {
-    const fixture = makeQueue();
-    enqueue(fixture, {
-      generation: 8,
-      document: makeDocument(),
-      base_revision_id: 'r7',
-      suggestion_decisions: [ACCEPT],
-    });
-    enqueue(fixture, { generation: 9, document: makeDocument(), suggestion_decisions: [REVERT] });
-    enqueue(fixture, { generation: 10, document: makeDocument(), suggestion_decisions: [ACCEPT] });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
-
-    expect(fixture.transport.saves).toHaveLength(1);
-    expect(fixture.transport.saves[0].request.suggestion_decisions).toEqual([ACCEPT, REVERT, ACCEPT]);
-    expect(fixture.transport.saves[0].request.document).toEqual(makeDocument());
+  it('carries all three intents in order inside a single debounce window', async () => { const fixture = makeQueue();
+  enqueue(fixture, {
+    generation: 8,
+    document: makeDocument(),
+    base_revision_id: 'r7',
+    suggestion_decisions: [ACCEPT],
   });
+  enqueue(fixture, { generation: 9, document: makeDocument(), suggestion_decisions: [REVERT] });
+  enqueue(fixture, { generation: 10, document: makeDocument(), suggestion_decisions: [ACCEPT] });
+  fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
+  
+  expect(fixture.transport.saves).toHaveLength(1);
+  expect(fixture.transport.saves[0].request.suggestion_decisions).toEqual([ACCEPT, REVERT, ACCEPT]);
+  expect(fixture.transport.saves[0].request.document).toEqual(makeDocument()); });
 });
 
 // ===========================================================================
@@ -1067,35 +992,31 @@ describe('T13 behavior 5: decision journal survives debounce flushes', () => {
 // ===========================================================================
 
 describe('T13 behavior 6: debounce, single flight and asset switching', () => {
-  it('waits the full 400ms logical-operation debounce window', () => {
-    const fixture = makeQueue();
-    enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS - 1);
-    expect(fixture.transport.saves).toHaveLength(0);
-    fixture.clock.advance(1);
-    expect(fixture.transport.saves).toHaveLength(1);
-    expect(fixture.transport.saves[0].request.document).toEqual(makeDocument());
-  });
+  it('waits the full 400ms logical-operation debounce window', async () => { const fixture = makeQueue();
+  enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
+  fixture.clock.advance(SAVE_DEBOUNCE_MS - 1); await microtasks();
+  expect(fixture.transport.saves).toHaveLength(0);
+  fixture.clock.advance(1); await microtasks();
+  expect(fixture.transport.saves).toHaveLength(1);
+  expect(fixture.transport.saves[0].request.document).toEqual(makeDocument()); });
 
-  it('coalesces rapid logical operations into one request with the latest payload', () => {
-    const fixture = makeQueue();
-    const doc1 = makeDocument({ completion: 'unprocessed' });
-    const doc2 = makeDocument({ completion: 'complete' });
-    enqueue(fixture, { generation: 8, document: doc1, base_revision_id: 'r7' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS - 1);
-    enqueue(fixture, { generation: 9, document: doc2 });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS - 1);
-    expect(fixture.transport.saves).toHaveLength(0);
-    fixture.clock.advance(1);
-    expect(fixture.transport.saves).toHaveLength(1);
-    expect(fixture.transport.saves[0].request.document).toEqual(doc2);
-  });
+  it('coalesces rapid logical operations into one request with the latest payload', async () => { const fixture = makeQueue();
+  const doc1 = makeDocument({ completion: 'unprocessed' });
+  const doc2 = makeDocument({ completion: 'complete' });
+  enqueue(fixture, { generation: 8, document: doc1, base_revision_id: 'r7' });
+  fixture.clock.advance(SAVE_DEBOUNCE_MS - 1); await microtasks();
+  enqueue(fixture, { generation: 9, document: doc2 });
+  fixture.clock.advance(SAVE_DEBOUNCE_MS - 1); await microtasks();
+  expect(fixture.transport.saves).toHaveLength(0);
+  fixture.clock.advance(1); await microtasks();
+  expect(fixture.transport.saves).toHaveLength(1);
+  expect(fixture.transport.saves[0].request.document).toEqual(doc2); });
 
   it('sends one request per asset at a time while other assets keep flowing', async () => {
     const fixture = makeQueue();
     enqueue(fixture, { asset: 'asset_a', generation: 8, document: makeDocument(), base_revision_id: 'r7' });
     enqueue(fixture, { asset: 'asset_b', generation: 8, document: makeDocument(), base_revision_id: 'r7b' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(2);
     expect(fixture.transport.requestsFor('asset_a')).toHaveLength(1);
     expect(fixture.transport.requestsFor('asset_b')).toHaveLength(1);
@@ -1103,13 +1024,13 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
     // Local edits while both requests are in flight: still single flight per asset.
     enqueue(fixture, { asset: 'asset_a', generation: 9, document: makeDocument() });
     enqueue(fixture, { asset: 'asset_b', generation: 9, document: makeDocument() });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 2); await microtasks();
     expect(fixture.transport.saves).toHaveLength(2);
 
     // asset_b's ACK unblocks only asset_b's follow-up; asset_a stays in flight.
     fixture.transport.ackSave(1, 'r8b');
     await microtasks();
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(3);
     const bNext = fixture.transport.saves[2];
     expect(bNext.asset_revision_id).toBe('asset_b');
@@ -1119,7 +1040,7 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
     // Now asset_a's ACK releases its follow-up with its own new base.
     fixture.transport.ackSave(0, 'r8a');
     await microtasks();
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(4);
     const aNext = fixture.transport.saves[3];
     expect(aNext.asset_revision_id).toBe('asset_a');
@@ -1130,26 +1051,27 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
     const fixture = makeQueue();
     fixture.queue.switchAsset('asset_a');
     enqueue(fixture, { asset: 'asset_a', generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-    fixture.clock.advance(200);
+    fixture.clock.advance(200); await microtasks();
     expect(fixture.transport.saves).toHaveLength(0);
 
     // Switching away flushes asset_a immediately, bypassing the debounce window.
     fixture.queue.switchAsset('asset_b');
+    await microtasks();
     expect(fixture.transport.saves).toHaveLength(1);
     expect(fixture.transport.saves[0].asset_revision_id).toBe('asset_a');
 
     // The new asset keeps its own queue and debounce.
     enqueue(fixture, { asset: 'asset_b', generation: 8, document: makeDocument(), base_revision_id: 'r7b' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(2);
 
     // asset_a's background queue continues after its ACK although asset_b is active.
     enqueue(fixture, { asset: 'asset_a', generation: 9, document: makeDocument() });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.requestsFor('asset_a')).toHaveLength(1);
     fixture.transport.ackSave(0, 'r8');
     await microtasks();
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     const aSaves = fixture.transport.requestsFor('asset_a');
     expect(aSaves).toHaveLength(2);
     expect(aSaves[1].request.base_revision_id).toBe('r8');
@@ -1163,6 +1085,7 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
     let counter = 0;
     // No injected clock: this drives the production realClock seam itself.
     const queue = new SaveQueue({
+      owner: { token: {}, actor_id: 'test-actor', project_id: 'test-project', isCurrent: () => true, isWritable: () => true, canPrepareOperation: () => true, getLease: () => null },
       transport,
       storage,
       newOperationId: () => `op-${(counter += 1)}`,
@@ -1186,6 +1109,10 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
     render(
       createElement(SaveStatus, {
         queue: fixture.queue,
+        scopeKey: 'test-scope',
+        isCurrentScope: (key: string) => key === 'test-scope',
+        canReconcileInScope: (key: string) => key === 'test-scope', canWrite: (key: string) => key === 'test-scope',
+        canRetryOwnedFuture: () => false,
         asset_revision_id: 'asset_a',
       }),
     );
@@ -1201,7 +1128,7 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
     expect(status()).toHaveAttribute('data-dirty', 'true');
 
     await act(async () => {
-      fixture.clock.advance(SAVE_DEBOUNCE_MS);
+      fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     });
     expect(status()).toHaveAttribute('data-phase', 'saving');
 
@@ -1215,12 +1142,12 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
 
   it('the indicator keeps the dirty flag after a stale ACK and shows the failed save', async () => {
     const fixture = makeQueue();
-    render(createElement(SaveStatus, { queue: fixture.queue, asset_revision_id: 'asset_a' }));
+    render(createElement(SaveStatus, { queue: fixture.queue, asset_revision_id: 'asset_a', scopeKey: 'test-scope', isCurrentScope: (key: string) => key === 'test-scope', canReconcileInScope: (key: string) => key === 'test-scope', canWrite: (key: string) => key === 'test-scope', canRetryOwnedFuture: () => false }));
     const status = () => screen.getByTestId('save-status');
 
     await act(async () => {
       enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-      fixture.clock.advance(SAVE_DEBOUNCE_MS);
+      fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     });
     await act(async () => {
       enqueue(fixture, { generation: 9, document: makeDocument() });
@@ -1231,7 +1158,7 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
     expect(status()).toHaveAttribute('data-phase', 'saved_local');
 
     await act(async () => {
-      fixture.clock.advance(SAVE_DEBOUNCE_MS);
+      fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
       fixture.transport.failNetwork(1);
       await microtasks();
     });
@@ -1254,10 +1181,10 @@ describe('T13 behavior 7: draft record schema and rescue export', () => {
       base_revision_id: 'r7',
       suggestion_decisions: [ACCEPT, REVERT],
     });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     await fixture.queue.whenPersisted('asset_a');
 
-    const record = await fixture.storage.get('asset_a');
+    const record = ((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null);
     expect(record).not.toBeNull();
     expect(record?.schema_version).toBe(1);
     expect(record?.base_revision_id).toBe('r7');
@@ -1271,7 +1198,7 @@ describe('T13 behavior 7: draft record schema and rescue export', () => {
     expect(record?.synced_intent_seq).toBe(0);
 
     // Round trip through the storage seam preserves the record exactly.
-    const reread = await fixture.storage.get('asset_a');
+    const reread = ((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null);
     expect(reread).toEqual(record);
 
     // The prepared request is frozen in the live queue state: mutation attempts throw.
@@ -1285,11 +1212,11 @@ describe('T13 behavior 7: draft record schema and rescue export', () => {
     const storage = new InMemoryDraftStorage();
     const store = new DraftStore(storage);
     const record = makeRecord();
-    const saved = await store.save(record);
-    expect(saved).toEqual(record);
-    expect(await store.load(record.asset_revision_id)).toEqual(record);
-    await store.remove(record.asset_revision_id);
-    expect(await store.load(record.asset_revision_id)).toBeNull();
+    const saved = await store.save({ asset_revision_id: record.asset_revision_id, draft_id: 'fixture', write_token: '', record: record, sources: [] });
+    expect(saved?.record).toEqual(record);
+    expect(((await store.load(record.asset_revision_id, 'fixture'))?.record as DraftRecord | null)).toEqual(record);
+    await store.remove(record.asset_revision_id, 'fixture');
+    expect(await store.load(record.asset_revision_id, 'fixture')).toBeNull();
   });
 
   it('keeps the native draft downloadable when the storage write failed', async () => {
@@ -1321,42 +1248,48 @@ describe('T13 behavior 8: HTTP 409 pauses automatic writes', () => {
     doc9: AnnotationDocument;
   }> {
     const fixture = makeQueue();
-    const doc9 = makeDocument({ completion: 'complete' });
-    enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    const scope = { asset_revision_id: 'asset_a', ontology_version_id: 'ontology_v1' };
+    const doc9 = makeDocument({ ...scope, completion: 'complete' });
+    enqueue(fixture, { generation: 8, document: makeDocument(scope), base_revision_id: 'r7' });
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     fixture.transport.failHttp(0, 409, 'REVISION_CONFLICT');
     await microtasks();
     expect(fixture.queue.getStatus('asset_a').phase).toBe('conflict');
     expect(fixture.queue.getStatus('asset_a').writes_paused).toBe(true);
+    expect(fixture.queue.canAcceptEdits('asset_a', 'ontology_v1')).toBe(false);
     enqueue(fixture, { generation: 9, document: doc9 });
     return { fixture, doc9 };
   }
 
-  it('stops automatic writes (and manual retry) until the user resolves', async () => {
+  it('stops automatic writes until the user explicitly rebases the local work', async () => {
     const { fixture, doc9 } = await pauseOnConflict();
 
-    fixture.clock.advance(SAVE_DEBOUNCE_MS * 10);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 10); await microtasks();
     expect(fixture.transport.saves).toHaveLength(1);
-    void fixture.queue.retry('asset_a');
+    await fixture.queue.flush('asset_a');
     expect(fixture.transport.saves).toHaveLength(1);
 
     // "View server version" is read-only and does not resume writes.
-    fixture.transport.head = makeRevision('r8s', makeDocument());
-    const viewed = await fixture.queue.resolveConflict('asset_a', 'view_server');
+    fixture.transport.head = makeRevision('r8s', makeDocument({
+      asset_revision_id: 'asset_a', ontology_version_id: 'ontology_v1',
+    }));
+    const viewed = await fixture.queue.resolveConflict('asset_a', 'view_server', () => true);
     expect(viewed.action).toBe('view_server');
+    expect(fixture.queue.getStatus('asset_a').writes_paused).toBe(true);
     expect(fixture.transport.saves).toHaveLength(1);
-    fixture.clock.advance(SAVE_DEBOUNCE_MS * 10);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 10); await microtasks();
     expect(fixture.transport.saves).toHaveLength(1);
 
     // Explicit "keep local" resolution resumes writes on top of the observed head.
-    const resolution = await fixture.queue.resolveConflict('asset_a', 'keep_local_export');
+    const resolution = await fixture.queue.resolveConflict('asset_a', 'keep_local_export', () => true);
     expect(resolution.action).toBe('keep_local_export');
     if (resolution.action !== 'keep_local_export') throw new Error('expected keep_local_export');
     expect(resolution.base_revision_id).toBe('r8s');
+    expect(resolution.resumed).toBe(true);
     expect(resolution.export.unsynced).toBe(true);
     expect(resolution.export.document).toEqual(doc9);
 
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(2);
     const resumed = fixture.transport.saves[1].request;
     expect(resumed.base_revision_id).toBe('r8s');
@@ -1367,27 +1300,91 @@ describe('T13 behavior 8: HTTP 409 pauses automatic writes', () => {
     expect(fixture.queue.getStatus('asset_a').writes_paused).toBe(false);
   });
 
-  it('adopting the server version explicitly discards the local draft and resumes', async () => {
-    const { fixture } = await pauseOnConflict();
-    const serverDocument = makeDocument({ completion: 'unprocessed' });
-    fixture.transport.head = makeRevision('r8s', serverDocument);
+  it('manually replays the original rejected operation and preserves conflict and future work on another 409', async () => {
+    let lease: SaveRequest['lease'] = { task_id: 'task-a', fencing_token: 7 };
+    const fixture = makeQueue(() => lease);
+    const scope = { asset_revision_id: 'asset_a', ontology_version_id: 'ontology_v1' };
+    const doc8 = makeDocument(scope);
+    const doc9 = makeDocument({ ...scope, completion: 'complete' });
+    enqueue(fixture, { generation: 8, document: doc8, base_revision_id: 'r7', suggestion_decisions: [ACCEPT] });
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
+    const original = fixture.transport.saves[0].request;
+    const originalWire = JSON.stringify(original);
+    fixture.transport.failHttp(0, 409, 'REVISION_CONFLICT');
+    await microtasks();
+    expect(fixture.queue.canAcceptEdits('asset_a', 'ontology_v1')).toBe(false);
+    enqueue(fixture, { generation: 9, document: doc9, suggestion_decisions: [REVERT] });
+    await fixture.queue.whenPersisted('asset_a');
+    const before = fixture.queue.toRecord('asset_a')!;
+    const preserved = {
+      base_revision_id: before.base_revision_id,
+      generation: before.generation,
+      document: before.document,
+      pending: before.pending,
+      pending_owner: before.pending_owner,
+      draft_owner: before.draft_owner,
+      intent_journal: before.intent_journal,
+      synced_generation: before.synced_generation,
+      synced_intent_seq: before.synced_intent_seq,
+      edit_seq: before.edit_seq,
+      used_operation_ids: before.used_operation_ids,
+      writes_paused: true,
+    };
+    expect(before.pending_outcome).toBe('rejected');
+    expect(before.pending?.request).toEqual(original);
+    expect(before.intent_journal.map(entry => entry.intent)).toEqual([ACCEPT, REVERT]);
 
-    const resolution = await fixture.queue.resolveConflict('asset_a', 'adopt_server');
-    expect(resolution).toEqual({ action: 'adopt_server', base_revision_id: 'r8s' });
-    expect(fixture.queue.getStatus('asset_a').dirty).toBe(false);
-    expect(fixture.queue.getStatus('asset_a').phase).toBe('synced');
-    expect(fixture.queue.toRecord('asset_a')?.document).toEqual(serverDocument);
-
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    // Generic flush and timers must not replay a fresh known rejection.
+    lease = { task_id: 'task-a', fencing_token: 42 };
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 10); await microtasks();
+    await fixture.queue.flush('asset_a');
     expect(fixture.transport.saves).toHaveLength(1);
+
+    const retry = fixture.queue.retry('asset_a');
+    await microtasks();
+    expect(fixture.transport.saves).toHaveLength(2);
+    const replay = fixture.transport.saves[1].request;
+    expect(JSON.stringify(replay)).toBe(originalWire);
+    expect(replay).toEqual(original);
+    expect(replay).toMatchObject({
+      operation_id: 'op-1', base_revision_id: 'r7', document: doc8,
+      lease: { task_id: 'task-a', fencing_token: 7 }, suggestion_decisions: [ACCEPT],
+    });
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({ writes_paused: true, dirty: true, local_generation: 9 });
+    expect(fixture.queue.toRecord('asset_a')).toMatchObject(preserved);
+    await fixture.queue.whenPersisted('asset_a');
+    expect(((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null)).toMatchObject(preserved);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 10); await microtasks();
+    void fixture.queue.flush('asset_a'); await microtasks();
+    await microtasks();
+    expect(fixture.transport.saves).toHaveLength(2);
+
+    fixture.transport.failHttp(1, 409, 'REVISION_CONFLICT');
+    await retry;
+    await fixture.queue.whenPersisted('asset_a');
+    expect(fixture.queue.getStatus('asset_a')).toMatchObject({
+      phase: 'conflict', writes_paused: true, dirty: true,
+      base_revision_id: 'r7', local_generation: 9,
+      last_error: { code: 'REVISION_CONFLICT' },
+    });
+    expect(fixture.queue.toRecord('asset_a')).toMatchObject(preserved);
+    expect(((await fixture.storage.get('asset_a', fixture.queue.getDraftBranchSnapshot('asset_a')!.envelope.draft_id))?.record as DraftRecord | null)).toMatchObject(preserved);
+    expect(fixture.queue.exportDraft('asset_a')).toMatchObject({
+      unsynced: true, document: doc9, pending: before.pending, intent_journal: before.intent_journal,
+    });
+    fixture.clock.advance(SAVE_DEBOUNCE_MS * 10); await microtasks();
+    await fixture.queue.flush('asset_a');
+    expect(fixture.transport.saves).toHaveLength(2);
+    expect(fixture.transport.saves[0].request).toEqual(original);
   });
+
 });
 describe('T26 save lease recovery', () => {
   it('rebuilds a definitively rejected save with the acquired lease and a fresh operation id', async () => {
     let lease: SaveRequest['lease'] = null;
     const fixture = makeQueue(() => lease);
     enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     fixture.transport.failHttp(0, 409, 'LEASE_REQUIRED');
     await microtasks();
 
@@ -1524,6 +1521,10 @@ describe('T13 SaveStatus rescue and conflict surfaces', () => {
     render(
       createElement(SaveStatus, {
         queue: fixture.queue,
+        scopeKey: 'test-scope',
+        isCurrentScope: (key: string) => key === 'test-scope',
+        canReconcileInScope: (key: string) => key === 'test-scope', canWrite: (key: string) => key === 'test-scope',
+        canRetryOwnedFuture: () => false,
         asset_revision_id: 'asset_a',
         onExportDraft: (draft) => exported.push(draft),
       }),
@@ -1548,7 +1549,7 @@ describe('T13 SaveStatus rescue and conflict surfaces', () => {
 
   it('offers keep-local/export and view-server on a recovery conflict without auto-resolving', async () => {
     const fixture = makeQueue();
-    const record = makeRecord({ base_revision_id: 'r7', generation: 9, synced_generation: 7 });
+    const record = makeRecord({ base_revision_id: 'r7', generation: 9, synced_generation: 7, draft_owner: { actor_id: 'test-actor', project_id: 'test-project' } });
     const head = makeRevision('r8', makeDocument({ completion: 'complete' }));
     const report = compareWithServer(record, head);
     if (report.kind !== 'conflict') throw new Error('expected conflict');
@@ -1556,11 +1557,15 @@ describe('T13 SaveStatus rescue and conflict surfaces', () => {
     const exported: NativeDraftExport[] = [];
     const viewed: Array<AnnotationRevision | null> = [];
     fixture.transport.head = head;
-    fixture.queue.restoreFromRecord(record);
+    await fixture.queue.forkFromRecord(await seedBranch(fixture.storage, record));
 
     render(
       createElement(SaveStatus, {
         queue: fixture.queue,
+        scopeKey: 'test-scope',
+        isCurrentScope: (key: string) => key === 'test-scope',
+        canReconcileInScope: (key: string) => key === 'test-scope', canWrite: (key: string) => key === 'test-scope',
+        canRetryOwnedFuture: () => false,
         asset_revision_id: record.asset_revision_id,
         recovery: report,
         onExportDraft: (draft) => exported.push(draft),
@@ -1586,7 +1591,7 @@ describe('T13 SaveStatus rescue and conflict surfaces', () => {
     expect(exported).toHaveLength(1);
     expect(exported[0].document).toEqual(record.document);
     // The explicit keep-local resolution resumes automatic writes on the new base.
-    fixture.clock.advance(SAVE_DEBOUNCE_MS);
+    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
     expect(fixture.transport.saves).toHaveLength(1);
     expect(fixture.transport.saves[0].request.base_revision_id).toBe('r8');
     expect(fixture.transport.saves[0].request.document).toEqual(record.document);

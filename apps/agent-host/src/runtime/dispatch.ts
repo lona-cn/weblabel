@@ -5,14 +5,12 @@ import { ServerRuntimeContext, type RuntimeBinding } from './context';
 import { createOpenAiApiAdapter, type OpenAiApiAdapterConfig } from '../providers/openai-api';
 import { createAnthropicApiAdapter, type AnthropicApiAdapterConfig } from '../providers/anthropic-api';
 import { createMiMoApiAdapter, type MiMoApiAdapterConfig } from '../providers/mimo-api';
-import { type CodexLocalOptions } from '../providers/codex/adapter';
 import { createClaudeLocalAdapter, createStdioClaudeTransport, type ClaudeLocalOptions } from '../providers/claude/adapter';
 import { DetectorLocalAdapter, type DetectorLocalOptions } from "../providers/detector-local";
 type ProviderConfiguration =
   | { provider: 'openai_api'; config: OpenAiApiAdapterConfig }
   | { provider: 'anthropic_api'; config: AnthropicApiAdapterConfig }
   | { provider: 'mimo_api'; config: MiMoApiAdapterConfig }
-  | { provider: 'codex_local'; config: Omit<CodexLocalOptions, 'transport' | 'imageSource' | 'runToken'> }
   | { provider: 'claude_local'; config: Omit<ClaudeLocalOptions, 'transport' | 'imageSource' | 'runToken'> }
   | { provider: 'detector_local'; config: Omit<DetectorLocalOptions, 'imageSource'> };
 export interface HostConfiguration { apiBase: string; providers: ProviderConfiguration[]; timeoutMs: number }
@@ -22,6 +20,7 @@ export function providerDispatch(config: HostConfiguration, token: string): (pay
   return async function* (raw, signal) {
     const payload = raw as Omit<RuntimeBinding, 'apiBase' | 'token'> & { profile: ModelProfile; execution_profile_config: Record<string, unknown>; profile_configuration_hash: string };
     if (!payload?.request || !payload.profile || payload.profile.profile_id !== payload.request.profile_id) throw new RegistryError('invalid_payload');
+    if (payload.profile.provider_id === 'codex_local') throw new RegistryError('PROVIDER_RETIRED', 'Codex is retained for historical records only');
     if (!payload.execution_profile_config || Array.isArray(payload.execution_profile_config) || typeof payload.execution_profile_config !== 'object' || typeof payload.profile_configuration_hash !== 'string') throw new RegistryError('invalid_payload');
     const binding = { apiBase: config.apiBase, token, run_id: payload.run_id, request: payload.request };
     const ctx = await ServerRuntimeContext.open(binding, signal);
@@ -42,7 +41,6 @@ export function providerDispatch(config: HostConfiguration, token: string): (pay
         case "openai_api": registry.register(String(index), createOpenAiApiAdapter({ ...entry.config, secret_env: process.env })); break;
         case "anthropic_api": registry.register(String(index), createAnthropicApiAdapter({ ...entry.config, secret_env: process.env })); break;
         case "mimo_api": registry.register(String(index), createMiMoApiAdapter({ ...entry.config, secret_env: process.env })); break;
-        case "codex_local": throw new RegistryError('UNSUPPORTED_RUNTIME', 'verified native tool confinement is unavailable for this Codex runtime');
         case "claude_local": registry.register(String(index), createClaudeLocalAdapter({ ...entry.config, permissions: { ...entry.config.permissions, apiBase: config.apiBase, source_env: process.env }, transport: createStdioClaudeTransport, imageSource, runToken: () => token })); break;
         case "detector_local": registry.register(String(index), new DetectorLocalAdapter({ ...entry.config, imageSource })); break;
         default: throw new RegistryError("unknown_provider");

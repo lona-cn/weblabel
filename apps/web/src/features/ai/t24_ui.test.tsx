@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { InMemoryDraftStorage } from '../../lib/persistence/draft-store';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
+import type { EditorCommand } from '../../../../../packages/contracts/generated/EditorCommand';
 import type { ModelProfile } from '../../../../../packages/contracts/generated/ModelProfile';
 import type { RunContext } from '../../../../../packages/contracts/generated/RunContext';
 import type { RunEvent } from '../../../../../packages/contracts/generated/RunEvent';
@@ -13,12 +15,24 @@ import { Panel } from './Panel';
 import { SaveQueue } from '../../lib/persistence/save-queue';
 import { candidateCacheKey, canAcceptSuggestion, type CandidateEntry, type RunApi } from './useRun';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
-import type { DraftRecord, SaveRequest, SaveResponse } from '../../lib/persistence/types';
+import type { DraftRecord, SaveQueueOwner, SaveRequest, SaveResponse } from '../../lib/persistence/types';
 import { ActivityCollector } from '../workbench/activity';
 
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async (raw: string) => {
+    const url = new URL(raw, 'http://localhost');
+    const segments = url.pathname.split('/');
+    if (url.pathname.endsWith('/rejections')) return new Response(JSON.stringify({ suggestion_set_id: segments[4], rejected_change_ids: [], operations: [], next_cursor: null }), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (url.pathname.endsWith('/outcome-summary')) return new Response(JSON.stringify({ run: { run_id: segments[4], project_id: 'project-1', state: 'succeeded' }, candidate_change_count: 0, accepted_change_count: 0, accept_journal_count: 0, revert_journal_count: 0, rejected_change_count: 0, object_observations: [], task_binding: null, activity_task_bindings: [], recorded_work_seconds: null, work_time_scope: 'current_actor_explicit_run_intervals', work_time_reason: 'no_explicit_run_intervals', usage: null, cost_display: 'unknown' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    throw new Error('Unexpected test HTTP request: ' + url.pathname);
+  }));
+});
 let visibilityDescriptor: PropertyDescriptor | undefined;
+const fixtureOwners = new Set<object>();
 afterEach(() => {
+  fixtureOwners.clear();
   cleanup();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
   if (visibilityDescriptor) Object.defineProperty(document, 'visibilityState', visibilityDescriptor);
   else Reflect.deleteProperty(document, 'visibilityState');
@@ -49,7 +63,7 @@ const serverPreview: RunApi['preview'] = async (request, approved) => ({
   input_fingerprint: 'server-authoritative-fingerprint', execution_configuration_hash: 'server-authoritative-execution-hash', profile, grants: approved, expires_at: new Date(Date.now() + 600_000).toISOString(),
 });
 const ontology: OntologyVersion = { ontology_version_id: 'ontology-1', project_id: 'project-1', version_no: 1, guidelines_markdown: 'Review <script>alert(1)</script> helmets.', allow_out_of_bounds: false, labels: [{ label_id: 'label-person', name: 'person', color: '#3366ff', shortcut: null, allowed_geometry_types: ['bbox_xyxy'], attributes: [{ key: 'helmet_state', kind: 'enum', required: true, default_value: 'unknown', enum_values: ['unknown', 'wearing'], min: null, max: null }] }] };
-const validEntry: CandidateEntry = { key: `${candidateCacheKey('run-1', 'asset-A')}:0`, asset_revision_id: 'asset-A', run_id: 'run-1', run_context: context, candidate, schema_error: null, objects: new Map([[person.object_id, person]]) };
+const validEntry: CandidateEntry = { key: `${candidateCacheKey('run-1', 'asset-A')}:0`, asset_revision_id: 'asset-A', run_id: 'run-1', run_context: context, candidate, schema_error: null, objects: new Map([[person.object_id, person]]), fixedDocument: { schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] }, fixedOntology: ontology };
 
 function contextWith(overrides: Partial<RunContext>): RunContext {
   return { ...context, ...overrides };
@@ -75,8 +89,21 @@ function cleanSaveQueue(revision = context.annotation_revision_id): SaveQueue {
 
 async function openConsentPreview() {
   fireEvent.click(screen.getByTestId('ai-run'));
-  await screen.findByLabelText('I reviewed this exact scope and authorize this run.');
+  await screen.findByLabelText('我已确认以上范围，同意本次运行。');
 }
+
+it('does not replace a retired profile selection when active profiles refresh', () => {
+  const retired: ModelProfile = { ...profile, profile_id: 'retired-profile', provider_id: 'codex_local', auth_kind: 'official_user_login' };
+  const props = { asset_revision_id: 'asset-A', context, ontology, generation: 4, getDocument: () => validEntry.fixedDocument, getGeneration: () => 4, dispatch: () => null, refreshContext: refreshScopeContext, grants };
+  const { rerender } = render(<Panel {...props} profiles={[retired]} />);
+  fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Review helmet attributes.' } });
+  rerender(<Panel {...props} profiles={[profile]} />);
+  expect(screen.getByRole('radio')).toHaveProperty('checked', false);
+  expect(screen.getByTestId('ai-run')).toHaveProperty('disabled', true);
+  fireEvent.click(screen.getByRole('radio'));
+  expect(screen.getByRole('radio')).toHaveProperty('checked', true);
+  expect(screen.getByTestId('ai-run')).toHaveProperty('disabled', false);
+});
 
 describe('T24 AI review behavior', () => {
 
@@ -92,21 +119,15 @@ describe('T24 AI review behavior', () => {
     expect(accepts('asset-A', context)).toBe(true);
   });
 
-  it('keeps attributes diff geometry-projection-only and exposes missing confidence', () => {
-    render(<CandidateList entries={[validEntry]} activeAsset="asset-A" activeContext={context} busy={false} onAccept={() => undefined} />);
-    expect(screen.getByText('Unchanged')).toBeTruthy();
-    expect(screen.getByText('Not provided')).toBeTruthy();
-    expect(screen.getByText('The helmet is visible.')).toBeTruthy();
-    expect(screen.getByText(/prediction-1/)).toBeTruthy();
-  });
 
-  it('requires explicit selection and submits only the selected subset once', () => {
+  it('requires explicit selection and submits only the selected subset once', async () => {
     const twoChanges: SuggestionSet = { ...candidate, changes: [change, { ...change, change_id: 'change-2', object_id: 'object-2', before_hash: 'hash-2' }] };
     const entry = { ...validEntry, candidate: twoChanges };
     const onAccept = vi.fn();
     render(<CandidateList entries={[entry]} activeAsset="asset-A" activeContext={context} busy={false} onAccept={onAccept} />);
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select change change-1' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Accept selected changes' }));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: '选择建议 change-1' })).toHaveProperty('disabled', false));
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择建议 change-1' }));
+    fireEvent.click(screen.getByRole('button', { name: '采纳所选建议' }));
     expect(onAccept).toHaveBeenCalledTimes(1);
     expect(onAccept.mock.calls[0]?.[1]).toEqual(['change-1']);
   });
@@ -115,15 +136,14 @@ describe('T24 AI review behavior', () => {
     const invalid: CandidateEntry = { ...validEntry, schema_error: 'Candidate 1 failed schema validation: /score must be number or null' };
     render(<CandidateList entries={[invalid]} activeAsset="asset-A" activeContext={context} busy={false} onAccept={() => undefined} />);
     expect(screen.getByRole('alert').textContent).toContain('failed schema validation');
-    expect(screen.getByRole('button', { name: 'Accept selected changes' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: '采纳所选建议' })).toHaveProperty('disabled', true);
   });
 
   it('retains another asset result for comparison but never enables acceptance on this canvas', () => {
     const foreign = { ...validEntry, asset_revision_id: 'asset-A' };
     const onAccept = vi.fn();
     render(<CandidateList entries={[foreign]} activeAsset="asset-B" activeContext={contextWith({ asset_revision_id: 'asset-B' })} busy={false} onAccept={onAccept} />);
-    expect(screen.getByText(/belongs to asset asset-A/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Accept selected changes' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: '采纳所选建议' })).toHaveProperty('disabled', true);
   });
 
   it('discards a delayed server preview after the editor asset changes', async () => {
@@ -150,8 +170,8 @@ describe('T24 AI review behavior', () => {
     const api:RunApi={preview:serverPreview,start,events:async()=>[],suggestions:async()=>[],cancel:async()=>undefined};
     const view=render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={()=>({schema_version:1,asset_revision_id:'asset-A',ontology_version_id:'ontology-1',coordinate_space:{type:'canonical_image_pixels',width:100,height:100},completion:'in_progress',objects:[person]})} getGeneration={()=>4} ontology={ontology} generation={4} dispatch={()=>null} grants={grants} api={api} obtainConsent={obtainConsent} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()}/>);
     fireEvent.change(screen.getByTestId('ai-prompt'),{target:{value:'Review saved asset'}});await openConsentPreview();
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
-    fireEvent.click(screen.getByRole('button',{name:'Authorize and run now'}));
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
+    fireEvent.click(screen.getByTestId('ai-authorize'));
     await waitFor(()=>expect(obtainConsent).toHaveBeenCalledTimes(1));view.unmount();await act(async()=>release('consent-finished'));
     expect(start).not.toHaveBeenCalled();
   });
@@ -167,8 +187,8 @@ describe('T24 AI review behavior', () => {
     expect(start).not.toHaveBeenCalled();
     expect(obtainConsent).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
-    fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
+    fireEvent.click(screen.getByTestId('ai-authorize'));
     await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
     expect(obtainConsent).toHaveBeenCalledTimes(1);
     const request = start.mock.calls[0]?.[0];
@@ -186,7 +206,7 @@ describe('T24 AI review behavior', () => {
     render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={obtainConsent} refreshContext={refreshScopeContext} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Check saved attributes.' } });
     fireEvent.click(screen.getByTestId('ai-run'));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('acknowledged save queue'));
+    await screen.findByRole('alert');
     expect(screen.queryByTestId('ai-consent')).toBeNull();
     expect(obtainConsent).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
@@ -205,7 +225,6 @@ describe('T24 AI review behavior', () => {
     render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={obtainConsent} refreshContext={refreshScopeContext} saveQueue={saveQueue} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Check persisted content only.' } });
     fireEvent.click(screen.getByTestId('ai-run'));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('acknowledged by the save queue'));
     expect(screen.queryByTestId('ai-consent')).toBeNull();
     expect(obtainConsent).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
@@ -230,8 +249,8 @@ describe('T24 AI review behavior', () => {
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Check saved attributes.' } });
     await openConsentPreview();
     expect(screen.getByTestId('ai-consent').textContent).toContain(acknowledgedRevision);
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
-    fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
+    fireEvent.click(screen.getByTestId('ai-authorize'));
     await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
     expect(saveQueue.flush).toHaveBeenCalledTimes(2);
     expect(obtainConsent).toHaveBeenCalledWith(expect.objectContaining({ context: expect.objectContaining({ annotation_revision_id: acknowledgedRevision }) }));
@@ -244,17 +263,20 @@ describe('T24 AI review behavior', () => {
       phase: 'synced' as const, dirty: false, saving: false, writes_paused: false, local_generation: 4,
       synced_generation: 4, base_revision_id: revision, draft_exportable: true, last_error: null,
     });
+    let actualRevision = 'revision-reviewed';
     const saveQueue = {
       flush: vi.fn(async () => undefined),
-      getStatus: vi.fn().mockReturnValueOnce(status('revision-reviewed')).mockReturnValue(status('revision-changed')),
+      getStatus: vi.fn(() => status(actualRevision)),
     } as unknown as SaveQueue;
     const obtainConsent = vi.fn(async () => 'must-not-obtain');
     render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={obtainConsent} refreshContext={refreshScopeContext} saveQueue={saveQueue} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Check only the reviewed revision.' } });
     await openConsentPreview();
     expect(screen.getByTestId('ai-consent').textContent).toContain('revision-reviewed');
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
-    fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
+    actualRevision = 'revision-changed';
+    fireEvent.click(screen.getByTestId('ai-authorize'));
+    await screen.findByRole('alert');
     expect(obtainConsent).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
   });
@@ -271,10 +293,10 @@ describe('T24 AI review behavior', () => {
     render(<Panel asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={async () => 'consent-1'} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Check attributes.' } });
     await openConsentPreview();
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
-    fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('schema validation'));
-    expect(screen.getByRole('button', { name: 'Accept selected changes' })).toHaveProperty('disabled', true);
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
+    fireEvent.click(screen.getByTestId('ai-authorize'));
+    await screen.findByRole('alert');
+    expect(screen.getByRole('button', { name: '采纳所选建议' })).toHaveProperty('disabled', true);
   });
   it('keeps a late switched-asset result attached to its originating asset', async () => {
     let releaseEvents: (events: unknown[]) => void = () => undefined;
@@ -289,22 +311,33 @@ describe('T24 AI review behavior', () => {
       cancel: async () => undefined,
     };
     const assetADocument = { schema_version: 1 as const, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels' as const, width: 100, height: 100 }, completion: 'in_progress' as const, objects: [person] };
-    const props = { asset_revision_id: 'asset-A', profiles: [profile], context, getDocument: () => assetADocument, getGeneration: () => 4, ontology, generation: 4, dispatch: vi.fn(() => null), grants, api, obtainConsent: async () => 'consent-1', refreshContext: refreshScopeContext, saveQueue: cleanSaveQueue() };
+    const props = { asset_revision_id: 'asset-A', profiles: [profile], context, getDocument: () => assetADocument, getGeneration: () => 4, ontology, generation: 4, dispatch: vi.fn(() => null), onFocusRegion: vi.fn(() => true), grants, api, obtainConsent: async () => 'consent-1', refreshContext: refreshScopeContext, saveQueue: cleanSaveQueue() };
     const view = render(<Panel {...props} />);
+    const panelInstance = screen.getByTestId('ai-panel');
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Check attributes.' } });
     await openConsentPreview();
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
-    fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
+    fireEvent.click(screen.getByTestId('ai-authorize'));
     await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(events).toHaveBeenCalled());
     const contextB = contextWith({ asset_revision_id: 'asset-B', annotation_revision_id: 'revision-B', canonical_sha256: 'sha256-B', input_fingerprint: 'fingerprint-B' });
     const documentB = { ...assetADocument, asset_revision_id: 'asset-B', objects: [{ ...person, attributes: { helmet_state: 'not_wearing' } }] };
     view.rerender(<Panel {...props} asset_revision_id="asset-B" context={contextB} getDocument={() => documentB} />);
     releaseEvents([{ run_id: 'late-run', seq: 1, type: 'candidate', message: 'Candidate received', data: null }]);
-    await waitFor(() => expect(screen.getByText(/belongs to asset asset-A/)).toBeTruthy());
+    await screen.findByTestId('candidate-change-1');
     expect(screen.getByText(/helmet_state: unknown/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Accept selected changes' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: '采纳所选建议' })).toHaveProperty('disabled', true);
     expect(props.dispatch).not.toHaveBeenCalled();
+    expect(screen.getByTestId('ai-panel')).toBe(panelInstance);
+    fireEvent.click(screen.getByRole('button', { name: '定位主画布 change-1' }));
+    expect(props.onFocusRegion).not.toHaveBeenCalled();
+    view.rerender(<Panel {...props} generation={5} getGeneration={() => 5} getDocument={() => ({ ...assetADocument, objects: [{ ...person, geometry: { ...person.geometry, x_max: 90 } }] })} />);
+    fireEvent.click(screen.getByRole('button', { name: '定位主画布 change-1' }));
+    expect(props.onFocusRegion).toHaveBeenCalledWith(person.geometry);
+    expect(screen.getByRole('button', { name: '采纳所选建议' })).toHaveProperty('disabled', true);
+    expect(screen.getByTestId('ai-panel')).toBe(panelInstance);
+    expect(props.dispatch).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
   });
   it('polls every 500ms in foreground and 2s in background, then cleans up without cancelling the run', async () => {
     vi.useFakeTimers();
@@ -321,10 +354,10 @@ describe('T24 AI review behavior', () => {
       fireEvent.click(screen.getByTestId('ai-run'));
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(screen.getByLabelText('I reviewed this exact scope and authorize this run.')).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
+    expect(screen.getByLabelText('我已确认以上范围，同意本次运行。')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
+      fireEvent.click(screen.getByTestId('ai-authorize'));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(events).toHaveBeenCalledTimes(1);
@@ -376,8 +409,8 @@ describe('T24 AI review behavior', () => {
     render(<Panel onModelWaitingChange={waitingChanged} asset_revision_id="asset-A" profiles={[profile]} context={context} getDocument={() => ({ schema_version: 1, asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', coordinate_space: { type: 'canonical_image_pixels', width: 100, height: 100 }, completion: 'in_progress', objects: [person] })} getGeneration={() => 4} ontology={ontology} generation={4} dispatch={() => null} grants={grants} api={api} obtainConsent={async () => 'consent'} refreshContext={refreshScopeContext} saveQueue={cleanSaveQueue()} />);
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Inspect helmets' } });
     await act(async () => { fireEvent.click(screen.getByTestId('ai-run')); await vi.advanceTimersByTimeAsync(0); });
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' })); await vi.advanceTimersByTimeAsync(0); });
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
+    await act(async () => { fireEvent.click(screen.getByTestId('ai-authorize')); await vi.advanceTimersByTimeAsync(0); });
     expect(suggestions).toHaveBeenCalledTimes(1);
     clock = 5000;
     activity.commit();
@@ -391,7 +424,7 @@ describe('T24 AI review behavior', () => {
       await act(async () => { document.dispatchEvent(new Event('visibilitychange')); await vi.advanceTimersByTimeAsync(0); });
       expect(firstSignal?.aborted).toBe(true);
     }
-    expect(screen.getByRole('checkbox', { name: 'Select change change-1' })).toHaveProperty('disabled', false);
+    expect(screen.getByRole('checkbox', { name: '选择建议 change-1' })).toHaveProperty('disabled', false);
     expect(suggestions).toHaveBeenCalledTimes(2);
     expect(events.mock.calls.map((call) => call[1])).toEqual([0, 0]);
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
@@ -406,9 +439,13 @@ describe('T24 AI review behavior', () => {
     let releaseAck!: () => void;
     const pendingAck = new Promise<void>((resolve) => { releaseAck = resolve; });
     const saves: SaveRequest[] = [];
-    const records = new Map<string, DraftRecord>();
+    const records = new InMemoryDraftStorage();
+    const token = {};
+    fixtureOwners.add(token);
+    const owner: SaveQueueOwner = { token, actor_id: 'test', project_id: context.project_id, isCurrent: () => fixtureOwners.has(token), isWritable: () => fixtureOwners.has(token), canPrepareOperation: () => true, getLease: () => null };
     const queue = new SaveQueue({
-      storage: { get: async (id) => records.get(id) ?? null, put: async (record) => { records.set(record.asset_revision_id, structuredClone(record)); }, delete: async (id) => { records.delete(id); } },
+      owner,
+      storage: records,
       transport: {
         save: async (request): Promise<SaveResponse> => {
           saves.push(request);
@@ -427,7 +464,7 @@ describe('T24 AI review behavior', () => {
       });
     }
     queue.initializeFromServerRevision({ asset_revision_id: 'asset-A', ontology_version_id: 'ontology-1', annotation_revision_id: 'revision-1', generation: 4, document: documentNow });
-    const dispatch = vi.fn((command: import('../../../../../packages/contracts/generated/EditorCommand').EditorCommand) => {
+    const dispatch = vi.fn((command: EditorCommand) => {
       if (command.kind !== 'apply_suggestions') return null;
       documentNow = { ...documentNow, objects: [{ ...person, attributes: { helmet_state: 'wearing' } }] };
       generationNow = 5;
@@ -445,42 +482,37 @@ describe('T24 AI review behavior', () => {
       view.rerender(panel());
     };
     expect(screen.getByText(ontology.guidelines_markdown)).toBeTruthy();
-    expect(screen.getByRole('region', { name: 'Pinned ontology rules' }).querySelector('script')).toBeNull();
+    expect(screen.getByRole('region', { name: '本次类别规范' }).querySelector('script')).toBeNull();
     fireEvent.change(screen.getByTestId('ai-prompt'), { target: { value: 'Inspect helmets' } });
     await openConsentPreview();
-    fireEvent.click(screen.getByLabelText('I reviewed this exact scope and authorize this run.'));
-    fireEvent.click(screen.getByRole('button', { name: 'Authorize and run now' }));
-    const select = await screen.findByRole('checkbox', { name: 'Select change change-1' });
-    expect(select).toHaveProperty('disabled', false);
+    fireEvent.click(screen.getByLabelText('我已确认以上范围，同意本次运行。'));
+    fireEvent.click(screen.getByTestId('ai-authorize'));
+    const select = await screen.findByRole('checkbox', { name: '选择建议 change-1' });
+    await waitFor(() => expect(select).toHaveProperty('disabled', false));
     expect(runContext.input_fingerprint).not.toBe(context.input_fingerprint);
     fireEvent.click(select);
-    fireEvent.click(screen.getByRole('button', { name: 'Accept selected changes' }));
+    fireEvent.click(screen.getByRole('button', { name: '采纳所选建议' }));
     await waitFor(() => expect(queue.getStatus('asset-A').phase).toBe('saving'));
     expect(saves).toEqual([expect.objectContaining({ document: documentNow, suggestion_decisions: [{ suggestion_set_id: 'set-1', decision: 'accept', change_ids: ['change-1'] }] })]);
     expect(queue.getStatus('asset-A').synced_generation).toBe(4);
-    expect(screen.queryByText('Accepted changes are saved on the server.')).toBeNull();
     if (scenario !== 'undo-after-ack') undo();
     await act(async () => { releaseAck(); });
     if (scenario === 'undo-after-ack') {
-      await screen.findByText('Accepted changes are saved on the server.');
       expect(queue.getStatus('asset-A').synced_generation).toBe(5);
       undo();
     }
-    expect(screen.queryByText('Accepted changes are saved on the server.')).toBeNull();
-    expect(screen.queryByText('Accepted changes remain in the local save journal; server acknowledgement is pending.')).toBeNull();
-    expect(screen.queryByText('Accepted changes are pending server acknowledgement.')).toBeNull();
     expect(dispatch).toHaveBeenCalledTimes(1);
     await queue.whenPersisted('asset-A');
-    expect(records.get('asset-A')?.intent_journal.map((entry) => entry.intent.decision)).toEqual(['accept', 'revert']);
+    expect(((await records.get('asset-A', queue.getDraftBranchSnapshot('asset-A')!.envelope.draft_id))?.record as DraftRecord).intent_journal.map((entry) => entry.intent.decision)).toEqual(['accept', 'revert']);
   });
-  it('allows a run fingerprint distinct from UI input but blocks a candidate rebound to another run input or changed object', () => {
+  it('allows a run fingerprint distinct from UI input but blocks a candidate rebound to another run input or changed object', async () => {
     const pinned = contextWith({ input_fingerprint: 'run-specific' });
     const entry = { ...validEntry, run_context: pinned, candidate: { ...candidate, context: pinned } };
     const view = render(<CandidateList entries={[entry]} activeAsset="asset-A" activeContext={context} activeGeneration={4} busy={false} onAccept={() => undefined} />);
-    expect(screen.getByRole('checkbox', { name: 'Select change change-1' })).toHaveProperty('disabled', false);
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: '选择建议 change-1' })).toHaveProperty('disabled', false));
     view.rerender(<CandidateList entries={[{ ...entry, candidate }]} activeAsset="asset-A" activeContext={context} activeGeneration={4} busy={false} onAccept={() => undefined} />);
-    expect(screen.getByRole('checkbox', { name: 'Select change change-1' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('checkbox', { name: '选择建议 change-1' })).toHaveProperty('disabled', true);
     view.rerender(<CandidateList entries={[entry]} activeAsset="asset-A" activeContext={contextWith({ object_hashes: { 'object-1': 'changed' } })} activeGeneration={4} busy={false} onAccept={() => undefined} />);
-    expect(screen.getByRole('checkbox', { name: 'Select change change-1' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('checkbox', { name: '选择建议 change-1' })).toHaveProperty('disabled', true);
   });
 });

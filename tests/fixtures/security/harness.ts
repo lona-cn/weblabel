@@ -69,6 +69,8 @@ export interface SecurityApp extends TestApp {
   extractArchive(bytes: Uint8Array, maximumUncompressedBytes?: number): Promise<Record<string, unknown>>;
   logs(): string;
 }
+// Test-only output seam; set before importing this harness. The router still compiles current source.
+const routerTarget = resolve(root, process.env.WEBLABEL_T29_ROUTER_TARGET_DIR ?? 'target');
 let compiledRouter: string | undefined;
 async function routerBinary(): Promise<string> {
   if (compiledRouter) return compiledRouter;
@@ -79,7 +81,7 @@ async function routerBinary(): Promise<string> {
   const compiler = execFileSync('rustup', ['which', 'rustc'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim();
   compilerEnv.RUSTC = compiler;
   console.log(`T29 repository toolchain: ${toolchain}; compiler: ${compiler}`);
-  const buildArgs = ['build', '--locked', '--manifest-path', join(root, 'Cargo.toml'), '--target-dir', join(root, 'target'), '--config', `build.build-dir=${JSON.stringify(join(root, 'target'))}`, '-p', 'weblabel-api', '--lib', '--message-format=json'];
+  const buildArgs = ['build', '--locked', '--manifest-path', join(root, 'Cargo.toml'), '--target-dir', routerTarget, '--config', `build.build-dir=${JSON.stringify(routerTarget)}`, '-p', 'weblabel-api', '--lib', '--message-format=json'];
   console.log('T29 source-library compile: cargo ' + buildArgs.join(' '));
   const output = execFileSync('cargo', buildArgs, { cwd: process.env.CARGO_HOME ?? root, env: compilerEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
   const messages = output.split('\n').filter(line => line.startsWith('{')).map(line => object(JSON.parse(line)));
@@ -102,7 +104,7 @@ async function routerBinary(): Promise<string> {
     externs.push('--extern', `${name}=${library}`);
     dependencyDirectories.add(dirname(library));
   }
-  const binary = join(root, 'target', 'debug', `t29-router-${crypto.randomUUID()}${process.platform === 'win32' ? '.exe' : ''}`);
+  const binary = join(routerTarget, 'debug', `t29-router-${crypto.randomUUID()}${process.platform === 'win32' ? '.exe' : ''}`);
   execFileSync(compiler, ['--edition=2021', '--crate-name', 't29_router', join(root, 'tests/fixtures/security/router.rs'), ...Array.from(dependencyDirectories).flatMap(directory => ['-L', `dependency=${directory}`]), ...nativePaths.flatMap(path => ['-L', path]), ...externs, '-o', binary], { cwd: root, env: compilerEnv, stdio: 'inherit' });
   compiledRouter = binary;
   return binary;

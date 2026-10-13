@@ -242,3 +242,10 @@ def test_selected_directory_alias_resolves_once_for_loading(boundary, monkeypatc
     predictor = Predictor.load(lock_path, alias)
     assert predictor._lock["model_id"] == "test/model@0000"
     assert attempts == []
+
+
+def test_execution_receipt_refuses_a_predictor_without_a_completed_forward():
+    predictor = Predictor(processor=None, model=None, torch=None, lock={})
+    with pytest.raises(ConfigurationError) as caught:
+        predictor.execution_receipt("unexecuted-run")
+    assert caught.value.code == "forward_not_completed"

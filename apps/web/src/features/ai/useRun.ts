@@ -14,12 +14,15 @@ import { freezeAfterFlush } from './runCoordinator';
 import type { AiApprovedGrants } from '../../../../../packages/contracts/generated/AiApprovedGrants';
 import type { AiPreviewRequest } from '../../../../../packages/contracts/generated/AiPreviewRequest';
 import type { AiPreviewResponse } from '../../../../../packages/contracts/generated/AiPreviewResponse';
+import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 
 export interface ConsentPreview extends AiPreviewResponse {
   context: RunContext;
   intent: StartRunRequest['intent'];
   prompt: string;
 }
+
+export type RunScope = { runId: string; projectId: string; assetRevisionId: string; ontologyVersionId: string };
 
 export interface RunApi {
   preview(request: StartRunRequest, grants: AiApprovedGrants, signal: AbortSignal): Promise<AiPreviewResponse>;
@@ -33,6 +36,7 @@ export interface RunControllerOptions {
   asset_revision_id: string;
   profile: ModelProfile | null;
   context: RunContext;
+  ontology: OntologyVersion;
   intent: StartRunRequest['intent'];
   prompt: string;
   grants: AiApprovedGrants;
@@ -54,6 +58,8 @@ export interface CandidateEntry {
   readonly candidate: SuggestionSet;
   readonly schema_error: string | null;
   readonly objects: ReadonlyMap<string, AnnotationObject>;
+  readonly fixedDocument: AnnotationDocument | null;
+  readonly fixedOntology: OntologyVersion | null;
 }
 
 const runCache = new Map<string, CandidateEntry[]>();
@@ -76,6 +82,8 @@ export function canAcceptSuggestion(input: {
   if (input.run_context && !contextMatches(input.run_context, input.candidate.context)) return false;
   if (input.active_generation !== undefined && input.candidate.context.draft_generation !== input.active_generation) return false;
   if (!['pending', 'partially_accepted'].includes(input.candidate.state) || !input.candidate.changes.length) return false;
+  // Production run intents do not grant relabel operations; projection is comparison only.
+  if (input.candidate.changes.some(change => change.kind === 'set_label')) return false;
   return contextMatches(input.active_context, input.candidate.context, false);
 }
 
@@ -84,14 +92,14 @@ function defaultApi(csrfToken: string | null): RunApi {
     const headers = new Headers(init.headers);
     if (!headers.has('content-type')) headers.set('content-type', 'application/json');
     if (init.method && init.method !== 'GET') {
-      if (!csrfToken) throw new Error('CSRF_TOKEN_UNAVAILABLE: unsafe AI request was not sent.');
+      if (!csrfToken) throw new Error('CSRF_TOKEN_UNAVAILABLE: 登录验证信息不可用，未发送 AI 请求。');
       headers.set('x-csrf-token', csrfToken);
     }
     const response = await fetch(url, { ...init, credentials: 'same-origin', signal, headers });
     const body = await response.json().catch(() => null) as unknown;
     if (!response.ok) {
       const code = typeof body === 'object' && body !== null && 'code' in body ? String((body as { code: unknown }).code) : `HTTP_${response.status}`;
-      throw new Error(`${code}: AI request failed`);
+      throw new Error(`${code}: AI 请求失败`);
     }
     return body as T;
   };
@@ -110,10 +118,10 @@ function defaultApi(csrfToken: string | null): RunApi {
         const query = new URLSearchParams({ limit: '500' });
         if (after !== null) query.set('after', after);
         const page = await request<{ items: unknown[]; next_cursor: string | null }>(`/api/ai/runs/${encodeURIComponent(runId)}/suggestions?${query}`, { method: 'GET' }, signal);
-        if (!Array.isArray(page.items) || (page.next_cursor !== null && typeof page.next_cursor !== 'string')) throw new Error('SUGGESTION_RESPONSE_INVALID: invalid page shape');
+        if (!Array.isArray(page.items) || (page.next_cursor !== null && typeof page.next_cursor !== 'string')) throw new Error('SUGGESTION_RESPONSE_INVALID: 建议数据格式不正确');
         items.push(...page.items);
         if (page.next_cursor === null) return items;
-        if (page.items.length === 0 || cursors.has(page.next_cursor)) throw new Error('SUGGESTION_RESPONSE_INVALID: invalid pagination cursor');
+        if (page.items.length === 0 || cursors.has(page.next_cursor)) throw new Error('SUGGESTION_RESPONSE_INVALID: 建议分页信息不正确');
         cursors.add(page.next_cursor);
         after = page.next_cursor;
       }
@@ -145,10 +153,10 @@ export function useRun(options: RunControllerOptions) {
   const [busy, setBusy] = useState(false);
   const [savedNotice, setSavedNotice] = useState<{ assetId: string; generation: number; message: string } | null>(null);
   const savedMessage = savedNotice?.assetId === options.asset_revision_id
-    ? (savedNotice.generation === options.getGeneration() ? savedNotice.message : 'A later edit or undo changed this acceptance; check the current save status.')
+    ? (savedNotice.generation === options.getGeneration() ? savedNotice.message : '之后的编辑或撤销已改变本次采纳结果，请查看当前保存状态。')
     : null;
   const runContexts = useRef(new Map<string, RunContext>());
-  const runObjects = useRef(new Map<string, ReadonlyMap<string, AnnotationObject>>());
+  const runSnapshots = useRef(new Map<string, { document: AnnotationDocument; ontology: OntologyVersion }>());
   const lastSequences = useRef(new Map<string, number>());
   const finishedRuns = useRef(new Set<string>());
   const mounted = useRef(true);
@@ -158,8 +166,10 @@ export function useRun(options: RunControllerOptions) {
   useEffect(() => { setSavedNotice(null); }, [options.asset_revision_id]);
   const prepareSnapshot = useCallback(async () => {
     const initial = optionsRef.current;
+    const fixedOntology = structuredClone(initial.ontology);
     try {
-      if (!initial.saveQueue) throw new Error('Persistence is unavailable; AI runs require an acknowledged save queue.');
+      if (fixedOntology.ontology_version_id !== initial.context.ontology_version_id || fixedOntology.project_id !== initial.context.project_id) throw new Error('类别规范与运行范围不一致，本次运行未启动。');
+      if (!initial.saveQueue) throw new Error('保存服务不可用；标注同步到服务器后才能运行 AI。');
       const frozen = await freezeAfterFlush({
         asset_revision_id: initial.asset_revision_id,
         ontology_version_id: initial.context.ontology_version_id,
@@ -171,21 +181,23 @@ export function useRun(options: RunControllerOptions) {
       const current = optionsRef.current;
       if (current.asset_revision_id !== initial.asset_revision_id ||
         frozen.context.project_id !== current.context.project_id) {
-        throw new Error('Active project or asset changed while preparing AI scope; no run was started.');
+        throw new Error('准备授权时项目或图片已切换，本次运行未启动。');
       }
-      return frozen;
+      return { ...frozen, ontology: fixedOntology };
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not refresh the saved AI context.');
+      setError(cause instanceof Error ? cause.message : '无法确认已保存的标注范围，请重试。');
       return null;
     }
   }, []);
-  const preparedObjects = useRef(new Map<string, ReadonlyMap<string, AnnotationObject>>());
+  const preparedSnapshots = useRef(new Map<string, { document: AnnotationDocument; ontology: OntologyVersion }>());
+  const getPreviewSnapshot = useCallback((previewId: string) => preparedSnapshots.current.get(previewId) ?? null, []);
   const inFlight = useRef(false);
-  const scopeIdentity = (value: RunControllerOptions) => JSON.stringify([value.asset_revision_id, value.context.project_id, value.context.ontology_version_id, value.context.selected_object_ids, value.context.object_hashes, value.getGeneration(), value.profile, value.intent, value.prompt, value.grants]);
+  const scopeIdentity = (value: RunControllerOptions) => JSON.stringify([value.asset_revision_id, value.context.project_id, value.context.ontology_version_id, value.context.selected_object_ids, value.context.object_hashes, value.getGeneration(), value.profile, value.intent, value.prompt, value.grants, value.ontology]);
   const preparePreview = useCallback(async (): Promise<ConsentPreview | null> => {
     const initial = optionsRef.current;
     const identity = scopeIdentity(initial);
     if (!initial.profile || !initial.prompt.trim()) return null;
+    if (initial.profile.provider_id === 'codex_local') { setError('PROVIDER_RETIRED: 此渠道已停用，不能启动新运行。'); return null; }
     setError(null);
     try {
       const frozen = await prepareSnapshot();
@@ -196,12 +208,14 @@ export function useRun(options: RunControllerOptions) {
       };
       const fixed = await api.preview(request, initial.grants, new AbortController().signal);
       if (!mounted.current || identity !== scopeIdentity(optionsRef.current)) return null;
-      if (!fixed.preview_id || !contextMatches(fixed.request.context, frozen.context, false)) throw new Error('PREVIEW_RESPONSE_INVALID: preview does not match the acknowledged scope');
-      preparedObjects.current.clear();
-      preparedObjects.current.set(fixed.preview_id, new Map(frozen.document.objects.map(object => [object.object_id, structuredClone(object)])));
-      return { ...fixed, context: fixed.request.context, intent: fixed.request.intent, prompt: fixed.request.prompt };
+      if (!fixed.preview_id || !contextMatches(fixed.request.context, frozen.context, false)) throw new Error('PREVIEW_RESPONSE_INVALID: 授权预览与已同步的范围不一致，请重新确认。');
+      if (fixed.profile.provider_id === 'codex_local') throw new Error('PROVIDER_RETIRED');
+      preparedSnapshots.current.clear();
+      preparedSnapshots.current.set(fixed.preview_id, { document: frozen.document, ontology: frozen.ontology });
+      const pinned = structuredClone(fixed);
+      return { ...pinned, context: pinned.request.context, intent: pinned.request.intent, prompt: pinned.request.prompt };
     } catch (cause) {
-      if (identity === scopeIdentity(optionsRef.current)) setError(cause instanceof Error ? cause.message : 'Could not prepare AI scope.');
+      if (identity === scopeIdentity(optionsRef.current)) setError(cause instanceof Error ? cause.message : '无法准备授权范围，请重试。');
       return null;
     }
   }, [api, prepareSnapshot]);
@@ -219,8 +233,9 @@ export function useRun(options: RunControllerOptions) {
     setSavedNotice(null);
     const initial = optionsRef.current;
     const identity = scopeIdentity(initial);
-    if (!initial.obtainConsent || !initial.profile) { setError('Consent service is unavailable; no run was started.'); return; }
-    if (!initial.api && !initial.csrfToken) { setError('CSRF token is unavailable; no AI request was sent.'); return; }
+    if (!initial.obtainConsent || !initial.profile) { setError('授权服务不可用，本次运行未启动。'); return; }
+    if (initial.profile.provider_id === 'codex_local' || preview.profile.provider_id === 'codex_local') { setError('PROVIDER_RETIRED: 此渠道已停用，不能启动新运行。'); return; }
+    if (!initial.api && !initial.csrfToken) { setError('登录验证信息不可用，未发送 AI 请求。'); return; }
     inFlight.current = true;
     setBusy(true);
     const controller = new AbortController();
@@ -230,17 +245,16 @@ export function useRun(options: RunControllerOptions) {
       if (!mounted.current || identity !== scopeIdentity(optionsRef.current) || !contextMatches(preview.context, prepared.context, false) ||
           initial.profile.profile_id !== preview.profile.profile_id || initial.prompt !== preview.prompt || initial.intent !== preview.intent ||
           JSON.stringify(initial.grants) !== JSON.stringify(preview.grants) || Date.parse(preview.expires_at) <= Date.now()) {
-        throw new Error('The saved scope changed after review. Prepare a new server preview and confirm consent again.');
+        throw new Error('确认后标注范围已变化或授权预览已过期，请重新获取预览并授权。');
       }
-      const objectSnapshot = preparedObjects.current.get(preview.preview_id);
-      if (!objectSnapshot) throw new Error('The reviewed editor snapshot is unavailable.');
+      const snapshot = preparedSnapshots.current.get(preview.preview_id);
+      if (!snapshot) throw new Error('已确认的标注版本不可用，请重新预览。');
       const consent_id = await initial.obtainConsent(preview);
-      if (!mounted.current || identity !== scopeIdentity(optionsRef.current)) throw new Error('Active editor changed during consent; no run was started.');
+      if (!mounted.current || identity !== scopeIdentity(optionsRef.current)) throw new Error('授权时图片或标注已变化，本次运行未启动。');
       const result = await api.start({ ...preview.request, consent_id }, controller.signal);
-      if (!result.run_id) throw new Error('RUN_RESPONSE_INVALID: server returned no run id');
-      runContexts.current.set(result.run_id, preview.context);
-      runObjects.current.set(result.run_id, objectSnapshot);
-      preparedObjects.current.delete(preview.preview_id);
+      if (!result.run_id) throw new Error('RUN_RESPONSE_INVALID: 服务器未返回运行编号。');
+      runContexts.current.set(result.run_id, structuredClone(preview.context));
+      runSnapshots.current.set(result.run_id, snapshot);
       setRunId(result.run_id);
       setRunIds(currentRuns => currentRuns.includes(result.run_id) ? currentRuns : [...currentRuns, result.run_id]);
       setCandidateEntries(currentEntries => {
@@ -248,9 +262,9 @@ export function useRun(options: RunControllerOptions) {
         return [...currentEntries.filter(entry => entry.run_id !== result.run_id || entry.asset_revision_id !== initial.asset_revision_id), ...cached];
       });
     } catch (cause) {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not start AI run.');
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法启动 AI 运行。');
     } finally {
-      preparedObjects.current.delete(preview.preview_id);
+      preparedSnapshots.current.delete(preview.preview_id);
       inFlight.current = false;
       if (mounted.current && !controller.signal.aborted) setBusy(false);
     }
@@ -268,7 +282,7 @@ export function useRun(options: RunControllerOptions) {
           if (poller.controller.signal.aborted) return;
           const invalidEvents = rawEvents.map((event) => validateContract('run_event', event)).filter((result) => !result.valid);
           if (invalidEvents.length) {
-            setError(`Run event schema validation failed: ${invalidEvents.flatMap((result) => result.errors.map((item) => `${item.instancePath || '/'} ${item.message}`)).join('; ')}`);
+            setError(`运行进度数据格式不正确： ${invalidEvents.flatMap((result) => result.errors.map((item) => `${item.instancePath || '/'} ${item.message}`)).join('; ')}`);
             return;
           }
           const incoming = rawEvents as RunEvent[];
@@ -280,9 +294,9 @@ export function useRun(options: RunControllerOptions) {
             const raw = await api.suggestions(runId, poller.controller.signal);
             if (poller.controller.signal.aborted) return;
             const pinnedContext = runContexts.current.get(runId);
-            const pinnedObjects = runObjects.current.get(runId);
-            if (!pinnedContext || !pinnedObjects) {
-              setError('Run context or editor snapshot is unavailable; returned suggestions were not attached.');
+            const pinnedSnapshot = runSnapshots.current.get(runId);
+            if (!pinnedContext || !pinnedSnapshot) {
+              setError('无法确认运行范围或标注版本，返回的建议未加载。');
               return;
             }
             const assetId = pinnedContext.asset_revision_id;
@@ -291,8 +305,8 @@ export function useRun(options: RunControllerOptions) {
               const validation = validateContract('suggestion_set', unknownCandidate);
               const schema_error = validation.valid
                 ? ((unknownCandidate as SuggestionSet).model_run_id !== runId || !contextMatches((unknownCandidate as SuggestionSet).context, pinnedContext)
-                  ? `Candidate ${index + 1} does not match its frozen run context.` : null)
-                : `Candidate ${index + 1} failed schema validation: ${validation.errors.map((item) => `${item.instancePath || '/'} ${item.message}`).join('; ')}`;
+                  ? `第 ${index + 1} 组建议与运行时确认的范围不一致。` : null)
+                : `第 ${index + 1} 组建议格式不正确： ${validation.errors.map((item) => `${item.instancePath || '/'} ${item.message}`).join('; ')}`;
               const candidate: SuggestionSet = validation.valid ? unknownCandidate as SuggestionSet : {
                 suggestion_set_id: `invalid-${runId}-${index}`,
                 model_run_id: runId,
@@ -303,7 +317,7 @@ export function useRun(options: RunControllerOptions) {
                 score: null,
                 state: 'stale',
               };
-              return { key: `${key}:${index}`, asset_revision_id: assetId, run_id: runId, run_context: pinnedContext, candidate, schema_error, objects: pinnedObjects };
+              return { key: `${key}:${index}`, asset_revision_id: assetId, run_id: runId, run_context: pinnedContext, candidate, schema_error, objects: new Map(pinnedSnapshot.document.objects.map(object => [object.object_id, object])), fixedDocument: pinnedSnapshot.document, fixedOntology: pinnedSnapshot.ontology };
             });
             runCache.set(key, checked);
             setCandidateEntries((current) => [...current.filter((entry) => entry.run_id !== runId), ...checked]);
@@ -317,7 +331,7 @@ export function useRun(options: RunControllerOptions) {
             return;
           }
         } catch (cause) {
-          if (!poller.controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not update AI run.');
+          if (!poller.controller.signal.aborted) setError(cause instanceof Error ? cause.message : '无法更新运行进度。');
         }
         if (!poller.controller.signal.aborted) poller.timer = setTimeout(poll, background ? 2000 : 500);
       };
@@ -336,28 +350,29 @@ export function useRun(options: RunControllerOptions) {
     if (!runId) return;
     const controller = new AbortController();
     try { await api.cancel(runId, controller.signal); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not cancel AI run.'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '无法取消本次运行。'); }
   }, [api, runId]);
 
-  const acceptSelected = useCallback(async (candidate: SuggestionSet, assetId: string, changeIds: string[], schemaError: string | null) => {
+  const acceptSelected = useCallback(async (candidate: SuggestionSet, assetId: string, changeIds: string[], schemaError: string | null, rejectedIds: readonly string[] | null) => {
     setError(null);
     setSavedNotice(null);
+    if (rejectedIds === null || changeIds.some(id => rejectedIds.includes(id))) { setError('拒绝状态未核实或包含已拒绝项，不能采纳。'); return; }
     const captured = runContexts.current.get(candidate.model_run_id) ?? null;
     const currentGeneration = options.getGeneration();
     if (!captured || !contextMatches(captured, candidate.context) || !canAcceptSuggestion({ active_asset: options.asset_revision_id, candidate_asset: assetId, active_context: options.context, active_generation: currentGeneration ?? -1, candidate, busy, schema_error: schemaError })) {
-      setError(candidate.state === 'stale' ? 'This candidate is stale and can only be compared.' : 'Candidate context or schema is not valid for acceptance.');
+      setError(candidate.state === 'stale' ? '建议已过期，只能对照，不能采纳。' : '建议的范围或格式不符合当前标注，不能采纳。');
       return;
     }
-    if (!changeIds.length) { setError('Select at least one change to accept.'); return; }
+    if (!changeIds.length) { setError('请先选择要采纳的建议。'); return; }
     const saveQueue = options.saveQueue;
-    if (!saveQueue) { setError('Persistence is unavailable; candidate changes were not applied.'); return; }
+    if (!saveQueue) { setError('保存服务不可用，建议未应用。'); return; }
     const delta = options.dispatch({ kind: 'apply_suggestions', set: candidate, change_ids: changeIds, expected_generation: currentGeneration ?? -1 });
-    if (!delta || delta.error) { setError(delta?.error?.message ?? 'Editor rejected the selected changes.'); return; }
+    if (!delta || delta.error) { setError(delta?.error?.message ?? '无法应用所选建议。'); return; }
     const documentNow = options.getDocument();
     const generation = options.getGeneration();
     if (!documentNow || generation === null) {
       options.dispatch({ kind: 'undo' });
-      setError('Editor snapshot is unavailable after acceptance; the operation was undone.');
+      setError('采纳后无法读取标注，已撤销本次操作。');
       return;
     }
     const acceptedIntent = delta.suggestion_decisions.find((intent) =>
@@ -367,7 +382,7 @@ export function useRun(options: RunControllerOptions) {
     );
     if (!acceptedIntent) {
       options.dispatch({ kind: 'undo' });
-      setError('Editor did not produce the selected acceptance journal; the operation was undone.');
+      setError('无法记录本次采纳结果，已撤销操作。');
       return;
     }
     const showSavedMessage = (message: string) => setSavedNotice({ assetId, generation: delta.generation, message });
@@ -376,20 +391,24 @@ export function useRun(options: RunControllerOptions) {
       await saveQueue.flush(assetId);
       if (optionsRef.current.asset_revision_id !== assetId) return;
       if (acceptanceChanged()) {
-        showSavedMessage('A later edit or undo changed this acceptance; check the current save status.');
+        showSavedMessage('之后的编辑或撤销已改变本次采纳结果，请查看当前保存状态。');
         return;
       }
       const saved = saveQueue.getStatus(assetId);
-      if (saved.synced_generation >= delta.generation && !saved.dirty) showSavedMessage('Accepted changes are saved on the server.');
-      else showSavedMessage('Accepted changes are pending server acknowledgement.');
+      if (saved.synced_generation >= delta.generation && !saved.dirty) showSavedMessage('已采纳的修改已保存到服务器。');
+      else showSavedMessage('已采纳的修改尚待服务器确认。');
     } catch {
       if (optionsRef.current.asset_revision_id !== assetId) return;
       showSavedMessage(acceptanceChanged()
-        ? 'A later edit or undo changed this acceptance; check the current save status.'
-        : 'Accepted changes remain in the local save journal; server acknowledgement is pending.');
+        ? '之后的编辑或撤销已改变本次采纳结果，请查看当前保存状态。'
+        : '已采纳的修改保留在本地，尚待服务器确认。');
     }
   }, [busy, options]);
 
   const modelWaiting = runIds.some((id) => runContexts.current.get(id)?.project_id === options.context.project_id && !(eventsByRun.get(id) ?? []).some((event) => event.type === 'succeeded' || event.type === 'failed' || event.type === 'cancelled'));
-  return { run, preparePreview, cancel, runId, events, candidates: candidateEntries, error, busy, modelWaiting, savedMessage, acceptSelected };
+  const runScope = useMemo<RunScope | null>(() => {
+    const pinned = runId ? runContexts.current.get(runId) : null;
+    return runId && pinned ? { runId, projectId: pinned.project_id, assetRevisionId: pinned.asset_revision_id, ontologyVersionId: pinned.ontology_version_id } : null;
+  }, [runId]);
+  return { run, preparePreview, getPreviewSnapshot, cancel, runId, runScope, events, candidates: candidateEntries, error, busy, modelWaiting, savedMessage, acceptSelected };
 }

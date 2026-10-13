@@ -12,7 +12,7 @@ pub use facade::{
 pub use input::{pointer_input, tool, viewport, LocalFlagsArgs, PointerInputArgs, ViewportArgs};
 
 #[cfg(target_arch = "wasm32")]
-pub use facade::wasm::{create_editor, EditorFacade};
+pub use facade::wasm::{create_editor, project_relabel, EditorFacade};
 
 /// Read-only authorization hashing; no editor, canvas, DOM, or GPU is created.
 #[cfg(target_arch = "wasm32")]

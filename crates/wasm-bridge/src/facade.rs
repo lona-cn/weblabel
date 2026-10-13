@@ -286,6 +286,13 @@ pub struct PreparedFrame {
     pub projection: Option<(Vec<RenderObject>, Vec<Overlay>)>,
 }
 
+/// Read-only native click receipt. `index` is zero-based; absent means no picked candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct HitStackState {
+    pub index: Option<usize>,
+    pub count: usize,
+}
+
 /// Platform-independent C3 editor session (docs/contracts.md C3).
 pub struct EditorSession {
     editor: Editor,
@@ -446,6 +453,43 @@ impl EditorSession {
         self.set_viewport(next)
     }
 
+    pub fn focus_selection(&mut self) -> Result<(), ApiError> {
+        self.ensure_live()?;
+        if self.editor.focus_selection().map_err(|error| api_error_from_domain(&error))? {
+            // Core already validated and installed the view; mirror it once.
+            self.view = self.editor.viewport();
+            self.viewport_dirty = true;
+            if self.refresh_preview() {
+                self.projection_dirty = true;
+            }
+        }
+        Ok(())
+    }
+    /// Read-only canonical ROI navigation; invalid or invisible regions are no-ops.
+    pub fn focus_region(&mut self, bounds: annotation_domain::BBox) -> Result<bool, ApiError> {
+        self.ensure_live()?;
+        let view = self.view;
+        if view.css_width <= 0.0 || view.css_height <= 0.0
+            || ![bounds.x_min, bounds.y_min, bounds.x_max, bounds.y_max].iter().all(|v| v.is_finite())
+            || bounds.x_max <= bounds.x_min || bounds.y_max <= bounds.y_min {
+            return Ok(false);
+        }
+        let left = bounds.x_min.max(0.0);
+        let top = bounds.y_min.max(0.0);
+        let right = bounds.x_max.min(f64::from(self.image_width));
+        let bottom = bounds.y_max.min(f64::from(self.image_height));
+        if right <= left || bottom <= top { return Ok(false); }
+        let scale = 0.9 * (view.css_width / (right - left)).min(view.css_height / (bottom - top));
+        let Ok(next) = Viewport::try_new(
+            scale, view.css_width / 2.0 - (left + (right - left) / 2.0) * scale,
+            view.css_height / 2.0 - (top + (bottom - top) / 2.0) * scale,
+            view.css_width, view.css_height, view.dpr,
+        ) else { return Ok(false); };
+        self.set_viewport(next)?;
+        Ok(true)
+    }
+
+
     pub fn set_selection(&mut self, ids: Vec<Id>) -> EditorDelta {
         if self.disposed {
             return self.error_delta(api_error("EDITOR_DISPOSED", "editor session is disposed"));
@@ -535,6 +579,11 @@ impl EditorSession {
     /// callers can resize without duplicating zoom/pan math in the browser.
     pub fn get_viewport(&self) -> Viewport {
         self.view
+    }
+
+    pub fn get_hit_stack_state(&self) -> HitStackState {
+        let (index, count) = self.editor.hit_stack_state();
+        HitStackState { index, count }
     }
 
     pub fn is_disposed(&self) -> bool {
@@ -716,6 +765,216 @@ mod tests {
 
     fn person() -> Id {
         Id::from("object_person_001")
+    }
+    #[test]
+    fn ux21_focus_region_invalid_paused_and_off_image_are_noops_and_partial_bounds_clip() {
+        let mut session = session();
+        session.set_viewport(Viewport::try_new(1.0, 5.0, 9.0, 800.0, 600.0, 1.25).unwrap()).unwrap();
+        let initial = session.get_viewport();
+        let original = session.get_snapshot();
+        session.prepare_frame();
+        for bounds in [BBox::new(f64::NAN, 0.0, 10.0, 10.0), BBox::new(0.0, 0.0, f64::INFINITY, 10.0),
+            BBox::new(10.0, 0.0, 10.0, 10.0), BBox::new(20.0, 20.0, 10.0, 10.0),
+            BBox::new(-20.0, -20.0, -1.0, -1.0), BBox::new(10000.0, 0.0, 10010.0, 10.0)] {
+            assert!(!session.focus_region(bounds).unwrap());
+            assert_eq!(session.get_viewport(), initial);
+            assert!(session.prepare_frame().is_none());
+        }
+        assert!(session.focus_region(BBox::new(-10.0, -10.0, 100.0, 100.0)).unwrap());
+        assert_eq!(session.get_viewport().scale, 5.4);
+        assert_eq!(geometry::image_to_css([50.0, 50.0], session.get_viewport()), [400.0, 300.0]);
+        let paused = Viewport::try_new(1.0, 5.0, 9.0, 0.0, 600.0, 2.0).unwrap();
+        session.set_viewport(paused).unwrap();
+        session.prepare_frame();
+        assert!(!session.focus_region(BBox::new(10.0, 10.0, 20.0, 20.0)).unwrap());
+        assert_eq!(session.get_viewport(), paused);
+        assert!(session.prepare_frame().is_none());
+        assert_eq!(session.get_snapshot(), original);
+        assert_eq!(session.get_generation(), 0);
+    }
+
+    #[test]
+    fn ux21_focus_region_is_f64_dpr_independent_and_document_read_only() {
+        for dpr in [1.0, 1.25, 2.0] {
+            let mut session = session();
+            let original = session.get_snapshot();
+            session.set_viewport(Viewport::try_new(1.0, 0.0, 0.0, 800.0, 600.0, dpr).unwrap()).unwrap();
+            assert!(session.focus_region(BBox::new(10.125, 20.25, 110.375, 220.5)).unwrap());
+            let view = session.get_viewport();
+            assert!((view.scale - 0.9 * (800.0 / 100.25f64).min(600.0 / 200.25)).abs() < 1e-12);
+            assert_eq!(geometry::image_to_css([60.25, 120.375], view), [400.0, 300.0]);
+            assert_eq!(view.dpr, dpr);
+            assert_eq!(session.get_snapshot(), original);
+            assert_eq!(session.get_generation(), 0);
+            let undo = session.dispatch(EditorCommand::Undo);
+            assert!(!undo.can_undo && !undo.can_redo && !undo.document_changed);
+            assert!(undo.selected_object_ids.is_empty());
+        }
+    }
+
+    #[test]
+    fn ux05_external_mutations_invalidate_stack_and_strict_hits_precede_near_misses() {
+        for operation in 0..6 {
+            let mut session = session();
+            session.pointer(pointer(editor_core::PointerPhase::Down, 60.0, 100.0));
+            session.pointer(pointer(editor_core::PointerPhase::Up, 60.0, 100.0));
+            let delta = match operation {
+                0 => session.set_selection(vec![person()]),
+                1 => session.set_local_flags(&[person()], LocalFlagsArgs { hidden: Some(true), locked: None }),
+                2 => session.dispatch(EditorCommand::ReplaceGeometry { object_id: person(), geometry: BBox::new(15.0, 25.0, 115.0, 225.0) }),
+                3 => session.dispatch(EditorCommand::Delete { object_ids: vec![person()] }),
+                4 => session.dispatch(EditorCommand::Undo),
+                _ => session.dispatch(EditorCommand::Redo),
+            };
+            assert!(delta.repaint);
+            assert_eq!(session.get_hit_stack_state(), HitStackState { index: None, count: 0 });
+        }
+        let (mut document, ontology) = fixtures();
+        let mut near = document.objects[0].clone();
+        near.object_id = Id::from("near");
+        near.geometry = BBox::new(62.0, 90.0, 100.0, 150.0);
+        document.objects.push(near);
+        let mut session = EditorSession::new(document, ontology).unwrap();
+        session.pointer(pointer(editor_core::PointerPhase::Down, 60.0, 100.0));
+        let delta = session.pointer(pointer(editor_core::PointerPhase::Up, 60.0, 100.0));
+        assert_eq!(delta.selected_object_ids, vec![person()], "strict pixels win over later-drawn near misses");
+        assert_eq!(session.get_hit_stack_state(), HitStackState { index: Some(0), count: 2 });
+    }
+
+    #[test]
+    fn ux05_external_selection_cancels_preview_even_when_selection_is_unchanged() {
+        let mut session = session();
+        session.set_tool(Tool::Box).unwrap();
+        session.set_active_label(Id::from("label_person")).unwrap();
+        session.pointer(pointer(editor_core::PointerPhase::Down, 300.0, 300.0));
+        session.pointer(pointer(editor_core::PointerPhase::Move, 350.0, 350.0));
+        let delta = session.set_selection(Vec::new());
+        assert!(delta.repaint, "cancelling a preview must notify even without a selection edit");
+        let late = session.pointer(pointer(editor_core::PointerPhase::Up, 350.0, 350.0));
+        assert!(!late.document_changed);
+        assert_eq!(session.get_generation(), 0);
+        assert_eq!(session.get_hit_stack_state().count, 0);
+    }
+
+    #[test]
+    fn ux05_stack_cycles_native_draw_order_excludes_hidden_and_keeps_locked() {
+        let (mut document, ontology) = fixtures();
+        for id in ["middle", "locked", "hidden"] {
+            let mut object = document.objects[0].clone();
+            object.object_id = Id::from(id);
+            document.objects.push(object);
+        }
+        let mut session = EditorSession::new(document, ontology).unwrap();
+        session.set_local_flags(&[Id::from("hidden")], LocalFlagsArgs { hidden: Some(true), locked: None });
+        session.set_local_flags(&[Id::from("locked")], LocalFlagsArgs { hidden: None, locked: Some(true) });
+        for (index, id) in [(0, "locked"), (1, "middle"), (2, "object_person_001"), (0, "locked")] {
+            session.pointer(pointer(editor_core::PointerPhase::Down, 60.0, 100.0));
+            let delta = session.pointer(pointer(editor_core::PointerPhase::Up, 60.0, 100.0));
+            assert_eq!(delta.selected_object_ids, vec![Id::from(id)]);
+            assert_eq!(session.get_hit_stack_state(), HitStackState { index: Some(index), count: 3 });
+            assert!(!delta.document_changed);
+        }
+        let (state, allocations) = allocations::measure(|| session.get_hit_stack_state());
+        assert_eq!(allocations, 0);
+        session.pointer(pointer(editor_core::PointerPhase::Down, 500.0, 400.0));
+        session.pointer(pointer(editor_core::PointerPhase::Cancel, 500.0, 400.0));
+        session.pointer(pointer(editor_core::PointerPhase::Up, 500.0, 400.0));
+        assert_eq!(session.get_hit_stack_state(), state, "cancel never publishes a half click");
+        session.pointer(pointer(editor_core::PointerPhase::Down, 500.0, 400.0));
+        session.pointer(pointer(editor_core::PointerPhase::Move, 510.0, 410.0));
+        assert_eq!(session.get_hit_stack_state().count, 0, "drag invalidates click metadata");
+        session.pointer(pointer(editor_core::PointerPhase::Up, 510.0, 410.0));
+        assert_eq!(session.get_hit_stack_state().count, 0, "marquee is not a click stack");
+        assert_eq!(session.get_generation(), 0);
+    }
+
+    #[test]
+    fn ux05_focus_empty_hidden_and_zero_view_are_noops_and_css_zoom_ignores_dpr() {
+        for dpr in [1.0, 2.0, 3.0] {
+            let mut session = session();
+            let initial = Viewport::try_new(2.0, 10.0, -4.0, 640.0, 480.0, dpr).unwrap();
+            session.set_viewport(initial).unwrap();
+            session.focus_selection().unwrap();
+            assert_eq!(session.get_viewport(), initial);
+            session.set_selection(vec![person()]);
+            session.set_local_flags(&[person()], LocalFlagsArgs { hidden: Some(true), locked: None });
+            session.focus_selection().unwrap();
+            assert_eq!(session.get_viewport(), initial);
+            let css = [320.0, 240.0];
+            let anchor = geometry::css_to_image(css, initial);
+            session.zoom_at(css, 1.0 / initial.scale).unwrap();
+            assert_eq!(session.get_viewport().scale, 1.0);
+            assert_eq!(geometry::css_to_image(css, session.get_viewport()), anchor);
+            session.set_local_flags(&[person()], LocalFlagsArgs { hidden: Some(false), locked: Some(true) });
+            let zero = Viewport::try_new(1.0, 5.0, 9.0, 0.0, 0.0, dpr).unwrap();
+            session.set_viewport(zero).unwrap();
+            session.focus_selection().unwrap();
+            assert_eq!(session.get_viewport(), zero);
+            assert_eq!(session.get_generation(), 0);
+        }
+    }
+
+    #[test]
+    fn ux05_additive_click_reports_top_selected_hit_not_last_selection_id() {
+        let (mut document, ontology) = fixtures();
+        let mut top = document.objects[0].clone();
+        top.object_id = Id::from("top");
+        document.objects.push(top);
+        let mut session = EditorSession::new(document, ontology).unwrap();
+        session.set_selection(vec![Id::from("top"), person()]);
+        session.pointer(PointerInput { shift: true, ..pointer(editor_core::PointerPhase::Down, 60.0, 100.0) });
+        let delta = session.pointer(PointerInput { shift: true, ..pointer(editor_core::PointerPhase::Up, 60.0, 100.0) });
+        assert!(delta.repaint);
+        assert_eq!(session.get_hit_stack_state(), HitStackState { index: Some(0), count: 2 });
+        assert_eq!(session.get_generation(), 0);
+    }
+
+    #[test]
+    fn ux05_noop_undo_invalidates_click_receipt_and_requests_repaint() {
+        let mut session = session();
+        session.pointer(pointer(editor_core::PointerPhase::Down, 60.0, 100.0));
+        session.pointer(pointer(editor_core::PointerPhase::Up, 60.0, 100.0));
+        let delta = session.dispatch(EditorCommand::Undo);
+        assert!(delta.repaint);
+        assert_eq!(session.get_hit_stack_state().count, 0);
+        assert_eq!(session.get_generation(), 0);
+    }
+
+    #[test]
+    fn ux05_focus_selection_uses_canonical_union_and_ignores_hidden() {
+        let (mut document, ontology) = fixtures();
+        document.objects[0].geometry = BBox::new(10.125, 20.25, 110.375, 220.5);
+        let mut other = document.objects[0].clone();
+        other.object_id = Id::from("other");
+        other.geometry = BBox::new(200.0, 100.0, 400.0, 300.0);
+        document.objects.push(other);
+        let mut session = EditorSession::new(document, ontology).unwrap();
+        session.set_viewport(Viewport::try_new(1.0, 0.0, 0.0, 800.0, 600.0, 2.0).unwrap()).unwrap();
+        session.set_selection(vec![person(), Id::from("other")]);
+        session.focus_selection().unwrap();
+        let view = session.get_viewport();
+        assert!((view.scale - 0.9 * (800.0 / 389.875f64).min(600.0 / 279.75)).abs() < 1e-12);
+        assert_eq!(geometry::image_to_css([205.0625, 160.125], view), [400.0, 300.0]);
+        assert_eq!(view.dpr, 2.0);
+        assert_eq!(session.get_generation(), 0);
+        session.set_local_flags(&[Id::from("other")], LocalFlagsArgs { hidden: Some(true), locked: None });
+        session.focus_selection().unwrap();
+        assert_eq!(geometry::image_to_css([60.25, 120.375], session.get_viewport()), [400.0, 300.0]);
+    }
+
+    #[test]
+    fn ux05_completed_click_publishes_metadata_without_document_generation() {
+        let mut session = session();
+        session.set_selection(vec![person()]);
+        assert_eq!(session.get_hit_stack_state().count, 0);
+        session.pointer(pointer(editor_core::PointerPhase::Down, 60.0, 100.0));
+        assert_eq!(session.get_hit_stack_state().count, 0);
+        let delta = session.pointer(pointer(editor_core::PointerPhase::Up, 60.0, 100.0));
+        assert!(delta.repaint, "metadata-only clicks must notify consumers");
+        assert!(!delta.document_changed);
+        assert_eq!(session.get_hit_stack_state().index, Some(0));
+        assert_eq!(session.get_hit_stack_state().count, 1);
+        assert_eq!(session.get_generation(), 0);
     }
 
     #[test]
@@ -1608,6 +1867,30 @@ pub mod wasm {
         serde_wasm_bindgen::from_value(value).map_err(|error| api_error(code, &error.to_string()))
     }
 
+    /// Pure fixed-snapshot projection; no EditorFacade, DOM or GPU is needed.
+    #[wasm_bindgen]
+    pub fn project_relabel(
+        document: JsValue,
+        ontology: JsValue,
+        object_id: &str,
+        before_hash: &str,
+        label_id: &str,
+    ) -> Result<JsValue, JsValue> {
+        let document: AnnotationDocument =
+            from_js(document, "INVALID_DOCUMENT").map_err(to_js_error)?;
+        let ontology: OntologyVersion =
+            from_js(ontology, "INVALID_ONTOLOGY").map_err(to_js_error)?;
+        let projected = annotation_domain::project_relabel(
+            &document,
+            &ontology,
+            &Id::from(object_id),
+            before_hash,
+            &Id::from(label_id),
+        )
+        .map_err(|error| to_js_error(api_error_from_domain(&error)))?;
+        to_js(&projected)
+    }
+
     #[wasm_bindgen]
     pub struct EditorFacade {
         session: EditorSession,
@@ -1679,6 +1962,20 @@ pub mod wasm {
 
         pub fn fit_image(&mut self) -> Result<(), JsValue> {
             self.session.fit_image().map_err(to_js_error)
+        }
+
+        pub fn focus_selection(&mut self) -> Result<(), JsValue> {
+            self.session.focus_selection().map_err(to_js_error)
+        }
+
+        pub fn focus_region(&mut self, bounds: JsValue) -> Result<bool, JsValue> {
+            let Ok(bounds) = from_js::<annotation_domain::BBox>(bounds, "INVALID_BBOX") else { return Ok(false); };
+            self.session.focus_region(bounds).map_err(to_js_error)
+        }
+
+
+        pub fn get_hit_stack_state(&self) -> Result<JsValue, JsValue> {
+            to_js(&self.session.get_hit_stack_state())
         }
 
         pub fn set_selection(&mut self, ids: Vec<String>) -> Result<JsValue, JsValue> {
@@ -1961,3 +2258,4 @@ pub mod wasm {
         })
     }
 }
+

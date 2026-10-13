@@ -4,9 +4,11 @@
 // the WASM/GPU boundary that jsdom cannot provide. Real WebGPU + real wasm glue
 // verification lives in tests/e2e/t09_canvas.spec.ts.
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { createElement, StrictMode } from 'react';
+import { createElement, StrictMode, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CanvasView } from '../../features/workbench/CanvasView';
+import { RevisionExportPanel } from '../../features/import-export/RevisionExportPanel';
+import { ApiFailure } from '../t15/api';
 import { EditorHost } from './EditorHost';
 import { createEditorFacadeFactory, decodeCanonicalFrame, toApiError } from './loader';
 import type {
@@ -99,6 +101,7 @@ function makeApiError(overrides: Partial<ApiError> = {}): ApiError {
 // ---------------------------------------------------------------------------
 
 class FakeEditorFacade implements EditorFacade {
+  constructor(private readonly document: AnnotationDocument = makeDocument()) {}
   readonly dispatchCalls: EditorCommand[] = [];
   readonly pointerCalls: PointerInput[] = [];
   readonly toolCalls: EditorTool[] = [];
@@ -148,9 +151,12 @@ class FakeEditorFacade implements EditorFacade {
   set_viewport(view: Viewport): void { this.viewportCalls.push(view); this.viewport = view; }
   zoom_at(x_css: number, y_css: number, factor: number): void { this.zoomCalls.push([x_css, y_css, factor]); }
   fit_image(): void { this.fitCalls.push(0); }
+  focus_selection(): void {}
+  focus_region(): boolean { throw new Error('Unexpected focus region'); }
+  get_hit_stack_state(): { index: number | null; count: number } { return { index: null, count: 0 }; }
   set_selection(ids: Id[]): EditorDelta { this.selectionCalls.push(ids); return this.deltaFactory('selection'); }
   set_local_flags(ids: Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta { this.flagCalls.push([ids, flags]); return this.deltaFactory('flags'); }
-  get_snapshot(): AnnotationDocument { return makeDocument(); }
+  get_snapshot(): AnnotationDocument { return structuredClone(this.document); }
   get_commit_readback(): never { throw new Error('Lifecycle fixture has no document commits'); }
   get_generation(): number { return 0; }
   get_object_hashes(): Record<Id, string> { return {}; }
@@ -178,7 +184,7 @@ interface FakeCreation {
 class FakeFacadeFactory implements EditorFacadeFactory {
   readonly creations: FakeCreation[] = [];
   create(canvas: HTMLCanvasElement, request: EditorAssetRequest): Promise<CreatedEditor> {
-    const facade = new FakeEditorFacade();
+    const facade = new FakeEditorFacade(structuredClone(request.document));
     return new Promise<CreatedEditor>((resolve, reject) => {
       this.creations.push({
         canvas,
@@ -375,6 +381,54 @@ describe('T09 stale-asset async initialization', () => {
 // ---------------------------------------------------------------------------
 // Behavior 2: DPR / resize / CSS offset / 0x0 pause / unmount cleanup.
 // ---------------------------------------------------------------------------
+describe('UX01 transient rendering', () => {
+  it('schedules cancellation after a tool switch after the preview frame drained', async () => {
+    const { host, factory, scheduler } = makeHost();
+    const canvas = document.createElement('canvas');
+    stubCanvasRect(canvas, { width: 640, height: 480 });
+    host.mount(canvas);
+    const load = host.loadAsset(makeRequest());
+    factory.creations[0].settle();
+    await load;
+    scheduler.flush();
+    const facade = factory.creations[0].facade;
+    fireEvent.pointerDown(canvas, { pointerId: 7, clientX: 20, clientY: 30, buttons: 1 });
+    fireEvent.pointerMove(canvas, { pointerId: 7, clientX: 80, clientY: 90, buttons: 1 });
+    scheduler.flush();
+    const renders = facade.renderCalls.length;
+    expect(host.setTool('select')).toBe(true);
+    expect(scheduler.flush()).toBe(1);
+    expect(facade.renderCalls).toHaveLength(renders + 1);
+    expect(scheduler.pending.size).toBe(0);
+    expect(facade.dispatchCalls).toEqual([]);
+  });
+
+  it('reads immutable current native viewport without scheduling or document reads', async () => {
+    const { host, factory, scheduler } = makeHost();
+    expect(host.getViewport()).toBeNull();
+    const canvas = document.createElement('canvas');
+    stubCanvasRect(canvas, { width: 640, height: 480 });
+    host.mount(canvas);
+    const load = host.loadAsset(makeRequest());
+    factory.creations[0].settle();
+    await load;
+    scheduler.flush();
+    const facade = factory.creations[0].facade;
+    facade.viewport = { scale: 2.5, tx: 13, ty: -7, css_width: 640, css_height: 480, dpr: 2 };
+    const view = host.getViewport();
+    expect(view).toEqual(facade.viewport);
+    expect(Object.isFrozen(view)).toBe(true);
+    expect(view).not.toBe(facade.viewport);
+    facade.viewport = { ...facade.viewport, scale: 4 };
+    expect(host.getViewport()?.scale).toBe(4);
+    expect(view?.scale).toBe(2.5);
+    expect(scheduler.pending.size).toBe(0);
+    expect(facade.dispatchCalls).toEqual([]);
+    host.dispose();
+    expect(host.getViewport()).toBeNull();
+  });
+});
+
 
 describe('T09 canvas sizing and cleanup', () => {
   it('passes canvas-local CSS pointer coordinates and a DPR-correct viewport without baking DPR into image coordinates', async () => {
@@ -577,7 +631,7 @@ describe('T09 StrictMode double mounting', () => {
           hostOptions: { facadeFactory: factory, scheduler },
           activeTool: 'select',
           onDelta: () => {},
-          onHostReady: () => {},
+          onHostSettled: () => {},
         }),
       ),
     );
@@ -741,7 +795,7 @@ describe('T09 structured error surfaces', () => {
       hostOptions,
       activeTool: 'select',
       onDelta: () => {},
-      onHostReady: () => {},
+      onHostSettled: () => {},
     }));
     await act(async () => {
       await Promise.resolve();
@@ -909,10 +963,10 @@ describe('T30 renderer-only recovery lifecycle', () => {
 
   it('projects recovery diagnostics and inert canvas without reinitializing the workbench host', async () => {
     const factory = new FakeFacadeFactory();
-    const ready = vi.fn();
+    let settledHost: EditorHost | null = null;
     render(createElement(CanvasView, { request: makeRequest(), activeTool: 'select',
       hostOptions: { facadeFactory: factory, scheduler: new FakeRenderScheduler() },
-      onDelta: () => {}, onHostReady: ready }));
+      onDelta: () => {}, onHostSettled: host => { settledHost = host; } }));
     await act(async () => { await Promise.resolve(); factory.creations[0].settle(); });
     const canvas = screen.getByTestId('annotation-canvas');
     await act(async () => { factory.creations[0].facade.loseDevice(); });
@@ -921,8 +975,79 @@ describe('T30 renderer-only recovery lifecycle', () => {
     await act(async () => { factory.creations[0].facade.recovery.resolve(); });
     expect(screen.getByTestId('gpu-status').getAttribute('data-device-state')).toBe('ready');
     expect(canvas.inert).toBe(false);
-    expect(ready).toHaveBeenCalledTimes(1);
+    expect(settledHost!.status).toBe('ready');
+    expect(settledHost!.getSnapshot()).toEqual(makeDocument());
   });
+});
+
+describe('T15 same-asset immutable request replacement', () => {
+  it.each(['ready', 'held initialization'] as const)('installs only the latest full document after replacement from %s', async (phase) => {
+    const factory = new FakeFacadeFactory();
+    const hostOptions = { facadeFactory: factory, scheduler: new FakeRenderScheduler() };
+    const firstRequest = makeRequest();
+    const replacement = makeRequest({ document: { ...makeDocument(), completion: 'in_progress', objects: [{
+      ...makeDocument().objects[0], attributes: { helmet_state: 'wearing' },
+      geometry: { type: 'bbox_xyxy', x_min: 30, y_min: 40, x_max: 130, y_max: 240 },
+    }] } });
+    let currentHost: EditorHost | null = null;
+    function Consumer({ request }: { request: EditorAssetRequest }) {
+      const [settled, setSettled] = useState<{ request: EditorAssetRequest; host: EditorHost } | null>(null);
+      return createElement('div', null,
+        createElement(CanvasView, { request, readOnly: true, activeTool: 'select', hostOptions, onDelta: () => {},
+          onHostSettled: host => { currentHost = host; setSettled({ request, host }); } }),
+        createElement(RevisionExportPanel, { scopeKey: 'same-asset-preview', media: request.media,
+          canStart: settled?.request === request && settled.host.status === 'ready',
+          prepareExport: async () => { throw new ApiFailure(409, 'REVISION_CONFLICT', 'unsynced local branch', null, 'same-asset-preview'); } }));
+    }
+    const view = render(createElement(Consumer, { request: firstRequest }));
+    await act(async () => { await Promise.resolve(); });
+    const oldFacade = factory.creations[0].facade;
+    if (phase === 'ready') {
+      await act(async () => { factory.creations[0].settle(); });
+      expect(currentHost!.getSnapshot()).toEqual(firstRequest.document);
+      expect((screen.getByRole('button', { name: '检查损失并导出' }) as HTMLButtonElement).disabled).toBe(false);
+    }
+    const oldHost = currentHost as EditorHost | null;
+    view.rerender(createElement(Consumer, { request: replacement }));
+    await act(async () => { await Promise.resolve(); });
+    expect((screen.getByRole('button', { name: '检查损失并导出' }) as HTMLButtonElement).disabled).toBe(true);
+    if (phase === 'held initialization') {
+      await act(async () => { factory.creations[0].settle(); });
+      expect(currentHost).toBeNull();
+    }
+    await act(async () => { factory.creations[1]?.settle(); });
+    expect((screen.getByRole('button', { name: '检查损失并导出' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(currentHost!.status).toBe('ready');
+    expect(currentHost!.getSnapshot()).toEqual(replacement.document);
+    expect(currentHost).not.toBe(oldHost);
+    expect(oldFacade.get_device_state()).toBe('disposed');
+    if (oldHost) expect(oldHost.status).toBe('disposed');
+    expect(screen.getByTestId('annotation-canvas').inert).toBe(true);
+  });
+});
+
+
+it('keeps read-only export unavailable during initialization but surfaces preflight errors after terminal Native failure', async () => {
+  const pending = deferred<CreatedEditor>();
+  const request = makeRequest();
+  const factory: EditorFacadeFactory = { create: () => pending.promise };
+  const prepare = vi.fn(async () => { throw new ApiFailure(404, 'REVISION_NOT_FOUND', 'fixed server revision unavailable', null, 'terminal-readonly-preflight'); });
+  function Consumer() {
+    const [host, setHost] = useState<EditorHost | null>(null);
+    return createElement('div', null,
+      createElement(CanvasView, { request, readOnly: true, activeTool: 'select', hostOptions: { facadeFactory: factory, scheduler: new FakeRenderScheduler() }, onDelta: () => {}, onHostSettled: setHost }),
+      createElement(RevisionExportPanel, { scopeKey: host ? 'terminal-native-export' : 'loading-native-export', media: { ...request.media, project_id: 'terminal-native-export' }, canStart: !!host && ['ready', 'error', 'lost'].includes(host.status), prepareExport: prepare }));
+  }
+  render(createElement(Consumer));
+  await act(async () => { await Promise.resolve(); });
+  const button = screen.getByRole('button', { name: '检查损失并导出' }) as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  fireEvent.click(button); expect(prepare).not.toHaveBeenCalled();
+  await act(async () => { pending.reject(new Error('adapter unavailable')); });
+  expect(screen.getByTestId('annotation-canvas').inert).toBe(true);
+  expect(button.disabled).toBe(false);
+  await act(async () => { fireEvent.click(button); });
+  expect(screen.getAllByRole('alert').some(alert => alert.textContent?.includes('terminal-readonly-preflight'))).toBe(true);
 });
 
 // ---------------------------------------------------------------------------

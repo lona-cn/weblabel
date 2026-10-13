@@ -12,6 +12,14 @@ use serde::{Deserialize, Serialize};
 pub enum FormatError {
     #[error("invalid dataset: {0}")]
     Invalid(String),
+    #[error(
+        "archive {budget} exceeds its size limit: {observed} bytes observed, {limit} bytes allowed"
+    )]
+    SizeLimit {
+        budget: &'static str,
+        limit: u64,
+        observed: u64,
+    },
     #[error("unsupported dataset: {0}")]
     Unsupported(String),
     #[error("dataset serialization failed")]
@@ -100,6 +108,17 @@ pub(crate) fn validate_document(
     }
     annotation_domain::validate_document(document, ontology)
         .map_err(|error| FormatError::Invalid(error.code.to_owned()))
+}
+
+/// External formats create new objects; native revisions retain their own attributes.
+pub(crate) fn target_default_attributes(
+    label: &annotation_domain::ontology::LabelDef,
+) -> annotation_domain::Attrs {
+    label
+        .attributes
+        .iter()
+        .map(|attribute| (attribute.key.clone(), attribute.default_value.clone()))
+        .collect()
 }
 
 pub(crate) fn import_document(

@@ -3,7 +3,9 @@
 // types (geometry::Viewport, editor_core::PointerInput) field for field; the
 // generated contract types are consumed from packages/contracts/generated and
 // never re-declared here.
+import type { BBox } from '../../../../../packages/contracts/generated/BBox';
 import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
+import type { AnnotationObject } from '../../../../../packages/contracts/generated/AnnotationObject';
 import type { ApiError } from '../../../../../packages/contracts/generated/ApiError';
 import type { EditorCommand } from '../../../../../packages/contracts/generated/EditorCommand';
 import type { EditorDelta } from '../../../../../packages/contracts/generated/EditorDelta';
@@ -66,6 +68,8 @@ export interface CommitReadback extends Omit<AnnotationDocument, 'objects'> {
   object_count: number;
   changed_positions: number[];
 }
+/** Receipt of the last completed native click, not a browser bbox estimate. */
+export interface HitStackState { index: number | null; count: number }
 export interface EditorFacade {
   dispatch(command: EditorCommand): EditorDelta;
   pointer(input: PointerInput): EditorDelta;
@@ -74,6 +78,9 @@ export interface EditorFacade {
   set_viewport(view: Viewport): void;
   zoom_at(x_css: number, y_css: number, factor: number): void;
   fit_image(): void;
+  focus_selection(): void;
+  focus_region(bounds: BBox): boolean;
+  get_hit_stack_state(): HitStackState;
   set_selection(ids: Id[]): EditorDelta;
   set_local_flags(ids: readonly Id[], flags: { hidden?: boolean; locked?: boolean }): EditorDelta;
   get_snapshot(): AnnotationDocument;
@@ -141,6 +148,13 @@ export interface EditorWasmBridge {
     canonical_rgba: Uint8Array,
     initial_generation: number,
   ): Promise<EditorFacade>;
+}
+
+export type RelabelChange = { object_id: Id; before_hash: string; label_id: Id };
+/** Read-only WASM capability, independent from a mounted canvas/editor. */
+export interface RelabelWasmBridge extends EditorWasmBridge {
+  project_relabel(document: AnnotationDocument, ontology: OntologyVersion,
+    object_id: Id, before_hash: string, label_id: Id): AnnotationObject;
 }
 
 /** On-demand render scheduling; a frame is requested only while dirty. */

@@ -9,20 +9,31 @@ import type { EditorHost } from '../../lib/editor/EditorHost';
 import type { SaveQueue } from '../../lib/persistence/save-queue';
 import { api, csrfToken, type ApiMedia } from '../../lib/t15/api';
 import { Panel } from './Panel';
-import type { ConsentPreview } from './useRun';
+import type { ConsentPreview, RunScope } from './useRun';
 
-export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId, selectedIds, onModelWaitingChange }: {
+export interface WorkbenchAiEditorPort {
+  getDocument(): AnnotationDocument | null;
+  getGeneration(): number | null;
+  getObjectHashes(): Record<string, string> | null;
+  dispatch: EditorHost['dispatch'];
+  focusRegion: EditorHost['focusRegion'];
+}
+
+export function WorkbenchAi({ assetId, media, ontology, editor, queue, revisionId, selectedIds, onModelWaitingChange, profilesRevision, onRunScopeChange }: {
   assetId: string;
   media: ApiMedia | null;
   ontology: OntologyVersion | null;
-  host: EditorHost | null;
+  editor: WorkbenchAiEditorPort | null;
   queue: SaveQueue;
   revisionId: string | null;
   selectedIds: readonly string[];
+  profilesRevision: number;
   onModelWaitingChange?: (waiting: boolean) => void;
+  onRunScopeChange?: (scope: RunScope | null) => void;
 }) {
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [profileCheck, setProfileCheck] = useState(0);
   const subscribe = useCallback((notify: () => void) => assetId ? queue.subscribe(assetId, notify) : () => {}, [queue, assetId]);
   const syncedRevision = useSyncExternalStore(subscribe, () => assetId ? queue.getStatus(assetId).base_revision_id : null, () => null);
   useEffect(() => {
@@ -33,15 +44,15 @@ export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId,
       if (active) setError(reason instanceof Error ? reason.message : String(reason));
     });
     return () => { active = false; };
-  }, []);
+  }, [profileCheck, profilesRevision]);
 
   // Keep the panel instance across asset switches so previously authorized runs
   // remain pinned to their original asset; live getters never return old hosts.
   const [lastReady, setLastReady] = useState<{ ontology: OntologyVersion; context: RunContext } | null>(null);
-  const generation = host?.getGeneration() ?? null;
-  const objectHashes = useMemo(() => host?.getObjectHashes() ?? {}, [host, generation]);
+  const generation = editor?.getGeneration() ?? null;
+  const objectHashes = useMemo(() => editor?.getObjectHashes() ?? {}, [editor, generation]);
   const baseRevision = media ? syncedRevision ?? revisionId : null;
-  const ready = host?.status === 'ready' && media && ontology && generation !== null && baseRevision ? {
+  const ready = editor && media && ontology && generation !== null && baseRevision ? {
     ontology,
     context: {
       project_id: media.project_id, asset_revision_id: media.asset_revision_id,
@@ -52,16 +63,16 @@ export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId,
   } : null;
   useEffect(() => {
     if (ready) setLastReady(ready);
-  }, [host, media, ontology, generation, baseRevision, selectedIds]);
+  }, [editor, media, ontology, generation, baseRevision, selectedIds]);
   const shown = ready ?? lastReady;
 
   const refreshContext = (snapshot: { document: AnnotationDocument; generation: number; annotation_revision_id: string }): RunContext => {
-    if (!host || !media || !ontology || media.asset_revision_id !== assetId ||
-      snapshot.document.asset_revision_id !== assetId || host.getGeneration() !== snapshot.generation) {
-      throw new Error('Active editor changed while preparing the AI scope.');
+    if (!editor || !media || !ontology || media.asset_revision_id !== assetId ||
+      snapshot.document.asset_revision_id !== assetId || snapshot.document.ontology_version_id !== ontology.ontology_version_id || editor.getGeneration() !== snapshot.generation) {
+      throw new Error('准备授权时图片或标注已变化，请重新确认范围。');
     }
-    const hashes = host.getObjectHashes();
-    if (!hashes) throw new Error('The Rust editor could not provide pinned object hashes.');
+    const hashes = editor.getObjectHashes();
+    if (!hashes) throw new Error('无法确认对象版本，请重新加载后再试。');
     return {
       project_id: media.project_id, asset_revision_id: assetId,
       annotation_revision_id: snapshot.annotation_revision_id,
@@ -79,14 +90,22 @@ export function WorkbenchAi({ assetId, media, ontology, host, queue, revisionId,
     return result.consent_id;
   };
 
-  return <section aria-label="工作台 AI 审校">
-    {error ? <p role="alert">模型配置不可用：{error}</p> : null}
+  return <section className="workbench-ai" aria-label="工作台 AI 审校">
+    <div className="panel-heading"><h2>AI 审校</h2><span>按次授权</span></div>
+    {error ? <div role="alert"><p>模型配置读取失败。人工标注可继续；检查登录与读取权限后只读重新检查，不会调用模型。</p><details><summary>读取错误详情</summary>{error}</details></div> : null}
+    <button type="button" onClick={() => setProfileCheck(value => value + 1)}>只读重新检查模型列表</button>
     {shown ? <Panel asset_revision_id={assetId} profiles={profiles} context={shown.context}
       ontology={shown.ontology} generation={generation ?? -1}
-      getDocument={() => host?.getSnapshot() ?? null} getGeneration={() => host?.getGeneration() ?? null}
-      dispatch={(command) => host?.dispatch(command) ?? null} saveQueue={queue}
+      getDocument={() => editor?.getDocument() ?? null} getGeneration={() => editor?.getGeneration() ?? null}
+      dispatch={(command) => editor?.dispatch(command) ?? null} saveQueue={queue}
+      onFocusRegion={ready ? bounds => {
+        if (!media || !ontology || media.project_id !== ontology.project_id || media.asset_revision_id !== assetId) return false;
+        const document = editor?.getDocument();
+        return !!document && document.asset_revision_id === ready.context.asset_revision_id
+          && document.ontology_version_id === ready.context.ontology_version_id && (editor?.focusRegion(bounds) ?? false);
+      } : undefined}
       refreshContext={refreshContext} obtainConsent={obtainConsent} csrfToken={csrfToken()}
-      onModelWaitingChange={onModelWaitingChange}
+      onModelWaitingChange={onModelWaitingChange} onRunScopeChange={onRunScopeChange}
       grants={{ allow_image: true, allow_object_context: true, preview_crop: null }} /> : <p role="status">加载编辑器后可审校当前图像。</p>}
   </section>;
 }
