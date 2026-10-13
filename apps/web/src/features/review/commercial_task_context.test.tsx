@@ -1431,6 +1431,21 @@ describe('C06 real Workbench + SaveQueue creation barrier (controlled HTTP/stora
       act(() => controlledCanvas.commit!(completed, delta));
       await act(async () => saves.whenPersisted(targetId));
       expect(disk.get(targetId)).toMatchObject({ generation: 1, document: completed });
+      // Local durability does not settle the parent/claim refresh. Check the
+      // post-commit action in the actual fixed context, without flushing the PUT
+      // that must still be triggered by submission's SaveQueue barrier.
+      await waitFor(() => {
+        expect(workbenchBoundary.host).toBe(fixedHost);
+        expect(fixedHost.getGeneration()).toBe(1);
+        expect(fixedHost.getSnapshot()).toEqual(completed);
+        expect(new URL(location.href).searchParams.get('task_id')).toBe('task-1');
+        expect((screen.getByTestId('completion-state') as HTMLSelectElement).value).toBe('complete');
+        expect((screen.getByTestId('tool-box') as HTMLButtonElement).disabled).toBe(false);
+        expect(saves.getStatus(targetId).local_commit).toMatchObject({ generation: 1 });
+        expect(disk.get(targetId)).toMatchObject({ generation: 1, document: completed });
+        expect((screen.getByTestId('task-submit') as HTMLButtonElement).disabled).toBe(false);
+      });
+      expect(requests.filter(item => item.method === 'PUT' || item.url.pathname.endsWith('/submit'))).toHaveLength(0);
       fireEvent.click(screen.getByTestId('task-submit'));
       // The receipt can render before the parent callback and task refresh finish.
       // Freeze the proof only once the real continuation action is enabled.
