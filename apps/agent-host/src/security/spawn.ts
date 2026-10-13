@@ -551,15 +551,16 @@ export function spawnChild(spec: ChildSpec, policy: SpawnPolicy): SpawnedChild {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const report = await reclaimObservedTree({ root_pid: pid, spawned_at_ms: started_at_ms, exited_at_ms }, reason, deadline);
-          // Observation alone cannot prove that our native child exited.
-          if (child.exitCode === null && child.signalCode === null) {
-            throw new SpawnPolicyError('reclaim_incomplete', reason + ': process table did not prove owned child exit');
-          }
           await new Promise<void>((resolve, reject) => {
             timer = setTimeout(() => reject(new SpawnPolicyError('reclaim_incomplete', reason + ': owned child exit/pipe close deadline exceeded')),
               remainingBudget(deadline, 'owned child exit/pipe close'));
             closed.then(resolve, reject);
           });
+          // Kernel termination may precede delivery of Node's exit callback.
+          // Require native exit proof after close, not before the bounded wait.
+          if (child.exitCode === null && child.signalCode === null) {
+            throw new SpawnPolicyError('reclaim_incomplete', reason + ': owned child closed without observed exit');
+          }
           return report;
         } catch (error) {
           // Dispose only capabilities we own; this does not prove tree cleanup.
