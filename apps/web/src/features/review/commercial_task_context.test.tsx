@@ -1422,12 +1422,19 @@ describe('C06 real Workbench + SaveQueue creation barrier (controlled HTTP/stora
     try {
       await claim('task-1');
       await waitFor(() => expect((screen.getByTestId('tool-box') as HTMLButtonElement).disabled).toBe(false));
+      // Native readiness precedes the claim action's final task refresh. Wait for
+      // the real ReviewPanel action to settle before committing/submitting.
+      await waitFor(() => expect((screen.getByTestId('task-submit') as HTMLButtonElement).disabled).toBe(false));
       const fixedHost = workbenchBoundary.host!;
       const completed = { ...doc(targetId), completion: 'complete' as const };
       const delta: EditorDelta = { generation: 1, changed_objects: [], removed_object_ids: [], selected_object_ids: [], can_undo: false, can_redo: false, document_changed: true, repaint: true, suggestion_decisions: [], error: null };
       act(() => controlledCanvas.commit!(completed, delta));
+      await act(async () => saves.whenPersisted(targetId));
+      expect(disk.get(targetId)).toMatchObject({ generation: 1, document: completed });
       fireEvent.click(screen.getByTestId('task-submit'));
-      await screen.findByRole('button', { name: '完成并继续' });
+      // The receipt can render before the parent callback and task refresh finish.
+      // Freeze the proof only once the real continuation action is enabled.
+      await waitFor(() => expect((screen.getByRole('button', { name: '完成并继续' }) as HTMLButtonElement).disabled).toBe(false));
       await act(async () => saves.whenPersisted(targetId));
       expect(saves.getStatus(targetId)).toMatchObject({ phase: 'synced', local_commit: { generation: 1 }, base_revision_id: 'saved-continue' });
       expect(workbenchBoundary.host).toBe(fixedHost);
