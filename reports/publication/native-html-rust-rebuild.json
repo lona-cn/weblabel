@@ -359,7 +359,8 @@
       "model_forwards_requested": 0,
       "raw_tokens_or_passwords_persisted": false
     },
-    "verification_source_binding": "Observed against the integrated precommit working tree; the following metadata-only receipt binds the unchanged application source to the public source commit."
+    "verification_source_binding": "Observed against the integrated precommit working tree, then committed as 8a415bc5bde57bb9513ae68980644322920a7c84. This following receipt changes only status/provenance/verification metadata, not application source, tests or documentation.",
+    "verified_source_commit": "8a415bc5bde57bb9513ae68980644322920a7c84"
   },
   "unchanged_gates": {
     "R05": "blocked",
@@ -402,7 +403,8 @@
     "limitations": [
       "No Linux execution or new official live-model support certified by this publication",
       "Private hardware/visual acceptance is inherited, not rerun or promoted as public integration GPU proof"
-    ]
+    ],
+    "source_commit": "8a415bc5bde57bb9513ae68980644322920a7c84"
   },
   "preserved_initial_failures": [
     {
@@ -444,5 +446,6 @@
       ],
       "kind": "five native private-evidence links were unavailable in public history; converted to explicit private-archive references and the real public structured summary without publishing raw evidence or suppressing link validation"
     }
-  ]
+  ],
+  "public_source_commit": "8a415bc5bde57bb9513ae68980644322920a7c84"
 }

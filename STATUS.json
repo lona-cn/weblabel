@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plan_version": "1.0.0",
   "application_commit": "0eb232cc859568f229e1efa09a2a71fd4f796bbf",
-  "last_updated_at": "2026-10-26T10:55:02.020385+00:00",
+  "last_updated_at": "2026-10-26T10:57:10.127977+00:00",
   "user_requests": {
     "first_start_login": {
       "status": "done",
@@ -942,7 +942,7 @@
     "html_rust_rebuild": {
       "status": "blocked",
       "approved_scope": "R00_R11_native_web_rust_single_process",
-      "base_commit": "196f6da536ba6f9a9b6a45bb17cade3a70fd0c4d",
+      "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
       "contract_version": "v1",
       "report_index": "reports/publication/native-html-rust-rebuild.json",
       "design_gate": "accepted",
@@ -962,9 +962,9 @@
       "tasks": {
         "R00": {
           "status": "done",
-          "base_commit": "196f6da536ba6f9a9b6a45bb17cade3a70fd0c4d",
-          "integrated_commit": "85e5f3ee8cb5b3b4f4afc24f0e050efc0ab07b71",
-          "actualcommit": "85e5f3ee8cb5b3b4f4afc24f0e050efc0ab07b71",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
           ],
@@ -979,13 +979,14 @@
             "reports/T08/html-rust-rebuild/previews/catalog.json",
             "reports/T35/html-rust-rebuild/gallery-final-smoke.json"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "85e5f3ee8cb5b3b4f4afc24f0e050efc0ab07b71"
         },
         "R01": {
           "status": "done",
-          "base_commit": "91edf309b3c5325a1fa42a2241b6de79a55e5c34",
-          "integrated_commit": "cec408ca07041b01b9c8d9d01a890fe3ccf2f6f9",
-          "actualcommit": "cec408ca07041b01b9c8d9d01a890fe3ccf2f6f9",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
           ],
@@ -1000,13 +1001,14 @@
             "reports/T35/html-rust-rebuild/r01-smoke-archive.json",
             "reports/T35/html-rust-rebuild/r01-worktree-pre-removal.json"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "cec408ca07041b01b9c8d9d01a890fe3ccf2f6f9"
         },
         "R02": {
           "status": "done",
-          "base_commit": "91edf309b3c5325a1fa42a2241b6de79a55e5c34",
-          "integrated_commit": "4c7a3f2d144f0ccc39b3603fe2035ac996dfc230",
-          "actualcommit": "4c7a3f2d144f0ccc39b3603fe2035ac996dfc230",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
           ],
@@ -1023,13 +1025,14 @@
             "reports/T35/html-rust-rebuild/r02-author-archive.json",
             "reports/T35/html-rust-rebuild/r02-worktree-cleanup.json"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "4c7a3f2d144f0ccc39b3603fe2035ac996dfc230"
         },
         "R03": {
           "status": "done",
-          "base_commit": "6afd1fa96d80e49375c755eda96935cb1be1923d",
-          "integrated_commit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690",
-          "actualcommit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
           ],
@@ -1042,13 +1045,14 @@
             "reports/T20/html-rust-rebuild/r03-b10-source-closure.md",
             "reports/T20/html-rust-rebuild/product-factory/report.json"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690"
         },
         "R04": {
           "status": "done",
-          "base_commit": "6afd1fa96d80e49375c755eda96935cb1be1923d",
-          "integrated_commit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690",
-          "actualcommit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
           ],
@@ -1062,13 +1066,14 @@
             "reports/T23/html-rust-rebuild/r04-native-root-closure-review.md",
             "reports/T23/html-rust-rebuild/product-factory/report.json"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690"
         },
         "R05": {
           "status": "blocked",
-          "base_commit": "6afd1fa96d80e49375c755eda96935cb1be1923d",
-          "integrated_commit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690",
-          "actualcommit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "commit_scope": "partial_source_only_not_task_completion",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
@@ -1088,13 +1093,14 @@
             "reports/T35/html-rust-rebuild/r05-single-uac-filelink-control.json",
             "tools/detector-export/README.md"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690"
         },
         "R06": {
           "status": "done",
-          "base_commit": "bdac4b0edb2df40d4d867fd7d504634bb5a61c9a",
-          "integrated_commit": "3d53d4b22a52a87791658e16483b0d7fb5a74a25",
-          "actualcommit": "3d53d4b22a52a87791658e16483b0d7fb5a74a25",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
           ],
@@ -1112,13 +1118,14 @@
             "reports/T08/html-rust-rebuild/r06-review-visual-final.md",
             "reports/T35/html-rust-rebuild/r06-worktree-cleanup.json"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "3d53d4b22a52a87791658e16483b0d7fb5a74a25"
         },
         "R07": {
           "status": "done",
-          "base_commit": "bdac4b0edb2df40d4d867fd7d504634bb5a61c9a",
-          "integrated_commit": "bcc63da74e8b81e9259b40fa38e03001bcf8f650",
-          "actualcommit": "bcc63da74e8b81e9259b40fa38e03001bcf8f650",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
           ],
@@ -1132,13 +1139,14 @@
             "reports/T12/html-rust-rebuild/ai-candidate/acceptance.json",
             "reports/T35/html-rust-rebuild/r07-outcome-main/acceptance.json"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "bcc63da74e8b81e9259b40fa38e03001bcf8f650"
         },
         "R08": {
           "status": "done",
-          "base_commit": "a286df7b345a7cb9cda1aaa1137c8da25ada0ae0",
-          "integrated_commit": "bcc63da74e8b81e9259b40fa38e03001bcf8f650",
-          "actualcommit": "bcc63da74e8b81e9259b40fa38e03001bcf8f650",
+          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
+          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json"
           ],
@@ -1151,7 +1159,8 @@
             "reports/T35/html-rust-rebuild/r08-history-return-source-closure.md",
             "reports/T12/html-rust-rebuild/r07-r08-composition/acceptance.json"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "original_actualcommit": "bcc63da74e8b81e9259b40fa38e03001bcf8f650"
         },
         "R09": {
           "status": "pending",
@@ -1207,8 +1216,12 @@
           "reports/publication/native-html-rust-rebuild.json"
         ],
         "scope": "Windows integration and actual loopback smoke only; source commit bound in following receipt",
-        "release_gate_change": false
-      }
+        "release_gate_change": false,
+        "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+        "source_binding": "Public source commit; original private task and acceptance provenance preserved separately in original_* and archived_original_evidence fields."
+      },
+      "original_base_commit": "196f6da536ba6f9a9b6a45bb17cade3a70fd0c4d",
+      "latest_implementation_commit": "8a415bc5bde57bb9513ae68980644322920a7c84"
     }
   },
   "tasks": {

@@ -585,6 +585,19 @@
       "verification": "reports/publication/increment-verification.json",
       "policy": "Same private generated-evidence boundary; 12 manually reviewed synthetic README/tutorial image exceptions; no original private parent commits published.",
       "acceptanceScope": "Structured observed summaries; raw logs, databases, runtime tokens, DLLs, browser profiles and other generated receipts stay in the project-local private archive. Metadata-only publication receipt follows the tested source commit; no test, model or hardware gate is silently upgraded."
+    },
+    {
+      "originalBase": "196f6da536ba6f9a9b6a45bb17cade3a70fd0c4d",
+      "originalHead": "90e68307a9b338b7821ff22615511d0b9f537bee",
+      "sourceCommitCount": 13,
+      "publicBase": "e61f12cd276c7772ea646b5385ad078a7949300e",
+      "sourceSnapshot": "8a415bc5bde57bb9513ae68980644322920a7c84",
+      "integrationCommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+      "verifiedSourceHead": "8a415bc5bde57bb9513ae68980644322920a7c84",
+      "sourceMap": "STATUS.json: user_requests.html_rust_rebuild.tasks original_* -> public actualcommit",
+      "verification": "reports/publication/native-html-rust-rebuild.json",
+      "policy": "Same private generated-evidence boundary. Source integrated on public main without private parents; original master, full private evidence and unrelated uncommitted files unchanged. Raw logs, screenshots, databases, tokens, model binaries, DLLs and generated traces withheld.",
+      "acceptanceScope": "Windows native 223, all Vitest 83 files/1220 tests, contracts/types/build and actual native loopback API persistence/shutdown. Private hardware/visual acceptance is inherited, not newly promoted. No additional model inference, UAC, native cutover, official live or release gate claims."
     }
   ]
 }
