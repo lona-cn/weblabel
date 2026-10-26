@@ -1,8 +1,8 @@
 import type { AnnotationRevision } from '../../../../../packages/contracts/generated/AnnotationRevision';
 import type { AnnotationImportCommitRequest, RevisionExportArtifact, RevisionExportIntent } from '../../lib/t15/api';
 export type IntentTarget = Readonly<{ projectId: string; assetRevisionId: string; ontologyId: string }>;
-export type ImportIntent = Readonly<{ scope: string; target: IntentTarget; batchId: string; payload: AnnotationImportCommitRequest; receipt: AnnotationRevision | null; sending: boolean }>;
-export type ExportIntent = Readonly<{ scope: string; target: IntentTarget; revisionId: string; payload: RevisionExportIntent; artifact: RevisionExportArtifact | null; sending: boolean }>;
+export type ImportIntent = Readonly<{ scope: string | object; target: IntentTarget; batchId: string; payload: AnnotationImportCommitRequest; receipt: AnnotationRevision | null; sending: boolean }>;
+export type ExportIntent = Readonly<{ scope: string | object; target: IntentTarget; revisionId: string; payload: RevisionExportIntent; artifact: RevisionExportArtifact | null; sending: boolean }>;
 const imports = new Map<string, ImportIntent>();
 const exports = new Map<string, ExportIntent>();
 const listeners = new Set<() => void>();

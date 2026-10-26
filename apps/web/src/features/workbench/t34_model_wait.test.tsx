@@ -1,4 +1,3 @@
-import { act, cleanup, renderHook } from '@testing-library/react';
 import { InMemoryDraftStorage } from '../../lib/persistence/draft-store';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
@@ -7,11 +6,11 @@ import type { RunContext } from '../../../../../packages/contracts/generated/Run
 import type { RunEvent } from '../../../../../packages/contracts/generated/RunEvent';
 import { SaveQueue } from '../../lib/persistence/save-queue';
 import type { SaveQueueOwner } from '../../lib/persistence/types';
-import { useRun } from '../ai/useRun';
-import type { ConsentPreview, RunApi, RunControllerOptions } from '../ai/useRun';
+import { createRunController, type RunController, type RunApi, type RunControllerOptions } from '../ai/run-controller';
 
 const fixtureOwners = new Set<object>();
-afterEach(() => { fixtureOwners.clear(); cleanup(); vi.useRealTimers(); });
+const controllers = new Set<RunController>();
+afterEach(() => { for (const controller of controllers) controller.dispose(); controllers.clear(); fixtureOwners.clear(); vi.useRealTimers(); });
 
 it('ends model waiting on a validated terminal event while preserving strict-after candidate delivery retries', async () => {
   vi.useFakeTimers();
@@ -44,22 +43,24 @@ it('ends model waiting on a validated terminal event while preserving strict-aft
     cancel: async () => {},
   };
   const options: RunControllerOptions = { ontology: { ontology_version_id: document.ontology_version_id, project_id: context.project_id, version_no: 1, labels: [], guidelines_markdown: '', allow_out_of_bounds: false }, asset_revision_id: document.asset_revision_id, profile, context, intent: 'audit_attributes', prompt: 'Unit-only waiting boundary', grants: { allow_image: true, allow_object_context: true, preview_crop: null }, obtainConsent: async () => 't34-unit-consent', dispatch: () => null, getDocument: () => document, getGeneration: () => 0, refreshContext: () => context, saveQueue: queue, api };
-  const view = renderHook(() => useRun(options));
-  let preview: ConsentPreview | null = null;
-  await act(async () => { preview = await view.result.current.preparePreview(); });
+  const controller = createRunController(options);
+  controllers.add(controller);
+  const initialSnapshot = controller.getSnapshot();
+  controller.update(options);
+  expect(controller.getSnapshot()).toBe(initialSnapshot);
+  const preview = await controller.preparePreview();
   expect(preview).not.toBeNull();
-  await act(async () => { await view.result.current.run(preview!); });
-  expect(view.result.current.modelWaiting).toBe(true);
+  await controller.run(preview!);
+  expect(controller.getSnapshot().modelWaiting).toBe(true);
   terminal = true;
-  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-  expect(view.result.current.events.at(-1)?.type).toBe('succeeded');
-  expect(view.result.current.error).toBe('candidate delivery unavailable');
-  expect(view.result.current.modelWaiting).toBe(false);
-  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  await vi.advanceTimersByTimeAsync(500);
+  expect(controller.getSnapshot().events.at(-1)?.type).toBe('succeeded');
+  expect(controller.getSnapshot().error).toBe('candidate delivery unavailable');
+  expect(controller.getSnapshot().modelWaiting).toBe(false);
+  await vi.advanceTimersByTimeAsync(500);
   expect(suggestions).toHaveBeenCalledTimes(2);
   expect(cursors).toEqual([0, 1, 1]);
   expect(start).toHaveBeenCalledTimes(1);
-  expect(view.result.current.modelWaiting).toBe(false);
+  expect(controller.getSnapshot().modelWaiting).toBe(false);
   fixtureOwners.delete(token);
-  view.unmount();
 });

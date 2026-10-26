@@ -1,5 +1,6 @@
 import Ajv from 'ajv';
 import { readFileSync } from 'node:fs';
+import { numericFormats } from './numeric-formats.js';
 
 const schemaFiles = {
   bootstrap_status: 'bootstrap_status.schema.json',
@@ -34,10 +35,7 @@ const schemaFiles = {
   external_processing_policy: 'external_processing_policy.schema.json',
 };
 const ajv = new Ajv({ allErrors: true, strict: false });
-ajv.addFormat('uint8', { type: 'number', validate: (value) => Number.isInteger(value) && value >= 0 && value <= 255 });
-ajv.addFormat('uint32', { type: 'number', validate: (value) => Number.isInteger(value) && value >= 0 && value <= 4_294_967_295 });
-ajv.addFormat('uint64', { type: 'number', validate: (value) => Number.isSafeInteger(value) && value >= 0 });
-ajv.addFormat('double', { type: 'number', validate: Number.isFinite });
+for (const [name, format] of Object.entries(numericFormats)) ajv.addFormat(name, format);
 ajv.addFormat('date-time', {
   type: 'string',
   validate: (value) => {

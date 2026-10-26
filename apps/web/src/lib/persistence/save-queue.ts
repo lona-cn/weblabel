@@ -496,7 +496,20 @@ export class SaveQueue {
       !Number.isSafeInteger(input.generation) || input.generation < 0) {
       throw new Error('server revision baseline does not match its asset, ontology, or generation');
     }
-    if (this.states.has(input.asset_revision_id)) return false;
+    const existing = this.states.get(input.asset_revision_id);
+    if (existing) {
+      // Rebinding a page revokes its old certificate. Re-establish it with a
+      // genuine local transaction only for the exact unchanged clean head.
+      if (!this.writable() || existing.ontology_version_id !== input.ontology_version_id
+        || existing.base_revision_id !== input.annotation_revision_id
+        || existing.local_generation !== input.generation || existing.synced_generation !== input.generation
+        || !sameJson(existing.document, input.document) || isDirty(existing)
+        || existing.pending !== null || existing.in_flight !== null || existing.pump_promise !== null
+        || existing.paused || existing.owner_paused || existing.ack_local_barrier !== null
+        || existing.conflict !== null || existing.save_error !== null) return false;
+      if (!isLocalCommitted(existing)) this.persist(existing);
+      return true;
+    }
     const state = this.stateTemplate(input.asset_revision_id, input.ontology_version_id);
     state.base_revision_id = input.annotation_revision_id;
     state.local_generation = input.generation;
@@ -520,9 +533,16 @@ export class SaveQueue {
     if (!this.writable()) return false;
     const document = revision.document;
     const state = this.states.get(document.asset_revision_id);
-    if (!state || state.ontology_version_id !== document.ontology_version_id || state.base_revision_id !== expectedBase
+    if (!state || state.ontology_version_id !== document.ontology_version_id
       || revision.parent_revision_id !== expectedBase || isDirty(state) || state.in_flight !== null || state.pump_promise !== null
       || state.pending !== null || state.paused || state.ack_local_barrier !== null || state.conflict !== null) return false;
+    if (state.base_revision_id === revision.annotation_revision_id) {
+      if (!sameJson(state.document, document)) return false;
+      // Reconcile this exact acknowledged receipt locally; never mint a save operation.
+      if (!isLocalCommitted(state)) this.persist(state);
+      return true;
+    }
+    if (state.base_revision_id !== expectedBase) return false;
     this.clearTimer(state);
     state.base_revision_id = revision.annotation_revision_id;
     state.document = immutableDocument(document);

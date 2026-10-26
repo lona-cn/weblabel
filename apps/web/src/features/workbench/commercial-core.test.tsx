@@ -10,8 +10,9 @@ import type { Scalar } from '../../../../../packages/contracts/generated/Scalar'
 import { AttributePanel } from './AttributePanel';
 import { ObjectList } from './ObjectList';
 import { NumericGeometry } from './NumericGeometry';
-import { SelectionStore } from './SelectionLink';
-import { LabelControls, categoryShortcuts } from './LabelControls';
+import { SelectionStore } from './selection-store';
+import { LabelControls } from './LabelControls';
+import { categoryShortcuts } from './category-shortcuts';
 
 const object = (id: string, x = 1): AnnotationObject => ({ object_id: id, label_id: 'car', geometry: { type: 'bbox_xyxy', x_min: x, y_min: 2, x_max: x + 10, y_max: 12 }, attributes: {}, origin: { type: 'manual', prediction_id: null, model_run_id: null, import_batch_id: null } });
 const ontology: OntologyVersion = { ontology_version_id: 'ontology', project_id: 'project', version_no: 1, guidelines_markdown: '', allow_out_of_bounds: false, labels: [{ label_id: 'car', name: '车辆', color: '#ffff00', shortcut: null, allowed_geometry_types: ['bbox_xyxy'], attributes: ['enum', 'boolean', 'number', 'text'].map((kind) => ({ key: kind, kind: kind as 'enum' | 'boolean' | 'number' | 'text', required: true, default_value: null, enum_values: kind === 'enum' ? ['', 'red'] : [], min: null, max: null })) }] };

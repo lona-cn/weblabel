@@ -113,6 +113,63 @@ pub async fn record(
     Ok(true)
 }
 
+/// Preserve the last controlled named-API observation on the single service
+/// lifecycle event, including immediate cancellation before response headers.
+pub(crate) async fn terminal_data(
+    connection: &mut SqliteConnection,
+    record: &runs::RunRecord,
+    code: Option<&str>,
+    extra: Option<Value>,
+) -> Result<Option<Value>, sqlx::Error> {
+    if !matches!(record.provider_id.as_str(), "openai_api" | "anthropic_api" | "mimo_api") {
+        return Ok(extra);
+    }
+    let mut data = match extra {
+        Some(Value::Object(data)) => data,
+        Some(other) => return Ok(Some(other)),
+        None => serde_json::Map::new(),
+    };
+    // A failed checkpoint is not evidence of zero requests, nor proof that an
+    // older snapshot describes the latest attempt. Keep prior progress in the
+    // history, but explicitly withhold a falsely complete terminal observation.
+    if code == Some("event_checkpoint_failed")
+        || data.get("dropped").and_then(Value::as_str) == Some("observation_checkpoint_unconfirmed")
+    {
+        for key in ["receipts", "receipt", "usage", "cost_display"] { data.remove(key); }
+        data.insert("dropped".to_owned(), Value::String("observation_checkpoint_unconfirmed".to_owned()));
+        if let Some(code) = code { data.insert("error_code".to_owned(), Value::String(code.to_owned())); }
+        return Ok(Some(Value::Object(data)));
+    }
+    let observed: Option<String> = sqlx::query_scalar(
+        "SELECT data_json FROM run_events WHERE run_id=? AND event_type='progress' \
+         AND message='provider observation checkpoint' AND data_json IS NOT NULL ORDER BY seq DESC LIMIT 1",
+    ).bind(&record.run_id).fetch_optional(&mut *connection).await?;
+    // Local configuration/budget rejection has no upstream observation. Preserve
+    // the controlled empty envelope, without overwriting terminal evidence or
+    // turning an explicitly dropped checkpoint into a false zero-attempt claim.
+    if observed.is_none() {
+        data.entry("receipts").or_insert_with(|| Value::Array(Vec::new()));
+        data.entry("receipt").or_insert(Value::Null);
+        data.entry("usage").or_insert_with(|| serde_json::json!({
+            "input_tokens": null, "output_tokens": null, "cost_usd": null,
+        }));
+        data.entry("cost_display").or_insert_with(|| Value::String("unknown".to_owned()));
+    }
+    if let Some(raw) = observed.filter(|raw| raw.len() <= MAX_EVENT_DATA_BYTES) {
+        if let Ok(Value::Object(mut observation)) = serde_json::from_str(&raw) {
+            observation.retain(|key, _| matches!(key.as_str(), "receipts" | "receipt" | "usage" | "cost_display" | "dropped"));
+            // An observed cost classification must not be replaced by the
+            // generic cancellation row's unknown classification.
+            data.extend(observation);
+        }
+    }
+    if let Some(code) = code {
+        data.insert("error_code".to_owned(), Value::String(code.to_owned()));
+    }
+    Ok(if data.is_empty() { None } else { Some(Value::Object(data)) })
+}
+
+
 pub(crate) const fn event_type_str(event_type: RunEventType) -> &'static str {
     match event_type {
         RunEventType::Queued => "queued",

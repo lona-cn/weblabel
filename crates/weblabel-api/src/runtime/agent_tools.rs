@@ -22,7 +22,7 @@ use axum::{
     Json, Router,
 };
 use image::GenericImageView;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
 
@@ -52,6 +52,33 @@ pub const TOOL_NAMES: [&str; 5] = [
     TOOL_REPORT_ISSUES,
 ];
 
+/// The single native schema source used by provider and MCP adapters.
+/// Nested candidate types are generated from the unchanged domain wire types.
+pub fn tool_definitions() -> Value {
+    fn schema<T: schemars::JsonSchema>() -> Value {
+        serde_json::to_value(schemars::schema_for!(T)).expect("tool schemas serialize")
+    }
+    let context = schema::<EmptyArgs>();
+    let mut objects = schema::<ListObjectsArgs>();
+    objects["properties"]["cursor"]["maxLength"] = json!(128);
+    objects["properties"]["limit"] = json!({"type":"integer","minimum":1,"maximum":MAX_LIST_LIMIT});
+    let mut region = schema::<ReadRegionArgs>();
+    region["required"] = json!(["region"]);
+    let mut changes = schema::<ProposeChangesArgs>();
+    changes["properties"]["changes"]["maxItems"] = json!(MAX_CHANGES);
+    changes["properties"]["issues"]["maxItems"] = json!(MAX_ISSUES);
+    let mut issues = schema::<ReportIssuesArgs>();
+    issues["properties"]["issues"]["minItems"] = json!(1);
+    issues["properties"]["issues"]["maxItems"] = json!(MAX_ISSUES);
+    json!([
+        {"name":TOOL_GET_CONTEXT,"description":"Frozen run context, pinned versions and approved scope; identity cannot be switched.","inputSchema":context},
+        {"name":TOOL_LIST_OBJECTS,"description":"Cursor-paginated objects from the frozen, approved run scope.","inputSchema":objects},
+        {"name":TOOL_READ_REGION,"description":"Authorized canonical image or crop with its exact transform; consumes image budgets. No paths or URLs.","inputSchema":region},
+        {"name":TOOL_PROPOSE_CHANGES,"description":"Submit untrusted candidate changes and issues for server validation and human review. Never writes annotations.","inputSchema":changes},
+        {"name":TOOL_REPORT_ISSUES,"description":"Submit suspected quality issues for human review, never review conclusions.","inputSchema":issues}
+    ])
+}
+
 /// Hard cap on a single tool request body (controlled 413 above this).
 pub const MAX_TOOL_BODY_BYTES: usize = 1024 * 1024;
 /// C4 caps for candidate submissions.
@@ -79,11 +106,38 @@ const FORBIDDEN_KEYS: [&str; 8] = [
     "path", "url", "file", "filename", "grant_id", "command", "argv", "cwd",
 ];
 
+/// Reusable authorization boundary for both HTTP and in-process providers.
 #[derive(Clone)]
-struct AgentToolsState {
+pub struct AgentToolService {
     repository: Repository,
     tokens: RunTokenStore,
 }
+
+#[derive(Debug)]
+pub struct AuthorizedRegion {
+    pub bytes: Vec<u8>,
+    pub mime: String,
+    pub width: u32,
+    pub height: u32,
+    pub region: Option<[u32; 4]>,
+    pub transform_to_canonical: [f64; 9],
+}
+
+#[derive(Debug)]
+pub enum AgentToolOutput {
+    Json(Value),
+    Region(AuthorizedRegion),
+}
+
+#[derive(Debug)]
+pub struct AgentToolError {
+    pub status: StatusCode,
+    pub code: String,
+    pub message: String,
+    pub details: Value,
+}
+
+type ToolResult = Result<AgentToolOutput, AgentToolError>;
 
 /// Mounts the internal agent tools route. No session middleware is attached:
 /// only run-scoped bearer tokens are accepted.
@@ -99,34 +153,58 @@ pub fn router(
             crate::auth::host_and_origin,
         ))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
-        .with_state(AgentToolsState { repository, tokens })
+        .with_state(AgentToolService::new(repository, tokens))
 }
 
-fn tool_error(status: StatusCode, code: &str, message: &str, details: Value) -> Response {
-    (
+fn tool_failure(status: StatusCode, code: &str, message: &str) -> AgentToolError {
+    AgentToolError {
         status,
-        Json(json!({
-            "code": code,
-            "message": message,
+        code: code.to_owned(),
+        message: message.to_owned(),
+        details: Value::Null,
+    }
+}
+
+fn tool_error(status: StatusCode, code: &str, message: &str, details: Value) -> ToolResult {
+    Err(AgentToolError { details, ..tool_failure(status, code, message) })
+}
+
+fn simple_error(status: StatusCode, code: &str, message: &str) -> ToolResult {
+    Err(tool_failure(status, code, message))
+}
+
+fn http_result(result: ToolResult) -> Response {
+    match result {
+        Ok(AgentToolOutput::Json(value)) => Json(value).into_response(),
+        Ok(AgentToolOutput::Region(region)) => Json(json!({
+            "mime": region.mime,
+            "width": region.width,
+            "height": region.height,
+            "region": region.region,
+            "transform_to_canonical": region.transform_to_canonical,
+            "data_base64": base64_encode(&region.bytes),
+        })).into_response(),
+        Err(error) => (error.status, Json(json!({
+            "code": error.code,
+            "message": error.message,
             "request_id": uuid::Uuid::new_v4().to_string(),
-            "details": details,
-        })),
-    )
-        .into_response()
+            "details": error.details,
+        }))).into_response(),
+    }
 }
 
-fn simple_error(status: StatusCode, code: &str, message: &str) -> Response {
-    tool_error(status, code, message, Value::Null)
-}
-
-fn token_error(error: TokenError) -> Response {
+fn token_failure(error: TokenError) -> AgentToolError {
     let status = match error {
         TokenError::Required | TokenError::Invalid | TokenError::Expired | TokenError::Revoked => {
             StatusCode::UNAUTHORIZED
         }
-        TokenError::ProjectMismatch | TokenError::BudgetExhausted => StatusCode::FORBIDDEN,
+        TokenError::ProjectMismatch | TokenError::BudgetExhausted | TokenError::AlreadyDispatched => StatusCode::FORBIDDEN,
     };
-    simple_error(status, error.code(), "run token rejected")
+    tool_failure(status, error.code(), "run token rejected")
+}
+
+fn token_error(error: TokenError) -> ToolResult {
+    Err(token_failure(error))
 }
 
 /// Extracts the run-scoped bearer token. Session cookies are never consulted.
@@ -147,7 +225,7 @@ fn bearer_token(headers: &HeaderMap) -> Result<&str, TokenError> {
     Ok(token)
 }
 
-fn check_argument_keys(value: &Value) -> Option<Response> {
+fn check_argument_keys(value: &Value) -> Option<ToolResult> {
     let Some(object) = value.as_object() else {
         return Some(simple_error(
             StatusCode::BAD_REQUEST,
@@ -174,7 +252,7 @@ fn check_argument_keys(value: &Value) -> Option<Response> {
     None
 }
 
-fn invalid_arguments(error: impl std::fmt::Display) -> Response {
+fn invalid_arguments(error: impl std::fmt::Display) -> ToolResult {
     simple_error(
         StatusCode::BAD_REQUEST,
         "INVALID_ARGUMENTS",
@@ -186,11 +264,11 @@ fn invalid_arguments(error: impl std::fmt::Display) -> Response {
 // argument schemas (JSON objects with additionalProperties: false)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EmptyArgs {}
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ListObjectsArgs {
     #[serde(default)]
@@ -199,13 +277,13 @@ struct ListObjectsArgs {
     limit: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReadRegionArgs {
     region: Option<BBox>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ProposeChangesArgs {
     changes: Vec<Change>,
@@ -215,10 +293,40 @@ struct ProposeChangesArgs {
     score: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReportIssuesArgs {
     issues: Vec<QualityIssue>,
+}
+
+fn json_fits_budget(value: &impl Serialize, limit: usize) -> bool {
+    struct Budget { bytes: usize, limit: usize }
+    impl std::io::Write for Budget {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.bytes = self.bytes.saturating_add(bytes.len());
+            if self.bytes > self.limit {
+                return Err(std::io::Error::other("JSON byte budget exceeded"));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    serde_json::to_writer(Budget { bytes: 0, limit }, value).is_ok()
+}
+
+/// MCP tools and terminal echoes share one run-scoped semantic candidate identity.
+/// Normalize only through the existing strict tool schema, without cloning raw JSON.
+pub fn claude_candidate_event_id(raw: &Value) -> Result<String, AgentToolError> {
+    let too_large = || tool_failure(StatusCode::PAYLOAD_TOO_LARGE, "PREDICTION_TOO_LARGE",
+        "raw provider output exceeds the 262144 byte cap");
+    let invalid = || tool_failure(StatusCode::BAD_REQUEST, "INVALID_ARGUMENTS",
+        "Claude candidate does not match the frozen proposal schema");
+    if !json_fits_budget(raw, predictions::MAX_RAW_OUTPUT_BYTES) { return Err(too_large()); }
+    let args = ProposeChangesArgs::deserialize(raw).map_err(|_| invalid())?;
+    let normalized = serde_json::to_value(args).map_err(|_| invalid())?;
+    if !json_fits_budget(&normalized, predictions::MAX_RAW_OUTPUT_BYTES) { return Err(too_large()); }
+    let hash = annotation_domain::hash::execution_configuration_hash(&normalized).map_err(|_| invalid())?;
+    Ok(format!("claude-candidate-{hash}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -243,9 +351,9 @@ async fn load_facts(
     repository: &Repository,
     grant: &RunTokenGrant,
     submission: bool,
-) -> Result<RunFacts, Response> {
+) -> Result<RunFacts, AgentToolError> {
     let mut tx = repository.begin_write().await.map_err(|_| {
-        simple_error(
+        tool_failure(
             StatusCode::SERVICE_UNAVAILABLE,
             "STORAGE_UNAVAILABLE",
             "could not read the frozen run context",
@@ -254,30 +362,30 @@ async fn load_facts(
     let record = runs::load_record(tx.connection(), &grant.run_id)
         .await
         .map_err(|_| {
-            simple_error(
+            tool_failure(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "STORAGE_UNAVAILABLE",
                 "could not read the frozen run context",
             )
         })?
         .ok_or_else(|| {
-            simple_error(
+            tool_failure(
                 StatusCode::UNAUTHORIZED,
                 "RUN_TOKEN_INVALID",
                 "run token does not name a live run",
             )
         })?;
     if record.project_id != grant.project_id {
-        return Err(token_error(TokenError::ProjectMismatch));
+        return Err(token_failure(TokenError::ProjectMismatch));
     }
     if record.cancel_requested {
-        return Err(token_error(TokenError::Revoked));
+        return Err(token_failure(TokenError::Revoked));
     }
     if matches!(
         record.state,
         runs::RunState::Cancelled | runs::RunState::Interrupted
     ) {
-        return Err(token_error(TokenError::Revoked));
+        return Err(token_failure(TokenError::Revoked));
     }
     let authorization = if submission {
         consent::authorize_submission(tx.connection(), &record).await
@@ -285,10 +393,10 @@ async fn load_facts(
         consent::authorize_run(tx.connection(), &record).await
     };
     let grants = authorization
-        .map_err(|failure| simple_error(failure.status, failure.code, &failure.message))?;
+        .map_err(|failure| tool_failure(failure.status, failure.code, &failure.message))?;
 
     let context = record.context().map_err(|_| {
-        simple_error(
+        tool_failure(
             StatusCode::INTERNAL_SERVER_ERROR,
             "RUN_CONTEXT_INVALID",
             "the stored run context cannot be decoded",
@@ -296,7 +404,7 @@ async fn load_facts(
     })?;
     let profile: ModelProfile =
         serde_json::from_str(&record.profile_snapshot_json).map_err(|_| {
-            simple_error(
+            tool_failure(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "RUN_CONTEXT_INVALID",
                 "the stored profile snapshot cannot be decoded",
@@ -312,7 +420,7 @@ async fn load_facts(
     .await
     .map_err(|_| storage_unavailable())?
     .ok_or_else(|| {
-        simple_error(
+        tool_failure(
             StatusCode::NOT_FOUND,
             "MEDIA_NOT_FOUND",
             "the run's pinned media revision is gone",
@@ -339,14 +447,14 @@ async fn load_facts(
     .await
     .map_err(|_| storage_unavailable())?;
     let ontology: OntologyVersion = serde_json::from_str(&ontology_json.ok_or_else(|| {
-        simple_error(
+        tool_failure(
             StatusCode::NOT_FOUND,
             "ONTOLOGY_NOT_FOUND",
             "the run's pinned ontology version is gone",
         )
     })?)
     .map_err(|_| {
-        simple_error(
+        tool_failure(
             StatusCode::INTERNAL_SERVER_ERROR,
             "RUN_CONTEXT_INVALID",
             "the pinned ontology cannot be decoded",
@@ -363,14 +471,14 @@ async fn load_facts(
     .map_err(|_| storage_unavailable())?;
     let document: annotation_domain::AnnotationDocument =
         serde_json::from_str(&annotation_json.ok_or_else(|| {
-            simple_error(
+            tool_failure(
                 StatusCode::NOT_FOUND,
                 "REVISION_NOT_FOUND",
                 "the run's pinned annotation revision is gone",
             )
         })?)
         .map_err(|_| {
-            simple_error(
+            tool_failure(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "RUN_CONTEXT_INVALID",
                 "the pinned annotation revision cannot be decoded",
@@ -403,8 +511,8 @@ async fn load_facts(
     })
 }
 
-fn storage_unavailable() -> Response {
-    simple_error(
+fn storage_unavailable() -> AgentToolError {
+    tool_failure(
         StatusCode::SERVICE_UNAVAILABLE,
         "STORAGE_UNAVAILABLE",
         "could not read the frozen run context",
@@ -416,62 +524,66 @@ fn storage_unavailable() -> Response {
 // ---------------------------------------------------------------------------
 
 async fn invoke_tool(
-    State(state): State<AgentToolsState>,
+    State(service): State<AgentToolService>,
     Path(tool): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let token = match bearer_token(&headers) {
-        Ok(token) => token.to_owned(),
-        Err(error) => return token_error(error),
+        Ok(token) => token,
+        Err(error) => return http_result(token_error(error)),
     };
+    // Preserve the HTTP boundary's error ordering and original wire budget.
     if !TOOL_NAMES.contains(&tool.as_str()) {
-        return simple_error(
-            StatusCode::NOT_FOUND,
-            "UNKNOWN_TOOL",
-            "only the five frozen semantic tools are available",
-        );
+        return http_result(simple_error(StatusCode::NOT_FOUND, "UNKNOWN_TOOL",
+            "only the five frozen semantic tools are available"));
     }
     if body.len() > MAX_TOOL_BODY_BYTES {
-        return simple_error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "TOOL_PAYLOAD_TOO_LARGE",
-            "tool arguments exceed the 1 MiB request budget",
-        );
+        return http_result(simple_error(StatusCode::PAYLOAD_TOO_LARGE, "TOOL_PAYLOAD_TOO_LARGE",
+            "tool arguments exceed the 1 MiB request budget"));
     }
-    let arguments: Value = match serde_json::from_slice(&body) {
+    let arguments = match serde_json::from_slice(&body) {
         Ok(value) => value,
-        Err(error) => return invalid_arguments(error),
+        Err(error) => return http_result(invalid_arguments(error)),
     };
-    if let Some(response) = check_argument_keys(&arguments) {
-        return response;
-    }
-    let grant = match state.tokens.verify(&token) {
-        Ok(grant) => grant,
-        Err(error) => return token_error(error),
-    };
-    let facts = match load_facts(
-        &state.repository,
-        &grant,
-        matches!(tool.as_str(), "propose_changes" | "report_issues"),
-    )
-    .await
-    {
-        Ok(facts) => facts,
-        Err(response) => return response,
-    };
+    http_result(service.invoke_checked(token, &tool, &arguments).await)
+}
 
-    match tool.as_str() {
-        TOOL_GET_CONTEXT => get_context(&facts, &arguments),
-        TOOL_LIST_OBJECTS => list_objects(&facts, &arguments),
-        TOOL_READ_REGION => read_region(&state, &token, &facts, &arguments).await,
-        TOOL_PROPOSE_CHANGES => {
-            submit_candidates(&state, &facts, &arguments, CandidateKind::Changes).await
+impl AgentToolService {
+    pub fn new(repository: Repository, tokens: RunTokenStore) -> Self {
+        Self { repository, tokens }
+    }
+
+    pub async fn invoke(&self, token: &str, name: &str, arguments: &Value) -> Result<AgentToolOutput, AgentToolError> {
+        if !TOOL_NAMES.contains(&name) {
+            return simple_error(StatusCode::NOT_FOUND, "UNKNOWN_TOOL",
+                "only the five frozen semantic tools are available");
         }
-        TOOL_REPORT_ISSUES => {
-            submit_candidates(&state, &facts, &arguments, CandidateKind::Issues).await
+        // Count serialized bytes without allocating another potentially large JSON buffer.
+        if !json_fits_budget(arguments, MAX_TOOL_BODY_BYTES) {
+            return simple_error(StatusCode::PAYLOAD_TOO_LARGE, "TOOL_PAYLOAD_TOO_LARGE",
+                "tool arguments exceed the 1 MiB request budget");
         }
-        _ => unreachable!("tool names were checked above"),
+        self.invoke_checked(token, name, arguments).await
+    }
+
+    // Private boundary: caller has already checked the tool name and byte budget.
+    // HTTP measures its original wire bytes, avoiding a second serialization.
+    async fn invoke_checked(&self, token: &str, name: &str, arguments: &Value) -> ToolResult {
+        if let Some(result) = check_argument_keys(arguments) {
+            return result;
+        }
+        let grant = self.tokens.verify(token).map_err(token_failure)?;
+        let facts = load_facts(&self.repository, &grant,
+            matches!(name, TOOL_PROPOSE_CHANGES | TOOL_REPORT_ISSUES)).await?;
+        match name {
+            TOOL_GET_CONTEXT => get_context(&facts, arguments),
+            TOOL_LIST_OBJECTS => list_objects(&facts, arguments),
+            TOOL_READ_REGION => read_region(self, token, &facts, arguments).await,
+            TOOL_PROPOSE_CHANGES => submit_candidates(self, token, &facts, arguments, CandidateKind::Changes).await,
+            TOOL_REPORT_ISSUES => submit_candidates(self, token, &facts, arguments, CandidateKind::Issues).await,
+            _ => unreachable!("tool names were checked above"),
+        }
     }
 }
 
@@ -479,7 +591,7 @@ async fn invoke_tool(
 // get_context
 // ---------------------------------------------------------------------------
 
-fn get_context(facts: &RunFacts, arguments: &Value) -> Response {
+fn get_context(facts: &RunFacts, arguments: &Value) -> ToolResult {
     // get_context accepts exactly `{}`: nothing about the run can be selected.
     match serde_json::from_value::<EmptyArgs>(arguments.clone()) {
         Ok(_) => {}
@@ -500,7 +612,7 @@ fn get_context(facts: &RunFacts, arguments: &Value) -> Response {
             .object_hashes
             .retain(|id, _| visible_context.selected_object_ids.contains(id));
     }
-    Json(json!({
+    Ok(AgentToolOutput::Json(json!({
         "run_id": facts.record.run_id,
         "project_id": facts.record.project_id,
         "intent": facts.record.intent,
@@ -527,15 +639,14 @@ fn get_context(facts: &RunFacts, arguments: &Value) -> Response {
             "labels": facts.labels.iter().take(MAX_LABELS).collect::<Vec<_>>(),
             "labels_truncated": facts.labels.len() > MAX_LABELS,
         },
-    }))
-    .into_response()
+    })))
 }
 
 // ---------------------------------------------------------------------------
 // list_objects
 // ---------------------------------------------------------------------------
 
-fn list_objects(facts: &RunFacts, arguments: &Value) -> Response {
+fn list_objects(facts: &RunFacts, arguments: &Value) -> ToolResult {
     if !facts.grants.allow_object_context {
         return simple_error(
             StatusCode::FORBIDDEN,
@@ -623,7 +734,7 @@ fn list_objects(facts: &RunFacts, arguments: &Value) -> Response {
     } else {
         None
     };
-    Json(json!({ "items": items, "next_cursor": next_cursor })).into_response()
+    Ok(AgentToolOutput::Json(json!({ "items": items, "next_cursor": next_cursor })))
 }
 
 // ---------------------------------------------------------------------------
@@ -655,11 +766,11 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 async fn read_region(
-    state: &AgentToolsState,
+    state: &AgentToolService,
     token: &str,
     facts: &RunFacts,
     arguments: &Value,
-) -> Response {
+) -> ToolResult {
     if !arguments
         .as_object()
         .is_some_and(|object| object.contains_key("region"))
@@ -725,15 +836,14 @@ async fn read_region(
             return token_error(error);
         }
         let (width, height) = (facts.width, facts.height);
-        return Json(json!({
-            "mime": "image/png",
-            "width": width,
-            "height": height,
-            "region": Value::Null,
-            "transform_to_canonical": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            "data_base64": base64_encode(&canonical_png),
-        }))
-        .into_response();
+        return Ok(AgentToolOutput::Region(AuthorizedRegion {
+            bytes: canonical_png,
+            mime: "image/png".to_owned(),
+            width,
+            height,
+            region: None,
+            transform_to_canonical: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        }));
     };
 
     // Bounded coordinates only: the region must lie inside the canonical image.
@@ -787,16 +897,15 @@ async fn read_region(
             "the requested crop cannot be encoded",
         );
     }
-    Json(json!({
-        "mime": "image/png",
-        "width": crop_width,
-        "height": crop_height,
-        "region": [x0, y0, x1, y1],
+    Ok(AgentToolOutput::Region(AuthorizedRegion {
+        bytes: encoded.into_inner(),
+        mime: "image/png".to_owned(),
+        width: crop_width,
+        height: crop_height,
+        region: Some([x0, y0, x1, y1]),
         // Crop pixels to canonical pixels: translation by the crop origin.
-        "transform_to_canonical": [1.0, 0.0, f64::from(x0), 0.0, 1.0, f64::from(y0), 0.0, 0.0, 1.0],
-        "data_base64": base64_encode(encoded.get_ref()),
+        transform_to_canonical: [1.0, 0.0, f64::from(x0), 0.0, 1.0, f64::from(y0), 0.0, 0.0, 1.0],
     }))
-    .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -809,14 +918,15 @@ enum CandidateKind {
 }
 
 async fn submit_candidates(
-    state: &AgentToolsState,
+    state: &AgentToolService,
+    token: &str,
     facts: &RunFacts,
     arguments: &Value,
     kind: CandidateKind,
-) -> Response {
+) -> ToolResult {
     let raw = match kind {
         CandidateKind::Changes => {
-            let args: ProposeChangesArgs = match serde_json::from_value(arguments.clone()) {
+            let args: ProposeChangesArgs = match ProposeChangesArgs::deserialize(arguments) {
                 Ok(args) => args,
                 Err(error) => return invalid_arguments(error),
             };
@@ -837,7 +947,7 @@ async fn submit_candidates(
             json!({ "changes": args.changes, "issues": args.issues, "score": args.score })
         }
         CandidateKind::Issues => {
-            let args: ReportIssuesArgs = match serde_json::from_value(arguments.clone()) {
+            let args: ReportIssuesArgs = match ReportIssuesArgs::deserialize(arguments) {
                 Ok(args) => args,
                 Err(error) => return invalid_arguments(error),
             };
@@ -868,18 +978,23 @@ async fn submit_candidates(
         objects: &facts.objects,
     };
     let submit = predictions::SubmitCandidates {
-        provider_event_id: uuid::Uuid::new_v4().to_string(),
+        provider_event_id: if facts.record.provider_id == "claude_local" {
+            claude_candidate_event_id(&raw)?
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        },
         provider_seq: None,
         raw,
     };
 
     let mut tx = match state.repository.begin_write().await {
         Ok(tx) => tx,
-        Err(_) => return storage_unavailable(),
+        Err(_) => return Err(storage_unavailable()),
     };
+    state.tokens.verify(token).map_err(token_failure)?;
     let live = match runs::load_record(tx.connection(), &facts.record.run_id).await {
         Ok(Some(record)) => record,
-        _ => return storage_unavailable(),
+        _ => return Err(storage_unavailable()),
     };
     let grants = match consent::authorize_submission(tx.connection(), &live).await {
         Ok(grants) => grants,
@@ -898,24 +1013,23 @@ async fn submit_candidates(
     .await
     {
         Ok(outcome) => outcome,
-        Err(_) => return storage_unavailable(),
+        Err(_) => return Err(storage_unavailable()),
     };
-    if tx.commit().await.is_err() {
-        return storage_unavailable();
+    if state.tokens.admit_if_live(token, tx.commit()).await.map_err(token_failure)?.is_err() {
+        return Err(storage_unavailable());
     }
 
     match outcome {
         predictions::CandidateOutcome::Applied {
             prediction_id,
             suggestion_set_id,
-        } => Json(json!({
+        } => Ok(AgentToolOutput::Json(json!({
             "suggestion_set_id": suggestion_set_id,
             "prediction_id": prediction_id,
             "state": "pending",
             "changes_count": changes_count,
             "issues_count": issues_count,
-        }))
-        .into_response(),
+        }))),
         predictions::CandidateOutcome::Duplicate => simple_error(
             StatusCode::CONFLICT,
             "DUPLICATE_CANDIDATE",
@@ -930,5 +1044,46 @@ async fn submit_candidates(
         predictions::CandidateOutcome::Rejected { code, message } => {
             simple_error(StatusCode::UNPROCESSABLE_ENTITY, code, &message)
         }
+    }
+}
+
+#[cfg(test)]
+mod service_boundary_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn http_region_adapter_preserves_integer_crop_and_transform() {
+        let response = http_result(Ok(AgentToolOutput::Region(AuthorizedRegion {
+            bytes: vec![0, 1, 2, 255],
+            mime: "image/png".into(),
+            width: 3,
+            height: 4,
+            region: Some([7, 11, 10, 15]),
+            transform_to_canonical: [1.0, 0.0, 7.0, 0.0, 1.0, 11.0, 0.0, 0.0, 1.0],
+        })));
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["data_base64"], "AAEC/w==");
+        assert_eq!(value["region"], json!([7, 11, 10, 15]));
+        assert_eq!(value["transform_to_canonical"], json!([1.0,0.0,7.0,0.0,1.0,11.0,0.0,0.0,1.0]));
+        assert_eq!(value["width"], 3);
+        assert_eq!(value["height"], 4);
+    }
+
+    #[test]
+    fn internal_argument_guards_do_not_depend_on_http() {
+        for (arguments, code) in [
+            (json!({"project_id":"other"}), "IDENTITY_OVERRIDE"),
+            (json!({"path":"private.png"}), "FORBIDDEN_ARGUMENT"),
+            (json!([]), "INVALID_ARGUMENTS"),
+        ] {
+            let error = check_argument_keys(&arguments).unwrap().unwrap_err();
+            assert_eq!(error.status, StatusCode::BAD_REQUEST);
+            assert_eq!(error.code, code);
+            assert!(error.details.is_null());
+        }
+        assert!(serde_json::from_value::<ReadRegionArgs>(json!({"region":null,"url":"file:///x"})).is_err());
+        assert!(serde_json::from_value::<ListObjectsArgs>(json!({"limit":1.5})).is_err());
     }
 }

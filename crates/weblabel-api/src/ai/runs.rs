@@ -1093,6 +1093,18 @@ pub async fn cancel(
     .execute(tx.connection())
     .await
     .map_err(|_| storage_failure("RUN_CANCEL_FAILED", "Could not cancel the model run"))?;
+    let reason = crate::ai::redact_text(reason);
+    let mut cancellation_data = json!({"reason": reason, "cost_display": cost_display});
+    // The dispatch writer may have admitted IO and then lost its checkpoint.
+    // Check only after acquiring this writer; revocation must not erase the
+    // original capability's unconfirmed observation.
+    if run_tokens.observation_pending_for_run(run_id) {
+        cancellation_data["dropped"] = json!("observation_checkpoint_unconfirmed");
+    }
+    let terminal_data = events::terminal_data(
+        tx.connection(), &record, Some("RUN_CANCELLED"),
+        Some(cancellation_data),
+    ).await.map_err(|_| storage_failure("RUN_CANCEL_FAILED", "Could not retain the provider observation"))?;
     events::record(
         tx.connection(),
         run_id,
@@ -1100,11 +1112,8 @@ pub async fn cancel(
             provider_event_id: None,
             provider_seq: None,
             event_type: events::RunEventType::Cancelled,
-            message: &format!("run cancelled: {}", crate::ai::redact_text(reason)),
-            data: Some(json!({
-                "reason": crate::ai::redact_text(reason),
-                "cost_display": cost_display,
-            })),
+            message: &format!("run cancelled: {reason}"),
+            data: terminal_data,
         },
     )
     .await

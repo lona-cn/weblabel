@@ -6,8 +6,13 @@
 //! request ids.
 
 pub mod agent_tools;
+pub mod config;
+pub mod detector;
+pub mod mcp;
+pub mod providers;
 pub mod host;
 pub mod run_tokens;
+pub mod runner;
 pub mod supervisor;
 
 use std::collections::HashSet;

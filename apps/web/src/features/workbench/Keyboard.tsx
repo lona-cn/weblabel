@@ -3,13 +3,13 @@
 // is inert — Delete and letter shortcuts can never delete objects or switch
 // tools out from under the text field. Space-pan, Esc cancellation, undo/redo
 // and the tool keys are defined here; the normative summary lives in
-// ToolSettings.INTERACTION_POLICY.
+// tool-state.INTERACTION_POLICY.
 import { useEffect, useRef } from 'react';
 import type { EditorCommand } from '../../../../../packages/contracts/generated/EditorCommand';
 import type { EditorDelta } from '../../../../../packages/contracts/generated/EditorDelta';
 import type { EditorTool } from '../../lib/editor/types';
-import type { SelectionStore } from './SelectionLink';
-import { type ToolState } from './ToolSettings';
+import type { SelectionStore } from './selection-store';
+import { type ToolState } from './tool-state';
 
 /** The slice of the editor host the keyboard needs. */
 export interface KeyboardHostPort {

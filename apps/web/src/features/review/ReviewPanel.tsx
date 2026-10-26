@@ -6,19 +6,13 @@ import { confirmsSubmission, classifyWriteFailure, queueMatches, type TaskQueue,
 import { VirtualReviewList } from './VirtualReviewList';
 import { RevisionReviewView } from './RevisionReviewView';
 
-export type LocalTaskLease = { asset_revision_id: string; ontology_version_id: string; task_id: string; fencing_token: number };
-export type TaskOpenPreparation = { token: symbol; isCurrent(): boolean; validateCurrent(): Promise<boolean>; onTaskOpen(task: ReviewTask, lease: LocalTaskLease): void; release(): void };
-export function wireSaveLease(lease: LocalTaskLease | null) { return lease ? { task_id: lease.task_id, fencing_token: lease.fencing_token } : null; }
+import type { LocalTaskLease, TaskOpenPreparation, TaskContinuationProof, TaskContinueResult, TaskSessionPort } from './task-session-port';
 type Member = { user_id: string; username: string; role: string };
 type FixedOntology = { project_id: string; ontology_version_id: string; version_no: number };
 type Scope = { key: string; actor: string; alive: boolean; epoch: number; busy: boolean; lease: LocalTaskLease | null; notify: Props['onLeaseChange'] };
 type ReviewSnapshot = { review_id: string; revision: AnnotationRevision; parent: AnnotationRevision | null };
 type ObjectDelta = { object_id: string; kind: 'added' | 'removed' | 'changed'; fields: string[]; details: string[] };
-export type TaskContinueInput = { task: ReviewTask; submission: TaskSubmission; isCurrent(): boolean };
-export type TaskContinuationProof = { isCurrent(preparationToken: symbol | null): boolean };
-export type TaskContinueResult = { task: ReviewTask; proof: TaskContinuationProof };
-// The resolver only reads/validates; acquisition and navigation use the existing task-open barrier.
-type Props = { projectId: string; session: Session; initialQueue?: TaskQueue; onContinueTask?: (input: TaskContinueInput) => Promise<TaskContinueResult | null>; onPrepareTaskCreate: (target: TaskCreateTarget) => Promise<TaskCreatePreparation>; onPrepareTaskOpen: (task: ReviewTask, proof?: TaskContinuationProof) => Promise<TaskOpenPreparation>; onLeaseChange: (lease: LocalTaskLease | null) => void; onSubmitTask: (task: ReviewTask, submit: (revisionId: string) => Promise<void>) => Promise<void> };
+type Props = TaskSessionPort & { projectId: string; session: Session; initialQueue?: TaskQueue };
 
 function objectDeltas(before: AnnotationRevision | null, after: AnnotationRevision): ObjectDelta[] {
   const previous = new Map((before?.document.objects ?? []).map((item) => [item.object_id, item]));

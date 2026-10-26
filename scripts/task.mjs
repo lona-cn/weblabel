@@ -124,8 +124,10 @@ export function runArgv(argv, cwd = process.cwd(), options = {}) {
 
 export async function runTask(root, taskId, runner = runArgv) {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'TASKS.json'), 'utf8'));
-  const task = manifest.tasks.find(({ id }) => id === taskId);
-  if (!task) throw new Error(`unknown task: ${taskId}`);
+  const matches = [...manifest.tasks, ...(manifest.refactor_tasks ?? [])].filter(({ id }) => id === taskId);
+  if (matches.length === 0) throw new Error(`unknown task: ${taskId}`);
+  if (matches.length !== 1) throw new Error(`duplicate task: ${taskId}`);
+  const [task] = matches;
   if (!Array.isArray(task.checks) || task.checks.length === 0) throw new Error(`${taskId} has no checks`);
   for (const argv of task.checks) {
     const status = await runner(argv, root);

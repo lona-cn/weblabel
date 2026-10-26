@@ -167,6 +167,83 @@ impl HostConfig {
     }
 }
 
+/// Native child transport without the legacy Node envelope reader or request pump.
+/// Path/environment policy is shared with the old active caller; ownership and
+/// tree reclamation remain explicit even when a caller future is cancelled.
+pub struct NativeProcess {
+    pub child: tokio::process::Child,
+    pub root: supervisor::NativeRoot,
+    ownership: supervisor::OwnedTree,
+}
+
+impl NativeProcess {
+    pub async fn reclaim(&mut self) -> Result<ReclaimReport, SpawnError> {
+        let members=self.ownership.terminate()?;
+        let deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(5);
+        while !self.ownership.empty()? {
+            if tokio::time::Instant::now()>=deadline {return Err(SpawnError::Io("owned job reclamation timed out".into()));}
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tokio::time::timeout_at(deadline,self.child.wait()).await
+            .map_err(|_|SpawnError::Io("native child reap timed out".into()))?
+            .map_err(|_|SpawnError::Io("native child reap failed".into()))?;
+        self.ownership.report(members)
+    }
+}
+
+
+/// Reject shell/script/npm wrappers by file identity, not just by extension.
+/// Native format is not proof of publisher identity; the trusted local operator
+/// still supplies the official CLI and protocol/auth evidence is a separate gate.
+pub fn validate_native_executable(path: &Path) -> Result<(), SpawnError> {
+    if !path.is_absolute() {
+        return Err(SpawnError::ExecutableUntrusted("native executable must be absolute".into()));
+    }
+    let canonical = path.canonicalize().map_err(|_| SpawnError::ExecutableMissing("native executable".into()))?;
+    let basename = canonical.file_stem().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+    if ["node", "nodejs", "npm", "npx", "cmd", "powershell", "pwsh", "sh", "bash", "python", "python3"].contains(&basename.as_str()) {
+        return Err(SpawnError::ShellForbidden);
+    }
+    let mut magic = [0u8; 4];
+    std::fs::File::open(&canonical).and_then(|mut file| file.read_exact(&mut magic))
+        .map_err(|_| SpawnError::ExecutableUntrusted("native executable format unavailable".into()))?;
+    let native = if cfg!(windows) { magic[..2] == *b"MZ" }
+        else if cfg!(target_os = "macos") { matches!(magic, [0xcf,0xfa,0xed,0xfe] | [0xfe,0xed,0xfa,0xcf] | [0xca,0xfe,0xba,0xbe] | [0xbe,0xba,0xfe,0xca]) }
+        else { magic == *b"\x7fELF" };
+    if !native { return Err(SpawnError::ExecutableUntrusted("script/wrapper is not a native executable".into())); }
+    Ok(())
+}
+
+pub fn spawn_native(config: &HostConfig) -> Result<NativeProcess, SpawnError> {
+    config.validate()?;
+    validate_native_executable(&config.executable)?;
+    let mut ownership=supervisor::OwnedTree::new()?;
+    let stamp=supervisor::registration_stamp();
+    let executable = config.executable.canonicalize().map_err(|_| SpawnError::ExecutableMissing("native executable".into()))?;
+    let cwd = config.cwd.canonicalize().map_err(|_| SpawnError::CwdMissing("native cwd".into()))?;
+    let mut command = tokio::process::Command::new(executable);
+    command.args(&config.argv).current_dir(cwd).env_clear().envs(config.build_env())
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x00000200 | 0x00000004);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+    }
+    let mut child = command.spawn().map_err(|_| SpawnError::SpawnFailed("native child spawn failed".into()))?;
+    let root = supervisor::NativeRoot { root_pid: child.id().ok_or_else(|| SpawnError::SpawnFailed("native child has no pid".into()))?,
+        spawned_at_ms: stamp, exited_at_ms: None };
+    #[cfg(windows)]
+    if let Err(error)=ownership.attach(child.raw_handle().ok_or_else(||SpawnError::Io("suspended process handle missing".into()))?.cast(),root) {
+        // Assignment failed before ResumeThread: no executable or descendant
+        // has run. A root-only abort here cannot leave an uncontained tree.
+        let _=child.start_kill();
+        return Err(error);
+    }
+    Ok(NativeProcess { child, root, ownership })
+}
+
 pub struct HostProcess {
     pub child: Child,
     pub started_at_ms: i64,
@@ -174,6 +251,8 @@ pub struct HostProcess {
     tracker: crate::runtime::RequestTracker,
     #[cfg(target_os = "linux")]
     root_owner: std::sync::Arc<supervisor::linux_broker::ReclaimHandle>,
+    #[cfg(not(target_os = "linux"))]
+    ownership: supervisor::OwnedTree,
 }
 
 impl HostProcess {
@@ -189,6 +268,13 @@ impl HostProcess {
             #[cfg(target_os = "linux")]
             owner: std::sync::Arc::clone(&self.root_owner),
         }
+    }
+
+    pub(crate) fn reclaim_lease(&self) -> Option<supervisor::OwnedReclaimLease> {
+        #[cfg(target_os = "linux")]
+        { Some(supervisor::OwnedReclaimLease::Broker(self.reclaim_root())) }
+        #[cfg(not(target_os = "linux"))]
+        { self.ownership.lease() }
     }
 
     /// One NDJSON message to the child, verbatim and line-delimited.
@@ -246,9 +332,23 @@ impl HostProcess {
     }
 
     pub fn kill_tree(&mut self) -> Result<ReclaimReport, SpawnError> {
-        let report = supervisor::reclaim_process_tree(self.reclaim_root())?;
-        let _ = self.child.wait();
-        Ok(report)
+        #[cfg(target_os = "linux")]
+        {
+            let report = supervisor::reclaim_process_tree(self.reclaim_root())?;
+            self.child.wait().map_err(|_| SpawnError::Io("owned broker reap failed".into()))?;
+            Ok(report)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let members=self.ownership.terminate()?;
+            let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
+            while !self.ownership.empty()? {
+                if std::time::Instant::now()>=deadline {return Err(SpawnError::Io("owned job reclamation timed out".into()));}
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            self.child.wait().map_err(|_|SpawnError::Io("legacy owned child reap failed".into()))?;
+            self.ownership.report(members)
+        }
     }
 }
 
@@ -263,6 +363,10 @@ impl Drop for HostProcess {
 
 pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
     config.validate()?;
+    #[cfg(not(target_os = "linux"))]
+    let mut ownership=supervisor::OwnedTree::new()?;
+    #[cfg(not(target_os = "linux"))]
+    let stamp=supervisor::registration_stamp();
     let executable = config
         .executable
         .canonicalize()
@@ -313,14 +417,17 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
+        command.creation_flags(CREATE_NO_WINDOW | 0x00000004);
     }
     #[cfg(target_os = "linux")]
     let startup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut child = command
         .spawn()
         .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?;
+    #[cfg(target_os = "linux")]
     let started_at_ms = chrono::Utc::now().timestamp_millis();
+    #[cfg(not(target_os = "linux"))]
+    let started_at_ms = stamp;
     #[cfg(target_os = "linux")]
     let root_owner = {
         drop(inherited_completion);
@@ -344,6 +451,15 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
             }
         }
     };
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        let root=ReclaimRoot{root_pid:child.id(),spawned_at_ms:stamp,exited_at_ms:None};
+        if let Err(error)=ownership.attach(child.as_raw_handle().cast(),root) {
+            let _=child.kill();
+            return Err(error);
+        }
+    }
     let stdout = child
         .stdout
         .take()
@@ -356,6 +472,8 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
         tracker: crate::runtime::RequestTracker::default(),
         #[cfg(target_os = "linux")]
         root_owner,
+        #[cfg(not(target_os = "linux"))]
+        ownership,
     })
 }
 

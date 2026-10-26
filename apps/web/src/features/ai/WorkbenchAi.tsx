@@ -9,7 +9,7 @@ import type { EditorHost } from '../../lib/editor/EditorHost';
 import type { SaveQueue } from '../../lib/persistence/save-queue';
 import { api, csrfToken, type ApiMedia } from '../../lib/t15/api';
 import { Panel } from './Panel';
-import type { ConsentPreview, RunScope } from './useRun';
+import type { ConsentPreview, RunScope } from './run-controller';
 
 export interface WorkbenchAiEditorPort {
   getDocument(): AnnotationDocument | null;

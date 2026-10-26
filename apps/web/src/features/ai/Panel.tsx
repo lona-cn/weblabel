@@ -12,7 +12,8 @@ import { CandidateList } from './CandidateList';
 import { Consent } from './Consent';
 import { ProviderPicker } from './ProviderPicker';
 import { RunProgress } from './RunProgress';
-import { useRun, type ConsentPreview, type RunApi, type RunScope } from './useRun';
+import { useRun } from './useRun';
+import type { ConsentPreview, RunApi, RunScope } from './run-controller';
 import { OutcomeSummary } from './OutcomeSummary';
 
 export function Panel({ asset_revision_id, profiles, context, ontology, getDocument, getGeneration, generation, dispatch, saveQueue, obtainConsent, refreshContext, grants, api, csrfToken, intent: initialIntent = 'audit_attributes', onModelWaitingChange, onFocusRegion, onRunScopeChange }: {

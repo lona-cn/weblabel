@@ -155,12 +155,37 @@ impl RunDriver<'_> {
 
     /// Delivers one raw provider candidate batch. Late output after a terminal
     /// run is quarantined and never applied.
-    pub async fn submit_candidates(&self, submit: SubmitCandidates) -> Result<(), ModelJobError> {
+    /// Nonterminal non-mock output must carry its original capability to commit.
+    pub async fn submit_candidates(
+        &self,
+        submit: SubmitCandidates,
+        capability: Option<(&crate::runtime::run_tokens::RunTokenStore, &str)>,
+    ) -> Result<(), ModelJobError> {
         let mut tx = self.repository.begin_write().await?;
         ensure_job_lease(tx.connection(), self.lease).await?;
         let current = runs::load_record(tx.connection(), &self.record.run_id)
             .await?
             .ok_or(ModelJobError::InvalidPayload)?;
+        let denied = |error: crate::runtime::run_tokens::TokenError| ModelJobError::Rejected {
+            code: error.code().to_owned(),
+            message: "original run capability no longer authorizes candidate publication".to_owned(),
+        };
+        if !current.state.is_terminal() {
+            if let Some((tokens, token)) = capability {
+                let grant = tokens.verify(token).map_err(denied)?;
+                if grant.run_id != self.record.run_id || grant.project_id != self.record.project_id {
+                    return Err(ModelJobError::Rejected {
+                        code: "RUN_TOKEN_SCOPE_MISMATCH".to_owned(),
+                        message: "candidate capability does not belong to this run and project".to_owned(),
+                    });
+                }
+            } else if self.profile.provider_id != annotation_domain::ProviderId::Mock {
+                return Err(ModelJobError::Rejected {
+                    code: "RUN_CAPABILITY_REQUIRED".to_owned(),
+                    message: "native candidate publication requires the original run capability".to_owned(),
+                });
+            }
+        }
         // Terminal output still enters the existing quarantine funnel, never authorization or apply.
         let scoped_objects = if current.state.is_terminal() {
             None
@@ -206,7 +231,11 @@ impl RunDriver<'_> {
             &submit,
         )
         .await?;
-        tx.commit().await?;
+        if let Some((tokens, token)) = capability.filter(|_| !current.state.is_terminal()) {
+            tokens.admit_if_live(token, tx.commit()).await.map_err(denied)??;
+        } else {
+            tx.commit().await?;
+        }
         match outcome {
             predictions::CandidateOutcome::Rejected { code, message } => {
                 Err(ModelJobError::Rejected {
@@ -583,6 +612,9 @@ async fn execute_run_item(
         runs::transition(current.state, RunState::Cancelled)?;
         sqlx::query("UPDATE model_runs SET state='cancelled',finished_at=? WHERE run_id=? AND state IN ('queued','running')")
             .bind(&now).bind(run_id).execute(tx.connection()).await?;
+        let terminal_data = events::terminal_data(
+            tx.connection(), &current, Some("RUN_CANCELLED"), Some(json!({"code":"RUN_CANCELLED"})),
+        ).await?;
         events::record(
             tx.connection(),
             run_id,
@@ -591,7 +623,7 @@ async fn execute_run_item(
                 provider_seq: None,
                 event_type: events::RunEventType::Cancelled,
                 message: "run cancelled",
-                data: Some(json!({"code":"RUN_CANCELLED"})),
+                data: terminal_data,
             },
         )
         .await?;
@@ -612,6 +644,7 @@ async fn execute_run_item(
             .bind(run_id)
             .execute(tx.connection())
             .await?;
+            let terminal_data = events::terminal_data(tx.connection(), &current, None, None).await?;
             events::record(
                 tx.connection(),
                 run_id,
@@ -620,7 +653,7 @@ async fn execute_run_item(
                     provider_seq: None,
                     event_type: events::RunEventType::Succeeded,
                     message: "model run succeeded",
-                    data: None,
+                    data: terminal_data,
                 },
             )
             .await?;
@@ -640,6 +673,9 @@ async fn execute_run_item(
             .bind(run_id)
             .execute(tx.connection())
             .await?;
+            let terminal_data = events::terminal_data(
+                tx.connection(), &current, Some(&code), Some(json!({"code": code, "message": message})),
+            ).await?;
             events::record(
                 tx.connection(),
                 run_id,
@@ -648,7 +684,7 @@ async fn execute_run_item(
                     provider_seq: None,
                     event_type: events::RunEventType::Failed,
                     message: "model run failed",
-                    data: Some(json!({"code": code, "message": message})),
+                    data: terminal_data,
                 },
             )
             .await?;
@@ -874,7 +910,7 @@ impl ProductionRunner {
 }
 
 struct RuntimeLease {
-    root: Option<crate::runtime::supervisor::ReclaimRoot>,
+    root: Option<crate::runtime::supervisor::OwnedReclaimLease>,
     tokens: crate::runtime::run_tokens::RunTokenStore,
     run_id: String,
 }
@@ -885,7 +921,7 @@ impl Drop for RuntimeLease {
             // The Tokio runtime joins blocking tasks before the API process exits;
             // a detached std thread could be terminated before reclaiming the Host.
             tokio::task::spawn_blocking(move || {
-                if let Err(error) = crate::runtime::supervisor::reclaim_process_tree(root) {
+                if let Err(error) = root.reclaim() {
                     tracing::error!(%error, "cancelled Host process tree reclamation failed");
                 }
             });
@@ -899,7 +935,7 @@ impl RunRunner for ProductionRunner {
         driver: &'a RunDriver,
     ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, RunnerError>> + Send + 'a>> {
         Box::pin(async move {
-            use crate::runtime::supervisor::{reclaim_process_tree, Supervisor};
+            use crate::runtime::supervisor::Supervisor;
             use crate::runtime::{EnvelopeKind, EnvelopeMethod, RuntimeEnvelope};
             if driver.profile.provider_id == annotation_domain::ProviderId::CodexLocal {
                 return Err(RunnerError::new(
@@ -984,17 +1020,23 @@ impl RunRunner for ProductionRunner {
             };
             let mut host = configured_host.clone();
             host.extra_env
-                .insert("WEBLABEL_RUN_TOKEN".to_owned(), token);
+                .insert("WEBLABEL_RUN_TOKEN".to_owned(), token.clone());
             let run_id = driver.run_id().to_owned();
+            let dispatch_tokens = self.tokens.clone();
             let mut supervisor = tokio::task::spawn_blocking(move || {
-                let mut supervisor = Supervisor::new(host, Some(timeout));
-                supervisor.start_run(&run_id)?;
-                Ok::<_, crate::runtime::host::SpawnError>(supervisor)
+                dispatch_tokens.dispatch_if_live(&token, || {
+                    let mut supervisor = Supervisor::new(host, Some(timeout));
+                    supervisor.start_run(&run_id)?;
+                    Ok::<_, crate::runtime::host::SpawnError>(supervisor)
+                })
             })
             .await
             .map_err(|_| RunnerError::new("HOST_SPAWN_FAILED", "host task failed"))?
+            .map_err(|error| RunnerError::new(error.code(), "run no longer owns native dispatch"))?
             .map_err(|_| RunnerError::new("HOST_SPAWN_FAILED", "fixed host could not start"))?;
-            lease.root = supervisor.reclaim_root(driver.run_id());
+            lease.root = Some(supervisor.reclaim_lease(driver.run_id()).ok_or_else(|| {
+                RunnerError::new("HOST_OWNERSHIP_UNAVAILABLE", "owned Host cleanup lease is unavailable")
+            })?);
             let request = json!({
                 "operation_id": driver.record.operation_id,
                 "profile_id": driver.record.profile_id,
@@ -1083,7 +1125,7 @@ impl RunRunner for ProductionRunner {
             receiver.close();
             drop(receiver);
             if let Some(root) = lease.root.take() {
-                tokio::task::spawn_blocking(move || reclaim_process_tree(root))
+                tokio::task::spawn_blocking(move || root.reclaim())
                     .await
                     .map_err(|_| RunnerError::new("HOST_CLEANUP_FAILED", "cleanup task failed"))?
                     .map_err(|_| {
@@ -1133,7 +1175,7 @@ impl MockRunner {
                 provider_event_id: "mock-candidate-1".to_owned(),
                 provider_seq: Some(1),
                 raw,
-            })
+            }, None)
             .await
             .map_err(RunnerError::from)?;
         Ok(RunOutcome::Completed)
@@ -1151,7 +1193,7 @@ impl MockRunner {
                     .await
                     .map_err(RunnerError::from)?,
                 MockStep::Candidate(submit) => driver
-                    .submit_candidates(submit.clone())
+                    .submit_candidates(submit.clone(), None)
                     .await
                     .map_err(RunnerError::from)?,
                 MockStep::Fail { code, message } => {

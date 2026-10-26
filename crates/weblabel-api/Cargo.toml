@@ -3,6 +3,7 @@ name = "weblabel-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "weblabel-api"
 
 [lib]
 path = "src/lib.rs"
@@ -11,6 +12,10 @@ path = "src/lib.rs"
 name = "weblabel-api"
 path = "src/main.rs"
 
+[[bin]]
+name = "weblabel"
+path = "src/bin/weblabel.rs"
+
 [dependencies]
 annotation-domain = { path = "../annotation-domain" }
 dataset-formats = { path = "../dataset-formats" }
@@ -18,19 +23,32 @@ chrono = { version = "=0.4.42", default-features = false, features = ["clock", "
 exif = { package = "kamadak-exif", version = "=0.6.1" }
 image = { version = "=0.25.8", default-features = false, features = ["jpeg", "png"] }
 serde = { version = "=1.0.229", features = ["derive"] }
+schemars = "=0.8.22"
 axum = { version = "=0.8.6", features = ["multipart"] }
+http-body = "=1.1.0"
+base64 = "=0.22.1"
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "json", "stream"] }
+rmcp = { version = "=3.7.0", default-features = false, features = ["server", "transport-io", "base64"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-23", "tracing"] }
 argon2 = { version = "=0.5.3", features = ["std"] }
 rand = { version = "=0.8.5", features = ["getrandom"] }
 serde_json = { version = "=1.0.147", features = ["float_roundtrip"] }
 sha2 = "=0.10.9"
 sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 thiserror = "=2.0.17"
-tokio = { version = "=1.47.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "=1.47.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time", "fs", "io-util", "process", "io-std"] }
 uuid = { version = "=1.18.1", features = ["v4", "v5"] }
 tracing = "=0.1.41"
 tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_System_LibraryLoader", "Win32_Security"] }
 
 [dev-dependencies]
 editor-core = { path = "../editor-core" }
 tempfile = "=3.23.0"
 tower = { version = "=0.5.3", features = ["util"] }
+rmcp = { version = "=3.7.0", default-features = false, features = ["client"] }

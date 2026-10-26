@@ -1,0 +1,448 @@
+{
+  "schema_version": 1,
+  "scope": "sanitized native HTML/CSS/TypeScript and Rust source integration; not a release or complete native cutover",
+  "public_base": "e61f12cd276c7772ea646b5385ad078a7949300e",
+  "original_private_base": "196f6da536ba6f9a9b6a45bb17cade3a70fd0c4d",
+  "original_private_head": "90e68307a9b338b7821ff22615511d0b9f537bee",
+  "source_delta_file_count": 219,
+  "policy": "Preserve origin/main updates and existing public evidence exceptions. Publish source and structured provenance only; no private parent commits, raw logs, traces, screenshots, databases, tokens, model binaries or runtime DLLs. Original master and private evidence remain unchanged.",
+  "inherited_private_acceptance": {
+    "scope": "Historical evidence from the private source head; these are not claimed as tests of the merged public tree.",
+    "native_consumer_tests": 213,
+    "web_test_files": 61,
+    "web_tests": 888,
+    "hardware_surface": "NVIDIA hardware WebGPU nonfallback, actual Rust API/WASM, synthetic loopback candidate/accept/revert/automatic outcome refresh observed privately",
+    "engineering_done": [
+      "R00",
+      "R01",
+      "R02",
+      "R03",
+      "R04",
+      "R06",
+      "R07",
+      "R08"
+    ],
+    "blocked": [
+      "R05"
+    ],
+    "not_ready": [
+      "R09",
+      "R10",
+      "R11"
+    ],
+    "release_gate_change": false
+  },
+  "merge_invariants": {
+    "linux_legacy_broker": "Copied unchanged from public base; pidfd/subreaper ownership and private completion channel retained. No new native Linux provider support claimed.",
+    "linux_broker_module_sha256": "433e757e12049656ffb33bce90e02a510a735790bafc164d839c040312f27826",
+    "windows_ownership": "Native non-breakaway kill-on-close Job assigned before child resumes; retain original root handle and strong cleanup lease. Concurrent termination callers join the same OS request; empty proof waits for its recorded outcome and the original root signal. The live foreign-root/descendant HTTP negative control now uses actual Job ownership for cleanup; the obsolete PID helper and its implementation-specific tests are removed, not kept as a fallback.",
+    "storage": "Public bounded owned-connection transactions, metadata role rechecks, cancellation clock, and leased RunDriver fencing retained. New native consumers explicitly use the borrowed lease lifetime.",
+    "shutdown_controls": "Keep detached descendant/foreign process/token revocation control and separate complete Host-drop/strong-lease control.",
+    "linux_legacy_tests": "Existing Linux broker and Host lifecycle controls retained; Windows-only legacy controls moved out of the Linux-only test module."
+  },
+  "detector_authorization": {
+    "sole_ledger_debits": 3,
+    "authorized_maximum": 20,
+    "successful_python_forwards": 2,
+    "successful_rust_forwards": 0,
+    "failed_native_request_before_session": 1,
+    "inference_stopped_by_user": true,
+    "additional_inference_authorized": false,
+    "numeric_equivalence_completed": false,
+    "file_symlink_negative_control_completed": false,
+    "only_authorized_uac_attempt": "cancelled before child start; no retry authorized"
+  },
+  "public_integration": {
+    "status": "passed",
+    "platform": "Windows x64",
+    "model_forwards_requested": 0,
+    "linux_execution": "not_verified; installed WSL Debian has no cargo/rustc/node on PATH, no tools installed or global configuration changed",
+    "checks": [
+      {
+        "label": "public-dependencies",
+        "argv": [
+          "pnpm",
+          "install",
+          "--offline",
+          "--frozen-lockfile"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "79694336a91967f065bbcc5d71973ec501c66cea20f7aafb11e707f7cf7424fb",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-host-build",
+        "argv": [
+          "node",
+          "scripts/build-agent-host.mjs"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "aa8ea0fe8441404bec802c16452a50964c9eb3358fdb1abbead0c4d67c4f96f5",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-web-bridge",
+        "argv": [
+          "node",
+          "scripts/build-web-bridge.mjs"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "96129c5f40177e54fcf5058dac2d2d57523f7255665c1c1e17bf05f16afe8c7a",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-browser-validators",
+        "argv": [
+          "node",
+          "tools/generate-browser-validators.mjs",
+          "--check"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "daa98e462a3515502522ed3b58dd7a21b505abfacdb5141d716d27f940a5f554",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-web-types",
+        "argv": [
+          "pnpm",
+          "--filter",
+          "@weblabel/web",
+          "exec",
+          "tsc",
+          "--noEmit"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "f4b116b72ad1fcad8e5b913700c4e827da5bbfcf315bfbd8b0a07cea2a3adfca",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-web-build",
+        "argv": [
+          "pnpm",
+          "--filter",
+          "@weblabel/web",
+          "exec",
+          "vite",
+          "build"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "d130828d400147407f4163d23c1087a2f46182b262c01b7520df9bed74b6701f",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-contract-tests",
+        "argv": [
+          "pnpm",
+          "test:contracts"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "74c9849d7c0bd28ff02a692895cc65696f8c345a6e23ecd41cdcfe7b7d8e1895",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-rust-contracts",
+        "argv": [
+          "cargo",
+          "run",
+          "--locked",
+          "--offline",
+          "-p",
+          "xtask",
+          "--",
+          "contracts-check"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "e0cf642788cf63abc9eab266b1969618eacab4618f9b832821878e265915b97d",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-plan-check",
+        "argv": [
+          "node",
+          "tools/check-plan.mjs"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "14fe46f442794f80f3aa9087521d7b9f3c960203342e266703ba740c7ec8ddae",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-docs-final",
+        "argv": [
+          "node",
+          "tools/check-docs.mjs"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "0ac48437b5fb15f402e08a74e87d1defeaadb10aafecf24926a5b89766e63760",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-web-all-v2",
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--maxWorkers=2"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "654fcd4c63ba93325ded77b10ff9bfb53eacbd0d3ec6ab29fe442818d073b56a",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-native-final",
+        "argv": [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--locked",
+          "--offline",
+          "--lib",
+          "--test",
+          "r02_runtime",
+          "--test",
+          "t17_jobs",
+          "--test",
+          "t21_agent_tools",
+          "--test",
+          "t25_runtime",
+          "--test",
+          "r03_http_providers",
+          "--test",
+          "r04_claude_mcp",
+          "--test",
+          "r05_detector",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "81f92eea60a18d68cefaf6490f62489d66f4a52c378af599f14c9798b913eaf9",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      },
+      {
+        "label": "public-api-final",
+        "argv": [
+          "C:/Python314/python.exe",
+          "D:/workspace/src/weblabel/target/test-artifacts/html-rust-rebuild/publish-main/api-smoke.py"
+        ],
+        "exit_code": 0,
+        "receipt_normalized_utf8_sha256": "907ea83b35ab18be8d9c0793365ea7e4ab67fde2b21db1ab918f405947cbbad7",
+        "raw_receipt_and_log": "withheld in project-local private verification archive"
+      }
+    ],
+    "native_suites": {
+      "lib": 103,
+      "r02_runtime": 10,
+      "r03_http_providers": 21,
+      "r04_claude_mcp": 19,
+      "r05_detector_no_model": 20,
+      "t17_jobs": 23,
+      "t21_agent_tools": 18,
+      "t25_runtime": 9
+    },
+    "native_total": 223,
+    "vitest_all_projects": {
+      "files": 83,
+      "passed": 1220,
+      "failed": 0,
+      "skipped": 0
+    },
+    "contract_tests": {
+      "node": 3,
+      "browser_csp": 25,
+      "string_code_generation_disabled_for_browser": true
+    },
+    "typescript": "passed",
+    "rust_contracts": "passed",
+    "browser_generated_validator_parity": "passed",
+    "actual_wasm_build": "passed; not a new hardware acceptance claim",
+    "retained_web_production_build": {
+      "modules": 113,
+      "passed": true,
+      "large_chunk_warning_retained": true
+    },
+    "documentation": {
+      "files": 77,
+      "links": 369,
+      "errors": 0
+    },
+    "plan": {
+      "original_tasks": 36,
+      "original_dependency_edges": 74,
+      "refactor_tasks": 12,
+      "refactor_dependency_edges": 16,
+      "ready_tasks": [],
+      "ready_refactor_tasks": []
+    },
+    "native_cli_smoke": {
+      "status": "passed",
+      "scope": "actual native CLI loopback API, fresh synthetic database, real authentication/project/ontology transactions and same-data restart; no model dispatch",
+      "executable_sha256": "91fe9e7f9a033deb2f29c4a2ac4ac89b17c98280ccb431e5cd7433f9b772e3ac",
+      "observations": [
+        {
+          "method": "GET",
+          "route_kind": "/api/session/bootstrap",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "route_kind": "/api/session/bootstrap",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "route_kind": "/api/session",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "route_kind": "/api/projects",
+          "status": 201
+        },
+        {
+          "method": "POST",
+          "route_kind": "/api/projects/{project_id}/ontologies",
+          "status": 201
+        },
+        {
+          "method": "POST",
+          "route_kind": "/api/projects/{project_id}/ontologies",
+          "status": 403
+        },
+        {
+          "method": "GET",
+          "route_kind": "/api/projects/{project_id}/ontologies",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "route_kind": "/api/session/bootstrap",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "route_kind": "/api/session/login",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "route_kind": "/api/session",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "route_kind": "/api/projects",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "route_kind": "/api/projects/{project_id}/ontologies",
+          "status": 200
+        }
+      ],
+      "shutdowns": [
+        {
+          "exit_code": 0,
+          "port_closed": true,
+          "owned_child_processes": 0,
+          "native_runtime_shutdown": "complete"
+        },
+        {
+          "exit_code": 0,
+          "port_closed": true,
+          "owned_child_processes": 0,
+          "native_runtime_shutdown": "complete"
+        }
+      ],
+      "persistent_identity_and_ontology": true,
+      "csrf_rejected_without_mutation": true,
+      "model_forwards_requested": 0,
+      "raw_tokens_or_passwords_persisted": false
+    },
+    "verification_source_binding": "Observed against the integrated precommit working tree; the following metadata-only receipt binds the unchanged application source to the public source commit."
+  },
+  "unchanged_gates": {
+    "R05": "blocked",
+    "R09_R11": "not ready",
+    "T32": "blocked",
+    "T35": "pending",
+    "default_web_entry": "retained legacy React; R09 cutover has not occurred",
+    "official_live_model_support": "not established",
+    "license": "UNLICENSED; no redistribution license granted"
+  },
+  "public_scope_guard": {
+    "status": "passed",
+    "public_base": "e61f12cd276c7772ea646b5385ad078a7949300e",
+    "original_private_head": "90e68307a9b338b7821ff22615511d0b9f537bee",
+    "native_input_delta_paths": 219,
+    "staged_public_paths": 223,
+    "new_report_paths": [
+      "reports/index.md",
+      "reports/publication/native-html-rust-rebuild.json"
+    ],
+    "raw_evidence_or_binary_paths": [],
+    "maximum_new_blob_bytes": 259309,
+    "private_parent_not_used": true,
+    "unmerged_index_entries": 0,
+    "removed_source": "crates/weblabel-api/src/runtime/windows_processes.rs; obsolete PID helper removed after its consumer-visible foreign-tree control migrated to actual Job ownership",
+    "policy": "Explicit main refspec only; no force, tags, private ancestors or raw evidence."
+  },
+  "review": {
+    "reviewer": "main",
+    "independent_review": false,
+    "scope": "integration seams; prior task-level independent reviews remain in private source-bound evidence",
+    "observed_checks": [
+      "preserved bounded owned SQLite connection finalization, role recheck, cancellation clock and leased RunDriver authority",
+      "native Windows ownership retained before child resumes; no PID/process-group cleanup fallback",
+      "original root handle and strong reclamation lease survive complete Host drop",
+      "concurrent cleanup waits through in-flight termination without erasing failure outcomes",
+      "public source/report whitelist and public-base-only lineage",
+      "no additional detector inference or privilege prompt; R05/R09-R11/T32/T35 gates unchanged"
+    ],
+    "limitations": [
+      "No Linux execution or new official live-model support certified by this publication",
+      "Private hardware/visual acceptance is inherited, not rerun or promoted as public integration GPU proof"
+    ]
+  },
+  "preserved_initial_failures": [
+    {
+      "labels": [
+        "public-rust-library",
+        "public-native-consumers"
+      ],
+      "kind": "compile-time migration gaps: borrowed RunDriver lifetime and explicit callback capability argument; fixed without bypassing lease fencing"
+    },
+    {
+      "labels": [
+        "public-native-consumers-v2"
+      ],
+      "kind": "actual Host-drop physical-exit and asynchronous crash-fixture EOF failures; original assertions retained after correcting termination joining and stdin lifetime"
+    },
+    {
+      "labels": [
+        "public-native-consumers-v4",
+        "public-native-consumers-v5"
+      ],
+      "kind": "migrated foreign-tree fixture cleanup/argv failures; replaced old PID cleanup with actual Job ownership and compile-time single-line fixture script, without weakening argv validation or foreign-process assertions"
+    },
+    {
+      "labels": [
+        "public-web-all"
+      ],
+      "kind": "verification runner used the original checkout evidence marker; public checkout ownership guard correctly refused it. Corrected harness import and reran the same complete 83-project-file selection, not a narrowed suite"
+    },
+    {
+      "labels": [
+        "public-api-smoke",
+        "public-api-smoke-v2"
+      ],
+      "kind": "throwaway harness assumed HTTP 201 and a caller-selected bootstrap username/current-session CSRF; corrected to actual HTTP 200, server-returned identity and bootstrap CSRF, with no product auth change"
+    },
+    {
+      "labels": [
+        "public-docs-check"
+      ],
+      "kind": "five native private-evidence links were unavailable in public history; converted to explicit private-archive references and the real public structured summary without publishing raw evidence or suppressing link validation"
+    }
+  ]
+}

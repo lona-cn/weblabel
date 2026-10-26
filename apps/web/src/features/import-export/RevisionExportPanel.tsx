@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import './import-export.css';
 import type { AnnotationRevision } from '../../../../../packages/contracts/generated/AnnotationRevision';
 import { api, ApiFailure, type ApiMedia, type RevisionExportArtifact, type RevisionExportIntent } from '../../lib/t15/api';
-import { failureText, isAmbiguous, LossReportView, readLossReport, type LossReport } from './LossReportView';
+import { LossReportView } from './LossReportView';
+import { failureText, isAmbiguous, readLossReport, type LossReport } from './loss-report';
 import { getOutboxSnapshot, putExportIntent, removeExportIntent, subscribeOutbox, type IntentTarget } from './outbox';
 type Props = { scopeKey: string; media: ApiMedia | null; canStart: boolean; prepareExport: () => Promise<AnnotationRevision> };
-type Operation = { scope: string; target: IntentTarget; revisionId: string; payload: RevisionExportIntent; uncertain: boolean };
+type Operation = { scope: string | object; target: IntentTarget; revisionId: string; payload: RevisionExportIntent; uncertain: boolean };
 export function RevisionExportPanel(props: Props) {
   const latest = useRef(props); latest.current = props; const mounted = useRef(true); const single = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -13,7 +14,7 @@ export function RevisionExportPanel(props: Props) {
   const [report, setReport] = useState<LossReport | null>(null); const [ack, setAck] = useState(false); const [artifact, setArtifact] = useState<RevisionExportArtifact | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [downloaded, setDownloaded] = useState(false);
   const outbox = useSyncExternalStore(subscribeOutbox, getOutboxSnapshot, getOutboxSnapshot);
-  const records = outbox.exports.filter(record => record.target.projectId === props.media?.project_id && record.target.assetRevisionId === props.media?.asset_revision_id);
+  const records = outbox.exports.filter(record => typeof record.scope === 'string' && record.target.projectId === props.media?.project_id && record.target.assetRevisionId === props.media?.asset_revision_id);
   const retained = records.find(record => record.scope === props.scopeKey && !record.artifact) ?? records.filter(record => record.scope === props.scopeKey).at(-1) ?? records.find(record => !record.artifact) ?? records.at(-1);
   const viewKey = JSON.stringify([props.scopeKey, props.media?.project_id ?? null, props.media?.asset_revision_id ?? null]);
   const restoredView = useRef<string | null>(null);
@@ -30,8 +31,8 @@ export function RevisionExportPanel(props: Props) {
       setReport(retained.artifact ? readLossReport(retained.artifact.loss_report) : null);
     } else if (moved) { operationRef.current = null; setOperation(null); setReport(null); setArtifact(null); }
   }, [retained, viewKey]);
-  const current = (scope: string) => mounted.current && latest.current.scopeKey === scope;
-  async function download(existing: RevisionExportArtifact, scope: string) {
+  const current = (scope: string | object) => mounted.current && latest.current.scopeKey === scope;
+  async function download(existing: RevisionExportArtifact, scope: string | object) {
     try {
       const file = await api.download(existing.download_url); if (!current(scope)) return;
       const url = URL.createObjectURL(file.bytes); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `weblabel-${existing.export_id}.${existing.format === 'coco' ? 'json' : 'zip'}`; anchor.click(); URL.revokeObjectURL(url);

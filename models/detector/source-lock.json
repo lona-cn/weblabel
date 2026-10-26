@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "model_id": "PekingU/rtdetr_v2_r18vd@5650961749fa93567c0d46fc7f43ea4f9e914107",
+  "revision": "5650961749fa93567c0d46fc7f43ea4f9e914107",
+  "source": "https://huggingface.co/PekingU/rtdetr_v2_r18vd/tree/5650961749fa93567c0d46fc7f43ea4f9e914107",
+  "license": {"id":"apache-2.0","evidence":"Pinned README.md model card front matter; redistribution approval remains separate from local execution."},
+  "files": [
+    {"path":"model.safetensors","bytes":80904640,"sha256":"d18309d0d7ea57048138885c4c6ecfcb1e24506fc6153b94ad484f8ab62c7115"},
+    {"path":"config.json","bytes":5437,"sha256":"ed051ec77cb41c5d9d5e3af21a979b1e890599dfd68434d7636ff82ded4c1527"},
+    {"path":"preprocessor_config.json","bytes":444,"sha256":"cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"},
+    {"path":"README.md","bytes":3542,"sha256":"4a26a3a6de73500f181e4edbc75b3f3f19ca6dde0fdaceeeb78167f223973305"}
+  ],
+  "input":{"pixel_values":{"shape":[1,3,640,640],"dtype":"float32","layout":"NCHW"}},
+  "outputs":{"logits":[1,300,80],"pred_boxes":[1,300,4]},
+  "preprocess":{"resize":"stretch","backend":"original Transformers 5.17.0 RTDetrImageProcessor default TorchvisionBackend; no backend override","filter":"Torch 2.14 CPU uint8 bilinear antialias; f64 coefficients, axis-global int16 quantization precision, uint8 rounded horizontal then vertical","rescale":0.00392156862745098,"rescale_arithmetic":"float32 multiply by float32(1/255)","normalize":false,"pad":false,"alpha":"drop via RGB conversion","assumption_correction":{"prior":"Pillow fixed22-bit equivalence was disproven by the original processor-only probe in all six synthetic cases","evidence":"reports/T18/html-rust-rebuild/original-processor-probe.json; reports/T35/html-rust-rebuild/r05-original-processor-probe.log","gate":"tools/detector-export/preprocess.py must prove six byte-exact native tensors before any detector forward","native_equivalence":"not_run_by_implementation_agent"},"sources":["https://github.com/pytorch/pytorch/blob/v2.14.0/aten/src/ATen/native/cpu/UpSampleKernel.cpp","https://github.com/pytorch/pytorch/blob/v2.14.0/aten/src/ATen/native/cpu/UpSampleKernelAVXAntialias.h"]},
+  "postprocess":{"activation":"sigmoid","class_selection":"highest per query; first class on ties","threshold":0.5,"max_detections":300,"mapping":"explicit category to ontology label only","coordinates":"normalized cxcywh -> original once -> authorized canonical matrix -> clamp"}
+}

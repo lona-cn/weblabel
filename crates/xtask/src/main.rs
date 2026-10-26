@@ -18,8 +18,8 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let generated = std::env::temp_dir()
-                .join(format!("weblabel-contracts-{}-{nonce}", std::process::id()));
+            let generated = std::path::Path::new("target/test-artifacts/html-rust-rebuild")
+                .join(format!("contracts-check-{}-{nonce}", std::process::id()));
             contracts::check(
                 std::path::Path::new("packages/contracts/generated"),
                 &generated,

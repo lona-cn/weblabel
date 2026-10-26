@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import './import-export.css';
 import type { AnnotationRevision } from '../../../../../packages/contracts/generated/AnnotationRevision';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
-import type { SaveLease } from '../../../../../packages/contracts/generated/SaveLease';
+import type { AnnotationImportContext } from './import-context';
 import { api, ApiFailure, type ApiMedia, type AnnotationImportPreview } from '../../lib/t15/api';
-import { failureText, fileText, isAmbiguous, LossReportView, readLossReport } from './LossReportView';
+import { LossReportView } from './LossReportView';
+import { failureText, fileText, isAmbiguous, readLossReport } from './loss-report';
 import { getOutboxSnapshot, putImportIntent, removeImportIntent, subscribeOutbox, type ImportIntent } from './outbox';
-export type AnnotationImportContext = { asset_revision_id: string; ontology_version_id: string; base_revision_id: string | null; lease: SaveLease | null };
 type Props = { scopeKey: string; media: ApiMedia | null; ontology: OntologyVersion | null; canWrite: boolean; prepareImport: () => Promise<AnnotationImportContext>; onCommit: (revision: AnnotationRevision, scopeKey: string) => Promise<void>; releaseImport: (scopeKey: string) => void };
 type CocoSource = { images: { id: number; file_name: string }[]; categories: { id: number; name: string; label_id?: string }[]; raw: Record<string, unknown> };
 type Preview = { scope: string; context: AnnotationImportContext; result: AnnotationImportPreview };
@@ -17,7 +17,7 @@ export function AnnotationImportPanel(props: Props) {
   const [coco, setCoco] = useState<CocoSource | null>(null); const [imageId, setImageId] = useState(''); const [mapping, setMapping] = useState<Record<string, string>>({});
   const [yoloLabels, setYoloLabels] = useState<string[]>([]); const [preview, setPreview] = useState<Preview | null>(null);
   const outbox = useSyncExternalStore(subscribeOutbox, getOutboxSnapshot, getOutboxSnapshot);
-  const records = outbox.imports.filter(record => record.target.projectId === props.media?.project_id && record.target.assetRevisionId === props.media?.asset_revision_id && record.target.ontologyId === props.ontology?.ontology_version_id);
+  const records = outbox.imports.filter(record => typeof record.scope === 'string' && record.target.projectId === props.media?.project_id && record.target.assetRevisionId === props.media?.asset_revision_id && record.target.ontologyId === props.ontology?.ontology_version_id);
   const pending = records.find(record => record.scope === props.scopeKey) ?? records[0] ?? null; const pendingRef = useRef<ImportIntent | null>(null); pendingRef.current = pending;
   const [ack, setAck] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [conflict, setConflict] = useState(false);
   const targetKey = JSON.stringify([props.media?.project_id ?? null, props.media?.asset_revision_id ?? null, props.ontology?.ontology_version_id ?? null]);
@@ -31,7 +31,7 @@ export function AnnotationImportPanel(props: Props) {
       if (changedTarget) { setFile(null); setCoco(null); setImageId(''); setMapping({}); setYoloLabels([]); setError(''); }
     }
   }, [props.scopeKey, targetKey]);
-  const current = (scope: string) => mounted.current && latest.current.scopeKey === scope;
+  const current = (scope: string | object) => mounted.current && latest.current.scopeKey === scope;
   const held = !!preview || !!pending; const stale = !!pending && pending.scope !== props.scopeKey;
   async function choose(source: File | null) {
     if (single.current || held || !latest.current.canWrite) return;
@@ -103,6 +103,7 @@ export function AnnotationImportPanel(props: Props) {
         confirmed = receipt.revision; putImportIntent({ ...fixed, receipt: confirmed, sending: false });
       }
       if (!current(fixed.scope)) return;
+      if (typeof fixed.scope !== 'string') return;
       await latest.current.onCommit(confirmed, fixed.scope);
       // Adoption may advance the owner epoch; remove only this original completed operation.
       removeImportIntent(fixed);

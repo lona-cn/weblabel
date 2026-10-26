@@ -1,9 +1,9 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { taskReportPath } from './report-paths.mjs';
 
 export type Role = 'admin' | 'annotator' | 'reviewer' | 'viewer';
 export interface ApiResponse<T = unknown> { status: number; json: T; headers: Headers }
@@ -143,7 +143,9 @@ export function prepare_test_api(): string {
 
 export async function start_test_app(cookieSecure: 'true' | 'false' = 'false', modelWorker: 'manual' | 'background' = 'manual'): Promise<TestApp> {
   const binary = prepare_test_api();
-  const root = await mkdtemp(resolve(tmpdir(), 'weblabel-t10-'));
+  const fixtureParent = taskReportPath('T10', 'runtime');
+  await mkdir(fixtureParent, { recursive: true });
+  const root = await mkdtemp(resolve(fixtureParent, 'weblabel-t10-'));
   const port = await freeLoopbackPort();
   const base_url = `http://127.0.0.1:${port}`;
   const child: ChildProcess = spawn(binary, [], {

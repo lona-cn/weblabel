@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import * as matchers from '@testing-library/jest-dom/matchers';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -289,4 +290,22 @@ it('locates invalid category configuration and retains input without creating ed
   expect(label.getByLabelText('类别名称')).toHaveValue(''); expect(label.getByLabelText('类别名称')).toHaveFocus();
   expect(api.createProject).not.toHaveBeenCalled();
   expect(screen.getByRole('region', { name: '默认对象属性只读预览' })).not.toContainElement(screen.queryByRole('textbox', { name: '几何' }));
+});
+
+it('revokes StrictMode project write permission synchronously when creation ACK is queued before unmount', async () => {
+  const acknowledgement = Promise.withResolvers<typeof project>();
+  vi.mocked(api.createProject).mockReturnValueOnce(acknowledgement.promise);
+  const onOpen = vi.fn(), user = userEvent.setup();
+  const view = render(<StrictMode><Projects onOpen={onOpen} createdUsername={null} /></StrictMode>);
+  await user.type(screen.getByTestId('project-name'), project.name);
+  await user.click(screen.getByTestId('project-submit'));
+  await waitFor(() => expect(api.createProject).toHaveBeenCalledTimes(1));
+  await act(async () => {
+    acknowledgement.resolve(project);
+    view.unmount();
+    await acknowledgement.promise;
+  });
+  expect(api.publishOntology).not.toHaveBeenCalled();
+  expect(api.ontologies).not.toHaveBeenCalled();
+  expect(onOpen).not.toHaveBeenCalled();
 });

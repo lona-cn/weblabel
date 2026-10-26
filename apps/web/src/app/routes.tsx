@@ -5,7 +5,7 @@ import { Projects } from '../features/projects/Projects';
 import { Workbench } from '../features/workbench/Workbench';
 import { Datasets, type DeliveryTarget } from '../features/datasets/Datasets';
 import { FixedRevisionPage } from '../features/review/FixedRevisionPage';
-import type { TaskQueue } from '../features/review/workflow';
+import { readRoute } from './route-state';
 import type { Project } from '../lib/t15/api';
 const DenseHarness = import.meta.env.MODE === 'test' ? lazy(() => import('../features/workbench/DenseHarness')) : null;
 export function RouteView() {
@@ -16,18 +16,14 @@ export function RouteView() {
   }
   return <StandardRoutes />;
 }
-function readRoute() {
-  const query = new URLSearchParams(location.search), queue = query.get('review_queue');
-  return { projectId: query.get('project_id'), dataset: query.get('dataset_view') === '1', assetId: query.get('asset_revision_id') ?? '', ontologyId: query.get('ontology_version_id') ?? '', revisionId: query.get('annotation_revision_id'), queue: queue && ['all','mine','pending','returned','closed'].includes(queue) ? queue as TaskQueue : undefined };
-}
 function StandardRoutes() {
   const { entry, refresh } = useSession();
-  const [route, setRoute] = useState(readRoute);
+  const [route, setRoute] = useState(() => readRoute(new URL(location.href)));
   const [navigationError, setNavigationError] = useState<string | null>(null);
-  useEffect(() => { const restore = () => { setRoute(readRoute()); setNavigationError(null); }; window.addEventListener('popstate', restore); return () => window.removeEventListener('popstate', restore); }, []);
+  useEffect(() => { const restore = () => { setRoute(readRoute(new URL(location.href))); setNavigationError(null); }; window.addEventListener('popstate', restore); return () => window.removeEventListener('popstate', restore); }, []);
   if (entry.kind === 'checking') return <main className="session-loading" role="status">正在检查登录状态…</main>;
   if (entry.kind !== 'authenticated') return <Login key={entry.kind === 'bootstrap' ? 'bootstrap-' + entry.mode : entry.kind} />;
-  const navigate = (url: URL) => { history.pushState(null, '', url); setRoute(readRoute()); setNavigationError(null); };
+  const navigate = (url: URL) => { history.pushState(null, '', url); setRoute(readRoute(new URL(location.href))); setNavigationError(null); };
   const clearTarget = (url: URL) => { for (const key of ['asset_revision_id','ontology_version_id','annotation_revision_id','review_queue','task_id','dataset_view']) url.searchParams.delete(key); };
   const open = (project: Project) => { const url = new URL(location.href); clearTarget(url); url.searchParams.set('project_id', project.project_id); navigate(url); void refresh(); };
   const goProjects = () => { const url = new URL(location.href); clearTarget(url); url.searchParams.delete('project_id'); navigate(url); };

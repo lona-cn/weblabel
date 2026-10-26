@@ -127,8 +127,7 @@ impl Repository {
         begin_immediate(&self.pool, self.write_timeout, Some(&self.write_admission)).await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn close_for_test(&self) {
+    pub async fn close(&self) {
         self.pool.close().await;
     }
 

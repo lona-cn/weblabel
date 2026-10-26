@@ -36,9 +36,9 @@
     "host:build": "node scripts/build-agent-host.mjs",
     "test:e2e": "node scripts/test-e2e.mjs",
     "test:gpu:software": "node scripts/test-e2e.mjs --project=e2e --grep @software-gpu --require-device",
-    "test:contracts": "node --test tests/contracts-validation.test.mjs",
-    "contracts:generate": "cargo run -p xtask -- contracts-generate",
-    "contracts:check": "cargo run -p xtask -- contracts-check",
+    "test:contracts": "node --test tests/contracts-validation.test.mjs && node --disallow-code-generation-from-strings --test tests/contracts-browser-csp.test.mjs",
+    "contracts:generate": "cargo run -p xtask -- contracts-generate && node tools/generate-browser-validators.mjs",
+    "contracts:check": "cargo run -p xtask -- contracts-check && node tools/generate-browser-validators.mjs --check",
     "demo:seed": "cargo run -p weblabel-api -- demo-seed"
   }
 }

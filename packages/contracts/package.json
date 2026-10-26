@@ -13,5 +13,8 @@
   },
   "dependencies": {
     "ajv": "8.17.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
   }
 }

@@ -1,4 +1,4 @@
-import type { ConsentPreview } from './useRun';
+import type { ConsentPreview } from './run-controller';
 import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 

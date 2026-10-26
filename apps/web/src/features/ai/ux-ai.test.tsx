@@ -2,7 +2,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { CandidateList } from './CandidateList';
-import type { CandidateEntry } from './useRun';
+import type { CandidateEntry } from './run-controller';
 import type { RejectionState } from './rejections';
 import { ModelProfileSettings } from './ModelProfileSettings';
 import { Consent } from './Consent';

@@ -7,6 +7,7 @@ use crate::runtime::{
 use std::{
     collections::BTreeMap,
     process::Command,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -84,7 +85,7 @@ fn api_runtime_shutdown_waits_for_actual_owned_host_process_reclamation() {
         .unwrap();
     runtime.block_on(async {
         drop(RuntimeLease {
-            root: Some(root.clone()),
+            root: Some(host.reclaim_lease().expect("actual Host owns a retained cleanup capability")),
             tokens: tokens.clone(),
             run_id: "t33-owned-synthetic-shutdown".into(),
         });
@@ -117,4 +118,65 @@ fn api_runtime_shutdown_waits_for_actual_owned_host_process_reclamation() {
         foreign.0.try_wait().unwrap().is_none(),
         "unrelated process survives shutdown"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn runtime_shutdown_retains_ownership_after_complete_host_drop(){
+    let fixtures=Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-artifacts/R04/shutdown");
+    std::fs::create_dir_all(&fixtures).unwrap();
+    let directory=tempfile::tempdir_in(fixtures).unwrap();
+    let marker=directory.path().join("owned-child.json");
+    let script=format!("const{{spawn}}=require('node:child_process');const fs=require('node:fs');const child=spawn(process.execPath,['-e','setInterval(()=>{{}},1000)'],{{stdio:'ignore'}});fs.writeFileSync({},JSON.stringify({{child_pid:child.pid}}));setInterval(()=>{{}},1000)",serde_json::to_string(&marker.to_string_lossy()).unwrap());
+    let executable=crate::runtime::test_support::node_executable();
+    let mut extra_env=BTreeMap::new();
+    for name in ["SystemRoot","SystemDrive","WINDIR","PATH"]{
+        if let Ok(value)=std::env::var(name){extra_env.insert(name.to_owned(),value);}
+    }
+    for name in ["TEMP","TMP","TMPDIR"]{
+        extra_env.insert(name.to_owned(),directory.path().to_string_lossy().into_owned());
+    }
+    let config=HostConfig{
+        trusted_executable_roots:vec![executable.parent().unwrap().to_path_buf()],
+        executable,argv:vec!["-e".into(),script],cwd:directory.path().to_path_buf(),
+        allowed_env:extra_env.keys().cloned().collect(),source_env:BTreeMap::new(),extra_env,
+        trusted_cwd_roots:vec![directory.path().to_path_buf()],
+    };
+    // Use the real hardened Host spawn: the child is assigned to its owned Job
+    // before execution. Copying a PID/timestamp never grants cleanup authority.
+    let host=spawn_host(&config).unwrap();
+    let root_pid=host.pid();
+    let runtime_cleanup=host.reclaim_lease().expect("actual Host owns a strong cleanup lease");
+    let cleanup_backstop=host.reclaim_lease().expect("retain independent owned cleanup proof");
+    let deadline=Instant::now()+Duration::from_secs(10);
+    while !marker.exists()&&Instant::now()<deadline{
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !marker.exists(){
+        let _=cleanup_backstop.reclaim();
+        panic!("owned Node descendant did not start");
+    }
+    let marker_body:serde_json::Value=serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+    let runtime=tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+    let mut child=runtime.block_on(async move{
+        // Capture the complete Host, not only its public child field. Its other
+        // fields (including original ownership) drop before block_on returns.
+        let host=host;
+        let lease=RuntimeLease{
+            root:Some(runtime_cleanup),tokens:RunTokenStore::new(),
+            run_id:"t33-owned-synthetic-shutdown".to_owned(),
+        };
+        let child=host.child;
+        drop(lease);
+        child
+    });
+    drop(runtime);
+    // Immediate retained process-handle observation, before any cleanup wait or
+    // process-table probe could give an incorrectly detached reclaimer time.
+    let observed=child.try_wait().unwrap();
+    let cleanup=cleanup_backstop.reclaim();
+    println!("actual_owned_root_pid={} child_pid={} root_exited_before_runtime_return={} final_reclaim={}",root_pid,marker_body["child_pid"],observed.is_some(),cleanup.is_ok());
+    assert!(observed.is_some(),"API runtime returned while the owned Host root was still alive");
+    assert!(cleanup.is_ok(),"synthetic process cleanup backstop failed");
+    let _=child.wait();
 }

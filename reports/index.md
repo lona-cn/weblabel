@@ -169,6 +169,14 @@ Web 114/114、types、前端 Vite 构建、实际硬件 Chromium T15 / T24 / T25
 入口：完整结果（私有归档：`reports/T33/documentation/2026-10-12T12-52-37-812Z/result.json`）、文档与工具审查（私有归档：`reports/T33/documentation/2026-10-12T12-52-37-812Z/review.md`）、最终证据审查（私有归档：`reports/T33/documentation/2026-10-12T12-52-37-812Z/review-evidence-final.md`）、三ZIP独立回读（私有归档：`reports/T33/documentation/2026-10-12T12-52-37-812Z/ui-dataset-independent.json`）、恢复链（私有归档：`reports/T33/documentation/2026-10-12T12-52-37-812Z/backup-restore-smoke.json`）、中文往返闭合（私有归档：`reports/T33/documentation/2026-10-12T12-52-37-812Z/api-unicode-closed.json`）。独立文档字节hash与实际commit由本轮结果/STATUS入口绑定，不借历史工程指纹覆盖Markdown。
 
 
+### 原生 HTML/CSS/TypeScript 与 Rust 重构源码
+
+本次向公开 main 集成 R00–R04、R06–R08 的工程源码及 R05 的部分源码，不是完整原生切换或发布验收。默认网页入口仍保留 React；R05 blocked，R09–R11 尚未就绪，T32 blocked / T35 pending 不变。
+
+保留公开基线的 Linux pidfd/subreaper broker、事务连接关闭与 lease/fencing 修复；Windows 原生运行时使用启动前分配的非 breakaway Job 和原始进程句柄。合并复验发现并修复并发终止请求的等待窗口，并保留完整 Host 丢弃后的物理退出断言；崩溃夹具等待期间显式持有 stdin，不降低退出码断言。
+
+检测器唯一账本冻结于 3/20 debits；没有追加推理，也没有重试已取消的 UAC 文件软链接负控。原始报告、日志、截图、数据库、令牌、DLL 和模型工件留在私有项目内归档，不发布私有父提交。源码来源、已运行的公开集成验证及剩余边界见[结构化发布记录](publication/native-html-rust-rebuild.json)。
+
 ## 维护这份索引
 
 主会话集成后更新任务 ID、actualcommit、真实验收、审查和关卡状态。敏感输入不进入 Git；只保存授权范围、hash 和脱敏证据。文档清理不能改变已有任务状态或升级发布结论。

@@ -73,13 +73,21 @@ API启动必须显式提供 `WEBLABEL_COOKIE_SECURE=true|false`；`scripts/dev.m
 
 v0.1 的订阅模式仅供本机最终用户本人运行。把服务改为非 loopback 监听不是受支持的上线方式。团队/远程 SaaS 的本地伴随程序配对、租户计费和公网运维另立方案，不可让远端用户消耗服务器所有者的订阅凭证。
 
+### 4.1 原生 Rust 迁移入口（R02）
+
+新增 `weblabel` binary 将 CLI、同源 server、只读 doctor 和私有 runtime 契约放入现有 `weblabel-api` library，不另建业务数据库或微服务。旧默认 binary/Host loader/Node 启动器仅在过渡期继续工作，R09 再统一切除。新 `serve` 默认单一 loopback origin `http://127.0.0.1:48100`，从已验证的 v2 manifest 白名单流式提供静态资源；API 404 不回退 HTML，CSP 不允许字符串求值或 inline-style 放宽。
+
+维护模式只开放账户恢复依赖和恢复 API，不启动业务 worker/运行恢复。正常停机停止接单、撤销 run capabilities、结算 interrupted/unknown、等待 worker 与两个 SQLite pool 关闭，再释放 OS sidecar 锁；shutdown receipt 不宣称已取消上游计费。首次 bootstrap 在资格读取前、规范发布在版本号读取前取得 SQLite writer reservation；两者共用 storage 的专用 close-on-drop 连接，构造阶段取消不能池化仍活动的写事务。只读事务不因此升级为写事务。
+
+`runtime/config.rs` 解析显式的新私有配置，按 `(provider_id, profile_id)` 精确选择并保留数值类型的配置 hash。`AgentToolService` 是 HTTP 与后续原生 provider 的共同授权业务入口；内部 region 传原始字节，只有 HTTP/MCP 边界编码。R02 不提供配置后的假执行器，真实 HTTP/Claude/detector 组装仍分别属于 R03–R05/R09；CLI 接缝存在不代表这些能力已通过。
+
 ## 5. 状态的唯一来源
 
 | 状态 | 所有者 |
 |---|---|
 | 当前可编辑几何、工具状态机、撤销栈 | Rust EditorCore |
 | 已持久化不可变版本、审核、任务、预测 | Rust API + SQLite |
-| UI 面板展开、搜索、请求加载状态 | React |
+| UI 面板展开、搜索、请求加载状态 | React 展示层；认证与 AI 运行状态由下述无框架 controller 持有 |
 | 图像纹理、实例缓冲、选中覆盖层 | Renderer，仅缓存 |
 | 本地待同步草稿 | IndexedDB，包含业务文档而非 GPU 数据 |
 | Provider 密钥、认证状态 | 最终用户的官方运行时或本地 secret store；不属于项目数据 |
@@ -87,6 +95,41 @@ v0.1 的订阅模式仅供本机最终用户本人运行。把服务改为非 lo
 Rust EditorCore 拥有可编辑几何。React 只能读取投影，不得维护第二套可修改的 bbox。创建、修改、接受 AI 和撤销都走同一 EditorCommand 入口；每次保存仍由服务器重新验证，WASM 客户端不构成信任依据。
 
 实体引用、原图/canonical、分支作者与真实提交证据见[数据生命周期](data-model.md)；精确 wire 与当前恢复增量见[共享契约](contracts.md)。
+
+### 5.1 原生 Web 迁移的共享接缝（R01）
+
+当前公开入口仍为 React；`AppProviders` 和 `useRun` 只持有、订阅、销毁唯一的无框架 controller，不复制认证或 AI 状态机。正式原生页面和入口在后续任务切换，不提供第二套公开路由。
+
+- `app/session.ts::createSessionController` 持有认证 union、generation fencing、bootstrap ACK/unknown 与单飞边界。构造不请求；owner 调用 `refresh()`。每次新 login 独立推进 generation，旧响应不能安装身份。
+- `features/ai/run-controller.ts::createRunController` 保留原 scope、固定文档/规范、严格 after cursor、候选缓存和接受/保存 journal。`getSnapshot()` 未变化时保持同一对象，读取不复制候选文档。
+- `selection-store.ts`、`tool-state.ts` 和 `review/task-session-port.ts` 是投影/任务的共享接缝；可编辑几何、undo、SaveQueue、outbox 与 IndexedDB 身份不变。`route-state.ts::readRoute(URL)` 由当前路由复用。
+- 页面遵循 `mountX(root, context): () => void`；共享 `PageContext` 显式传入 session、navigate、signal 和 route，不借 window 单例。销毁取消监听、观察器、定时器和只读请求，不把 abort 当作撤回已发送写入。
+- `ui/` 基元使用原生 button/input/select/dialog 和纯文本 DOM 更新。长列表由 `@tanstack/virtual-core = 3.13.12` 负责范围与测量；首次通知在观察器完成登记后发布，通知内 abort 必须完整解绑，不再通知已销毁 consumer。
+
+行为边界与实测记录保存在私有归档：`reports/T08/html-rust-rebuild/r01-controllers.md`、`reports/T35/html-rust-rebuild/r01-main-native-input-smoke.json`；公开集成范围见[结构化发布记录](../reports/publication/native-html-rust-rebuild.json)。R01 的这些记录不是原生产品页面、GPU 或真实模型通过证据。
+
+### 5.2 原生页面组合契约（R07/R08）
+
+`features/workbench/workbench-context.ts` 是纯类型组合边界，不是展示模块。工作台通过必需的 `mountReview`、`mountManagement`、`mountTransfers` 注入真实页面；review 接收共享 `TaskSessionPort` 和可观察 scope/queue，transfers 只经显式 prepare/commit/release/export callbacks 触及编辑器生命周期，不访问几何或 SaveQueue 内部。
+
+`features/import-export/import-context.ts` 保留原 `AnnotationImportContext`：固定 asset/ontology、可空 `base_revision_id` 与生成的 `SaveLease`。旧 React 导入和工作台已直接消费该纯类型，不从展示组件 re-export。无历史 head 的导入仍可使用 null base；不能为满足类型预造 revision、要求额外保存或自动确认 negative。原生 transfer 的 `scopeKey` 是独立对象身份凭据，不进入 wire，也不能通过重新构造同值对象恢复权限。
+
+只读 API 显式接受 owner AbortSignal，身份/权限/authorization epoch 撤销会终止自有读取，不取消或重试已发送 POST。媒体上传另用 `canUploadMedia`：真实项目角色、catalog 与生命周期围栏决定，不要求已有 asset、可编辑 head 或 GPU；标注导入仍用独立 `canWrite` 及原 scopeKey，不能用上传权限绕过保存围栏。
+
+### 5.3 账户与项目原生页面（R06）
+
+`login-page.ts/projects-page.ts/member-manager-page.ts/external-processing-policy.ts/model-profile-settings.ts` 已有可独立 mount/dispose 的原生表单。规范构造与发布由唯一 `ontology-draft.ts/project-controller.ts` 持有；旧 React Projects 在 R09 前仍消费同一 controller。语义差异区分 false/0/null/空串/未包含，比较不修复非法草稿或发写请求；原生 details 保留枚举与数值范围字段。未知创建/发布不认领同名结果，平台权限与项目成员管理分开。验证见 R06 报告；独立挂载与截图不是最终路由、实际200%缩放或 CSP 发行验收。
+
+
+### 5.4 原生工作台与交付的组合证据（R07/R08）
+
+`workbench-page.ts` 的 controller、editor-port、task-session、draft-recovery 和 DOM view 复用原 C3、SaveQueue、导入 outbox 与唯一 run controller；仍只在 Rust 命令结果后发布几何投影。临时组合页已实际验证分数像素绘框、pointermove 仅预览、单次 Undo/Redo、保存与未知 ACK 恢复，以及 NVIDIA Blackwell 上真实 device.lost 后恢复同一 CPU facade、文档和历史。它不是正式第二路由。
+
+同项目重挂页面会撤销旧 writer 的本地凭证。loader 在读取当前服务器 head 后，只为 asset/ontology/base/document/generation 全部精确匹配、没有 dirty/pending/冲突/ACK barrier 的干净保留分支重新执行本地持久化；保留 generation 和分支身份，等待后读取新凭证。凭证必须来自真实 guarded IndexedDB 事务完成，不合成成功、不新增编辑或保存 POST，也不把这描述为新增跨标签页 CAS。Task 准备仍独立检查当前凭证、Native generation、分支、身份和 lease。
+
+实际任务领取/续租/转交/提交与继续下一项、固定 revision 审核、新 head 不继承批准、三格式导入导出、不可变 DatasetVersion、未知写入跨挂载，以及 53 条真实任务的动态虚拟列表均有组合验收记录（私有归档：`reports/T12/html-rust-rebuild/r07-r08-composition/report.md`）。原始失败、C01 修复前失败和修复后独立 11/11 场景分别保留；不是全绿报告。该组合记录未执行 AI provider 请求；正式 router/popstate、严格 CSP、发行、200% zoom、真正 unsupported-WebGPU 与性能/1024 规模关卡仍须单独验收。R09 尚未就绪，默认入口仍保留 React。
+
+原生 AI 候选到达后清除旧空状态提示，但保留真实批次决定摘要。运行摘要刷新键同时绑定当前 run 对应图片的已确认 `base_revision_id`：撤销的本地提示或 run event 不变，也必须在后续保存 ACK 后重新读取真实决策数；不轮询模型、不重发决定或把 unknown 填零。主会话实际页面验证（私有归档：`reports/T35/html-rust-rebuild/r07-outcome-main/acceptance.json`）通过公开预设配置、真实服务与 Rust/WASM，显式采纳后一次 Undo 恢复原文档，服务端 accept/revert 与页面自动更新一致。上游仅两次本机 synthetic HTTP 请求，不是真实模型或检测器数值验收。
 
 ## 6. 目录职责
 

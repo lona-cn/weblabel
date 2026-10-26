@@ -1,6 +1,7 @@
 import { cleanup, render, screen, act } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { OutcomeSummary, type RunOutcomeSummary } from './OutcomeSummary';
+import { OutcomeSummary } from './OutcomeSummary';
+import type { RunOutcomeSummary } from './outcome-summary';
 import { api } from '../../lib/t15/api';
 afterEach(cleanup);
 const outcome = (runId = 'run'): RunOutcomeSummary => ({

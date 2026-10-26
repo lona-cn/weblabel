@@ -4,7 +4,9 @@
 
 Rust wire 类型定义在 crates/annotation-domain，使用 serde/schemars/ts-rs 生成 JSON Schema 与 TypeScript 到 packages/contracts/generated。Node 通过 `@weblabel/contracts/validate` 消费同一 JSON Schema，不另建 DTO。
 
-`pnpm contracts:check` 在临时目录重生成并检查差异。
+`pnpm contracts:generate` 先生成 Rust 契约，再由开发期 Node/AJV standalone 与 esbuild 生成 `packages/contracts/src/browser-validators.generated.js`；浏览器 `@weblabel/contracts/validate-browser` 仅调用静态 ESM validator，不运行 schema compiler、不依赖字符串求值。该产物不得手改，17 个既有名称、错误投影和 numeric formats 保持不变；Node 额外的 UTC `date-time` 校验与浏览器原有不校验该 format 的差异也保持不变。
+
+`pnpm contracts:check` 在项目内唯一临时目录重生成 Rust 对照并检查 browser standalone 漂移。`pnpm test:contracts` 包含原 Node 消费者与禁止字符串代码生成的浏览器消费者测试；实际同源严格 CSP 页面仍须单独运行验证。
 
 ## C1. 序列化与错误
 
@@ -315,6 +317,14 @@ HTTP server runtime 版本未正式暴露：`runtime_version=null,runtime_versio
 C4 RunEvent.data 已是通用 unknown JSON，Rust model_jobs→ai/events→events API 原样脱敏持久化，无 DTO/migration。
 
 T32观测checkpoint：OpenAI/MiMo在实际attempt或已识别身份/有效usage改变时，使用现有progress事件持久化同形receipts/receipt/usage/cost_display；不逐token发事件，不扩大16KiB/4096事件上限。服务端cancel立即撤销run token并停止Host，不等待其终态data；取消前checkpoint为已观测证据，取消后不接受候选。
+
+Rust 原生 HTTP 在最终 FIFO writer 内重做授权，并用原 run capability 的同步 gate 首次 poll 上游请求；实际 attempt checkpoint 与该 writer 的提交先于立即取消终态。准备阶段不进入 receipts，收到 POST 后的首个取消终态不能只留下 prepared。
+
+checkpoint 的 INSERT/COMMIT 失败不是“没有请求”的证据。原 capability 保留 observation 未确认状态，取消在取得 writer 后重新读取；撤销不清除此状态。受影响终态使用 `data.dropped='observation_checkpoint_unconfirmed'`，不填空 receipts/usage，也不复制旧的较短快照冒充最新完整观察；此前已持久化的 progress 仍保留在事件历史。提交确认边界宁可标未确认，不虚构零次尝试。普通配置、secret 或预算拒绝且确无上游尝试时，仍返回 receipts=[]、receipt=null 和 unknown usage/cost。
+
+原生 HTTP profile 的 `ready` 仅代表当前配置允许尝试：服务已安装对应执行器，私有配置与存储 hash/model/auth/capabilities 一致，原 allowlist 中的 secret 可用，明确 account/model/capability 及 custom base 授权有效，且 tools=true 与执行器要求一致。DNS、私网、scope 和最终授权仍在 dispatch 处执行。配置资格不制造 live 验证：verification、runtime_version、verified_at 不因 ready 被改为已验证。GET 不提升历史 blocked 状态；显式同 hash provision 可以刷新可用性，不覆盖历史配置或身份。Claude/Detector 的外部证据门不随 HTTP 安装而放行。
+
+
 
 脱敏仅保留精确input_tokens/output_tokens键的null或JS安全非负整数，其他token键与畸形值继续脱敏。
 

@@ -1426,4 +1426,121 @@
       "report_dir": "reports/T35"
     }
   ]
+  ,
+  "refactor_tasks": [
+    {
+      "id": "R00", "title": "可恢复基线、独立任务图和全套设计预览关卡", "owner": "main",
+      "depends_on": [], "locks": ["rebuild-metadata", "ui-preview-catalog"],
+      "files": ["TASKS.json", "STATUS.json", "tasks/R*.md", "tools/check-plan.mjs", "tools/check-plan.test.mjs", "tools/check-ui-previews.mjs", "tools/check-ui-previews.test.mjs", "scripts/task.mjs", "reports/T08/html-rust-rebuild/previews", "reports/T35/html-rust-rebuild", "reports/index.md"],
+      "checks": [["node", "tools/check-plan.mjs"], ["node", "--test", "tools/check-plan.test.mjs", "tools/check-ui-previews.test.mjs"], ["node", "tools/check-ui-previews.mjs", "reports/T08/html-rust-rebuild/previews/catalog.json"]],
+      "external_gate": false, "card": "tasks/R00.md", "report_dir": "reports/T35/html-rust-rebuild"
+    },
+    {
+      "id": "R01", "title": "无框架状态机和页面挂载共享接缝", "owner": "wl-web",
+      "depends_on": ["R00"], "locks": ["ui-shared-controllers"],
+      "files": [
+        "apps/web/src/app/session.ts", "apps/web/src/app/route-state.ts", "apps/web/src/app/providers.tsx", "apps/web/src/app/routes.tsx", "apps/web/src/ui",
+        "apps/web/package.json", "pnpm-lock.yaml", "vitest.config.ts", "apps/web/src/lib/t15/api.ts",
+        "apps/web/src/features/workbench/selection-store.ts", "apps/web/src/features/workbench/tool-state.ts",
+        "apps/web/src/features/ai/run-controller.ts", "apps/web/src/features/ai/useRun.ts", "apps/web/src/features/review/task-session-port.ts",
+        "apps/web/src/features/projects/Login.tsx", "apps/web/src/features/projects/AdminRecoveryForm.tsx",
+        "apps/web/src/features/workbench/SelectionLink.tsx", "apps/web/src/features/workbench/ToolSettings.tsx", "apps/web/src/features/workbench/Keyboard.tsx", "apps/web/src/features/workbench/NumericGeometry.tsx", "apps/web/src/features/workbench/Workbench.tsx",
+        "apps/web/src/features/ai/CandidateList.tsx", "apps/web/src/features/ai/Consent.tsx", "apps/web/src/features/ai/Panel.tsx", "apps/web/src/features/ai/WorkbenchAi.tsx", "apps/web/src/features/review/ReviewPanel.tsx",
+        "apps/web/src/features/workbench/commercial-core.test.tsx", "apps/web/src/features/workbench/t34_model_wait.test.tsx",
+        "apps/web/src/features/ai/commercial_projection.test.tsx", "apps/web/src/features/ai/t24_ui.test.tsx", "apps/web/src/features/ai/ux-ai.test.tsx",
+        "apps/web/src/features/review/commercial_task_context.test.tsx", "apps/web/src/features/review/t26_review_ui.test.tsx", "apps/web/src/features/review/ux_panel.test.tsx",
+        "crates/xtask/src/main.rs", "tests/support/app.ts", "docs/architecture.md"
+      ],
+      "checks": [["pnpm", "contracts:check"], ["pnpm", "--filter", "@weblabel/web", "exec", "tsc", "--noEmit"], ["pnpm", "exec", "vitest", "run", "--project", "web"]],
+      "external_gate": false, "card": "tasks/R01.md", "report_dir": "reports/T08/html-rust-rebuild"
+    },
+    {
+      "id": "R02", "title": "Rust server、永久 CLI、运维和运行契约", "owner": "main",
+      "depends_on": ["R00"], "locks": ["rust-shared-runtime", "root-manifests"],
+      "files": [
+        "crates/weblabel-api/Cargo.toml", "crates/weblabel-api/src/bin/weblabel.rs",
+        "crates/weblabel-api/src/lib.rs", "crates/weblabel-api/src/main.rs", "crates/weblabel-api/src/startup.rs",
+        "crates/weblabel-api/src/server", "crates/weblabel-api/src/cli", "crates/weblabel-api/src/ops",
+        "crates/weblabel-api/src/ai/mod.rs", "crates/weblabel-api/src/ai/profiles.rs",
+        "crates/weblabel-api/src/auth/session.rs",
+        "crates/weblabel-api/src/projects/ontology.rs", "crates/weblabel-api/src/storage/mod.rs",
+        "crates/weblabel-api/src/storage/db.rs", "crates/weblabel-api/src/jobs/queue.rs", "crates/weblabel-api/src/review/submissions.rs",
+        "crates/weblabel-api/src/runtime/mod.rs", "crates/weblabel-api/src/runtime/config.rs",
+        "crates/weblabel-api/src/runtime/agent_tools.rs", "crates/weblabel-api/src/runtime/run_tokens.rs",
+        "crates/weblabel-api/src/runtime/runner.rs", "crates/weblabel-api/tests/r02_runtime.rs",
+        "Cargo.toml", "Cargo.lock", "package.json", "pnpm-lock.yaml",
+        "packages/contracts/package.json", "packages/contracts/src/validate-browser.js",
+        "packages/contracts/src/validate.js", "packages/contracts/src/browser-contracts.js",
+        "packages/contracts/src/numeric-formats.js", "packages/contracts/src/browser-validators.generated.js",
+        "tools/generate-browser-validators.mjs", "tests/contracts-browser-csp.test.mjs",
+        "apps/web/src/features/projects/Projects.tsx", "apps/web/src/features/projects/project-delivery.css",
+        "docs/development.md", "docs/contracts.md", "docs/architecture.md"
+      ],
+      "checks": [["cargo", "test", "-p", "weblabel-api", "--lib", "--test", "r02_runtime", "--test", "t21_agent_tools", "--locked"], ["pnpm", "contracts:check"], ["pnpm", "test:contracts"]],
+      "external_gate": false, "card": "tasks/R02.md", "report_dir": "reports/T16/html-rust-rebuild"
+    },
+    {
+      "id": "R03", "title": "Rust 三种 HTTP provider 执行器", "owner": "wl-ai",
+      "depends_on": ["R02"], "locks": ["runtime-http-providers"],
+      "files": ["crates/weblabel-api/src/runtime/providers/http.rs", "crates/weblabel-api/src/runtime/providers/openai.rs", "crates/weblabel-api/src/runtime/providers/anthropic.rs", "crates/weblabel-api/src/runtime/providers/mimo.rs", "crates/weblabel-api/tests/r03_http_providers.rs"],
+      "checks": [["cargo", "test", "-p", "weblabel-api", "--test", "r03_http_providers", "--locked"]],
+      "external_gate": false, "card": "tasks/R03.md", "report_dir": "reports/T20/html-rust-rebuild"
+    },
+    {
+      "id": "R04", "title": "官方 native Claude、Rust MCP 和子进程监管", "owner": "wl-ai",
+      "depends_on": ["R02"], "locks": ["runtime-claude-mcp", "runtime-process-supervision"],
+      "files": ["crates/weblabel-api/src/runtime/providers/claude", "crates/weblabel-api/src/runtime/mcp.rs", "crates/weblabel-api/src/runtime/host.rs", "crates/weblabel-api/src/runtime/supervisor.rs", "crates/weblabel-api/tests/r04_claude_mcp.rs"],
+      "checks": [["cargo", "test", "-p", "weblabel-api", "--test", "r04_claude_mcp", "--locked"]],
+      "external_gate": true, "card": "tasks/R04.md", "report_dir": "reports/T23/html-rust-rebuild"
+    },
+    {
+      "id": "R05", "title": "Rust ORT 检测、开发期转换和数值等价验证", "owner": "wl-ai",
+      "depends_on": ["R02"], "locks": ["runtime-detector", "detector-forward-budget"],
+      "files": ["crates/weblabel-api/src/runtime/detector", "crates/weblabel-api/tests/r05_detector.rs", "tools/detector-export", "models/detector"],
+      "checks": [["cargo", "test", "-p", "weblabel-api", "--test", "r05_detector", "--locked"]],
+      "external_gate": true, "card": "tasks/R05.md", "report_dir": "reports/T18/html-rust-rebuild"
+    },
+    {
+      "id": "R06", "title": "原生账户、项目、规范和管理页面", "owner": "wl-web",
+      "depends_on": ["R01"], "locks": ["ui-projects-admin"],
+      "files": ["apps/web/src/features/projects", "apps/web/src/features/ai/model-profile-settings.ts", "apps/web/src/features/ai/model-profile-settings.test.ts", "apps/web/src/lib/t15/api.ts"],
+      "checks": [["pnpm", "--filter", "@weblabel/web", "exec", "tsc", "--noEmit"], ["pnpm", "exec", "vitest", "run", "--project", "web", "apps/web/src/features/projects"]],
+      "external_gate": false, "card": "tasks/R06.md", "report_dir": "reports/T08/html-rust-rebuild"
+    },
+    {
+      "id": "R07", "title": "原生工作台、保存恢复和 AI 页面", "owner": "wl-web",
+      "depends_on": ["R01"], "locks": ["ui-workbench-ai"],
+      "files": ["apps/web/src/features/workbench", "apps/web/src/features/ai"],
+      "checks": [["pnpm", "--filter", "@weblabel/web", "exec", "tsc", "--noEmit"], ["pnpm", "exec", "vitest", "run", "--project", "web", "apps/web/src/features/workbench", "apps/web/src/features/ai"]],
+      "external_gate": false, "card": "tasks/R07.md", "report_dir": "reports/T12/html-rust-rebuild"
+    },
+    {
+      "id": "R08", "title": "原生任务审核、导入导出和数据集页面", "owner": "wl-web",
+      "depends_on": ["R01"], "locks": ["ui-review-delivery"],
+      "files": ["apps/web/src/features/review", "apps/web/src/features/datasets", "apps/web/src/features/import-export"],
+      "checks": [["pnpm", "--filter", "@weblabel/web", "exec", "tsc", "--noEmit"], ["pnpm", "exec", "vitest", "run", "--project", "web", "apps/web/src/features/review", "apps/web/src/features/datasets", "apps/web/src/features/import-export"]],
+      "external_gate": false, "card": "tasks/R08.md", "report_dir": "reports/T13/html-rust-rebuild"
+    },
+    {
+      "id": "R09", "title": "统一切换、Rust 运维发行和旧生产路径移除", "owner": "main",
+      "depends_on": ["R03", "R04", "R05", "R06", "R07", "R08"], "locks": ["rebuild-cutover", "root-manifests", "rust-shared-runtime", "ui-routing"],
+      "files": ["apps", "crates", "scripts", "tools", "tests", ".github", "package.json", "pnpm-lock.yaml", "Cargo.toml", "Cargo.lock", "TASKS.json", "docs"],
+      "checks": [["node", "tools/check-plan.mjs"], ["pnpm", "contracts:check"], ["cargo", "test", "--workspace", "--locked"], ["pnpm", "exec", "vitest", "run", "--project", "web", "--project", "integration"]],
+      "external_gate": false, "card": "tasks/R09.md", "report_dir": "reports/T33/html-rust-rebuild"
+    },
+    {
+      "id": "R10", "title": "全量行为、视觉、发行、恢复和硬件 GPU 回归", "owner": "wl-qa",
+      "depends_on": ["R09"], "locks": ["rebuild-acceptance", "hardware-gpu"],
+      "files": ["tests", "scripts/verify*.mjs", "reports/T31/html-rust-rebuild", "reports/T35/html-rust-rebuild", "START_HERE.md", "PLAN.md", "docs"],
+      "checks": [["node", "scripts/verify.mjs", "release"], ["node", "scripts/verify-gpu.mjs", "--report-dir", "reports/T31/html-rust-rebuild/r10"]],
+      "external_gate": true, "card": "tasks/R10.md", "report_dir": "reports/T35/html-rust-rebuild"
+    },
+    {
+      "id": "R11", "title": "独立规格质量审查和真实交付结论", "owner": "main",
+      "depends_on": ["R10"], "locks": ["rebuild-release-review"],
+      "files": ["STATUS.json", "reports/index.md", "reports/T35/html-rust-rebuild"],
+      "checks": [["node", "tools/check-plan.mjs"], ["node", "tools/check-ui-previews.mjs", "reports/T08/html-rust-rebuild/previews/catalog.json"], ["pnpm", "docs:check"]],
+      "external_gate": false, "card": "tasks/R11.md", "report_dir": "reports/T35/html-rust-rebuild"
+    }
+  ]
 }

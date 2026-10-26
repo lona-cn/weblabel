@@ -4,10 +4,9 @@ use rand::{rngs::OsRng, RngCore};
 use weblabel_api::{
     auth::{hash_launch_code, AuthConfig},
     config::ServerConfig,
-    router, AppState,
+    router, startup, AppState,
 };
 
-mod startup;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
@@ -44,6 +43,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
+        .with_writer(std::io::stderr)
         .init();
 
     let defaults = ServerConfig::default();

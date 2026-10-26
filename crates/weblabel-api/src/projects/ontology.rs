@@ -127,7 +127,7 @@ pub(super) async fn publish(
     }
     // The early role check rejects unauthorized requests without a writer lock.
     // Recheck after acquiring it: a waiting writer may have revoked that role.
-    let mut tx = match state.pool.begin_with("BEGIN IMMEDIATE").await {
+    let mut tx = match crate::storage::transactions::begin_immediate(&state.pool, state.write_timeout, None).await {
         Ok(tx) => tx,
         Err(_) => {
             return error(
@@ -142,7 +142,7 @@ pub(super) async fn publish(
     )
     .bind(&principal.user_id)
     .bind(&project_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(tx.connection())
     .await;
     match actor_role {
         Ok(Some(value)) if Role::parse(&value) == Some(Role::Admin) => {}
@@ -170,13 +170,13 @@ pub(super) async fn publish(
     }
     let ontology_id = uuid::Uuid::new_v4().to_string();
     let transaction = async {
-        let row = sqlx::query("SELECT COALESCE(MAX(version_no),0) AS version_no FROM ontology_versions WHERE project_id=?").bind(&project_id).fetch_one(&mut *tx).await?;
+        let row = sqlx::query("SELECT COALESCE(MAX(version_no),0) AS version_no FROM ontology_versions WHERE project_id=?").bind(&project_id).fetch_one(tx.connection()).await?;
         let version_no: i64 = row.get("version_no");
         let version_no = version_no + 1;
         let ontology = json!({"ontology_version_id": ontology_id, "project_id": project_id, "version_no": version_no, "labels": labels, "guidelines_markdown": guidelines, "allow_out_of_bounds": false});
         let body_json = serde_json::to_string(&ontology).map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
         sqlx::query("INSERT INTO ontology_versions(ontology_version_id,project_id,version_no,body_json,created_at) VALUES(?,?,?,?,?)")
-            .bind(&ontology_id).bind(&project_id).bind(version_no).bind(body_json).bind(crate::projects::now_rfc3339()).execute(&mut *tx).await?;
+            .bind(&ontology_id).bind(&project_id).bind(version_no).bind(body_json).bind(crate::projects::now_rfc3339()).execute(tx.connection()).await?;
         tx.commit().await?;
         Ok::<Value, sqlx::Error>(ontology)
     }.await;

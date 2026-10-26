@@ -262,20 +262,30 @@ mod tests {
         AppState,
     };
     use std::time::Duration;
-    #[tokio::test]
-    async fn readback_is_project_protected_and_observes_real_lease_state_without_writes() {
+    #[test]
+    fn readback_is_project_protected_and_observes_real_lease_state_without_writes() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../reports/T26/ux-improvement");
+            .join("../../target/test-artifacts/html-rust-rebuild/r08-review-readback");
         std::fs::create_dir_all(&root).unwrap();
         let directory = tempfile::tempdir_in(&root).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(assert_readback(directory.path()));
+        drop(runtime);
+        directory.close().unwrap();
+    }
+
+    async fn assert_readback(directory: &std::path::Path) {
         let bind = "127.0.0.1:48100".parse().unwrap();
         let config = ServerConfig {
             bind,
             database_url: format!(
                 "sqlite:{}",
-                directory.path().join("readback.sqlite").display()
+                directory.join("readback.sqlite").display()
             ),
-            object_root: directory.path().join("objects"),
+            object_root: directory.join("objects"),
             write_timeout: Duration::from_secs(2),
             production: true,
         };
@@ -366,9 +376,8 @@ mod tests {
             connection.close().await.unwrap();
         }
         pool.close().await;
-        // AppState owns a separate repository pool in addition to auth.pool.
-        // Await both SQLx worker shutdowns before deleting the Windows fixture.
-        app.repository.close_for_test().await;
-        directory.close().unwrap();
+        // Drain the separate repository pool before the outer TempDir closes.
+        app.repository.close().await;
+        drop(app);
     }
 }

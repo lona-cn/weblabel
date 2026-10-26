@@ -788,7 +788,7 @@ async fn cancel_is_idempotent_and_quarantines_late_candidates() {
                         1,
                         "issue-before",
                         "candidate delivered before cancel",
-                    ))
+                    ), None)
                     .await
                     .map_err(model_jobs::RunnerError::from)?;
                 // The user cancels while the provider is still streaming.
@@ -810,7 +810,7 @@ async fn cancel_is_idempotent_and_quarantines_late_candidates() {
                         2,
                         "issue-after",
                         "candidate delivered after cancel",
-                    ))
+                    ), None)
                     .await
                     .map_err(model_jobs::RunnerError::from)?;
                 Ok(RunOutcome::Completed)
@@ -1180,7 +1180,7 @@ async fn single_asset_failure_keeps_successful_batch_items() {
                         1,
                         &format!("issue-{}", driver.run_id()),
                         "synthetic mock observation",
-                    ))
+                    ), None)
                     .await
                     .map_err(model_jobs::RunnerError::from)?;
                 Ok(RunOutcome::Completed)
@@ -1558,7 +1558,7 @@ async fn worker_callbacks_after_authority_loss(fenced: bool) {
                 driver
                     .submit_candidates(issue_candidate(
                         "callback-owned-candidate", 2, "owned-issue", "owned candidate",
-                    ))
+                    ), None)
                     .await
                     .unwrap();
                 let mut tx = self.repository.begin_write().await.unwrap();
@@ -1593,7 +1593,7 @@ async fn worker_callbacks_after_authority_loss(fenced: bool) {
                 let candidate = driver
                     .submit_candidates(issue_candidate(
                         "callback-stale-candidate", 4, "stale-issue", "stale candidate",
-                    ))
+                    ), None)
                     .await;
                 let mut tx = self.repository.begin_write().await.unwrap();
                 let after: (i64, i64, i64) = sqlx::query_as(
@@ -2681,7 +2681,7 @@ async fn restart_recovery_concludes_runs_of_a_crashed_claimed_job() {
 
 #[tokio::test]
 async fn capability_gates_reject_changes_the_profile_cannot_produce() {
-    struct SubmitRunner(SubmitCandidates);
+    struct SubmitRunner(SubmitCandidates, weblabel_api::runtime::run_tokens::RunTokenStore);
     impl RunRunner for SubmitRunner {
         fn execute<'a>(
             &'a self,
@@ -2689,10 +2689,12 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
         ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
         {
             Box::pin(async move {
-                driver
-                    .submit_candidates(self.0.clone())
-                    .await
-                    .map_err(model_jobs::RunnerError::from)?;
+                let token = self.1.issue_once_until(
+                    driver.run_id(), &driver.context().project_id, chrono::Utc::now().timestamp_millis() + 60_000,
+                ).ok_or_else(|| model_jobs::RunnerError::new("RUN_TOKEN_ALREADY_ISSUED", "synthetic claimed run already has a capability"))?;
+                let result = driver.submit_candidates(self.0.clone(), Some((&self.1, &token))).await;
+                self.1.revoke_run(driver.run_id());
+                result.map_err(model_jobs::RunnerError::from)?;
                 Ok(RunOutcome::Completed)
             })
         }
@@ -2768,7 +2770,7 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
         &queue,
         "t17-worker",
         Duration::from_secs(30),
-        &SubmitRunner(create_change),
+        &SubmitRunner(create_change, fixture.state.run_tokens.clone()),
     )
     .await
     .unwrap();
@@ -2869,7 +2871,7 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
         &queue,
         "t17-worker",
         Duration::from_secs(30),
-        &SubmitRunner(audit_change),
+        &SubmitRunner(audit_change, fixture.state.run_tokens.clone()),
     )
     .await
     .unwrap();

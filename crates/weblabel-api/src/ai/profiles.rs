@@ -1,4 +1,4 @@
-//! Safe public model metadata and administrator selection of exact service-owned Host presets.
+//! Safe public model metadata and exact service-owned legacy/native presets.
 use annotation_domain::ModelProfile;
 use axum::{
     extract::State,
@@ -33,10 +33,13 @@ pub(super) async fn list(State(state): State<AiState>) -> Response {
         Ok(tx) => tx,
         Err(_) => return failed(),
     };
+    let native_http = matches!(&state.profile_configuration,
+        crate::runtime::config::ProfileConfiguration::Native(Ok(Some(_))));
     let rows = match sqlx::query(
-        "SELECT profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at \
+        "SELECT profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at, \
+         CASE WHEN ? AND provider_id IN ('openai_api','anthropic_api','mimo_api') THEN config_json ELSE NULL END AS native_config_json \
          FROM model_profiles WHERE provider_id != 'codex_local' ORDER BY profile_id",
-    ).fetch_all(tx.connection()).await {
+    ).bind(native_http).fetch_all(tx.connection()).await {
         Ok(rows) => rows,
         Err(_) => return failed(),
     };
@@ -45,8 +48,22 @@ pub(super) async fn list(State(state): State<AiState>) -> Response {
     }
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
+        let stored_hash = match row.try_get::<Option<&str>, _>("native_config_json") {
+            Ok(Some(raw)) => {
+                let Ok(config) = serde_json::from_str::<Value>(raw) else { return failed(); };
+                match annotation_domain::hash::execution_configuration_hash(&config) {
+                    Ok(hash) => Some(hash),
+                    Err(_) => return failed(),
+                }
+            }
+            Ok(None) => None,
+            Err(_) => return failed(),
+        };
         match decode(row) {
-            Ok(profile) => items.push(profile),
+            Ok(mut profile) => {
+                native_availability(&state, &mut profile, stored_hash.as_deref());
+                items.push(profile);
+            }
             Err(_) => return failed(),
         }
     }
@@ -321,50 +338,30 @@ fn valid_optional_settings(config: &Value, api: bool) -> bool {
     true
 }
 
-fn parse_presets(
-    raw: &str,
-    allowed_env: &str,
-    has_secret: impl Fn(&str) -> bool,
-) -> Result<Vec<Preset>, Response> {
-    let host: Value = serde_json::from_str(raw).map_err(|_| config_error())?;
-    let base: axum::http::Uri = host
-        .get("apiBase")
-        .and_then(Value::as_str)
-        .ok_or_else(config_error)?
-        .parse()
-        .map_err(|_| config_error())?;
-    if base.scheme_str() != Some("http")
-        || !matches!(base.host(), Some("127.0.0.1" | "localhost" | "[::1]"))
-        || base.port_u16().is_none_or(|p| p == 0)
-        || base.authority().is_some_and(|a| a.as_str().contains('@'))
-        || base.query().is_some()
-        || !host
-            .get("timeoutMs")
-            .and_then(Value::as_u64)
-            .is_some_and(|n| n > 0)
-    {
+pub(crate) fn http_base_approval(config: &Value) -> bool {
+    let approval = &config["base_approval"];
+    approval["approved"] == true
+        && approval["approved_by"].as_str().is_some_and(|admin| {
+            config["local_admins"].as_array().is_some_and(|admins| {
+                admins.iter().any(|value| value.as_str() == Some(admin))
+            })
+        })
+        && approval["approved_at"].as_str().is_some_and(|value| {
+            chrono::DateTime::parse_from_rfc3339(value).is_ok()
+        })
+}
+
+/// Shared HTTP configuration validation; does not resolve secrets or probe a provider.
+pub(crate) fn http_metadata<'a>(
+    provider: &str,
+    config: &'a Value,
+    secret_available: impl Fn(&str) -> bool,
+    native_executor: bool,
+) -> Result<(&'a str, &'a str, &'static str, Value, &'static str, &'static str), Response> {
+    if !clean_private(config) || !valid_optional_settings(config, true) {
         return Err(config_error());
     }
-    let providers = host
-        .get("providers")
-        .and_then(Value::as_array)
-        .filter(|a| a.len() <= 500)
-        .ok_or_else(config_error)?;
-    let mut result = Vec::with_capacity(providers.len());
-    for entry in providers {
-        let provider = entry
-            .get("provider")
-            .and_then(Value::as_str)
-            .ok_or_else(config_error)?;
-        let config = entry
-            .get("config")
-            .filter(|c| c.is_object() && clean_private(c))
-            .ok_or_else(config_error)?;
-        let api = matches!(provider, "openai_api" | "anthropic_api" | "mimo_api");
-        if !valid_optional_settings(config, api) {
-            return Err(config_error());
-        }
-        let (profile, model, auth, caps, availability, reason) = if api {
+    Ok({
             if !allowed_keys(
                 config,
                 &[
@@ -439,7 +436,10 @@ fn parse_presets(
             if let Some(base) = config.get("api_base") {
                 let raw = base.as_str().ok_or_else(config_error)?;
                 let uri: axum::http::Uri = raw.parse().map_err(|_| config_error())?;
-                if uri.scheme_str() != Some("https")
+                let insecure_approved = uri.scheme_str() == Some("http")
+                    && http_base_approval(config)
+                    && config["base_approval"]["allow_insecure_http"] == true;
+                if (uri.scheme_str() != Some("https") && !insecure_approved)
                     || uri.authority().is_none_or(|a| a.as_str().contains('@'))
                     || raw.contains('?')
                     || raw.contains('#')
@@ -448,11 +448,12 @@ fn parse_presets(
                 }
             }
             let caps = config.get("capabilities").cloned().unwrap_or_else(||json!({"image_input":false,"tools":false,"structured_output":false,"bbox_output":false,"attributes":false}));
-            let reference_available =
-                allowed_env.split(',').any(|k| k == &reference[4..]) && has_secret(&reference[4..]);
+            annotation_domain::ModelCapabilities::deserialize(&caps).map_err(|_| config_error())?;
+            let reference_available = secret_available(&reference[4..]);
             let evidence = config.get("account_model_verified") == Some(&Value::Bool(true))
                 && config.get("capabilities").is_some();
-            // Custom endpoint approval is enforced by the adapter. Metadata cannot reproduce its DNS policy: keep it blocked here.
+            // Native dispatch enforces DNS/private-network policy; metadata grants
+            // configuration eligibility only, never a live-verification result.
             let official = match provider {
                 "openai_api" => "https://api.openai.com/v1",
                 "anthropic_api" => "https://api.anthropic.com",
@@ -469,12 +470,65 @@ fn parse_presets(
                     "blocked",
                     "Explicit account model and capability evidence is missing",
                 )
-            } else if custom_base {
+            } else if native_executor && caps["tools"] != true {
+                ("blocked","Native HTTP execution requires tool-call capability")
+            } else if custom_base && !(native_executor && http_base_approval(config)) {
                 ("blocked","Custom endpoint runtime approval has not been checked; no network probe was performed")
+            } else if native_executor {
+                ("ready","Native HTTP configuration permits an attempt; live verification has not run and DNS/scope authorization are enforced at dispatch")
             } else {
                 ("ready","Host configuration and explicit account capability evidence are present; live verification has not run")
             };
             (profile, model, "api_key", caps, available, reason)
+    })
+}
+
+fn parse_presets(
+    raw: &str,
+    allowed_env: &str,
+    has_secret: impl Fn(&str) -> bool,
+) -> Result<Vec<Preset>, Response> {
+    let host: Value = serde_json::from_str(raw).map_err(|_| config_error())?;
+    let base: axum::http::Uri = host
+        .get("apiBase")
+        .and_then(Value::as_str)
+        .ok_or_else(config_error)?
+        .parse()
+        .map_err(|_| config_error())?;
+    if base.scheme_str() != Some("http")
+        || !matches!(base.host(), Some("127.0.0.1" | "localhost" | "[::1]"))
+        || base.port_u16().is_none_or(|p| p == 0)
+        || base.authority().is_some_and(|a| a.as_str().contains('@'))
+        || base.query().is_some()
+        || !host
+            .get("timeoutMs")
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0)
+    {
+        return Err(config_error());
+    }
+    let providers = host
+        .get("providers")
+        .and_then(Value::as_array)
+        .filter(|a| a.len() <= 500)
+        .ok_or_else(config_error)?;
+    let mut result = Vec::with_capacity(providers.len());
+    for entry in providers {
+        let provider = entry
+            .get("provider")
+            .and_then(Value::as_str)
+            .ok_or_else(config_error)?;
+        let config = entry
+            .get("config")
+            .filter(|c| c.is_object() && clean_private(c))
+            .ok_or_else(config_error)?;
+        let api = matches!(provider, "openai_api" | "anthropic_api" | "mimo_api");
+        if !valid_optional_settings(config, api) {
+            return Err(config_error());
+        }
+        let (profile, model, auth, caps, availability, reason) = if api {
+            http_metadata(provider, config,
+                |name| allowed_env.split(',').any(|allowed| allowed == name) && has_secret(name), false)?
         } else if provider == "claude_local" {
             if !valid_local_config(provider, config) {
                 return Err(config_error());
@@ -575,6 +629,118 @@ fn host_presets() -> Result<Vec<Preset>, Response> {
     Ok(presets)
 }
 
+fn native_config_error() -> Response {
+    failure_response(StatusCode::UNPROCESSABLE_ENTITY, "RUNTIME_CONFIGURATION_UNAVAILABLE",
+        "Native runtime presets are invalid or unavailable. A local operator must prepare the private configuration; manual annotation remains available.")
+}
+
+fn native_availability(state: &AiState, profile: &mut ModelProfile, stored_hash: Option<&str>) {
+    use annotation_domain::{AuthKind, Availability, ModelCapabilities, ProviderId};
+    let crate::runtime::config::ProfileConfiguration::Native(configuration) = &state.profile_configuration else { return; };
+    if profile.provider_id == ProviderId::Mock { return; }
+    let current = (|| {
+        let runtime = configuration.as_ref().ok()?.as_ref()?;
+        let provider = match profile.provider_id {
+            ProviderId::OpenaiApi => "openai_api",
+            ProviderId::AnthropicApi => "anthropic_api",
+            ProviderId::MimoApi => "mimo_api",
+            _ => return None,
+        };
+        let private = runtime.selected(provider, &profile.profile_id).ok()?;
+        let hash = runtime.configuration_hash(provider, &profile.profile_id).ok()?;
+        if stored_hash != Some(hash.as_str()) { return None; }
+        let (_, model, auth, caps, available, _) = native_http_metadata(runtime, provider, private).ok()?;
+        if model != &*profile.model_id || auth != "api_key" || profile.auth_kind != AuthKind::ApiKey
+            || serde_json::from_value::<ModelCapabilities>(caps).ok()? != profile.capabilities {
+            return None;
+        }
+        Some(match available {
+            "ready" => Availability::Ready,
+            "blocked" => Availability::Blocked,
+            _ => Availability::NeedsConfiguration,
+        })
+    })();
+    // Do not promote a historical operator-blocked profile through a GET.
+    // Explicit provisioning persists fresh eligibility; verification stays separate.
+    if current != Some(Availability::Ready) {
+        profile.availability = current.unwrap_or(Availability::NeedsConfiguration);
+    }
+}
+
+fn native_http_metadata<'a>(
+    runtime: &crate::runtime::config::RuntimeConfig,
+    provider: &str,
+    config: &'a Value,
+) -> Result<(&'a str, &'a str, &'static str, Value, &'static str, &'static str), Response> {
+    http_metadata(provider, config, |name| {
+        runtime.allowed_secret_env().iter().any(|allowed| allowed == name)
+            && std::env::var(name).is_ok_and(|value| !value.is_empty() && !value.contains(['\r', '\n', '\0']))
+    }, true)
+}
+
+fn native_presets(config: &crate::runtime::config::RuntimeConfig) -> Result<Vec<Preset>, Response> {
+    let mut result = Vec::with_capacity(config.providers().len());
+    for entry in config.providers() {
+        let profile = entry.config["profile_id"].as_str().ok_or_else(native_config_error)?;
+        let (model, auth, caps, availability, reason) = match entry.provider.as_str() {
+            "openai_api" | "anthropic_api" | "mimo_api" => {
+                let (_, model, auth, caps, availability, reason) =
+                    native_http_metadata(config, &entry.provider, &entry.config).map_err(|_| native_config_error())?;
+                (model.to_owned(), auth, caps, availability, reason)
+            }
+            "claude_local" => (
+                entry.config["model_id"].as_str().ok_or_else(native_config_error)?.to_owned(),
+                "official_user_login",
+                json!({"image_input":true,"tools":true,"structured_output":true,"bbox_output":false,"attributes":true}),
+                "needs_configuration",
+                "Native official runtime, personal login and isolation have not been checked; no process was started",
+            ),
+            "detector_local" => {
+                // Read only the explicitly configured public model lock metadata, never weights.
+                let model = entry.config["lock_path"].as_str()
+                    .and_then(|path| read_metadata(path).ok())
+                    .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                    .and_then(|lock| lock.get("model_id").and_then(Value::as_str)
+                        .filter(|id| safe_id(id)).map(str::to_owned))
+                    .unwrap_or_else(|| "unknown".to_owned());
+                (model, "local_weights",
+                    json!({"image_input":true,"tools":false,"structured_output":true,"bbox_output":true,"attributes":false}),
+                    "needs_configuration",
+                    "Native detector identity, derived model and runtime have not been verified; no weights were loaded or downloaded")
+            }
+            _ => return Err(native_config_error()),
+        };
+        let hash = config.configuration_hash(&entry.provider, profile).map_err(|_| native_config_error())?;
+        result.push(Preset {
+            public: ModelProfilePreset {
+                preset_id: hash.clone(),
+                profile_id: profile.to_owned(),
+                provider_id: entry.provider.clone(),
+                model_id: model,
+                auth_kind: auth.to_owned(),
+                capabilities: serde_json::from_value(caps).map_err(|_| native_config_error())?,
+                configuration_hash: hash,
+                configured: false,
+                availability: availability.to_owned(),
+                availability_reason: reason.to_owned(),
+            },
+            config: entry.config.clone(),
+        });
+    }
+    result.sort_by(|a, b| a.public.profile_id.cmp(&b.public.profile_id));
+    Ok(result)
+}
+
+fn active_presets(configuration: &crate::runtime::config::ProfileConfiguration) -> Result<Vec<Preset>, Response> {
+    use crate::runtime::config::ProfileConfiguration;
+    match configuration {
+        ProfileConfiguration::LegacyHost => host_presets(),
+        ProfileConfiguration::Native(Ok(Some(config))) => native_presets(config),
+        ProfileConfiguration::Native(Ok(None)) => Ok(Vec::new()),
+        ProfileConfiguration::Native(Err(_)) => Err(native_config_error()),
+    }
+}
+
 pub(super) async fn presets(
     State(state): State<AiState>,
     Extension(actor): Extension<Principal>,
@@ -586,7 +752,7 @@ pub(super) async fn presets(
     let result = async {
         let limit = query.limit.unwrap_or(50);
         if limit==0 || limit>100 || query.after.as_ref().is_some_and(|s|!safe_id(s)) { return Err(failure_response(StatusCode::BAD_REQUEST,"INVALID_PAGE","Invalid preset page")); }
-        let mut presets = host_presets()?;
+        let mut presets = active_presets(&state.profile_configuration)?;
         let mut tx = state.repository.begin_write().await.map_err(|_|failed())?;
         for preset in &mut presets {
             let stored=sqlx::query("SELECT config_json,provider_id,model_id,auth_kind,capabilities_json FROM model_profiles WHERE profile_id=?").bind(&preset.public.profile_id).fetch_optional(tx.connection()).await.map_err(|_|failed())?;
@@ -617,7 +783,8 @@ pub(super) async fn get(
         let row=sqlx::query("SELECT profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json FROM model_profiles WHERE profile_id=? AND provider_id NOT IN ('codex_local','mock')").bind(&id).fetch_optional(tx.connection()).await.map_err(|_|failed())?.ok_or_else(||failure_response(StatusCode::NOT_FOUND,"PROFILE_NOT_FOUND","Model profile not found"))?;
         let config: Value=serde_json::from_str(&row.try_get::<String,_>("config_json").map_err(|_|failed())?).map_err(|_|failed())?;
         let hash=annotation_domain::hash::execution_configuration_hash(&config).map_err(|_|failed())?;
-        let profile=decode(row).map_err(|_|failed())?;
+        let mut profile=decode(row).map_err(|_|failed())?;
+        native_availability(&state, &mut profile, Some(&hash));
         tx.commit().await.map_err(|_|failed())?;
         Ok(Json(json!({"profile":profile,"configuration_hash":hash})).into_response())
     }.await;
@@ -634,7 +801,7 @@ pub(super) async fn provision(
         return denied();
     }
     let result = async {
-        let preset = host_presets()?.into_iter().find(|p|p.public.profile_id==id && p.public.configuration_hash==input.configuration_hash).ok_or_else(||failure_response(StatusCode::NOT_FOUND,"PRESET_NOT_FOUND","No unique Host preset matches this profile and configuration hash"))?;
+        let preset = active_presets(&state.profile_configuration)?.into_iter().find(|p|p.public.profile_id==id && p.public.configuration_hash==input.configuration_hash).ok_or_else(||failure_response(StatusCode::NOT_FOUND,"PRESET_NOT_FOUND","No unique service-owned preset matches this profile and configuration hash"))?;
         if preset.public.provider_id=="detector_local" && preset.public.model_id=="unknown" {return Err(failure_response(StatusCode::UNPROCESSABLE_ENTITY,"DETECTOR_IDENTITY_UNAVAILABLE","Prepare the local pinned model lock before provisioning; no model or weight download is performed"));}
         let mut tx=state.repository.begin_write().await.map_err(|_|failed())?;
         let previous=sqlx::query("SELECT config_json,provider_id,model_id,auth_kind,capabilities_json FROM model_profiles WHERE profile_id=?").bind(&id).fetch_optional(tx.connection()).await.map_err(|_|failed())?;
@@ -642,16 +809,57 @@ pub(super) async fn provision(
             let config: Value=serde_json::from_str(&previous.get::<String,_>("config_json")).map_err(|_|failed())?;
             let capabilities: Value=serde_json::from_str(&previous.get::<String,_>("capabilities_json")).map_err(|_|failed())?;
             if annotation_domain::hash::execution_configuration_hash(&config).map_err(|_|failed())? != input.configuration_hash || previous.get::<String,_>("provider_id")!=preset.public.provider_id || previous.get::<String,_>("model_id")!=preset.public.model_id || previous.get::<String,_>("auth_kind")!=preset.public.auth_kind || capabilities!=serde_json::to_value(&preset.public.capabilities).map_err(|_|failed())? {return Err(failure_response(StatusCode::CONFLICT,"PROFILE_CONFIGURATION_CONFLICT","Existing profile identity or configuration differs; historical profiles cannot be overwritten"));}
+            if matches!(&state.profile_configuration, crate::runtime::config::ProfileConfiguration::Native(_))
+                && matches!(preset.public.provider_id.as_str(), "openai_api" | "anthropic_api" | "mimo_api") {
+                sqlx::query("UPDATE model_profiles SET availability=? WHERE profile_id=?")
+                    .bind(&preset.public.availability).bind(&id).execute(tx.connection()).await.map_err(|_|failed())?;
+            }
         } else {
             let p=&preset.public;
             sqlx::query("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES(?,?,?,?,?,?,'not_run',NULL,NULL,?,NULL,?)").bind(&id).bind(&p.provider_id).bind(&p.model_id).bind(&p.auth_kind).bind(serde_json::to_string(&p.capabilities).map_err(|_|failed())?).bind(&p.availability).bind(serde_json::to_string(&preset.config).map_err(|_|failed())?).bind(crate::projects::now_rfc3339()).execute(tx.connection()).await.map_err(|_|failed())?;
         }
         let row=sqlx::query("SELECT profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at FROM model_profiles WHERE profile_id=?").bind(&id).fetch_one(tx.connection()).await.map_err(|_|failed())?;
-        let profile=decode(row).map_err(|_|failed())?;
+        let mut profile=decode(row).map_err(|_|failed())?;
+        native_availability(&state, &mut profile, Some(&input.configuration_hash));
         tx.commit().await.map_err(|_|failed())?;
         Ok(Json(profile).into_response())
     }.await;
     result.unwrap_or_else(|e| e)
+}
+
+#[cfg(test)]
+mod native_tests {
+    use super::*;
+    use crate::runtime::config::{ProfileConfiguration, RuntimeConfig, RuntimeConfigurationError};
+
+    #[test]
+    fn native_absence_and_invalid_config_are_distinct_without_legacy_fallback() {
+        assert!(active_presets(&ProfileConfiguration::Native(Ok(None))).unwrap().is_empty());
+        let response = active_presets(&ProfileConfiguration::Native(Err(RuntimeConfigurationError))).err().unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn native_local_presets_use_exact_profile_ids_and_hashes_without_readiness_claims() {
+        let entries: Vec<Value> = ["local-first", "local-second"].into_iter().map(|profile| json!({
+            "provider":"claude_local","config":{
+                "profile_id":profile,"model_id":"claude-sonnet-synthetic",
+                "executable":std::env::current_exe().unwrap(),"timeout_ms":1000,
+                "max_tool_turns":5,"max_tool_result_bytes":4096
+            }
+        })).collect();
+        let raw = json!({"schema_version":1,"timeout_ms":1000,"providers":entries}).to_string();
+        let config = RuntimeConfig::parse(&raw, &[]).unwrap();
+        let presets = native_presets(&config).unwrap();
+        assert_eq!(presets.len(), 2);
+        for (preset, expected) in presets.iter().zip(["local-first", "local-second"]) {
+            assert_eq!(preset.public.profile_id, expected);
+            assert_eq!(preset.public.configuration_hash, config.configuration_hash("claude_local", expected).unwrap());
+            assert_eq!(preset.public.model_id, "claude-sonnet-synthetic");
+            assert_eq!(preset.public.availability, "needs_configuration");
+            assert!(!preset.public.configured);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -697,6 +905,7 @@ pub(crate) mod ux_tests {
                 repository,
                 allow_mock_runs: false,
                 run_tokens: Default::default(),
+                profile_configuration: crate::runtime::config::ProfileConfiguration::LegacyHost,
             })
     }
     pub(crate) async fn seed_session(repository: &Repository, user: &str, token: &str) {

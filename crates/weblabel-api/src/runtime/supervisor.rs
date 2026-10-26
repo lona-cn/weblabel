@@ -1,327 +1,420 @@
-//! Run supervision and process-tree reclamation.
-//!
-//! Windows uses checked Toolhelp snapshots for parent relationships and retained
-//! process handles with exact GetProcessTimes FILETIME identities for owned
-//! candidates only. taskkill /T /F and each orphan kill are immediately preceded
-//! by a fresh identity check; one checked table per sweep plus signaled retained
-//! handles proves physical exit. A newer root refuses all descendant attribution;
-//! only an absent root allows the old orphan window. Observation failures fail
-//! closed. Reclaim callers remain independent; this removes CIM cost, not calls.
-//!
-//! Linux uses a per-host subreaper broker and pidfds. Other POSIX platforms
-//! retain the `ps`/signal mechanism; Linux never attributes an orphan by stale PPID.
-
+//! Spawn-owned process containment. Numeric PIDs and current PPIDs never grant
+//! authority to kill a process. Windows jobs are assigned before child execution.
 use std::collections::HashMap;
-#[cfg(windows)]
-#[path = "windows_processes.rs"]
-mod windows_processes;
-#[cfg(any(not(target_os = "linux"), test))]
-use std::collections::HashSet;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-#[cfg(any(not(target_os = "linux"), test))]
-use std::process::Command;
-#[cfg(not(target_os = "linux"))]
-use std::process::Stdio;
-#[cfg(any(not(target_os = "linux"), test))]
+use std::sync::{Arc, Mutex, LazyLock, Weak};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
-
 use crate::runtime::host::{spawn_host, HostConfig, HostProcess, SpawnError};
 use crate::runtime::{ProtocolError, RuntimeEnvelope};
 
 const RECLAIM_DEADLINE: Duration = Duration::from_secs(5);
+pub(crate) const JOB_MECHANISM: &str = "windows non-breakaway job; active process count verified zero and original root process signaled";
 
 #[derive(Debug, Clone)]
 pub struct ReclaimReport {
     pub root_pid: u32,
     pub mechanism: &'static str,
+    /// Observed members before termination; job containment also covers members
+    /// created during termination. These lists are not a PPID-derived kill plan.
     pub descendants_found: Vec<u32>,
     pub killed: Vec<u32>,
 }
 
-/// Identity of the process tree being reclaimed.
+#[derive(Debug, Clone, Copy)]
+pub struct NativeRoot {
+    pub root_pid: u32,
+    /// Unique local registration stamp, sampled before the suspended spawn.
+    /// This is a lookup key, not a claim of OS process creation identity.
+    pub spawned_at_ms: i64,
+    pub exited_at_ms: Option<i64>,
+}
+
+#[cfg(not(target_os = "linux"))]
+pub type ReclaimRoot = NativeRoot;
+
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 pub struct ReclaimRoot {
     pub root_pid: u32,
-    /// Epoch milliseconds taken right after the root process was spawned.
     pub spawned_at_ms: i64,
-    /// Epoch milliseconds when the root's exit was observed, when known.
-    /// Descendants created after it cannot belong to the tree (pid reuse) and
-    /// are leaked rather than killed.
     pub exited_at_ms: Option<i64>,
-    #[cfg(target_os = "linux")]
-    pub(crate) owner: std::sync::Arc<linux_broker::ReclaimHandle>,
+    pub(crate) owner: Arc<linux_broker::ReclaimHandle>,
 }
 
+#[cfg(all(test, target_os = "linux"))]
 #[derive(Debug, Clone, Copy)]
 pub struct ProcessRecord {
     pub ppid: u32,
-    /// Epoch milliseconds of process creation; None when the platform hides it.
     pub created_ms: Option<i64>,
 }
 
-#[cfg(any(not(target_os = "linux"), test))]
-fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+fn now_ms() -> i64 { chrono::Utc::now().timestamp_millis() }
+pub(crate) fn registration_stamp() -> i64 {
+    static LAST: AtomicI64 = AtomicI64::new(0);
+    let now = now_ms();
+    let previous = LAST.fetch_update(Ordering::SeqCst, Ordering::SeqCst,
+        |last| Some(now.max(last.saturating_add(1)))).unwrap_or_else(|last|last);
+    now.max(previous.saturating_add(1))
 }
 
-#[cfg(not(target_os = "linux"))]
-fn system_tool(name: &str) -> String {
-    if cfg!(windows) {
-        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_owned());
-        let candidates = [
-            format!("{system_root}\\System32\\{name}"),
-            format!("{system_root}\\System32\\WindowsPowerShell\\v1.0\\{name}"),
-        ];
-        if let Some(found) = candidates
-            .iter()
-            .find(|candidate| std::path::Path::new(candidate).exists())
-        {
-            return found.clone();
-        }
+type OwnershipKey = (u32, i64);
+type OwnershipTable = Mutex<HashMap<OwnershipKey, Weak<Job>>>;
+fn ownerships() -> &'static OwnershipTable {
+    static TABLE: LazyLock<OwnershipTable> = LazyLock::new(||Mutex::new(HashMap::new()));
+    &TABLE
+}
+fn ownership_error() -> SpawnError { SpawnError::Io("process ownership unavailable or expired".into()) }
+
+pub(crate) struct OwnedTree {
+    job: Arc<Job>,
+    root: Option<NativeRoot>,
+}
+impl OwnedTree {
+    pub(crate) fn new() -> Result<Self, SpawnError> { Ok(Self { job: Arc::new(Job::new()?), root: None }) }
+    pub(crate) fn lease(&self)->Option<OwnedReclaimLease>{
+        self.root.map(|root|OwnedReclaimLease::Job{root,job:Arc::clone(&self.job)})
     }
-    name.to_owned()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn run_tool(executable: &str, args: &[&str]) {
-    let mut command = Command::new(executable);
     #[cfg(windows)]
-    {
-        // Noninteractive reclamation must not attach to the shutting-down console.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
+    pub(crate) fn attach(&mut self, process: windows_sys::Win32::Foundation::HANDLE, root: NativeRoot) -> Result<(), SpawnError> {
+        self.job.assign(process)?;
+        ownerships().lock().map_err(|_|ownership_error())?
+            .insert((root.root_pid,root.spawned_at_ms),Arc::downgrade(&self.job));
+        self.root=Some(root);
+        resume_primary(process,root.root_pid)
     }
-    let _ = command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-#[cfg(all(target_os = "linux", test))]
-pub(crate) fn snapshot_records() -> HashMap<u32, ProcessRecord> {
-    linux_broker::snapshot_records()
-}
-
-#[cfg(windows)]
-pub(crate) fn snapshot_records() -> std::io::Result<HashMap<u32, ProcessRecord>> {
-    windows_processes::snapshot()
-}
-
-#[cfg(all(not(windows), not(target_os = "linux")))]
-pub(crate) fn snapshot_records() -> HashMap<u32, ProcessRecord> {
-    let output = Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output();
-    let stdout = match output {
-        Ok(result) => result.stdout,
-        Err(_) => return HashMap::new(),
-    };
-    let text = String::from_utf8_lossy(&stdout);
-    let mut records = HashMap::new();
-    for line in text.lines() {
-        let mut parts = line.split_whitespace();
-        let (Some(pid), Some(ppid)) = (parts.next(), parts.next()) else {
-            continue;
-        };
-        let (Ok(pid), Ok(ppid)) = (pid.parse::<u32>(), ppid.parse::<u32>()) else {
-            continue;
-        };
-        let created_ms = parts
-            .next()
-            .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
-            .map(|when| when.timestamp_millis());
-        records.insert(pid, ProcessRecord { ppid, created_ms });
+    pub(crate) fn terminate(&self) -> Result<Vec<u32>,SpawnError> {
+        let members=self.job.members();
+        self.job.terminate()?;
+        members
     }
-    records
+    pub(crate) fn empty(&self) -> Result<bool,SpawnError> {self.job.empty()}
+    pub(crate) fn report(&self,members:Vec<u32>)->Result<ReclaimReport,SpawnError> {
+        let root=self.root.ok_or_else(ownership_error)?;
+        Ok(report(root,members))
+    }
 }
-
-#[cfg(test)]
-pub(crate) fn snapshot_pids() -> HashSet<u32> {
-    #[cfg(windows)]
-    let table = snapshot_records().expect("Windows process enumeration failed");
-    #[cfg(not(windows))]
-    let table = snapshot_records();
-    table.into_keys().collect()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn find_descendants(root: u32, table: &HashMap<u32, ProcessRecord>) -> Vec<u32> {
-    let mut found = Vec::new();
-    let mut queue = vec![root];
-    let mut seen = HashSet::from([root]);
-    while let Some(current) = queue.pop() {
-        for (&pid, record) in table {
-            if record.ppid != current || !seen.insert(pid) {
-                continue;
-            }
-            found.push(pid);
-            queue.push(pid);
+impl Drop for OwnedTree {
+    fn drop(&mut self) {
+        // TerminateJobObject/CloseHandle are immediate OS requests: no waits,
+        // snapshots, blocking tasks or root-only fallback on the dropping worker.
+        if self.job.terminate().is_err() {tracing::error!(code="PROCESS_CLEANUP_FAILED","owned job termination failed");}
+        if let Some(root)=self.root {
+            if let Ok(mut table)=ownerships().lock() {table.remove(&(root.root_pid,root.spawned_at_ms));}
         }
     }
-    found
+}
+fn report(root:NativeRoot,members:Vec<u32>)->ReclaimReport {
+    ReclaimReport {root_pid:root.root_pid,mechanism:JOB_MECHANISM,
+        descendants_found:members.iter().copied().filter(|pid|*pid!=root.root_pid).collect(),killed:members}
 }
 
-/// A target counts as reclaimed when its pid is gone or now names a different process.
-#[cfg(all(not(windows), not(target_os = "linux")))]
-fn still_same_process(
-    target_pid: u32,
-    target_created: Option<i64>,
-    table: &HashMap<u32, ProcessRecord>,
-) -> bool {
-    match table.get(&target_pid) {
-        None => false,
-        Some(record) => match (record.created_ms, target_created) {
-            (Some(current), Some(original)) => current == original,
-            _ => true,
-        },
+/// Retains the original OS ownership across Host/Supervisor abandonment.
+/// Linux keeps the existing broker pidfd and private completion channel alive.
+pub(crate) enum OwnedReclaimLease {
+    Job { root: NativeRoot, job: Arc<Job> },
+    #[cfg(target_os = "linux")]
+    Broker(ReclaimRoot),
+}
+impl OwnedReclaimLease {
+    pub(crate) fn reclaim(self) -> Result<ReclaimReport, SpawnError> {
+        match &self {
+            Self::Job { root, job } => reclaim_owned(job, *root),
+            #[cfg(target_os = "linux")]
+            Self::Broker(root) => linux_broker::reclaim(root.clone()),
+        }
     }
 }
-
-#[cfg(target_os = "linux")]
-pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnError> {
-    linux_broker::reclaim(root)
-}
-
-#[cfg(windows)]
-pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnError> {
-    let checked =
-        |error: std::io::Error| SpawnError::Io(format!("Windows reclaim observation: {error}"));
-    let cutoff_ms = root.exited_at_ms.unwrap_or_else(now_ms);
-    let table = snapshot_records().map_err(checked)?;
-    let mut targets = Vec::new();
-    // A current newer root invalidates the whole stale-PPID attribution, not
-    // merely the root target. Only a truly absent root permits orphan recovery.
-    if let Some(target) = windows_processes::Target::open(root.root_pid).map_err(checked)? {
-        if target.created_ms().map_err(checked)? > root.spawned_at_ms {
-            return Err(SpawnError::SpawnFailed(
-                "Windows root generation changed; refusing descendant attribution".into(),
-            ));
-        }
-        targets.push(target);
-    }
-    let mut descendants = Vec::new();
-    for pid in find_descendants(root.root_pid, &table) {
-        if let Some(target) = windows_processes::Target::open(pid).map_err(checked)? {
-            let created = target.created_ms().map_err(checked)?;
-            if created >= root.spawned_at_ms && created <= cutoff_ms {
-                descendants.push(pid);
-                targets.push(target);
-            }
-        }
-    }
-    // All candidate identities were captured before any kill. Retained handles
-    // prevent PID reuse until taskkill and physical-exit verification complete.
-    let taskkill = system_tool("taskkill.exe");
-    for target in &targets {
-        if target.still_current().map_err(checked)? {
-            let pid = target.pid.to_string();
-            let args: &[&str] = if target.pid == root.root_pid {
-                &["/pid", &pid, "/T", "/F"]
-            } else {
-                &["/pid", &pid, "/F"]
-            };
-            run_tool(&taskkill, args);
-        }
-    }
-    let deadline = Instant::now() + RECLAIM_DEADLINE;
-    let mut alive = Vec::with_capacity(targets.len());
-    loop {
-        // One successful table per sweep, not a process enumeration per target.
-        let table = snapshot_records().map_err(checked)?;
-        alive.clear();
-        for target in &targets {
-            // A vanished table row alone is not proof of physical process exit.
-            if target.alive().map_err(checked)? {
-                if !table.contains_key(&target.pid) {
-                    return Err(SpawnError::Io(format!(
-                        "Windows live target missing from snapshot: {}",
-                        target.pid
-                    )));
+impl Drop for OwnedReclaimLease {
+    fn drop(&mut self) {
+        match self {
+            Self::Job { job, .. } => {
+                if job.terminate().is_err() {
+                    tracing::error!(code="PROCESS_CLEANUP_FAILED","retained owned job termination failed");
                 }
-                alive.push(target.pid);
             }
+            #[cfg(target_os = "linux")]
+            // Last broker capability drop closes its private completion channel;
+            // blocking exit proof belongs to reclaim(), not this destructor.
+            Self::Broker(_) => {}
         }
-        if alive.is_empty() {
-            break;
-        }
-        if Instant::now() >= deadline {
-            return Err(SpawnError::SpawnFailed(format!(
-                "reclaim incomplete: pids still alive: {alive:?}"
-            )));
-        }
-        thread::sleep(Duration::from_millis(250));
     }
-    Ok(ReclaimReport {
-        root_pid: root.root_pid,
-        mechanism:
-            "windows taskkill /T + Toolhelp descendant sweep (retained exact creation identity)",
-        descendants_found: descendants,
-        killed: targets.into_iter().map(|target| target.pid).collect(),
-    })
 }
 
-#[cfg(all(not(windows), not(target_os = "linux")))]
-pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnError> {
-    let cutoff_ms = now_ms();
-    let table = snapshot_records();
-    let root_is_ours = table.get(&root.root_pid).is_none_or(|record| {
-        record
-            .created_ms
-            .is_none_or(|created| created <= root.spawned_at_ms)
-    });
-    let descendants: Vec<u32> = find_descendants(root.root_pid, &table)
-        .into_iter()
-        .filter(|pid| {
-            table
-                .get(pid)
-                .and_then(|record| record.created_ms)
-                .is_none_or(|created| {
-                    created >= root.spawned_at_ms
-                        && created <= root.exited_at_ms.unwrap_or(cutoff_ms)
-                })
-        })
-        .collect();
-    let mut targets: Vec<(u32, Option<i64>)> = Vec::new();
-    if root_is_ours {
-        targets.push((
-            root.root_pid,
-            table
-                .get(&root.root_pid)
-                .and_then(|record| record.created_ms),
-        ));
+#[cfg(not(target_os = "linux"))]
+pub fn reclaim_process_tree(root:NativeRoot)->Result<ReclaimReport,SpawnError> {
+    // A stale/recycled root can only resolve its retained original job, never
+    // authorize walking its replacement's current descendant lineage.
+    let job=ownerships().lock().map_err(|_|ownership_error())?
+        .get(&(root.root_pid,root.spawned_at_ms)).and_then(Weak::upgrade).ok_or_else(ownership_error)?;
+    reclaim_owned(&job,root)
+}
+
+fn reclaim_owned(job:&Job,root:NativeRoot)->Result<ReclaimReport,SpawnError>{
+    let members=job.members();
+    job.terminate()?;
+    let deadline=Instant::now()+RECLAIM_DEADLINE;
+    while !job.empty()? {
+        if Instant::now()>=deadline {return Err(SpawnError::Io("owned job reclamation timed out".into()));}
+        thread::sleep(Duration::from_millis(10));
     }
-    for pid in &descendants {
-        targets.push((*pid, table.get(pid).and_then(|record| record.created_ms)));
-    }
-    let mechanism = "posix kill -9 + ps snapshot sweep (ps exposes no creation time, so creation identity is unavailable on POSIX)";
-    for (pid, _) in &targets {
-        run_tool("/bin/kill", &["-9", &pid.to_string()]);
-    }
-    let deadline = Instant::now() + RECLAIM_DEADLINE;
-    loop {
-        let alive: Vec<u32> = targets
-            .iter()
-            .filter(|(pid, created)| still_same_process(*pid, *created, &snapshot_records()))
-            .map(|(pid, _)| *pid)
-            .collect();
-        if alive.is_empty() {
-            break;
+    Ok(report(root,members?))
+}
+
+#[cfg(windows)]
+pub(crate) struct Job {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    termination: std::sync::atomic::AtomicU8,
+    // Runtime-input slot: the original suspended child handle is duplicated
+    // exactly once during assignment, before any child code can execute.
+    root_process: std::sync::OnceLock<std::os::windows::io::OwnedHandle>,
+}
+// SAFETY: the unnamed handle is non-inheritable, owned until Arc's last drop,
+// and Job APIs are thread-safe. The atomic serializes the sole termination call.
+#[cfg(windows)]
+unsafe impl Send for Job {}
+#[cfg(windows)]
+unsafe impl Sync for Job {}
+
+#[cfg(windows)]
+impl Job {
+    fn new()->Result<Self,SpawnError> {
+        use windows_sys::Win32::System::JobObjects::*;
+        // SAFETY: null security attributes create a non-inheritable unnamed job.
+        let handle=unsafe{CreateJobObjectW(std::ptr::null(),std::ptr::null())};
+        if handle.is_null(){return Err(ownership_error());}
+        let job=Self{handle,termination:std::sync::atomic::AtomicU8::new(0),
+            root_process:std::sync::OnceLock::new()};
+        let mut limits=JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // Neither BREAKAWAY_OK nor SILENT_BREAKAWAY_OK is enabled.
+        // SAFETY: correctly typed initialized buffer and its exact size.
+        if unsafe{SetInformationJobObject(handle,JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const _,std::mem::size_of_val(&limits) as u32)}==0 {
+            return Err(ownership_error());
         }
-        if Instant::now() >= deadline {
-            return Err(SpawnError::SpawnFailed(format!(
-                "reclaim incomplete: pids still alive: {alive:?}"
-            )));
-        }
-        thread::sleep(Duration::from_millis(250));
+        Ok(job)
     }
-    Ok(ReclaimReport {
-        root_pid: root.root_pid,
-        mechanism,
-        descendants_found: descendants,
-        killed: targets.into_iter().map(|(pid, _)| pid).collect(),
-    })
+    fn assign(&self,process:windows_sys::Win32::Foundation::HANDLE)->Result<(),SpawnError>{
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::{Foundation::DuplicateHandle,
+            System::Threading::{GetCurrentProcess,PROCESS_SYNCHRONIZE}};
+        let mut duplicate=std::ptr::null_mut();
+        // SAFETY: caller retains the original suspended process handle.
+        // Duplicate that exact kernel object, never reopen a PID. Only wait
+        // permission is needed, and the resulting handle is non-inheritable.
+        if unsafe{DuplicateHandle(GetCurrentProcess(),process,GetCurrentProcess(),
+            &mut duplicate,PROCESS_SYNCHRONIZE,0,0)}==0 || duplicate.is_null(){
+            return Err(SpawnError::Io("owned root handle duplication failed".into()));
+        }
+        // SAFETY: successful DuplicateHandle transferred this fresh handle.
+        let retained=unsafe{std::os::windows::io::OwnedHandle::from_raw_handle(duplicate)};
+        self.root_process.set(retained).map_err(|_|ownership_error())?;
+        // SAFETY: caller retains the process handle; its primary thread is suspended.
+        if unsafe{windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(self.handle,process)}==0 {
+            return Err(ownership_error());
+        }
+        Ok(())
+    }
+    fn terminate(&self)->Result<(),SpawnError>{
+        match self.termination.compare_exchange(0,1,Ordering::AcqRel,Ordering::Acquire) {
+            Ok(_)=>{
+                // SAFETY: job handle remains owned, affects only assigned members.
+                let ok=unsafe{windows_sys::Win32::System::JobObjects::TerminateJobObject(self.handle,1)}!=0;
+                self.termination.store(if ok{2}else{3},Ordering::Release);
+                if ok{Ok(())}else{Err(SpawnError::Io("owned job termination failed".into()))}
+            }
+            // Another retained owner may already be inside TerminateJobObject.
+            // Drops remain nonblocking; reclaimers join via bounded empty().
+            Err(1 | 2)=>Ok(()),
+            Err(_)=>Err(SpawnError::Io("owned job termination failed".into())),
+        }
+    }
+    fn active(&self)->Result<u32,SpawnError>{
+        use windows_sys::Win32::System::JobObjects::*;
+        if self.termination.load(Ordering::Acquire)==3 {return Err(SpawnError::Io("owned job termination failed".into()));}
+        let mut info=JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        // SAFETY: exact initialized output struct, owned job handle.
+        if unsafe{QueryInformationJobObject(self.handle,JobObjectBasicAccountingInformation,
+            &mut info as *mut _ as *mut _,std::mem::size_of_val(&info) as u32,std::ptr::null_mut())}==0 {
+            return Err(SpawnError::Io("owned job accounting unavailable".into()));
+        }
+        Ok(info.ActiveProcesses)
+    }
+    fn empty(&self)->Result<bool,SpawnError>{
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{Foundation::{WAIT_OBJECT_0,WAIT_TIMEOUT},
+            System::Threading::WaitForSingleObject};
+        if self.termination.load(Ordering::Acquire)==1{return Ok(false);}
+        let root=self.root_process.get().ok_or_else(ownership_error)?;
+        if self.active()?!=0{return Ok(false);}
+        // Accounting can reach zero before process-object rundown signals.
+        // The retained duplicate stays live throughout this zero-time probe;
+        // callers already impose the bounded reclamation deadline.
+        match unsafe{WaitForSingleObject(root.as_raw_handle(),0)}{
+            WAIT_OBJECT_0=>Ok(true),
+            WAIT_TIMEOUT=>Ok(false),
+            _=>Err(SpawnError::Io("owned root exit signal unavailable".into())),
+        }
+    }
+    fn members(&self)->Result<Vec<u32>,SpawnError>{
+        use windows_sys::Win32::System::JobObjects::*;
+        // Bounded diagnostic snapshot, NOT cleanup authority. Job termination
+        // and accounting cover any later members independently of this list.
+        let active=self.active()? as usize;
+        if active==0{return Ok(Vec::new());}
+        if active>4096{return Err(SpawnError::Io("owned job membership exceeds budget".into()));}
+        let mut slots=(active+1).min(4096);
+        let mut storage=Vec::<usize>::new();
+        loop{
+            storage.resize(slots+2,0);
+            let bytes=(storage.len()*std::mem::size_of::<usize>()) as u32;
+            // SAFETY: usize-aligned storage contains header and slots trailing IDs.
+            let queried=unsafe{QueryInformationJobObject(self.handle,JobObjectBasicProcessIdList,
+                storage.as_mut_ptr().cast(),bytes,std::ptr::null_mut())}!=0;
+            if !queried{
+                let error=unsafe{windows_sys::Win32::Foundation::GetLastError()};
+                if error==windows_sys::Win32::Foundation::ERROR_MORE_DATA && slots<4096{
+                    slots=(slots*2).min(4096);continue;
+                }
+                return Err(SpawnError::Io("owned job membership unavailable or exceeds budget".into()));
+            }
+            let list=storage.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+            // SAFETY: successful query initialized this header and trailing IDs.
+            let count=unsafe{(*list).NumberOfProcessIdsInList} as usize;
+            if count>slots{return Err(SpawnError::Io("owned job membership exceeds budget".into()));}
+            let ids=unsafe{std::slice::from_raw_parts(
+                storage.as_ptr().cast::<u8>().add(std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST,ProcessIdList)).cast::<usize>(),count)};
+            return ids.iter().map(|pid|u32::try_from(*pid).map_err(|_|ownership_error())).collect();
+        }
+    }
+}
+#[cfg(windows)]
+impl Drop for Job {
+    fn drop(&mut self) {
+        // SAFETY: sole owned handle; KILL_ON_JOB_CLOSE remains a last-resort guard.
+        if unsafe{windows_sys::Win32::Foundation::CloseHandle(self.handle)}==0 {
+            tracing::error!(code="PROCESS_CLEANUP_FAILED","owned job handle close failed");
+        }
+    }
+}
+
+#[cfg(windows)]
+fn resume_primary(process:windows_sys::Win32::Foundation::HANDLE,pid:u32)->Result<(),SpawnError>{
+    use windows_sys::Win32::{Foundation::{CloseHandle,INVALID_HANDLE_VALUE},System::{
+        Diagnostics::ToolHelp::*,Threading::{OpenThread,ResumeThread,GetProcessIdOfThread,WaitForSingleObject,THREAD_SUSPEND_RESUME,THREAD_QUERY_LIMITED_INFORMATION}}};
+    // SAFETY: read-only system thread snapshot; primary thread has not executed.
+    let snapshot=unsafe{CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0)};
+    if snapshot==INVALID_HANDLE_VALUE{return Err(ownership_error());}
+    let mut entry=THREADENTRY32::default();entry.dwSize=std::mem::size_of_val(&entry) as u32;
+    let mut found=None;
+    let deadline=Instant::now()+RECLAIM_DEADLINE;
+    // SAFETY: snapshot and correctly sized initialized entry remain valid.
+    let mut has=unsafe{Thread32First(snapshot,&mut entry)}!=0;
+    while has && Instant::now()<deadline {
+        if entry.th32OwnerProcessID==pid {
+            if found.replace(entry.th32ThreadID).is_some(){unsafe{CloseHandle(snapshot)};return Err(ownership_error());}
+        }
+        has=unsafe{Thread32Next(snapshot,&mut entry)}!=0;
+    }
+    unsafe{CloseHandle(snapshot)};
+    if has{return Err(ownership_error());}
+    let tid=found.ok_or_else(ownership_error)?;
+    let thread=unsafe{OpenThread(THREAD_SUSPEND_RESUME|THREAD_QUERY_LIMITED_INFORMATION,0,tid)};
+    if thread.is_null(){return Err(ownership_error());}
+    // Retained process handle must still identify a live suspended root; a
+    // recycled thread ID cannot authorize resuming an unrelated process.
+    let valid=unsafe{GetProcessIdOfThread(thread)==pid && WaitForSingleObject(process,0)==258};
+    let resumed=valid && unsafe{ResumeThread(thread)}==1;
+    unsafe{CloseHandle(thread)};
+    if resumed{Ok(())}else{Err(ownership_error())}
+}
+
+// This platform has no implemented authoritative non-breakaway containment.
+// Refuse before spawn rather than claiming PPID/process-group sweeps prove it.
+#[cfg(not(windows))]
+pub(crate) struct Job;
+#[cfg(not(windows))]
+impl Job {
+    fn new()->Result<Self,SpawnError>{Err(ownership_error())}
+    fn terminate(&self)->Result<(),SpawnError>{Err(ownership_error())}
+    fn members(&self)->Result<Vec<u32>,SpawnError>{Err(ownership_error())}
+    fn empty(&self)->Result<bool,SpawnError>{Err(ownership_error())}
+}
+
+#[cfg(all(test,windows))]
+pub(crate) fn snapshot_pids()->std::collections::HashSet<u32>{
+    use windows_sys::Win32::{Foundation::{CloseHandle,INVALID_HANDLE_VALUE},System::Diagnostics::ToolHelp::*};
+    let snapshot=unsafe{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0)};
+    assert_ne!(snapshot,INVALID_HANDLE_VALUE,"process observation unavailable");
+    let mut entry=PROCESSENTRY32W::default();entry.dwSize=std::mem::size_of_val(&entry) as u32;
+    let mut ids=std::collections::HashSet::new();
+    let mut has=unsafe{Process32FirstW(snapshot,&mut entry)}!=0;
+    while has{ids.insert(entry.th32ProcessID);has=unsafe{Process32NextW(snapshot,&mut entry)}!=0;}
+    unsafe{CloseHandle(snapshot)};ids
+}
+#[cfg(all(test,not(windows),not(target_os = "linux")))]
+pub(crate) fn snapshot_pids()->std::collections::HashSet<u32>{
+    panic!("authoritative process containment is unavailable on this platform")
+}
+
+#[cfg(all(test,windows))]
+mod ownership_tests{
+    use super::*;
+    fn empty_registered()->HostProcess{
+        let executable=crate::runtime::test_support::node_executable();
+        let cwd=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let config=HostConfig{
+            trusted_executable_roots:vec![executable.parent().unwrap().to_owned()],
+            trusted_cwd_roots:vec![cwd.clone()],executable,cwd,
+            argv:vec!["-e".into(),"process.exit(0)".into()],
+            allowed_env:Vec::new(),source_env:std::collections::BTreeMap::new(),
+            extra_env:std::collections::BTreeMap::new(),
+        };
+        let mut host=spawn_host(&config).expect("spawn an actual contained immediate-exit fixture");
+        let lease=host.reclaim_lease().expect("retain the original job and root handle");
+        lease.reclaim().expect("bound fixture exit without relying on accounting alone");
+        host.child.wait().expect("fixture original process handle observes exit");
+        host
+    }
+    #[test]
+    fn empty_accounting_without_a_retained_root_handle_cannot_prove_cleanup(){
+        let job=Job::new().unwrap();
+        assert_eq!(job.active().unwrap(),0);
+        assert!(job.empty().is_err(),"job accounting alone cannot prove the original root process signaled");
+    }
+    #[test]
+    fn recycled_numeric_pid_cannot_select_a_different_job(){
+        // A real fixture root has already exited; a changed registration stamp
+        // must not authorize cleanup of any process that later reuses its PID.
+        let original=empty_registered();
+        let root=NativeRoot{root_pid:original.pid(),spawned_at_ms:original.started_at_ms,exited_at_ms:None};
+        let mut replacement=root;
+        replacement.spawned_at_ms=0;
+        assert!(reclaim_process_tree(replacement).is_err());
+        assert!(reclaim_process_tree(root).unwrap().killed.is_empty());
+    }
+    #[test]
+    fn recorded_job_failure_is_never_reported_as_verified_cleanup(){
+        let owner=empty_registered();
+        let lease=owner.reclaim_lease().unwrap();
+        // Synthetic failure injection stays private to this unit test; there is
+        // no runtime config flag or untrusted handle close/reuse in the fixture.
+        let OwnedReclaimLease::Job { root, job } = &lease;
+        job.termination.store(3,Ordering::Release);
+        assert!(job.empty().is_err());
+        assert!(reclaim_process_tree(*root).is_err());
+    }
+    #[test]
+    fn retained_lease_preserves_empty_proof_after_original_owner_and_registry_retire(){
+        let owner=empty_registered();
+        let lease=owner.reclaim_lease().expect("capture actual job ownership while owner is live");
+        let OwnedReclaimLease::Job { root, .. } = &lease;
+        let root = *root;
+        drop(owner);
+        assert!(reclaim_process_tree(root).is_err(),"retired numeric metadata must not restore ownership");
+        assert!(lease.reclaim().unwrap().killed.is_empty(),"strong lease must still prove the original job empty");
+    }
 }
 
 pub struct RunEntry {
@@ -349,6 +442,12 @@ impl Supervisor {
     /// Identity for independent teardown while a blocking pipe read is active.
     pub fn reclaim_root(&self, run_id: &str) -> Option<ReclaimRoot> {
         self.runs.get(run_id).map(|entry| entry.host.reclaim_root())
+    }
+
+    /// Capture strong OS ownership while the real Host is still present. The
+    /// resulting lease remains reclaimable after this Supervisor is dropped.
+    pub(crate) fn reclaim_lease(&self,run_id:&str)->Option<OwnedReclaimLease>{
+        self.runs.get(run_id)?.host.reclaim_lease()
     }
 
     pub fn start_run(&mut self, run_id: &str) -> Result<(), SpawnError> {
@@ -404,7 +503,9 @@ impl Supervisor {
             .map(|entry| entry.run_id.clone())
             .collect();
         for run_id in &expired {
-            let _ = self.cancel_run(run_id);
+            if self.cancel_run(run_id).is_err(){
+                tracing::error!(code="PROCESS_CLEANUP_FAILED","deadline reclamation failed");
+            }
         }
         expired
     }
@@ -413,16 +514,262 @@ impl Supervisor {
         let run_ids: Vec<String> = self.runs.keys().cloned().collect();
         run_ids
             .iter()
-            .filter_map(|run_id| self.cancel_run(run_id).ok())
+            .filter_map(|run_id|match self.cancel_run(run_id) {
+                Ok(report)=>Some(report),
+                Err(_)=>{tracing::error!(code="PROCESS_CLEANUP_FAILED","supervisor shutdown reclamation failed");None}
+            })
             .collect()
     }
 }
 
 impl Drop for Supervisor {
     fn drop(&mut self) {
-        self.shutdown();
+        // Dropping run ownership requests immediate job termination. Explicit
+        // shutdown is the bounded proof/report path; Drop never blocks a worker.
+        self.runs.clear();
     }
 }
+
+#[cfg(all(test,not(target_os = "linux")))]
+mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn recycled_root_generation_does_not_authorize_its_descendants() {
+        // Real OS tree with stale-owner metadata: a deterministic surrogate for
+        // root PID recycling, not a claim that natural PID reuse was forced.
+        struct Fixture { host: HostProcess }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                self.host.kill_tree().expect("actual owned fixture job must be empty and its original root signaled");
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root_marker = temp.path().join("root.json");
+        let leaf_marker = temp.path().join("leaf.json");
+        let server = concat!(
+            "const fs = require('node:fs');",
+            "const http = require('node:http');",
+            "const marker = process.argv[1];",
+            "const server = http.createServer((req, res) => res.end(String(process.pid)));",
+            "server.listen(0, '127.0.0.1', () => {",
+            "fs.writeFileSync(marker + '.tmp',JSON.stringify({pid: process.pid, port: server.address().port}));",
+            "fs.renameSync(marker + '.tmp', marker);",
+            "});",
+        );
+        let script = format!(
+            "require('node:child_process').spawn(process.execPath, ['-e', {}, process.argv[2]], {{detached:true, stdio:'ignore'}}).unref(); {}",
+            serde_json::to_string(server).unwrap(), server
+        );
+        let executable = node_executable();
+        let extra_env = system_env();
+        let config = HostConfig {
+            trusted_executable_roots: vec![executable.parent().unwrap().to_owned()],
+            executable,
+            argv: vec!["-e".into(), script, root_marker.to_string_lossy().into_owned(), leaf_marker.to_string_lossy().into_owned()],
+            cwd: temp.path().to_owned(),
+            allowed_env: extra_env.keys().cloned().collect(),
+            source_env: BTreeMap::new(),
+            extra_env,
+            trusted_cwd_roots: vec![temp.path().to_owned()],
+        };
+        let mut fixture = Fixture { host: spawn_host(&config).expect("spawn actual owned foreign-tree control") };
+        let mut stale_root = fixture.host.reclaim_root();
+        stale_root.spawned_at_ms -= 1;
+        wait_for_file(&root_marker);
+        wait_for_file(&leaf_marker);
+        let read_marker = |path: &std::path::Path| -> serde_json::Value {
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+        };
+        let root_info = read_marker(&root_marker);
+        let leaf_info = read_marker(&leaf_marker);
+        let leaf_pid = leaf_info["pid"].as_u64().unwrap() as u32;
+        let usable = |info: &serde_json::Value| -> bool {
+            use std::io::{Read, Write};
+            let address = format!("127.0.0.1:{}", info["port"].as_u64().unwrap());
+            let Ok(mut stream) = std::net::TcpStream::connect(address) else { return false; };
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            stream.write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n").unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).is_ok()
+                && response.ends_with(&info["pid"].as_u64().unwrap().to_string())
+        };
+        assert!(usable(&root_info) && usable(&leaf_info));
+        let result = reclaim_process_tree(stale_root);
+        let root_alive = fixture.host.child.try_wait().unwrap().is_none();
+        let leaf_alive = process_alive(leaf_pid);
+        let root_usable = usable(&root_info);
+        let leaf_usable = usable(&leaf_info);
+        eprintln!("stale-owner reclaim: result={result:?}; root_alive={root_alive}; leaf_alive={leaf_alive}; root_usable={root_usable}; leaf_usable={leaf_usable}");
+        assert!(root_alive && leaf_alive && root_usable && leaf_usable,
+            "stale root generation cannot authorize killing the foreign tree");
+        assert!(result.is_err(), "recycled root attribution must fail closed");
+    }
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::runtime::host::HostConfig;
+    use crate::runtime::test_support::{fake_runtime, node_executable, process_alive};
+    use crate::runtime::{EnvelopeMethod, RuntimeEnvelope};
+
+    fn system_env() -> BTreeMap<String, String> {
+        // std::process::Command with env_clear builds a truly bare environment
+        // block (no libuv-style baseline), so system essentials must be part of
+        // the explicit allowlist like any other variable.
+        let names = ["SystemRoot", "SystemDrive", "WINDIR", "TEMP", "TMP", "PATH"];
+        names
+            .iter()
+            .filter_map(|name| {
+                std::env::var(name)
+                    .ok()
+                    .map(|value| ((*name).to_owned(), value))
+            })
+            .collect()
+    }
+
+    fn spawn_config(mut extra: BTreeMap<String, String>, cwd: &std::path::Path) -> HostConfig {
+        let node = node_executable();
+        let node_root = node.parent().expect("node parent").to_path_buf();
+        for (key, value) in system_env() {
+            extra.entry(key).or_insert(value);
+        }
+        let allowed_env: Vec<String> = extra.keys().cloned().collect();
+        HostConfig {
+            executable: node,
+            argv: vec![fake_runtime().to_string_lossy().into_owned()],
+            cwd: cwd.to_path_buf(),
+            allowed_env,
+            source_env: BTreeMap::new(),
+            extra_env: extra,
+            trusted_executable_roots: vec![node_root],
+            trusted_cwd_roots: vec![cwd.to_path_buf()],
+        }
+    }
+
+    fn wait_for_file(path: &std::path::Path) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {}",
+                path.display()
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn reclaims_detached_orphans_left_by_a_crashed_child() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let pid_file = temp.path().join("pids.json");
+        let mut extra = BTreeMap::new();
+        extra.insert("TEST_SCENARIO".to_owned(), "crash".to_owned());
+        extra.insert("FAKE_RUNTIME_SPAWN_CHILD".to_owned(), "1".to_owned());
+        extra.insert(
+            "FAKE_RUNTIME_PID_FILE".to_owned(),
+            pid_file.to_string_lossy().into_owned(),
+        );
+        let config = spawn_config(extra, temp.path());
+        let mut host = spawn_host(&config).expect("spawn host");
+        host.send(&RuntimeEnvelope::request(
+            "req-1",
+            EnvelopeMethod::StartRun,
+            serde_json::json!({}),
+        ))
+        .expect("send start_run");
+        // Child::wait otherwise closes stdin while the asynchronous crash fixture
+        // is still proving its detached descendant ready, turning the crash into EOF.
+        let _stdin_guard = host.child.stdin.take();
+        let status = host.child.wait().expect("wait for crash");
+        assert_eq!(
+            status.code(),
+            Some(7),
+            "fake runtime crash scenario exits 7"
+        );
+
+        wait_for_file(&pid_file);
+        let pids: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&pid_file).expect("pid file"))
+                .expect("pid json");
+        let grandchild = pids["grandchild_pid"].as_u64().expect("grandchild pid") as u32;
+        assert!(
+            process_alive(grandchild),
+            "detached grandchild must survive the crash"
+        );
+
+        let root_exited_at_ms = now_ms();
+        let report = reclaim_process_tree(NativeRoot {
+            root_pid: host.pid(),
+            spawned_at_ms: host.started_at_ms,
+            exited_at_ms: Some(root_exited_at_ms),
+        })
+        .expect("reclaim");
+        if cfg!(windows) {
+            assert_eq!(
+                report.mechanism,
+                JOB_MECHANISM
+            );
+        }
+        assert!(
+            report.descendants_found.contains(&grandchild),
+            "orphan remains a member of the retained owned job"
+        );
+        assert!(!process_alive(grandchild), "detached orphan reclaimed");
+    }
+
+    #[test]
+    fn enforce_deadlines_reclaims_the_tree_of_a_stuck_run() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let pid_file = temp.path().join("pids.json");
+        let mut extra = BTreeMap::new();
+        extra.insert("TEST_SCENARIO".to_owned(), "slow".to_owned());
+        extra.insert("FAKE_RUNTIME_SPAWN_CHILD".to_owned(), "1".to_owned());
+        extra.insert(
+            "FAKE_RUNTIME_PID_FILE".to_owned(),
+            pid_file.to_string_lossy().into_owned(),
+        );
+        let config = spawn_config(extra, temp.path());
+        let mut supervisor = Supervisor::new(config, Some(Duration::from_millis(300)));
+        supervisor.start_run("run-slow").expect("start run");
+        supervisor
+            .send(
+                "run-slow",
+                &RuntimeEnvelope::request("req-1", EnvelopeMethod::StartRun, serde_json::json!({})),
+            )
+            .expect("send start_run");
+        wait_for_file(&pid_file);
+        let pids: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&pid_file).expect("pid file"))
+                .expect("pid json");
+        let grandchild = pids["grandchild_pid"].as_u64().expect("grandchild pid") as u32;
+
+        thread::sleep(Duration::from_millis(500));
+        let expired = supervisor.enforce_deadlines();
+        assert_eq!(
+            expired,
+            vec!["run-slow".to_owned()],
+            "stuck run reclaimed at its deadline"
+        );
+        assert!(
+            !process_alive(grandchild),
+            "grandchild reclaimed with the timed-out run"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn reclaim_process_tree(root: ReclaimRoot) -> Result<ReclaimReport, SpawnError> {
+    linux_broker::reclaim(root)
+}
+#[cfg(all(test,target_os = "linux"))]
+pub(crate) fn snapshot_records() -> HashMap<u32, ProcessRecord> {
+    linux_broker::snapshot_records()
+}
+#[cfg(all(test,target_os = "linux"))]
+pub(crate) fn snapshot_pids() -> std::collections::HashSet<u32> {
+    snapshot_records().into_keys().collect()
+}
+
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
 pub mod linux_broker {
@@ -1268,8 +1615,8 @@ pub mod linux_broker {
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(all(test,target_os = "linux"))]
+mod linux_host_tests {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
@@ -1324,93 +1671,6 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn recycled_root_generation_does_not_authorize_its_descendants() {
-        // Real OS tree with stale-owner metadata: a deterministic surrogate for
-        // root PID recycling, not a claim that natural PID reuse was forced.
-        struct Fixture {
-            child: std::process::Child,
-            targets: Vec<windows_processes::Target>,
-        }
-        impl Drop for Fixture {
-            fn drop(&mut self) {
-                for target in &self.targets {
-                    if target.still_current().expect("fixture cleanup identity") {
-                        let pid = target.pid.to_string();
-                        run_tool(&system_tool("taskkill.exe"), &["/pid", &pid, "/T", "/F"]);
-                    }
-                }
-                self.child.wait().expect("fixture root reaped");
-                for target in &self.targets {
-                    assert!(!target.alive().expect("fixture exit observation"));
-                }
-                eprintln!("fixture cleanup: retained owned root/leaf handles signaled");
-            }
-        }
-        let temp = tempfile::tempdir().unwrap();
-        let root_marker = temp.path().join("root.json");
-        let leaf_marker = temp.path().join("leaf.json");
-        let server = r#"
-            const fs = require('node:fs');
-            const http = require('node:http');
-            const marker = process.argv[1];
-            const server = http.createServer((req, res) => res.end(String(process.pid)));
-            server.listen(0, '127.0.0.1', () => {
-                fs.writeFileSync(marker + '.tmp',
-                    JSON.stringify({pid: process.pid, port: server.address().port}));
-                fs.renameSync(marker + '.tmp', marker);
-            });
-        "#;
-        let script = format!(
-            "require('node:child_process').spawn(process.execPath, ['-e', {}, process.argv[2]], {{detached:true, stdio:'ignore'}}).unref(); {}",
-            serde_json::to_string(server).unwrap(), server
-        );
-        let child = Command::new(node_executable())
-            .args(["-e", &script])
-            .arg(&root_marker)
-            .arg(&leaf_marker)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .creation_flags(0x0800_0000)
-            .spawn().unwrap();
-        let root_target = windows_processes::Target::open(child.id()).unwrap().unwrap();
-        let stale_spawn = root_target.created_ms().unwrap() - 1;
-        let mut fixture = Fixture { child, targets: vec![root_target] };
-        wait_for_file(&root_marker);
-        wait_for_file(&leaf_marker);
-        let read_marker = |path: &std::path::Path| -> serde_json::Value {
-            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
-        };
-        let root_info = read_marker(&root_marker);
-        let leaf_info = read_marker(&leaf_marker);
-        let leaf_pid = leaf_info["pid"].as_u64().unwrap() as u32;
-        fixture.targets.push(windows_processes::Target::open(leaf_pid).unwrap().unwrap());
-        assert_eq!(snapshot_records().unwrap()[&leaf_pid].ppid, fixture.child.id());
-        let usable = |info: &serde_json::Value| -> bool {
-            use std::io::{Read, Write};
-            let address = format!("127.0.0.1:{}", info["port"].as_u64().unwrap());
-            let Ok(mut stream) = std::net::TcpStream::connect(address) else { return false; };
-            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-            stream.write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n").unwrap();
-            let mut response = String::new();
-            stream.read_to_string(&mut response).is_ok()
-                && response.ends_with(&info["pid"].as_u64().unwrap().to_string())
-        };
-        assert!(usable(&root_info) && usable(&leaf_info));
-        let result = reclaim_process_tree(ReclaimRoot {
-            root_pid: fixture.child.id(), spawned_at_ms: stale_spawn, exited_at_ms: None,
-        });
-        let root_alive = fixture.targets[0].alive().unwrap();
-        let leaf_alive = fixture.targets[1].alive().unwrap();
-        let root_usable = usable(&root_info);
-        let leaf_usable = usable(&leaf_info);
-        eprintln!("stale-owner reclaim: result={result:?}; root_alive={root_alive}; leaf_alive={leaf_alive}; root_usable={root_usable}; leaf_usable={leaf_usable}");
-        assert!(root_alive && leaf_alive && root_usable && leaf_usable,
-            "stale root generation cannot authorize killing the foreign tree");
-        assert!(result.is_err(), "recycled root attribution must fail closed");
-    }
     #[test]
     fn reclaims_detached_orphans_left_by_a_crashed_child() {
         let temp = tempfile::tempdir().expect("tempdir");

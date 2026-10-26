@@ -23,6 +23,16 @@ Vite 的 `/api` proxy 目标固定为 `http://127.0.0.1:48100`；改变 `WEBLABE
 
 开发入口退出一项即停止其拥有的进程组；正式入口按自己的 Ctrl+C 生命周期停止服务并释放自己的锁。不要终止用户其他服务，或在服务活着时删 runtime.lock。发行构建、doctor、启动的 `--build-dir` 必须相同。参数与环境覆盖规则见[配置参考](configuration.md)。
 
+### 原生 Rust 入口的过渡验证（R02）
+
+旧默认 `weblabel-api` 与上述 Node 启动链在 R09 切换前仍保留；不得把新入口的 smoke 当作最终发行。新增的永久目标可用 `cargo run -p weblabel-api --bin weblabel --locked -- serve-api` 启动开发 API；仍须显式设置 `WEBLABEL_COOKIE_SECURE` 并选择独立合成数据库。正式同源验证使用 `weblabel serve --build-dir <已校验的v2发行目录> --data-dir <独立数据目录> --port <端口>`，不接受旧 `--api-port`。该目标不启动 Node/Python。
+
+`weblabel doctor --build-dir <同一发行目录> [--data-dir <目录>]` 只读输出一个脱敏 JSON。显式无效配置或数据目录导致非零退出；省略可选 AI 配置不等于错误，也不代表模型 ready。OS sidecar 锁按实际持有状态判断，不能通过删除文件“解锁”。运行配置仅来自 `WEBLABEL_RUNTIME_CONFIG/WEBLABEL_RUNTIME_ALLOWED_ENV`；旧 `WEBLABEL_HOST_*` 的存在只触发迁移诊断，不读取其内容或启动旧 Host。
+
+HTTP 适配器与 Claude MCP 已接入原生执行链；是否可用仍取决于真实配置、授权、本人官方运行时与动态能力，配置或诊断不等于 live 通过。`mcp-stdio`、`detector-worker` 已有真实协议入口；R05 的检测器数值等价与文件软链接负控仍未完成，唯一账本冻结于 3/20 debits，用户已停止进一步推理。尚未实现的原生 backup/restore/preflight 命令明确拒绝，不提供成功占位。
+
+首次设置账户在资格读取前用 SQLite `BEGIN IMMEDIATE` 取得 writer reservation；事务持有专用连接，取消和结束时关闭连接，不能把活动事务归还读取池。并发等待不意味着重试 bootstrap POST，原 launch-code、恢复资格和一次性 reservation 规则不变。阶段性原始轨迹留在私有归档 `reports/T35/html-rust-rebuild/index.md`；公开来源、合并验证与限制见[结构化发布记录](../reports/publication/native-html-rust-rebuild.json)。
+
 ## 按模块定位修改
 
 | 修改对象 | 负责模块 | 消费者和必须一起考虑的边界 |
@@ -44,8 +54,8 @@ Vite 的 `/api` proxy 目标固定为 `http://127.0.0.1:48100`；改变 `WEBLABE
 
 1. 先确认[共享契约](contracts.md)对应章节及当前恢复增量，区分约束、实现与已验证结果。`schema_version=1` 与 Host `protocol_version=1` 不意味着 HTTP 路径带 `/v1`。
 2. Rust 领域类型是生成 wire 的来源。修改需由主集成者批准；同时更新序列化、验证、golden 输入及 Rust/TS 消费者。handler-local DTO 仍须直接核对 handler，不能假称所有响应都已生成。
-3. `pnpm contracts:generate` 运行 xtask，写 `packages/contracts/generated` 的 TS/JSON Schema。不要手补 generated 来消除类型错误。
-4. `pnpm contracts:check` 会编译 Rust，并在进程临时目录生成对照文件后检查，不是只读命令；如需全产物留在项目内，应在本次子进程设置项目内临时目录。生成失败保留诊断，不拿旧输出当 ACK。
+3. `pnpm contracts:generate` 先运行 Rust xtask，写 `packages/contracts/generated` 的 TS/JSON Schema，再运行开发期 Node 生成器，把既有浏览器契约编译、打包到 `packages/contracts/src/browser-validators.generated.js`。两类生成物均不得手改；Rust 类型仍是 wire 来源。
+4. `pnpm contracts:check` 编译 Rust，在项目内唯一 `target/test-artifacts/html-rust-rebuild/contracts-check-*` 目录生成对照，并检查 browser standalone 产物漂移；它不是只读文件系统命令。Node/AJV/esbuild 只参与开发期生成，浏览器不运行 schema compiler，严格 CSP 不需要 `unsafe-eval`。`pnpm test:contracts` 同时运行原 Node 消费者及 `--disallow-code-generation-from-strings` 下的浏览器消费者；这些检查不替代真实浏览器验收。生成失败保留诊断，不拿旧输出当 ACK。
 5. 迁移每个实际调用者：可空字段仍必须显式 null，普通 SaveRequest 也完整携带 `lease:null` 和 `suggestion_decisions:[]`。lease、operation/base、journal 不能在未知重放时换值。
 6. 完成窄行为检查后再交主集成者统一生成、全树检查和集成；共享 manifest/lockfile、migrations 编号、路由装配、全局导航与 STATUS 不由并发模块作者写。协作边界见[执行规程](execution.md)。
 

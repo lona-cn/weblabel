@@ -34,6 +34,7 @@ pub(crate) struct AiState {
     pub(crate) allow_mock_runs: bool,
     /// Run-scoped bearer tokens for `/internal/agent-tools/{tool}` (C5).
     pub(crate) run_tokens: crate::runtime::run_tokens::RunTokenStore,
+    pub(crate) profile_configuration: crate::runtime::config::ProfileConfiguration,
 }
 
 pub fn router(
@@ -41,11 +42,13 @@ pub fn router(
     auth: AuthState,
     allow_mock_runs: bool,
     run_tokens: crate::runtime::run_tokens::RunTokenStore,
+    profile_configuration: crate::runtime::config::ProfileConfiguration,
 ) -> Router {
     let state = AiState {
         repository,
         allow_mock_runs,
         run_tokens,
+        profile_configuration,
     };
     let app = Router::new()
         .route("/api/model-profiles", get(profiles::list))

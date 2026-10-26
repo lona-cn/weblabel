@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-export function validateTaskGraph(tasks) {
+export function validateTaskGraph(tasks, idPattern = /^T\d{2}$/) {
  const errors=[];
  if(!Array.isArray(tasks) || tasks.length===0) return ['tasks must be a non-empty array'];
  const byId=new Map();
  for(const t of tasks){
-  if(!/^T\d{2}$/.test(t.id??'')) errors.push(`invalid task id: ${t.id}`);
+  if(!idPattern.test(t.id??'')) errors.push(`invalid task id: ${t.id}`);
   if(byId.has(t.id)) errors.push(`duplicate task: ${t.id}`);
   byId.set(t.id,t);
   if(!Array.isArray(t.depends_on)) errors.push(`${t.id}: depends_on must be array`);
@@ -34,25 +34,35 @@ export function checkPack(root){
  errors.push(...validateTaskGraph(manifest.tasks));
  const expected=Array.from({length:36},(_,i)=>`T${String(i).padStart(2,'0')}`);
  if(JSON.stringify(manifest.tasks.map(t=>t.id))!==JSON.stringify(expected))errors.push('expected exactly T00..T35');
+ if(manifest.refactor_tasks!==undefined){
+  errors.push(...validateTaskGraph(manifest.refactor_tasks,/^R\d{2}$/));
+  const expectedRefactor=Array.from({length:12},(_,i)=>`R${String(i).padStart(2,'0')}`);
+  if(JSON.stringify(manifest.refactor_tasks.map(t=>t.id))!==JSON.stringify(expectedRefactor))errors.push('expected exactly R00..R11');
+ }
  if(manifest.max_parallel_writers!==3||manifest.max_parallel_reviewers!==1)errors.push('unexpected concurrency budget');
  const allowed=['pending','running','review','done','blocked','failed'];
  const safeExists=rel=>{
   const abs=path.resolve(root,rel);
   return abs.startsWith(path.resolve(root)+path.sep)&&fs.existsSync(abs);
  };
- for(const t of manifest.tasks){
-  if(!safeExists(t.card))errors.push(`${t.id}: missing card ${t.card}`);
-  if(t.owner!=='main'&&!safeExists(`.omp/agents/${t.owner}.md`))errors.push(`${t.id}: missing owner ${t.owner}`);
-  const s=state.tasks[t.id];
-  if(!s||!allowed.includes(s.status)){errors.push(`${t.id}: invalid status`);continue;}
-  if(s.status==='done'){
-   if(!/^[0-9a-f]{40,64}$/.test(s.integrated_commit??''))errors.push(`${t.id}: done without actual commit`);
-   if(!Array.isArray(s.evidence)||!s.evidence.length||s.evidence.some(p=>!safeExists(p)))errors.push(`${t.id}: done without existing evidence`);
-   for(const d of t.depends_on)if(state.tasks[d]?.status!=='done')errors.push(`${t.id}: dependency not done: ${d}`);
+ const checkTasks=(tasks,statuses)=>{
+  for(const t of tasks){
+   if(!safeExists(t.card))errors.push(`${t.id}: missing card ${t.card}`);
+   if(t.owner!=='main'&&!safeExists(`.omp/agents/${t.owner}.md`))errors.push(`${t.id}: missing owner ${t.owner}`);
+   const s=statuses?.[t.id];
+   if(!s||!allowed.includes(s.status)){errors.push(`${t.id}: invalid status`);continue;}
+   if(s.status==='done'){
+    if(!/^[0-9a-f]{40,64}$/.test(s.integrated_commit??''))errors.push(`${t.id}: done without actual commit`);
+    if(!Array.isArray(s.evidence)||!s.evidence.length||s.evidence.some(p=>!safeExists(p)))errors.push(`${t.id}: done without existing evidence`);
+    for(const d of t.depends_on)if(statuses?.[d]?.status!=='done')errors.push(`${t.id}: dependency not done: ${d}`);
+   }
   }
- }
+ };
+ checkTasks(manifest.tasks,state.tasks);
+ if(manifest.refactor_tasks!==undefined)checkTasks(manifest.refactor_tasks,state.user_requests?.html_rust_rebuild?.tasks);
  for(const f of ['PLAN.md','AGENTS.md','START_HERE.md','START_PROMPT.md','docs/architecture.md','docs/contracts.md','docs/testing-contracts.md','docs/execution.md','docs/verification.md','docs/reference/original-proposal.md','docs/sources.md','prompts/RESUME.md'])if(!safeExists(f))errors.push(`missing required file: ${f}`);
- return {ok:errors.length===0,scope:'plan_structure_only_not_product_verification',task_count:manifest.tasks.length,dependency_edges:manifest.tasks.reduce((n,t)=>n+t.depends_on.length,0),ready_tasks:manifest.tasks.filter(t=>state.tasks[t.id]?.status==='pending'&&t.depends_on.every(d=>state.tasks[d]?.status==='done')).map(t=>t.id),errors};
+ const rebuildTasks=manifest.refactor_tasks??[],rebuildState=state.user_requests?.html_rust_rebuild?.tasks??{};
+ return {ok:errors.length===0,scope:'plan_structure_only_not_product_verification',task_count:manifest.tasks.length,dependency_edges:manifest.tasks.reduce((n,t)=>n+t.depends_on.length,0),ready_tasks:manifest.tasks.filter(t=>state.tasks[t.id]?.status==='pending'&&t.depends_on.every(d=>state.tasks[d]?.status==='done')).map(t=>t.id),refactor_task_count:rebuildTasks.length,refactor_dependency_edges:rebuildTasks.reduce((n,t)=>n+t.depends_on.length,0),ready_refactor_tasks:rebuildTasks.filter(t=>rebuildState[t.id]?.status==='pending'&&t.depends_on.every(d=>rebuildState[d]?.status==='done')).map(t=>t.id),errors};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');

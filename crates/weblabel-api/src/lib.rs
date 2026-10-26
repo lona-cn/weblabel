@@ -3,15 +3,19 @@
 pub mod ai;
 pub mod annotations;
 pub mod auth;
+pub mod cli;
 pub mod config;
 pub mod datasets;
 pub mod jobs;
 pub mod media;
+pub mod ops;
 pub mod projects;
 pub mod readiness;
 pub mod review;
 pub mod runtime;
 pub mod storage;
+pub mod server;
+pub mod startup;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -39,6 +43,7 @@ pub struct AppState {
     pub allow_mock_runs: bool,
     /// Run-scoped bearer tokens for `/internal/agent-tools/{tool}` (T21, C5).
     pub run_tokens: crate::runtime::run_tokens::RunTokenStore,
+    pub profile_configuration: crate::runtime::config::ProfileConfiguration,
 }
 
 impl AppState {
@@ -105,13 +110,19 @@ impl AppState {
         Ok(Self {
             repository,
             auth,
-            allow_mock_runs: !config.production,
+            allow_mock_runs: cfg!(debug_assertions) && !config.production,
             run_tokens,
+            profile_configuration: crate::runtime::config::ProfileConfiguration::LegacyHost,
         })
     }
 }
 
 pub fn router(state: AppState) -> Router {
+    router_with_static(state, Router::new())
+}
+
+/// Same-origin application routes with an explicit, already verified static whitelist.
+pub fn router_with_static(state: AppState, static_router: Router) -> Router {
     let readiness_router = Router::new()
         .route("/ready", get(readiness::ready))
         .with_state(state.clone())
@@ -124,6 +135,7 @@ pub fn router(state: AppState) -> Router {
             .route("/health", get(health))
             .fallback(recovery_maintenance)
             .with_state(state.clone())
+            .merge(static_router)
             .merge(readiness_router)
             .merge(auth::password_recovery_router(state.auth.clone()))
             .layer(middleware::from_fn_with_state(
@@ -147,6 +159,7 @@ pub fn router(state: AppState) -> Router {
             state.auth.clone(),
             state.allow_mock_runs,
             state.run_tokens.clone(),
+            state.profile_configuration.clone(),
         ))
         .merge(annotations::router(
             state.repository.clone(),
@@ -169,6 +182,7 @@ pub fn router(state: AppState) -> Router {
             state.run_tokens.clone(),
             state.auth,
         ))
+        .merge(static_router)
         .fallback(not_found)
         .layer(middleware::from_fn(request_id))
 }

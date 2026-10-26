@@ -1,0 +1,7 @@
+{
+  "schema_version":1,
+  "ort":{"version":"2.0.0-rc.15","default_features":false,"features":["std","load-dynamic","api-23","tracing"],"source":"https://docs.rs/ort/2.0.0-rc.15/ort/"},
+  "runtime":{"version":"1.23.2","execution_provider":"CPUExecutionProvider","platform":"win-x64","source":"https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip","official_release_metadata":"https://api.github.com/repos/microsoft/onnxruntime/releases/tags/v1.23.2","archive_sha256":"0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd","library":{"path":"lib/onnxruntime.dll","bytes":14186016,"sha256":"dec964ab1ee36cc9b0ae247d13b376627992fc57dec0454354017ab8fd84f1ea"},"shared_library":{"path":"lib/onnxruntime_providers_shared.dll","bytes":22088,"sha256":"a2b3a50956aa75a9879c8472bc7df4f7a8072bcd2db19a1b7d988e7688f293ef"},"license":{"id":"MIT","path":"LICENSE","sha256":"c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674"},"third_party_notices":{"path":"ThirdPartyNotices.txt","sha256":"e00f828e0a33de591a355ae6606d2625f5758da7d2c844db7821c9dd3e3647b6"}},
+  "installation":"Project-local target/tools/onnxruntime-1.23.2; installation.json records extracted identities. No binary or weight in Git/default release.",
+  "observed":{"archive_verified":true,"library_loaded":false,"model_forward_count":0,"linux_tested":false}
+}

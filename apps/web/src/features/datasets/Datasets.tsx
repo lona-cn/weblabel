@@ -1,35 +1,18 @@
 import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react';
 import { useSession } from '../../app/providers';
 import { api, ApiFailure, saveAuthorizationEpoch, subscribeSaveAuthorization } from '../../lib/t15/api';
-import { failureText, isAmbiguous, LossReportView, readLossReport, type LossReport } from '../import-export/LossReportView';
+import { LossReportView } from '../import-export/LossReportView';
+import { failureText, isAmbiguous, type LossReport } from '../import-export/loss-report';
 import type { AssetAnnotationHead } from '../../../../../packages/contracts/generated/AssetAnnotationHead';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 
 import { planDelivery } from './delivery-plan';
+import { CAP, uuid, hash, object, eligible, strictReport, readArtifact, type Format, type Artifact } from './delivery-protocol';
 import '../projects/project-delivery.css';
 export type DeliveryTarget = { projectId: string; assetRevisionId: string; ontologyVersionId: string; annotationRevisionId: string | null; mode: 'workbench' | 'review' };
-type Format = 'native' | 'yolo' | 'coco';
 type Choice = { disposition: 'include' | 'exclude' | 'outside'; split: 'train' | 'val' | 'test'; reason: string; row: AssetAnnotationHead };
 type Page = { cursor: string | null; items: AssetAnnotationHead[]; next: string | null };
 type Intent = { readonly scope: string; readonly kind: 'snapshot' | 'export'; readonly path: string; readonly body: string; uncertain: boolean; sending: boolean; view?: { base: string; ontology: string; format: Format; pages: Page[]; pageIndex: number; choices: Map<string, Choice>; snapshot: string; revision: number; plan?: Awaited<ReturnType<typeof planDelivery>> | null; batch?: number; batchSnapshots?: Record<number, string>; planConfirmed?: boolean } };
-type Artifact = { export_id: string; format: Format; download_url: string; byte_size: number; object_sha256: string; loss_report: LossReport };
-const CAP = 1024;
-const ZIP_CAP = 100663296;
-const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-const hash = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
-function object(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
-function eligible(row: AssetAnnotationHead, ontology: string): boolean {
-  return Boolean(row.head && row.head.ontology_version_id === ontology && row.head.approved_review_id && ['complete', 'confirmed_negative'].includes(row.head.completion));
-}
-function strictReport(value: unknown): LossReport | null {
-  const report = readLossReport(value);
-  return report && report.losses.every(loss => loss.field.trim() && loss.reason.trim()) ? report : null;
-}
-function readArtifact(value: unknown, job: string, format: Format): Artifact {
-  const result = object(value), report = strictReport(result.loss_report);
-  if (result.export_id !== job || result.format !== format || result.download_url !== `/api/exports/${job}/download` || !Number.isSafeInteger(result.byte_size) || Number(result.byte_size) < 22 || Number(result.byte_size) > ZIP_CAP || !hash(result.object_sha256) || !report) throw new Error('导出产物身份或校验信息无效。');
-  return { export_id: job, format, download_url: String(result.download_url), byte_size: Number(result.byte_size), object_sha256: result.object_sha256, loss_report: report };
-}
 
 export function Datasets({ projectId, onWorkbench }: { projectId: string; onWorkbench: (target?: DeliveryTarget) => void }) {
   const { entry } = useSession();

@@ -1,6 +1,6 @@
 import type { BBox } from '../../../../../packages/contracts/generated/BBox';
 import { useEffect, useRef, useState } from 'react';
-import { canAcceptSuggestion, type CandidateEntry } from './useRun';
+import { canAcceptSuggestion, type CandidateEntry } from './run-controller';
 import { DiffView } from './DiffView';
 import { checkedRejectionState, knownRejectionFailure, rejectionApi, type RejectionPayload } from './rejections';
 

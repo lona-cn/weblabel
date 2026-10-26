@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import './import-export.css';
 import { api, ApiFailure } from '../../lib/t15/api';
-import { failureText } from './LossReportView';
+import { failureText } from './loss-report';
 type Props = { projectId: string; canImport: boolean; catalogLocked?: boolean; onImported: () => Promise<void> };
 type Item = { item_index: number; state: string; error: string | null; error_code: string | null };
 const reasons: Record<string, string> = {

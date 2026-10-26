@@ -13,7 +13,7 @@ import { CandidateList } from './CandidateList';
 import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
 import { Panel } from './Panel';
 import { SaveQueue } from '../../lib/persistence/save-queue';
-import { candidateCacheKey, canAcceptSuggestion, type CandidateEntry, type RunApi } from './useRun';
+import { candidateCacheKey, canAcceptSuggestion, type CandidateEntry, type RunApi } from './run-controller';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 import type { DraftRecord, SaveQueueOwner, SaveRequest, SaveResponse } from '../../lib/persistence/types';
 import { ActivityCollector } from '../workbench/activity';

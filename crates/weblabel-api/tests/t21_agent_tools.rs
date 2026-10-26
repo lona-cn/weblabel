@@ -797,6 +797,10 @@ async fn revoked_and_cancelled_runs_kill_their_tokens() {
     }
 
     // (b) user cancellation revokes the run's tokens immediately.
+    let run_id = fixture.create_run(
+        "t21-op-cancelled-independent", &fixture.project_id, &fixture.ontology_id,
+        fixture.asset(), "detect", "detect persons", &[],
+    ).await;
     let token = fixture.issue_token(&run_id, &fixture.project_id, Duration::from_secs(600));
     let (status, _) = fixture
         .call_tool(Some(&token), None, "get_context", json!({}))
@@ -2080,5 +2084,56 @@ async fn get_context_returns_the_frozen_run_context_and_rejects_arguments() {
             response["code"] == "IDENTITY_OVERRIDE" || response["code"] == "INVALID_ARGUMENTS",
             "{response}"
         );
+    }
+}
+
+#[tokio::test]
+async fn candidate_publication_rechecks_original_capability_after_facts_and_writer_queue() {
+    use std::{future::Future, task::Poll};
+    use weblabel_api::runtime::agent_tools::AgentToolService;
+
+    let fixture = fixture().await;
+    let run_id = fixture.create_run(
+        "t21-queued-publication-revoked", &fixture.project_id, &fixture.ontology_id,
+        fixture.asset(), "find_issues", "Check the fixed image", &[],
+    ).await;
+    let token = fixture.issue_token(&run_id, &fixture.project_id, Duration::from_secs(60));
+    let service = AgentToolService::new(fixture.repository.clone(), fixture.state.run_tokens.clone());
+    let arguments = json!({"issues": [quality_issue("queued-revoked", None, "Synthetic issue")]});
+
+    // Queue the facts transaction, then a second writer, in the real FIFO lane.
+    let first_writer = fixture.repository.begin_write().await.unwrap();
+    let invocation = service.invoke(&token, "report_issues", &arguments);
+    tokio::pin!(invocation);
+    std::future::poll_fn(|cx| {
+        assert!(invocation.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    }).await;
+    let barrier = fixture.repository.begin_write();
+    tokio::pin!(barrier);
+    std::future::poll_fn(|cx| {
+        assert!(barrier.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    }).await;
+    first_writer.commit().await.unwrap();
+    let barrier = tokio::select! {
+        writer = &mut barrier => writer.unwrap(),
+        _ = &mut invocation => panic!("candidate bypassed its queued final publication writer"),
+    };
+    // Facts already passed the original token check; the final writer cannot run.
+    assert!(fixture.state.run_tokens.revoke(&token));
+    barrier.commit().await.unwrap();
+    let Err(error) = invocation.await else {
+        panic!("candidate committed after its original capability was revoked");
+    };
+    assert_eq!(error.code, "RUN_TOKEN_REVOKED");
+    assert!(!matches!(fixture.db_text("SELECT state FROM model_runs WHERE run_id=?", &[&run_id]).await.as_str(),
+        "succeeded" | "failed" | "cancelled" | "interrupted"), "memory revocation was not a database-terminal shortcut");
+    for query in [
+        "SELECT COUNT(*) FROM predictions WHERE run_id=?",
+        "SELECT COUNT(*) FROM suggestion_sets WHERE run_id=?",
+        "SELECT COUNT(*) FROM run_events WHERE run_id=? AND event_type='candidate'",
+    ] {
+        assert_eq!(fixture.db_scalar(query, &[&run_id]).await, 0);
     }
 }

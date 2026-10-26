@@ -75,15 +75,15 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
 }
 // Provider-only scope fence: stale acknowledgements must not install browser tokens.
 export function loginInScope(username: string, password: string): Promise<Session>;
-export function loginInScope(username: string, password: string, isCurrent: () => boolean): Promise<Session | null>;
-export async function loginInScope(username: string, password: string, isCurrent: () => boolean = () => true): Promise<Session | null> {
+export function loginInScope(username: string, password: string, isCurrent: () => boolean, signal?: AbortSignal): Promise<Session | null>;
+export async function loginInScope(username: string, password: string, isCurrent: () => boolean = () => true, signal?: AbortSignal): Promise<Session | null> {
   invalidateSaveAuthorization();
   const result = await request<{ csrf_token: string }>('/api/session/login', { method: 'POST', body: JSON.stringify({ username, password }) });
   if (!isCurrent()) return null;
   if (typeof result.csrf_token !== 'string' || !result.csrf_token.trim()) throw new Error('登录响应未提供 CSRF token');
   setCsrfToken(result.csrf_token);
   globalThis.sessionStorage.setItem('weblabel_csrf', result.csrf_token);
-  return api.session();
+  return api.session(signal);
 }
 
 function parseRecoveryStatus(value: unknown): AdminRecoveryStatus {
@@ -94,7 +94,7 @@ function parseRecoveryStatus(value: unknown): AdminRecoveryStatus {
   return status;
 }
 export const api = {
-  adminRecoveryStatus: async (): Promise<AdminRecoveryStatus> => parseRecoveryStatus(await request<unknown>('/api/session/password-recovery')),
+  adminRecoveryStatus: async (signal?: AbortSignal): Promise<AdminRecoveryStatus> => parseRecoveryStatus(await request<unknown>('/api/session/password-recovery', { signal })),
   adminRecover: async (body: AdminRecoveryRequest): Promise<AdminRecoveryStatus> => {
     const response = await fetch('/api/session/password-recovery', { method: 'POST', credentials: 'omit', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) });
     if (!response.ok) {
@@ -107,42 +107,43 @@ export const api = {
     return result;
   },
   request,
-  annotationHeads: async (assetId: string, cursor: string | null = null): Promise<AnnotationHeadPage> => {
-    const result = await request<unknown>(`/api/assets/${encodeURIComponent(assetId)}/annotation-heads?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+  annotationHeads: async (assetId: string, cursor: string | null = null, signal?: AbortSignal): Promise<AnnotationHeadPage> => {
+    const result = await request<unknown>(`/api/assets/${encodeURIComponent(assetId)}/annotation-heads?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal });
     if (!validateContract('annotation_head_page', result).valid) throw new ApiFailure(502, 'INVALID_ANNOTATION_HEAD_PAGE', '标注版本摘要响应无效');
     return result as AnnotationHeadPage;
   },
-  projectAnnotationHeads: async (projectId: string, ontologyId: string, cursor: string | null = null): Promise<AssetAnnotationHeadPage> => {
-    const result = await request<unknown>(`/api/projects/${encodeURIComponent(projectId)}/annotation-heads?ontology_version_id=${encodeURIComponent(ontologyId)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+  projectAnnotationHeads: async (projectId: string, ontologyId: string, cursor: string | null = null, signal?: AbortSignal): Promise<AssetAnnotationHeadPage> => {
+    const result = await request<unknown>(`/api/projects/${encodeURIComponent(projectId)}/annotation-heads?ontology_version_id=${encodeURIComponent(ontologyId)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal });
     if (!validateContract('asset_annotation_head_page', result).valid) throw new ApiFailure(502, 'INVALID_ASSET_ANNOTATION_HEAD_PAGE', '媒体标注摘要响应无效');
     return result as AssetAnnotationHeadPage;
   },
-  members: async (projectId: string, cursor: string | null = null): Promise<ProjectMemberPage> => {
-    const result = await request<unknown>(`/api/projects/${encodeURIComponent(projectId)}/members?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+  members: async (projectId: string, cursor: string | null = null, signal?: AbortSignal): Promise<ProjectMemberPage> => {
+    const result = await request<unknown>(`/api/projects/${encodeURIComponent(projectId)}/members?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal });
     if (!validateContract('project_member_page', result).valid) throw new ApiFailure(502, 'INVALID_PROJECT_MEMBER_PAGE', '项目成员响应无效');
     return result as ProjectMemberPage;
   },
-  session: () => request<Session>('/api/session'),
-  bootstrapStatus: async (): Promise<BootstrapStatus> => {
-    const result = await request<BootstrapStatus>('/api/session/bootstrap');
+  session: (signal?: AbortSignal) => request<Session>('/api/session', { signal }),
+  bootstrapStatus: async (signal?: AbortSignal): Promise<BootstrapStatus> => {
+    const result = await request<BootstrapStatus>('/api/session/bootstrap', { signal });
     if (!validateContract('bootstrap_status', result).valid) throw new ApiFailure(502, 'INVALID_BOOTSTRAP_STATUS', '初始化状态响应无效');
     return result;
   },
   bootstrap: (launchCode: string, password: string) => request<BootstrapResult>('/api/session/bootstrap', { method: 'POST', body: JSON.stringify({ launch_code: launchCode, password }) }),
   login: (username: string, password: string) => loginInScope(username, password),
   logout: () => { invalidateSaveAuthorization(); return request<void>('/api/session/logout', { method: 'POST' }); },
-  projects: () => request<{ items: Project[]; next_cursor: string | null }>('/api/projects'),
+  projects: (signal?: AbortSignal) => request<{ items: Project[]; next_cursor: string | null }>('/api/projects', { signal }),
   createProject: (body: { name: string; description: string; allow_self_review: boolean }) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(body) }),
-  externalProcessingPolicy: (projectId: string) => request<ExternalProcessingPolicy>(`/api/projects/${encodeURIComponent(projectId)}/external-processing-policy`),
+  externalProcessingPolicy: (projectId: string, signal?: AbortSignal) => request<ExternalProcessingPolicy>(`/api/projects/${encodeURIComponent(projectId)}/external-processing-policy`, { signal }),
   setExternalProcessingPolicy: (projectId: string, allow: boolean) => request<ExternalProcessingPolicy>(`/api/projects/${encodeURIComponent(projectId)}/external-processing-policy`, { method: 'PUT', body: JSON.stringify({ allow_external_processing: allow } satisfies ExternalProcessingPolicy) }),
-  ontologies: (projectId: string) => request<{ items: OntologyVersion[]; next_cursor: string | null }>(`/api/projects/${encodeURIComponent(projectId)}/ontologies`),
+  ontologies: (projectId: string, signal?: AbortSignal) => request<{ items: OntologyVersion[]; next_cursor: string | null }>(`/api/projects/${encodeURIComponent(projectId)}/ontologies`, { signal }),
   publishOntology: (projectId: string, body: Pick<OntologyVersion, 'labels' | 'guidelines_markdown'>) => request<OntologyVersion>(`/api/projects/${encodeURIComponent(projectId)}/ontologies`, { method: 'POST', body: JSON.stringify(body) }),
-  assets: async (projectId: string) => {
+  assets: async (projectId: string, signal?: AbortSignal) => {
     const items: ApiMedia[] = [];
     let cursor: string | null = null;
     do {
       const assetPage: { items: ApiMedia[]; next_cursor: string | null } = await request(
         `/api/projects/${encodeURIComponent(projectId)}/assets?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+        { signal },
       );
       items.push(...assetPage.items);
       cursor = assetPage.next_cursor;
@@ -154,9 +155,9 @@ export const api = {
     for (const file of files) body.append('images', file, file.name);
     return request<{ import_job_id: string; duplicate: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/assets`, { method: 'POST', headers: { 'idempotency-key': crypto.randomUUID() }, body });
   },
-  job: (jobId: string) => request<{ job_id: string; kind: string; state: string; progress_completed: number; progress_total: number; result: unknown }>(`/api/jobs/${encodeURIComponent(jobId)}`),
-  annotation: (assetId: string, ontologyId: string) => request<AnnotationRevision>(`/api/assets/${encodeURIComponent(assetId)}/annotation?ontology_version_id=${encodeURIComponent(ontologyId)}`),
-  image: (assetId: string) => fetch(`/api/assets/${encodeURIComponent(assetId)}/image`, { credentials: 'same-origin' }).then(async (response) => {
+  job: (jobId: string, signal?: AbortSignal) => request<{ job_id: string; kind: string; state: string; progress_completed: number; progress_total: number; result: unknown }>(`/api/jobs/${encodeURIComponent(jobId)}`, { signal }),
+  annotation: (assetId: string, ontologyId: string, signal?: AbortSignal) => request<AnnotationRevision>(`/api/assets/${encodeURIComponent(assetId)}/annotation?ontology_version_id=${encodeURIComponent(ontologyId)}`, { signal }),
+  image: (assetId: string, signal?: AbortSignal) => fetch(`/api/assets/${encodeURIComponent(assetId)}/image`, { credentials: 'same-origin', signal }).then(async (response) => {
     if (!response.ok) throw new ApiFailure(response.status, `HTTP_${response.status}`, `Image request failed (${response.status})`);
     return response.blob();
   }),

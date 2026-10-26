@@ -2,7 +2,8 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { ReviewPanel, type TaskOpenPreparation } from './ReviewPanel';
+import { ReviewPanel } from './ReviewPanel';
+import type { TaskOpenPreparation, TaskContinueResult } from './task-session-port';
 import type { ReviewTask } from './api';
 const task: ReviewTask = { task_id:'t', project_id:'p', asset_revision_id:'image', ontology_version_id:'fixed', assignee_id:'a', state:'open', created_at:'2026-10-13', review_id:null, revision_ids:null, review_decision:null, review_reason:null };
 const session = { user_id:'a', username:'a', platform_admin:false, project_roles:[{project_id:'p', role:'annotator'}] };
@@ -156,8 +157,8 @@ it('unknown release retains its original target and does not renew, submit or re
   expect(calls.filter(call=>call.url.endsWith('/lease') && call.body && typeof call.body==='object' && 'action' in call.body && call.body.action==='release')).toHaveLength(1);
 });
 it('never acquires the resolver candidate after actor scope changes', async () => {
-  const calls=transport(); let resolveNext:(task:import('./ReviewPanel').TaskContinueResult|null)=>void=()=>{throw new Error('resolver not dispatched');};
-  const resolver=vi.fn(()=>new Promise<import('./ReviewPanel').TaskContinueResult|null>(resolve=>{resolveNext=resolve;}));
+  const calls=transport(); let resolveNext:(task:TaskContinueResult|null)=>void=()=>{throw new Error('resolver not dispatched');};
+  const resolver=vi.fn(()=>new Promise<TaskContinueResult|null>(resolve=>{resolveNext=resolve;}));
   const props={projectId:'p',session,onPrepareTaskCreate:prepare,onPrepareTaskOpen:prepare,onLeaseChange:()=>{},onSubmitTask:async(_task:ReviewTask,submit:(id:string)=>Promise<void>)=>submit('r'),onContinueTask:resolver};
   const view=render(<ReviewPanel {...props} />);
   fireEvent.click(await screen.findByRole('button',{name:'领取任务'}));

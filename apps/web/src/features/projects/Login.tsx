@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { useSession, type AuthEntry } from '../../app/providers';
+import { useSession } from '../../app/providers';
+import type { AuthEntry } from '../../app/session';
 import { ApiFailure } from '../../lib/t15/api';
 import { AdminRecoveryForm } from './AdminRecoveryForm';
 

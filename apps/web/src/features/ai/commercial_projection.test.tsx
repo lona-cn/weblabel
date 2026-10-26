@@ -7,7 +7,8 @@ import type { RunContext } from '../../../../../packages/contracts/generated/Run
 import type { ModelProfile } from '../../../../../packages/contracts/generated/ModelProfile';
 import type { SuggestionSet } from '../../../../../packages/contracts/generated/SuggestionSet';
 import type { SaveQueue } from '../../lib/persistence/save-queue';
-import { useRun, type RunApi, type CandidateEntry } from './useRun';
+import { useRun } from './useRun';
+import type { RunApi, CandidateEntry } from './run-controller';
 import { CandidateList } from './CandidateList';
 import { freezeAfterFlush } from './runCoordinator';
 

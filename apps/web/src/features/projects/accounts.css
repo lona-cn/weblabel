@@ -1,0 +1,140 @@
+.accounts-page {
+  color: var(--fg, #edf2f3);
+  background: var(--surface-0, #101417);
+  font-family: "IBM Plex Sans", "Noto Sans SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  min-width: 0;
+  padding: 24px 32px;
+  color-scheme: dark;
+  font-variant-numeric: tabular-nums;
+}
+.accounts-page, .accounts-page * { box-sizing: border-box; }
+:is(#root, body) .accounts-page h1 { font-size: 24px; line-height: 1.35; margin: 0 0 16px; }
+:is(#root, body) .accounts-page h2 { font-size: 18px; line-height: 1.5; margin: 0 0 16px; }
+:is(#root, body) .accounts-page h3 { font-size: 15px; margin: 16px 0 8px; }
+:is(#root, body) .accounts-page p { margin: 8px 0 16px; }
+:is(#root, body) .accounts-page small { font-size: 12px; }
+:is(#root, body) .accounts-page :is(button, input, select, textarea) { font: inherit; color: inherit; border-radius: 6px; }
+:is(#root, body) .accounts-page button {
+  min-height: 44px; min-width: 44px; padding: 8px 16px; border: 1px solid var(--control-border, #71858f);
+  background: var(--surface-1, #181e22); cursor: pointer; touch-action: manipulation;
+}
+:is(#root, body) .accounts-page button:hover:not(:disabled) { background: var(--surface-2, #20292e); border-color: var(--accent, #69d9bb); }
+:is(#root, body) .accounts-page button.accounts-primary { color: var(--surface-0, #101417); background: var(--accent, #69d9bb); border-color: var(--accent, #69d9bb); font-weight: 650; }
+:is(#root, body) .accounts-page button:disabled { color: var(--muted, #adb9be); background: var(--surface-2, #20292e); border-color: var(--border, #3e4a52); cursor: not-allowed; }
+:is(#root, body) .accounts-page :focus-visible { outline: 2px solid var(--accent, #69d9bb); outline-offset: 3px; }
+:is(#root, body) .accounts-page :is(input:not([type=checkbox]), select, textarea) {
+  width: 100%; min-width: 0; max-width: 100%; min-height: 44px; padding: 8px 12px;
+  background: var(--surface-2, #20292e); border: 1px solid var(--control-border, #71858f);
+}
+:is(#root, body) .accounts-page textarea { resize: vertical; }
+:is(#root, body) .accounts-page input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent, #69d9bb); }
+:is(#root, body) .accounts-page :is(input, select, textarea)[aria-invalid=true] { border-color: var(--error, #ff9090); }
+.accounts-page .accounts-field { margin: 0 0 16px; min-width: 0; }
+.accounts-page .accounts-field label { display: block; margin-bottom: 6px; }
+:is(#root, body) .accounts-page .accounts-field p { color: var(--muted, #adb9be); font-size: 12px; margin: 4px 0 0; }
+:is(#root, body) .accounts-page .accounts-field p[id$=-error], .accounts-page .accounts-field-error { color: var(--error, #ff9090); }
+.accounts-page .accounts-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.accounts-page .accounts-check label { order: 1; margin: 0; }
+.accounts-page .accounts-check input { order: 0; }
+.accounts-page .accounts-check p { flex-basis: 100%; }
+.accounts-page .accounts-panel, .accounts-page .accounts-label { background: var(--surface-1, #181e22); border: 1px solid var(--border, #3e4a52); border-radius: 6px; padding: 20px; margin-bottom: 16px; min-width: 0; }
+:is(#root, body) .accounts-page fieldset { border-color: var(--border, #3e4a52); border-radius: 6px; min-width: 0; }
+:is(#root, body) .accounts-page legend { color: var(--fg, #edf2f3); }
+.accounts-page .accounts-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+.accounts-page .accounts-heading { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 16px; }
+:is(#root, body) .accounts-page .accounts-error { color: var(--error, #ff9090); border: 1px solid var(--error, #ff9090); border-radius: 6px; padding: 16px; margin: 16px 0; background: var(--surface-1, #181e22); }
+:is(#root, body) .accounts-page .accounts-status { color: var(--muted, #adb9be); overflow-wrap: anywhere; }
+.accounts-page .accounts-delivery-steps { display: grid; grid-template-columns: repeat(4, 1fr); padding: 20px 20px 20px 40px; gap: 32px; background: var(--surface-1, #181e22); border: 1px solid var(--border, #3e4a52); border-radius: 6px; }
+.accounts-page .accounts-delivery-steps li::marker { color: var(--accent, #69d9bb); }
+.accounts-page .accounts-table-scroll { overflow-x: auto; border: 1px solid var(--border, #3e4a52); border-radius: 6px; margin-block: 16px; }
+.accounts-page table { width: 100%; border-collapse: collapse; text-align: left; background: var(--surface-1, #181e22); }
+.accounts-page :is(th, td) { padding: 12px 20px; border-bottom: 1px solid var(--border, #3e4a52); vertical-align: top; overflow-wrap: anywhere; }
+.accounts-page th { font-weight: 500; background: var(--surface-2, #20292e); color: var(--muted, #adb9be); }
+.accounts-page tr:last-child td { border-bottom: 0; }
+.accounts-page td.accounts-actions { display: flex; margin-top: 0; min-width: 360px; }
+.accounts-page .accounts-admin-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); gap: 24px; align-items: start; }
+.accounts-page .accounts-preset-columns { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); gap: 24px; align-items: start; }
+.accounts-page .accounts-ontology-columns { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
+.accounts-page .accounts-label-fields { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; }
+.accounts-page .accounts-attribute { display: grid; grid-template-columns: minmax(120px, 1.2fr) minmax(130px, 1fr) 90px 136px minmax(200px, 1.6fr) 88px; align-items: end; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border, #3e4a52); }
+.accounts-page dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); margin: 0; }
+.accounts-page :is(dt, dd) { margin: 0; padding: 12px 8px; border-top: 1px solid var(--border, #3e4a52); overflow-wrap: anywhere; }
+.accounts-page dt { color: var(--muted, #adb9be); }
+.accounts-page pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.accounts-page .accounts-policy-state { padding: 16px; border: 1px solid var(--warning, #f1c975); border-radius: 6px; }
+:is(#root, body) .accounts-page .accounts-policy-state[data-state=denied] { color: var(--error, #ff9090); border-color: var(--error, #ff9090); }
+:is(#root, body) .accounts-page .accounts-policy-state[data-state=allowed] { color: var(--accent, #69d9bb); border-color: var(--accent, #69d9bb); }
+:is(#root, body) .accounts-page .accounts-policy-state[data-state=unknown] { color: var(--warning, #f1c975); }
+.accounts-auth { padding: 0; min-height: 100dvh; }
+.accounts-auth .accounts-brand { display: flex; height: 56px; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--border, #3e4a52); background: var(--surface-1, #181e22); font-size: 22px; font-weight: 600; }
+.accounts-auth .accounts-brand strong { color: var(--accent, #69d9bb); }
+.accounts-auth .accounts-auth-content { display: grid; place-items: center; min-height: calc(100dvh - 56px); padding: 40px 24px; }
+.accounts-auth .accounts-auth-card { width: min(100%, 532px); padding: 32px; border: 1px solid var(--border, #3e4a52); background: var(--surface-1, #181e22); border-radius: 6px; }
+.accounts-auth .accounts-auth-wide { width: min(100%, 1040px); }
+.accounts-auth .accounts-auth-columns { display: grid; gap: 32px; }
+.accounts-auth .accounts-auth-wide .accounts-auth-columns { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.accounts-auth .accounts-auth-aside { border-left: 1px solid var(--border, #3e4a52); padding-left: 32px; }
+.accounts-auth form:not(.accounts-auth-wide) button[type=submit] { width: 100%; }
+.accounts-page [hidden] { display: none !important; }
+/* Dense, labelled form rows: identity, type, required/null and default stay visible. */
+:is(#root, body) .accounts-ontology-form .accounts-label { padding: 12px; margin: 0 0 12px; }
+:is(#root, body) .accounts-ontology-form .accounts-field { margin-bottom: 8px; }
+:is(#root, body) .accounts-ontology-form .accounts-attribute .accounts-field { margin: 0; }
+.accounts-page .accounts-attribute-config { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; min-width: 0; }
+.accounts-page .accounts-attribute-config:not(:has(details)) { grid-template-columns: minmax(0, 1fr); }
+:is(#root, body) .accounts-ontology-form .accounts-attribute-advanced summary,
+:is(#root, body) .accounts-ontology-form .accounts-label-identity summary { min-height: 44px; padding: 10px 8px; border: 1px solid var(--control-border, #71858f); border-radius: 6px; white-space: nowrap; }
+.accounts-page .accounts-attribute-advanced[open] { grid-column: 1 / -1; }
+.accounts-page .accounts-attribute-advanced[open] .accounts-field { margin-top: 8px; }
+.accounts-page .accounts-label-identity[open] { flex-basis: 100%; }
+.accounts-page .accounts-label-identity code { display: block; padding: 8px; overflow-wrap: anywhere; }
+:is(#root, body) .accounts-ontology-form .accounts-check { position: relative; display: block; min-height: 44px; padding: 0; }
+:is(#root, body) .accounts-ontology-form .accounts-check label { display: flex; align-items: center; min-height: 44px; margin: 0; padding-left: 44px; }
+:is(#root, body) .accounts-ontology-form .accounts-check input { position: absolute; left: 0; top: 2px; width: 40px; height: 40px; margin: 0; }
+.accounts-page .accounts-ontology-form .accounts-label-fields { gap: 12px; }
+.accounts-page .accounts-ontology-form .accounts-label > .accounts-actions { margin-top: 8px; }
+:is(#root, body) .accounts-ontology-form .accounts-ontology-budget { font-size: 12px; color: var(--muted, #adb9be); margin: 8px 0 12px; }
+.accounts-page .accounts-ontology-actions { justify-content: flex-end; margin-top: 8px; padding: 12px 0; background: var(--surface-0, #101417); border-top: 1px solid var(--border, #3e4a52); }
+.accounts-page .accounts-semantic-diff { table-layout: fixed; }
+.accounts-page .accounts-semantic-diff th { width: 36%; }
+.accounts-page .accounts-semantic-diff :is(th, td) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.accounts-page .accounts-semantic-diff tbody th { background: var(--surface-1, #181e22); }
+.accounts-page .accounts-semantic-diff :is(strong, .accounts-diff-kind, code) { display: block; }
+.accounts-page .accounts-semantic-diff .accounts-diff-kind { font-size: 12px; color: var(--warning, #f1c975); margin-block: 4px; }
+:is(#root, body) .accounts-ontology-form .accounts-attribute > button { padding-inline: 8px; }
+.accounts-page.accounts-members table { min-width: 760px; }
+.accounts-page.accounts-members th { white-space: nowrap; overflow-wrap: normal; }
+.accounts-page.accounts-members :is(th, td) { padding: 12px 16px; }
+.accounts-page .accounts-member-id { min-width: 300px; }
+.accounts-page .accounts-member-id code { white-space: nowrap; font-size: 12px; }
+.accounts-page .accounts-member-role { min-width: 136px; }
+.accounts-page .accounts-member-role code { display: block; color: var(--muted, #adb9be); margin-top: 4px; }
+@media (min-width: 1100px) and (max-width: 1399px) {
+  .accounts-page .accounts-attribute { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 90px; }
+  .accounts-page .accounts-attribute-config { grid-column: span 2; }
+}
+@media (max-width: 1099px) {
+  .accounts-page { padding: 20px; }
+  .accounts-auth { padding: 0; }
+  .accounts-page .accounts-delivery-steps { grid-template-columns: repeat(2, 1fr); }
+  .accounts-page :is(.accounts-ontology-columns, .accounts-admin-columns, .accounts-preset-columns) { grid-template-columns: 1fr; }
+  .accounts-page .accounts-label-fields { grid-template-columns: 1fr 1fr; }
+  .accounts-page .accounts-attribute { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .accounts-page .accounts-attribute-config { grid-column: span 2; }
+  .accounts-auth .accounts-auth-wide .accounts-auth-columns { grid-template-columns: 1fr; }
+  .accounts-auth .accounts-auth-aside { border-left: 0; border-top: 1px solid var(--border, #3e4a52); padding: 20px 0 0; }
+}
+@media (max-width: 600px) {
+  .accounts-page .accounts-delivery-steps, .accounts-page .accounts-label-fields, .accounts-page .accounts-attribute { grid-template-columns: 1fr; }
+  .accounts-page .accounts-attribute-config { grid-column: auto; }
+  .accounts-page .accounts-ontology-actions { justify-content: stretch; }
+  .accounts-page .accounts-ontology-actions button { flex: 1 1 140px; }
+  .accounts-auth .accounts-auth-card { padding: 24px; }
+  .accounts-page .accounts-heading { align-items: start; flex-direction: column; }
+}
+@media (forced-colors: active) {
+  .accounts-page :is(button, input, select, textarea, .accounts-policy-state) { border: 1px solid ButtonText; }
+  .accounts-page :focus-visible { outline: 2px solid Highlight; }
+}

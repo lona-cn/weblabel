@@ -529,7 +529,7 @@ mod commercial_d_private_tests {
             .unwrap()
             .unwrap();
         assert_eq!(lease.payload, accepted);
-        repository.close_for_test().await;
+        repository.close().await;
         directory.close().unwrap();
     }
 
@@ -587,7 +587,7 @@ mod commercial_d_private_tests {
             exact
         );
         assert_eq!(after.5, None);
-        repository.close_for_test().await;
+        repository.close().await;
         directory.close().unwrap();
     }
 
@@ -653,7 +653,7 @@ mod commercial_d_private_tests {
         assert_eq!(after.1.unwrap(), r#"{"winner":"b"}"#);
         assert_eq!(after.6.as_deref(), Some("b"));
         assert_eq!(after.7, b.fencing_token as i64);
-        repository.close_for_test().await;
+        repository.close().await;
         directory.close().unwrap();
     }
 
@@ -706,7 +706,7 @@ mod commercial_d_private_tests {
             "expired lock waiter must not renew or finish"
         );
         assert!(matches!(outcome, Err(QueueError::InvalidRequest)));
-        repository.close_for_test().await;
+        repository.close().await;
         directory.close().unwrap();
     }
 
@@ -762,7 +762,7 @@ mod commercial_d_private_tests {
         .unwrap();
         tx.rollback().await.unwrap();
         assert_eq!(row(&repository, &lease.job_id).await, before);
-        repository.close_for_test().await;
+        repository.close().await;
         directory.close().unwrap();
     }
 
@@ -840,7 +840,7 @@ mod commercial_d_private_tests {
                     .await
                     .unwrap();
                 assert_eq!(row(&repository, &b.job_id).await.0, "succeeded");
-                repository.close_for_test().await;
+                repository.close().await;
                 directory.close().unwrap();
             }
         }

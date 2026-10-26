@@ -17,7 +17,8 @@ const mocked = vi.hoisted(() => ({
 }));
 vi.mock('./api', () => ({ reviewApi: mocked }));
 
-import { ReviewPanel, type TaskOpenPreparation } from './ReviewPanel';
+import { ReviewPanel } from './ReviewPanel';
+import type { TaskOpenPreparation } from './task-session-port';
 import { api } from '../../lib/t15/api';
 const prepare = async (): Promise<TaskOpenPreparation> => ({ token: Symbol(), isCurrent: () => true, validateCurrent: async () => true, onTaskOpen: () => undefined, release: () => undefined });
 
