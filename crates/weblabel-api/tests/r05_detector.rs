@@ -16,6 +16,18 @@ fn maps_original_pixels_once_then_mirrors_to_canonical() {
 }
 
 #[test]
+fn rotates_both_coordinates_from_the_original_input_corner() {
+    let mut logits=vec![-20.;300*80];logits[0]=20.;
+    let mut boxes=vec![0.;300*4];boxes[..4].copy_from_slice(&[0.25,0.25,0.25,0.25]);
+    let geometry=Projection {width:800,height:400,canonical_width:400,canonical_height:800,
+        transform_to_canonical:[0.,-1.,400.,1.,0.,0.,0.,0.,1.]};
+    let labels=BTreeMap::from([(0,"person".into())]);
+    let mapping=BTreeMap::from([("person".into(),"human".into())]);
+    let result=decode(&logits,&boxes,&labels,&mapping,&geometry).unwrap();
+    assert_eq!(result.detections[0].bbox_xyxy,[250.,100.,350.,300.]);
+}
+
+#[test]
 fn nonfinite_queries_drop_and_unmapped_categories_are_issues() {
     let mut logits=vec![-20.;300*80]; logits[0]=0.; logits[80]=f32::NAN;
     let boxes=vec![0.25;300*4];

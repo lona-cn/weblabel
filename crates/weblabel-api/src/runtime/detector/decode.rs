@@ -31,9 +31,9 @@ fn project(b:[f64;4],p:&Projection)->Result<[f64;4],DetectorError> {
     for (x,y) in [(b[0],b[1]),(b[2],b[1]),(b[2],b[3]),(b[0],b[3])] {
         let z=m[6]*x+m[7]*y+m[8];
         if z==0. { return Err(DetectorError::new("invalid_transform","corner maps to infinity")); }
-        let x=(m[0]*x+m[1]*y+m[2])/z; let y=(m[3]*x+m[4]*y+m[5])/z;
-        if !x.is_finite() || !y.is_finite() { return Err(DetectorError::new("invalid_transform","nonfinite projected corner")); }
-        out[0]=out[0].min(x);out[1]=out[1].min(y);out[2]=out[2].max(x);out[3]=out[3].max(y);
+        let mapped_x=(m[0]*x+m[1]*y+m[2])/z; let mapped_y=(m[3]*x+m[4]*y+m[5])/z;
+        if !mapped_x.is_finite() || !mapped_y.is_finite() { return Err(DetectorError::new("invalid_transform","nonfinite projected corner")); }
+        out[0]=out[0].min(mapped_x);out[1]=out[1].min(mapped_y);out[2]=out[2].max(mapped_x);out[3]=out[3].max(mapped_y);
     }
     Ok(clamp(out,p.canonical_width,p.canonical_height))
 }

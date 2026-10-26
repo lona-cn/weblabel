@@ -94,6 +94,24 @@ def compare_decoded(expected,actual):
     return maximum
 
 
+def measure_outputs(result,logits,boxes,expected):
+    """R05-N1 waives only raw-logit gating, not finite outputs, boxes or decisions."""
+    import numpy as np
+    rlogits=np.asarray(result['raw_logits'],dtype=np.float32).reshape(1,300,80)
+    rboxes=np.asarray(result['raw_boxes'],dtype=np.float32).reshape(1,300,4)
+    if not np.isfinite(rlogits).all() or not np.isfinite(rboxes).all():
+        raise RuntimeError('nonfinite Rust output')
+    np.testing.assert_allclose(rboxes,boxes,atol=1e-4,rtol=1e-4)
+    bbox_error=compare_decoded(expected,result['decoded'])
+    delta=np.abs(rlogits-logits)
+    return {'raw_logits_acceptance':'skipped_by_user',
+            'logit_tolerance_violations':int(np.count_nonzero(delta>(1e-4+1e-4*np.abs(logits)))),
+            'max_logits_absolute_error':float(np.max(delta)),
+            'max_boxes_absolute_error':float(np.max(np.abs(rboxes-boxes))),
+            'canonical_bbox_max_error':bbox_error,
+            'detections':len(result['decoded']['detections']),'unsupported':len(result['decoded']['unsupported'])}
+
+
 def model_artifacts(directory):
     """Resolve BOTH actual leaf identities before any artifact read/hash/parse."""
     model_dir=confined(directory)
@@ -195,6 +213,7 @@ def run(args):
     output=new_directory(args.report_dir)
     report={'kind':'measured-model-equivalence','versions':versions,'binary_sha256':digest(binary),'model_sha256':manifest['onnx']['sha256'],'runtime_sha256':RUNTIME_SHA,'atol':1e-4,'rtol':1e-4,'bbox_tolerance_pixels':.1,'cases':[],'status':'running'}
     report['runtime_files']={kind:runtime[kind] for kind in ('library','shared_library','license','third_party_notices')}
+    report['waived_controls']=[{'id':'R05-N1','decision':'raw_logits_elementwise_tolerance_skipped_by_user_not_passed'}]
     report['resume_python_reference']=resume_proof
     report['forward_accounting_before']=accounting_before
     report['planned_new_forwards']={'python':6-len(references),'rust':12}
@@ -243,15 +262,11 @@ def run(args):
                     (output/(name+'-'+kind+'-rust.json')).write_text(json.dumps(result,allow_nan=False),encoding='utf-8')
                     if result['input_tensor_sha256']!=sample['tensor_sha256']: raise RuntimeError(f'{name} {kind}: preprocessing golden mismatch')
                     if result['projection']!=projection or result['region'] is not None: raise RuntimeError('worker crop/transform identity mismatch')
-                    rlogits=np.array(result['raw_logits'],dtype=np.float32).reshape(1,300,80)
-                    rboxes=np.array(result['raw_boxes'],dtype=np.float32).reshape(1,300,4)
-                    np.testing.assert_allclose(rlogits,logits,atol=1e-4,rtol=1e-4)
-                    np.testing.assert_allclose(rboxes,boxes,atol=1e-4,rtol=1e-4)
-                    bbox_error=compare_decoded(expected,result['decoded'])
+                    measured=measure_outputs(result,logits,boxes,expected)
                     if result['receipt']['model_sha256']!=manifest['onnx']['sha256'] or result['receipt']['execution_provider']!='CPUExecutionProvider' or result['receipt']['cost'] is not None: raise RuntimeError('runtime receipt mismatch')
-                    case['paths'].append({'kind':kind,'max_logits_absolute_error':float(np.max(np.abs(rlogits-logits))),'max_boxes_absolute_error':float(np.max(np.abs(rboxes-boxes))),'canonical_bbox_max_error':bbox_error,'detections':len(result['decoded']['detections']),'unsupported':len(result['decoded']['unsupported']),'receipt':result['receipt']})
+                    case['paths'].append({'kind':kind,**measured,'receipt':result['receipt']})
                 report['cases'].append(case)
-        report['status']='passed'
+        report['status']='accepted_with_user_waiver'
         report['limitations']=['Synthetic images only; empty predictions do not prove detection quality, nonempty candidate acceptance, T32, or redistribution approval.']
     except BaseException as error:
         report['status']='failed';report['error']={'type':type(error).__name__,'message':str(error),'traceback':traceback.format_exc()}

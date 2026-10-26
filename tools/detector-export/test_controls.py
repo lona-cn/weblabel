@@ -1,4 +1,4 @@
-"""No model imports or forwards: Main must run these controls before export."""
+"""No detector weights or forwards: Main must run these controls before export."""
 import json
 import multiprocessing
 import os
@@ -242,5 +242,32 @@ class Controls(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             verifier.resume_python_reference(report,manifest,versions,ledger)
         self.assertEqual(ledger.ensure_available(0)['used'],3)
+
+    def test_logit_waiver_preserves_finite_outputs_decisions_and_geometry(self):
+        import numpy as np
+        import verify as verifier
+        logits=np.full((1,300,80),-20,dtype=np.float32);logits[0,0,0]=.25
+        boxes=np.tile(np.array([.5,.5,.25,.25],dtype=np.float32),(1,300,1))
+        projection={'width':800,'height':400,'canonical_width':800,'canonical_height':400,
+                    'transform_to_canonical':[1.,0.,0.,0.,1.,0.,0.,0.,1.]}
+        categories={'0':'object'};mapping={'object':'synthetic-label-0'}
+        expected=verifier.reference(logits[0],boxes[0],categories,mapping,projection)
+        def result(raw_logits,raw_boxes):
+            return {'raw_logits':raw_logits.reshape(-1).tolist(),'raw_boxes':raw_boxes.reshape(-1).tolist(),
+                    'decoded':verifier.reference(raw_logits[0],raw_boxes[0],categories,mapping,projection)}
+        drifted=logits.copy();drifted[0,0,0]+=.0005
+        measured=verifier.measure_outputs(result(drifted,boxes),logits,boxes,expected)
+        self.assertEqual(measured['raw_logits_acceptance'],'skipped_by_user')
+        self.assertEqual(measured['logit_tolerance_violations'],1)
+        self.assertEqual(measured['detections'],1)
+        wrong_label=result(drifted,boxes)
+        wrong_label['decoded']['detections'][0]['label_id']='different-label'
+        below_threshold=logits.copy();below_threshold[0,0,0]=-.25
+        shifted=boxes.copy();shifted[0,0,0]+=.00014
+        nonfinite=drifted.copy();nonfinite[0,0,1]=np.nan
+        for case,actual in [('label',wrong_label),('threshold',result(below_threshold,boxes)),
+                            ('geometry',result(drifted,shifted)),('nonfinite',result(nonfinite,boxes))]:
+            with self.subTest(case=case),self.assertRaises(RuntimeError):
+                verifier.measure_outputs(actual,logits,boxes,expected)
 
 if __name__=='__main__': unittest.main()
