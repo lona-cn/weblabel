@@ -2,7 +2,7 @@
   "schema_version": 1,
   "plan_version": "1.0.0",
   "application_commit": "0eb232cc859568f229e1efa09a2a71fd4f796bbf",
-  "last_updated_at": "2026-10-26T10:57:10.127977+00:00",
+  "last_updated_at": "2026-10-26T14:38:50.886674+00:00",
   "user_requests": {
     "first_start_login": {
       "status": "done",
@@ -947,17 +947,19 @@
       "report_index": "reports/publication/native-html-rust-rebuild.json",
       "design_gate": "accepted",
       "product_changes_started": true,
-      "model_forwards_used": 3,
+      "model_forwards_used": 16,
       "model_forwards_authorized_maximum": 20,
       "model_forward_accounting": {
         "basis": "durable debits including failed requests",
-        "ledger": "private project-local archive; frozen, not published",
-        "successful_python_forwards": 2,
-        "successful_rust_forwards": 0,
+        "ledger": "private project-local archive; stopped after numeric mismatch, not published",
+        "successful_python_forwards": 6,
+        "successful_rust_forwards": 9,
         "redeemed_native_requests_failed_before_session": 1,
-        "inference_stopped_by_user": true,
+        "inference_stopped_by_user": false,
+        "inference_stopped_on_error": true,
         "additional_inference_authorized": false,
-        "numeric_equivalence": "not_completed"
+        "numeric_equivalence": "failed_mirror_tensor_raw_logits",
+        "continuation_result": "reports/publication/r05-continuation.json"
       },
       "tasks": {
         "R00": {
@@ -1076,11 +1078,12 @@
           "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
           "commit_scope": "partial_source_only_not_task_completion",
           "evidence": [
-            "reports/publication/native-html-rust-rebuild.json"
+            "reports/publication/native-html-rust-rebuild.json",
+            "reports/publication/r05-continuation.json"
           ],
+          "waived_controls": [{"id": "R05-B1", "decision": "skipped_by_user", "proof": "not_executed_not_passed", "path_guards_retained": true, "uac_retry_authorized": false}],
           "blockers": [
-            "User explicitly stopped further detector inference; the sole ledger is frozen at 3/20 debits and numeric equivalence is incomplete",
-            "Real Windows file-symlink negative control requires unavailable permission; the only authorized UAC attempt was cancelled before its child started, with no retry authorized"
+            "Actual mirror/tensor raw logits fail unchanged atol=rtol=1e-4: 6/24000 violations, maximum violating absolute error 0.000492095947265625. Stopped at 16/20; RGB/alpha/wide/tall both paths passed. Mirror/image and rotation remain unexecuted; no automatic retry or model/engine/export strategy/tolerance change."
           ],
           "original_base_commit": "6afd1fa96d80e49375c755eda96935cb1be1923d",
           "original_integrated_commit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690",

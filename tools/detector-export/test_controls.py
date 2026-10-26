@@ -128,6 +128,7 @@ class Controls(unittest.TestCase):
                                   dynamo=False,opset_version=18,external_data=False)
             self.assertEqual(toy.invocations,observed)
 
+    @unittest.skip("R05-B1 explicitly waived by user as excessive testing; path guards remain enabled")
     def test_verifier_rejects_real_leaf_symlinks_before_read_hash_or_graph(self):
         # Actual regular-file links, not mocked resolution or invalid-file-type proof.
         # Targets are synthetic siblings inside the project, never private files.
@@ -197,5 +198,49 @@ class Controls(unittest.TestCase):
                 verifier.preflight_runtime()
         self.assertEqual(json.loads(self.path.read_text())['used'],0)
 
+
+    def test_resume_reference_requires_matching_provenance_and_finite_float32_outputs(self):
+        import numpy as np
+        import verify as verifier
+        ledger=Ledger(self.path,20)
+        python_receipt=ledger.charge('python-top-level-forward')
+        ledger.charge('rust-request')
+        directory=self.temp/'previous';directory.mkdir()
+        reference=directory/'rgb-python.npz'
+        logits=np.zeros((1,300,80),dtype=np.float32)
+        boxes=np.zeros((1,300,4),dtype=np.float32)
+        np.savez(reference,logits=logits,pred_boxes=boxes)
+        versions={'python':'synthetic-control'}
+        manifest={'onnx':{'sha256':'synthetic-model'},'goldens':[{'name':'rgb','tensor_sha256':'synthetic-tensor'}]}
+        previous={'kind':'measured-model-equivalence','status':'failed','cases':[],
+                  'versions':versions,'model_sha256':'synthetic-model','runtime_sha256':verifier.RUNTIME_SHA,
+                  'atol':1e-4,'rtol':1e-4,'bbox_tolerance_pixels':.1,
+                  'forward_accounting':ledger.ensure_available(0)}
+        report=directory/'equivalence.json'
+        report.write_text(json.dumps(previous),encoding='utf-8')
+        references,proof=verifier.resume_python_reference(report,manifest,versions,ledger)
+        self.assertEqual(set(references),{'rgb'})
+        self.assertEqual(proof['python_receipt_sequence'],python_receipt['sequence'])
+        for field,value in [('model_sha256','different-model'),('runtime_sha256','different-runtime'),
+                            ('versions',{'python':'different'}),('atol',.01),('cases',[{'name':'completed'}])]:
+            with self.subTest(field=field):
+                original=previous[field];previous[field]=value
+                report.write_text(json.dumps(previous),encoding='utf-8')
+                with self.assertRaises(RuntimeError):
+                    verifier.resume_python_reference(report,manifest,versions,ledger)
+                previous[field]=original
+        report.write_text(json.dumps(previous),encoding='utf-8')
+        for invalid in [np.zeros((1,300,80),dtype=np.float64),
+                        np.zeros((300,80),dtype=np.float32),
+                        np.full((1,300,80),np.nan,dtype=np.float32)]:
+            with self.subTest(dtype=str(invalid.dtype),shape=invalid.shape):
+                np.savez(reference,logits=invalid,pred_boxes=boxes)
+                with self.assertRaises(RuntimeError):
+                    verifier.resume_python_reference(report,manifest,versions,ledger)
+        np.savez(reference,logits=logits,pred_boxes=boxes)
+        ledger.charge('synthetic-other-operation')
+        with self.assertRaises(RuntimeError):
+            verifier.resume_python_reference(report,manifest,versions,ledger)
+        self.assertEqual(ledger.ensure_available(0)['used'],3)
 
 if __name__=='__main__': unittest.main()

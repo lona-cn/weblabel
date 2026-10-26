@@ -8,6 +8,11 @@
 
 本次已发布的[工程预发布 rc.3](https://github.com/lona-cn/weblabel/releases/tag/v0.1.0-rc.3)及其[净化增量与验证记录](publication/rc3-integration.json)绑定不可变 source `8a2ab61`：Release 全部门禁通过，两平台公开下载产物校验与独立持久化烟测通过。后续 main 只有测试、文档和来源记录修复，其 CI 独立记账，不移动 release tag 或替换 assets/image。新增历史审计 harness 仅保留工具源码；原始报告、登录产物、截图和运行目录保持私有。工程预发布不升级 T32/T35/G4 验收。
 
+## 原生 HTML / Rust 重构增量
+
+[原生源码整合记录](publication/native-html-rust-rebuild.json)保留先前公开源码的实际验证范围；[R05 单次续验结论](publication/r05-continuation.json)记录后续用户豁免与真实数值失败。叶文件软链接负控已明确跳过，生产路径防护不变。真实 Rust CPU 已执行；RGB/alpha/wide/tall 双路径通过，mirror/tensor 有 6/24000 logits 超出原容差，首错停止于原账本 16/20。R05 仍 blocked，R09–R11 未切换，T32/T35 不升级。模型比较来自原私有源目录，不冒充本次公开 SHA 的再次模型运行；原始数组、nonce 账本、模型、runtime 与日志不公开。工具 README 中的原始验收路径仍指向私有本地归档。
+
+
 ## 当前还卡在哪里
 
 原任务历史记录为 T00–T31、T33、T34 done，T32 当时五渠道完整验收 blocked、T35 pending。当前用户选择退役 Codex 后，必需真实渠道仅 Claude/OpenAI/MiMo/Detector 四项，仍全部 blocked；Anthropic API 可选。历史 GPU 通过不能代替本轮硬件重验或所有模型/完整 G4。

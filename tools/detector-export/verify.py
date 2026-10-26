@@ -1,4 +1,4 @@
-"""Measured Python vs real Rust product worker. No retries, warmups or relaxed bounds."""
+"""Measured Python vs real Rust worker. No automatic retries, warmups or relaxed bounds."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -122,11 +122,57 @@ def preflight_runtime():
         raise RuntimeError('runtime dependency preflight failed') from error
 
 
+def resume_python_reference(report_path,manifest,versions,ledger):
+    """Reuse only the first saved Python result from the same failed, unchanged run."""
+    import numpy as np
+    report_path=confined(report_path)
+    previous=json.loads(report_path.read_text(encoding='utf-8'))
+    if previous.get('kind')!='measured-model-equivalence' or previous.get('status')!='failed' or previous.get('cases')!=[]:
+        raise RuntimeError('only a failed run before its first completed case can resume')
+    expected={'versions':versions,'model_sha256':manifest['onnx']['sha256'],'runtime_sha256':RUNTIME_SHA,
+              'atol':1e-4,'rtol':1e-4,'bbox_tolerance_pixels':.1}
+    if any(previous.get(key)!=value for key,value in expected.items()):
+        raise RuntimeError('retained Python reference provenance mismatch')
+    state=ledger.ensure_available(0)
+    if previous.get('forward_accounting')!=state or not state['receipts']:
+        raise RuntimeError('retained Python reference ledger mismatch')
+    request=state['receipts'][-1]
+    charged=[receipt for receipt in state['receipts']
+             if receipt['kind']=='python-top-level-forward' and receipt['pid']==request['pid']]
+    if request['kind']!='rust-request' or len(charged)!=1 or charged[0]['sequence']>=request['sequence']:
+        raise RuntimeError('retained Python reference has no unique prior forward receipt')
+    sample=manifest['goldens'][0]
+    reference_path=confined(report_path.parent/(sample['name']+'-python.npz'))
+    if not reference_path.is_relative_to(report_path.parent) or reference_path.stat().st_size>2*1024*1024:
+        raise RuntimeError('invalid retained Python reference file')
+    try:
+        with reference_path.open('rb') as handle:
+            reference_sha256=hashlib.file_digest(handle,'sha256').hexdigest()
+            handle.seek(0)
+            with np.load(handle,allow_pickle=False) as saved:
+                if set(saved.files)!={'logits','pred_boxes'}:
+                    raise RuntimeError('invalid retained Python reference outputs')
+                logits=saved['logits'];boxes=saved['pred_boxes']
+        if logits.dtype!=np.float32 or boxes.dtype!=np.float32 or logits.shape!=(1,300,80) or boxes.shape!=(1,300,4):
+            raise RuntimeError('invalid retained Python reference dtype or shape')
+        if not np.isfinite(logits).all() or not np.isfinite(boxes).all():
+            raise RuntimeError('nonfinite retained Python reference')
+    except (OSError,ValueError,KeyError,TypeError) as error:
+        raise RuntimeError('invalid retained Python reference') from error
+    return {sample['name']:(logits,boxes)},{
+        'source_report':str(report_path),'source_report_sha256':digest(report_path),
+        'previous_binary_sha256':previous.get('binary_sha256'),
+        'reference_path':str(reference_path),'reference_sha256':reference_sha256,
+        'sample':sample['name'],'input_tensor_sha256':sample['tensor_sha256'],
+        'python_receipt_sequence':charged[0]['sequence'],'prior_used':state['used']}
+
+
 def run(args):
     offline();versions=identity()
     ledger=Ledger(args.budget_ledger,args.max_forwards)
     if not ledger.path.is_relative_to(FIXED_ROOT): raise RuntimeError('ledger outside fixed project root')
-    ledger.ensure_available(18)  # 6 Python + 6 same-tensor Rust + 6 image-path Rust.
+    resume_path=getattr(args,'resume_python_report',None)
+    accounting_before=ledger.ensure_available(18) if resume_path is None else None
     root,lock=weights(args.weights_dir)
     model_dir,manifest_path,onnx_path=model_artifacts(args.model_dir)
     manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -142,9 +188,16 @@ def run(args):
         for key in ('image','tensor'):
             path=confined(model_dir/sample[key])
             if not path.is_relative_to(model_dir) or digest(path)!=sample[key+'_sha256']: raise RuntimeError('golden path/hash mismatch')
+    references={};resume_proof=None
+    if resume_path is not None:
+        references,resume_proof=resume_python_reference(resume_path,manifest,versions,ledger)
+        accounting_before=ledger.ensure_available(18-len(references))
     output=new_directory(args.report_dir)
     report={'kind':'measured-model-equivalence','versions':versions,'binary_sha256':digest(binary),'model_sha256':manifest['onnx']['sha256'],'runtime_sha256':RUNTIME_SHA,'atol':1e-4,'rtol':1e-4,'bbox_tolerance_pixels':.1,'cases':[],'status':'running'}
     report['runtime_files']={kind:runtime[kind] for kind in ('library','shared_library','license','third_party_notices')}
+    report['resume_python_reference']=resume_proof
+    report['forward_accounting_before']=accounting_before
+    report['planned_new_forwards']={'python':6-len(references),'rust':12}
     try:
         import numpy as np
         # Operator boundary: source weights and derived artifacts remain immutable
@@ -163,17 +216,21 @@ def run(args):
                 # Hash the very bytes used for this forward, not a prior path open.
                 array=np.frombuffer(raw,dtype='<f4').reshape(1,3,640,640)
                 if not np.isfinite(array).all(): raise RuntimeError('nonfinite input')
-                py=model(pixel_values=torch.from_numpy(array.copy()))
-                logits=py.logits.detach().cpu().numpy();boxes=py.pred_boxes.detach().cpu().numpy()
+                if name in references:
+                    logits,boxes=references[name]
+                else:
+                    py=model(pixel_values=torch.from_numpy(array.copy()))
+                    logits=py.logits.detach().cpu().numpy();boxes=py.pred_boxes.detach().cpu().numpy()
                 if logits.shape!=(1,300,80) or boxes.shape!=(1,300,4): raise RuntimeError('Python output shape mismatch')
                 if not np.isfinite(logits).all() or not np.isfinite(boxes).all(): raise RuntimeError('nonfinite Python output')
-                np.savez(output/(name+'-python.npz'),logits=logits,pred_boxes=boxes)
+                if name not in references:
+                    np.savez(output/(name+'-python.npz'),logits=logits,pred_boxes=boxes)
                 w=sample['width'];h=sample['height']
                 projection={'width':w,'height':h,'canonical_width':w,'canonical_height':h,'transform_to_canonical':[-1.,0.,float(w),0.,1.,0.,0.,0.,1.] if name=='mirror' else [1.,0.,0.,0.,1.,0.,0.,0.,1.]}
                 if name=='rotate':
                     projection.update(canonical_width=h,canonical_height=w,transform_to_canonical=[0.,-1.,float(h),1.,0.,0.,0.,0.,1.])
                 expected=reference(logits[0],boxes[0],manifest['id2label'],mapping,projection)
-                case={'name':name,'paths':[]}
+                case={'name':name,'python_reference_reused':name in references,'paths':[]}
                 for kind in ('tensor','image'):
                     receipt=ledger.charge('rust-request') # Persisted BEFORE starting/sending Rust inference request.
                     request={'run_id':f'equivalence-{name}-{kind}','artifact_root':str(model_dir),'model_dir':str(model_dir),
@@ -213,4 +270,5 @@ if __name__=='__main__':
     parser.add_argument('--budget-ledger',type=Path,required=True)
     parser.add_argument('--max-forwards',type=int,required=True)
     parser.add_argument('--report-dir',type=Path,required=True)
+    parser.add_argument('--resume-python-report',type=Path,help='Explicitly reuse the first retained Python reference from an unchanged failed run; never retries automatically.')
     run(parser.parse_args())

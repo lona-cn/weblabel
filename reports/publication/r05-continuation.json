@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "task_id": "R05",
+  "status": "blocked",
+  "scope": "Sanitized bounded-reference continuation, explicit user-waived control and measured fixed-strategy numeric failure; not a cutover or release.",
+  "public_base": "53f2bfd05872ae87e479583fbfb2fe4ade7983e4",
+  "verification_origin": "The real model comparison ran in the original private project-local checkout. It is not claimed as a new model run of the publication SHA. The native worker source matches the public base and the two Python source files are integrated unchanged.",
+  "shared_native_worker_source_matches_public_base": true,
+  "source_files_sha256": {
+    "tools/detector-export/verify.py": "6f7ffa46e8a22a36f7f483b17cd091afaefb407e4de5ec6d41ec812172a06f49",
+    "tools/detector-export/test_controls.py": "997d17de40f99683bc242bce833402a2204fbf7a98bb4953adeee95f2c3fa333",
+    "tools/detector-export/README.md": "71e4568e0d99c611d488414d651666500916280d33bd12e15ebd1ef0178ff511",
+    "tasks/R05.md": "22f5e29f3b87a28ab40c97f681b49da65aa8ff7363be1e9c826711f16feff732"
+  },
+  "numeric_result": {
+    "process_exit_code": 1,
+    "binary_sha256": "189a9534baa473a22cc563763f33bd114bbafbec325edd8149051fc9f1eeee6a",
+    "model_sha256": "ddeed4c0b5d5a2686fb69dae892590b76a13dce1b319ca89d84a6e0e6a9c14c7",
+    "runtime_sha256": "dec964ab1ee36cc9b0ae247d13b376627992fc57dec0454354017ab8fd84f1ea",
+    "runtime_version": "1.23.2",
+    "execution_provider": "CPUExecutionProvider",
+    "complete_cases": [
+      "rgb",
+      "alpha",
+      "wide",
+      "tall"
+    ],
+    "complete_rust_paths": 8,
+    "failed_case": "mirror",
+    "failed_path": "tensor",
+    "compared_logit_elements": 24000,
+    "violating_logit_elements": 6,
+    "max_violating_absolute_error": 0.000492095947265625,
+    "atol": 0.0001,
+    "rtol": 0.0001,
+    "preprocessing_sha_matches": true,
+    "input_tensor_sha256": "f894da6b63594eb38d952c4e159c0f62dc1c139f04715813d4fa6d25a773c644",
+    "unexecuted_paths": [
+      "mirror/image",
+      "rotate/tensor",
+      "rotate/image"
+    ]
+  },
+  "failing_mirror_python_reference": "Freshly computed in this continuation, not reused. Only the earlier charged RGB Python reference was reused.",
+  "accounting": {
+    "sole_original_ledger": true,
+    "used_before": 3,
+    "new_debits": 13,
+    "used_after": 16,
+    "limit": 20,
+    "successful_python_forwards": 6,
+    "successful_rust_forwards": 9,
+    "original_native_failed_before_session_debits": 1,
+    "stopped_on_first_error": true,
+    "additional_inference_authorized": false,
+    "real_model_forwards_for_publication": 0,
+    "new_or_reset_real_ledger": false
+  },
+  "controls": {
+    "collected": 9,
+    "passed": 8,
+    "skipped_by_user": 1,
+    "failed": 0,
+    "real_detector_forwards": 0
+  },
+  "waived_control": {
+    "id": "R05-B1",
+    "test": "test_verifier_rejects_real_leaf_symlinks_before_read_hash_or_graph",
+    "decision": "skipped_by_user_not_passed",
+    "production_path_guards_retained": true,
+    "no_elevation_retry": true
+  },
+  "private_evidence": {
+    "full_comparison_report_sha256": "359b147321ff132b40c6b0aa8f3501cad6385336a2611b401dc0439df33d95fd",
+    "retained_original_report_sha256": "8ca13b2869cd17a66b24cc5be274d19d5530ae5795d9a0c235ea67b8fa35d80b",
+    "retained_original_rgb_reference_sha256": "cb86215fe9e03f6d258222d7dc96cdd399b8dfded4edb008599c07b0009228c8",
+    "original_report_and_reference_unchanged": true,
+    "raw_logs_traces_nonce_ledger_arrays_models_and_runtime_binaries_published": false
+  },
+  "acceptance": {
+    "R05": "blocked_numeric_mismatch",
+    "R09": "pending_dependency",
+    "R10": "pending_dependency",
+    "R11": "pending_dependency",
+    "T32": "blocked",
+    "T35": "pending",
+    "default_entry": "legacy_retained",
+    "quality_product_adoption_and_release_proved": false
+  },
+  "review": "Main inline code/spec review; no new subagent and no independent-review claim. Fixed tolerances/model/runtime/export strategy and all six-image acceptance requirements are unchanged.",
+  "publication_checks": {
+    "r05-public-controls": {
+      "exit_code": 0,
+      "receipt_sha256": "791baf772f241e3af31bfa8db445b8d2631373aa9422d4621c1e0e6d3d32980a",
+      "raw_receipt_and_log": "withheld in project-local private archive"
+    },
+    "r05-public-plan": {
+      "exit_code": 0,
+      "receipt_sha256": "11cc943fc9148b346ed07881e2b3840c5e001302d3f5d6ba9674a943585a24bb",
+      "raw_receipt_and_log": "withheld in project-local private archive"
+    },
+    "r05-public-docs": {
+      "exit_code": 0,
+      "receipt_sha256": "388459f3fadaa8dc4fee814603fd76c9b2587720a0b5ca43f49583f2252861a8",
+      "raw_receipt_and_log": "withheld in project-local private archive"
+    },
+    "control_counts": {
+      "collected": 9,
+      "passed": 8,
+      "skipped_by_user": 1,
+      "failed": 0
+    },
+    "docs": {
+      "files_checked": 77,
+      "links_checked": 371,
+      "errors": 0
+    },
+    "plan": {
+      "original_tasks": 36,
+      "refactor_tasks": 12,
+      "ready_tasks": [],
+      "ready_refactor_tasks": []
+    },
+    "whitelisted_paths": [
+      "tools/detector-export/verify.py",
+      "tools/detector-export/test_controls.py",
+      "tools/detector-export/README.md",
+      "tasks/R05.md",
+      "STATUS.json",
+      "reports/index.md",
+      "reports/publication/native-html-rust-rebuild.json",
+      "reports/publication/r05-continuation.json"
+    ]
+  }
+}

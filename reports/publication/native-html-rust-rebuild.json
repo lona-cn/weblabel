@@ -52,6 +52,10 @@
     "file_symlink_negative_control_completed": false,
     "only_authorized_uac_attempt": "cancelled before child start; no retry authorized"
   },
+  "subsequent_detector_update": {
+    "receipt": "reports/publication/r05-continuation.json",
+    "scope": "The detector_authorization block above is the historical first-publication snapshot. The later explicit continuation stopped at 16/20 on mirror/tensor numeric mismatch; R05 remains blocked. Existing public integration checks below are historical and were not rerun as model validation."
+  },
   "public_integration": {
     "status": "passed",
     "platform": "Windows x64",
