@@ -940,26 +940,28 @@
       "release_gate_change": false
     },
     "html_rust_rebuild": {
-      "status": "blocked",
+      "status": "running",
       "approved_scope": "R00_R11_native_web_rust_single_process",
       "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
       "contract_version": "v1",
       "report_index": "reports/publication/native-html-rust-rebuild.json",
       "design_gate": "accepted",
       "product_changes_started": true,
-      "model_forwards_used": 16,
+      "model_forwards_used": 20,
       "model_forwards_authorized_maximum": 20,
       "model_forward_accounting": {
         "basis": "durable debits including failed requests",
-        "ledger": "private project-local archive; stopped after numeric mismatch, not published",
-        "successful_python_forwards": 6,
-        "successful_rust_forwards": 9,
+        "ledger": "sole original private project-local ledger; exhausted at 20/20, not published",
+        "successful_python_forwards": 7,
+        "successful_rust_forwards": 11,
         "redeemed_native_requests_failed_before_session": 1,
-        "inference_stopped_by_user": false,
-        "inference_stopped_on_error": true,
+        "auxiliary_request_failed_before_model_debits": 1,
+        "inference_stopped_by_user": true,
+        "ledger_exhausted": true,
+        "original_numeric_failure_preserved": true,
         "additional_inference_authorized": false,
-        "numeric_equivalence": "failed_mirror_tensor_raw_logits",
-        "continuation_result": "reports/publication/r05-continuation.json"
+        "numeric_equivalence": "retained_gates_passed_with_explicit_R05_B1_N1_R1_waivers",
+        "continuation_result": "reports/publication/r05-accepted.json"
       },
       "tasks": {
         "R00": {
@@ -1072,19 +1074,23 @@
           "original_actualcommit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690"
         },
         "R05": {
-          "status": "blocked",
-          "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
-          "integrated_commit": "19e570e1be312003389d513077010fad990543e5",
-          "actualcommit": "19e570e1be312003389d513077010fad990543e5",
-          "commit_scope": "partial_source_only_not_task_completion",
+          "status": "done",
+          "base_commit": "794cc846acd505356bcc76b8451a445450e04098",
+          "integrated_commit": "ca78b47afdc5963005d1ed72eabf2aa463dc445b",
+          "actualcommit": "ca78b47afdc5963005d1ed72eabf2aa463dc445b",
+          "commit_scope": "accepted_source_with_explicit_user_waivers",
+          "acceptance_original_source_commit": "e3010e153b32818c8803a09342eb924a7ceb9b80",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json",
-            "reports/publication/r05-continuation.json"
+            "reports/publication/r05-continuation.json",
+            "reports/publication/r05-accepted.json"
           ],
-          "waived_controls": [{"id": "R05-B1", "decision": "skipped_by_user", "proof": "not_executed_not_passed", "path_guards_retained": true, "uac_retry_authorized": false}],
-          "blockers": [
-            "Actual mirror/tensor raw logits fail unchanged atol=rtol=1e-4: 6/24000 violations, maximum violating absolute error 0.000492095947265625. Stopped at 16/20; RGB/alpha/wide/tall both paths passed. Mirror/image and rotation remain unexecuted; no automatic retry or model/engine/export strategy/tolerance change."
+          "waived_controls": [
+            {"id":"R05-B1","decision":"skipped_by_user","proof":"not_executed_not_passed","path_guards_retained":true,"uac_retry_authorized":false},
+            {"id":"R05-N1","decision":"skipped_by_user","proof":"raw_logits_diagnostic_only_not_strict_pass","retained_output_gates_passed":true},
+            {"id":"R05-R1","decision":"skipped_by_user","proof":"independent_rotate_tensor_not_executed_not_passed","actual_rust_image_routes":6,"actual_rust_tensor_routes":5}
           ],
+          "blockers": [],
           "original_base_commit": "6afd1fa96d80e49375c755eda96935cb1be1923d",
           "original_integrated_commit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690",
           "archived_original_evidence": [
@@ -1096,7 +1102,7 @@
             "reports/T35/html-rust-rebuild/r05-single-uac-filelink-control.json",
             "tools/detector-export/README.md"
           ],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+          "evidence_scope": "Real inference acceptance is inherited from the private source and sole 20/20 ledger; corrected production decoder replay used saved real outputs without any further inference. Publication checks are separate; no R09 cutover, model quality, live or release gate is claimed.",
           "original_actualcommit": "6ec26076c8d42e4d7f950ebf83a19ae09bab4690"
         },
         "R06": {
@@ -1171,9 +1177,7 @@
           "integrated_commit": null,
           "actualcommit": null,
           "evidence": [],
-          "blockers": [
-            "Dependency R05 remains blocked; no cutover or legacy deletion before its completion"
-          ],
+          "blockers": [],
           "original_base_commit": null,
           "original_integrated_commit": null,
           "archived_original_evidence": [],
@@ -1224,7 +1228,7 @@
         "source_binding": "Public source commit; original private task and acceptance provenance preserved separately in original_* and archived_original_evidence fields."
       },
       "original_base_commit": "196f6da536ba6f9a9b6a45bb17cade3a70fd0c4d",
-      "latest_implementation_commit": "8a415bc5bde57bb9513ae68980644322920a7c84"
+      "latest_implementation_commit": "ca78b47afdc5963005d1ed72eabf2aa463dc445b"
     }
   },
   "tasks": {

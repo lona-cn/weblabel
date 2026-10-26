@@ -53,8 +53,9 @@
     "only_authorized_uac_attempt": "cancelled before child start; no retry authorized"
   },
   "subsequent_detector_update": {
-    "receipt": "reports/publication/r05-continuation.json",
-    "scope": "The detector_authorization block above is the historical first-publication snapshot. The later explicit continuation stopped at 16/20 on mirror/tensor numeric mismatch; R05 remains blocked. Existing public integration checks below are historical and were not rerun as model validation."
+    "receipt": "reports/publication/r05-accepted.json",
+    "previous_continuation": "reports/publication/r05-continuation.json",
+    "scope": "The detector_authorization and inherited_private_acceptance blocks above remain historical snapshots. R05 is now done under explicit B1/N1/R1 user waivers at the sole ledger's 20/20 limit, with six image and five tensor routes plus corrected production postprocessing replay without new inference. Original failures remain preserved; no strict raw-logit pass, independent rotate/tensor execution, R09 cutover or release/live gate advancement is claimed."
   },
   "public_integration": {
     "status": "passed",

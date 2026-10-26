@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "task_id": "R05",
+  "status": "done_with_explicit_user_waivers",
+  "public_base": "794cc846acd505356bcc76b8451a445450e04098",
+  "publication_source_commit": "ca78b47afdc5963005d1ed72eabf2aa463dc445b",
+  "original_source_commit": "e3010e153b32818c8803a09342eb924a7ceb9b80",
+  "original_receipt_commit": "515e69f0edcfae54d986677beedd57146173e628",
+  "scope": "Complete authorized detector acceptance with individually recorded waivers, corrected production rotation postprocessing and zero-inference replay; R09 cutover not yet published.",
+  "source_files_sha256": {
+    "crates/weblabel-api/src/runtime/detector/decode.rs": "92611d98546beee52919bad5e8870bb3bc9620a2e821a612f93dcbbcd4b16ab2",
+    "crates/weblabel-api/tests/r05_detector.rs": "8303045fa6d530b19161a9a0fdba0f7f979827a7078aa77d0fa76e02a2b5b6c6",
+    "tasks/R05.md": "0613f6e96ccdf6a0ea414f424cf218a7cc7711e0294d689dacee6f37b472c792",
+    "tasks/R09.md": "b301d61d449d115e810785f414bf71770600ed1e61edff9666c7e0930356f10c",
+    "tasks/R10.md": "6d380fd9a072adb86fa660ec5b00b2bf561202c6583f041f9a5eb87780eee0eb",
+    "tools/detector-export/README.md": "bf192932ce39f7a3fc7c2730be52cb3713e4295abdbba75b254592023ed7533d",
+    "tools/detector-export/test_controls.py": "49e26378eeded0d620bede3f6dfb1ee0b04302d2bbe60cb9a6a5797cad9acb32",
+    "tools/detector-export/verify.py": "6eccaade88a17f5de066c72a12e30b52793ad2a92050664c564f3776ca815548"
+  },
+  "waivers": [
+    {
+      "id": "R05-B1",
+      "control": "real leaf-file symlink escape negative control",
+      "decision": "skipped_by_user",
+      "proof": "not_executed_not_passed",
+      "production_path_guards_retained": true,
+      "elevation_retry_authorized": false
+    },
+    {
+      "id": "R05-N1",
+      "control": "raw logits elementwise atol=rtol=1e-4",
+      "decision": "skipped_by_user",
+      "proof": "diagnostic_drift_retained_not_strict_pass",
+      "shape_finite_raw_boxes_labels_threshold_and_canonical_geometry_retained": true
+    },
+    {
+      "id": "R05-R1",
+      "control": "independent rotate/tensor model route",
+      "decision": "skipped_by_user_keep_original_twenty_debits",
+      "proof": "not_executed_not_passed",
+      "rotate_image_route": "actually_executed"
+    }
+  ],
+  "real_acceptance": {
+    "origin": "Original private project-local source and sole budget ledger; no model inference is claimed for the publication SHA.",
+    "sole_ledger_debits": 20,
+    "authorized_maximum": 20,
+    "successful_python_forwards": 7,
+    "successful_rust_forwards": 11,
+    "charged_requests_failed_before_model": 2,
+    "ordinary_image_routes": 6,
+    "direct_tensor_routes": 5,
+    "independent_rotate_tensor": "not_executed_not_passed",
+    "additional_model_calls_authorized": false,
+    "model_forwards_for_publication": 0,
+    "runtime": "ONNX Runtime 1.23.2 CPUExecutionProvider; ort2.0.0-rc.15 api-23",
+    "model_sha256": "ddeed4c0b5d5a2686fb69dae892590b76a13dce1b319ca89d84a6e0e6a9c14c7",
+    "inference_binary_sha256": "189a9534baa473a22cc563763f33bd114bbafbec325edd8149051fc9f1eeee6a",
+    "runtime_sha256": "dec964ab1ee36cc9b0ae247d13b376627992fc57dec0454354017ab8fd84f1ea",
+    "raw_logit_violations_diagnostic_only": 12,
+    "retained_gate_assessment": "passed_after_corrected_production_decoder_zero_inference_replay",
+    "max_canonical_bbox_error_pixels": 4.351139068603516e-06,
+    "rotate_image_bbox_error_pixels": 0,
+    "canonical_bbox_tolerance_pixels": 0.1,
+    "raw_boxes_atol": 0.0001,
+    "raw_boxes_rtol": 0.0001
+  },
+  "rotation_fix": {
+    "cause": "The former decoder reused transformed x when computing y. Both transformed coordinates now derive from the same original input corner.",
+    "regression_expected_box": [
+      250,
+      100,
+      350,
+      300
+    ],
+    "regression_former_box": [
+      250,
+      250,
+      350,
+      350
+    ],
+    "replay": "Production Rust decoder executed as a standalone native program on eleven saved real inference outputs; no model or Session rerun.",
+    "corrected_binary_reran_model": false,
+    "production_decoder_source_sha256": "92611d98546beee52919bad5e8870bb3bc9620a2e821a612f93dcbbcd4b16ab2",
+    "accepted_private_report_sha256": "9aae87d0f6648bc40947ae6a7af262db8ed8a2dfbf501399e0edfe78168e9d92",
+    "standalone_replay_output_sha256": "11556f508af5d1d5d8c5af2d80274d69335e66dc12b7f83578d789117f3c8cb0"
+  },
+  "original_verification": {
+    "native_r05_controls": 21,
+    "python_controls": {
+      "collected": 10,
+      "passed": 9,
+      "explicit_user_skips": 1
+    },
+    "rotation_regression": "failed_before_passed_after",
+    "standalone_saved_output_smoke": "exit0_eleven_paths_zero_new_model_calls",
+    "review": "Main inline code/spec/privacy review; not an independent R11 review."
+  },
+  "publication_checks": {
+    "status": "passed",
+    "source_commit": "ca78b47afdc5963005d1ed72eabf2aa463dc445b",
+    "real_model_forwards": 0,
+    "sole_original_twenty_debit_ledger_unchanged": true,
+    "native_r05_tests": {"passed":21,"failed":0,"ignored":0},
+    "python_controls": {"collected":10,"passed":9,"skipped_by_user":1,"failed":0},
+    "plan": {"original_tasks":36,"refactor_tasks":12,"ready_refactor_tasks":["R09"],"errors":0},
+    "docs": {"files_checked":77,"links_checked":372,"errors":0},
+    "initial_control_command": "pytest was not installed; that command exited before controls. The existing unittest entry then ran successfully; no dependency installed and no detector inference.",
+    "receipts": [
+      {"label":"r05-accepted-public-native","exit_code":0,"receipt_sha256":"2d63329d34f33e912a8850d2bdda9ba3c1c24e31f3b2c494f3fb08acb204c06f"},
+      {"label":"r05-accepted-public-controls","exit_code":1,"receipt_sha256":"74036b4aafb7a757f57e5209f507a50243179876423d4030aa06c2bef68f19d5"},
+      {"label":"r05-accepted-public-controls-unittest","exit_code":0,"receipt_sha256":"55667b3f9b27538e2ebad3f9f8a4749bf9acdf93972d6f46049b0e38aa6f14f5"},
+      {"label":"r05-accepted-public-plan","exit_code":0,"receipt_sha256":"284e34fdfbe54d06997b197546092ba3ce7ae04e602bf196c2297e462a9d738b"},
+      {"label":"r05-accepted-public-docs","exit_code":0,"receipt_sha256":"79e3253234f95fbac5e4a8f71fe88f8aa814e43efb687980c477d4b86826f134"}
+    ],
+    "raw_receipts_and_logs": "withheld in project-local private evidence",
+    "review": "Main inline review: exact eight-file private-source delta, previous public blobs matched, public storage/lease/process safety retained, all three waivers separately disclosed, no private raw evidence or parent commits included."
+  },
+  "privacy": {
+    "original_reports_failures_and_nonce_ledger": "retained unchanged in private project-local evidence",
+    "raw_logs_traces_arrays_images_models_runtime_binaries_databases_and_private_parent_history_published": false
+  },
+  "gates": {
+    "R05": "done_under_explicit_waivers",
+    "R09": "ready_not_complete",
+    "R10": "pending",
+    "R11": "pending",
+    "T32": "blocked",
+    "T35": "pending",
+    "release_quality_live_and_product_adoption_acceptance_advanced": false
+  }
+}
