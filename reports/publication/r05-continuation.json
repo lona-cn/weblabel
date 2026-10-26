@@ -131,5 +131,8 @@
       "reports/publication/native-html-rust-rebuild.json",
       "reports/publication/r05-continuation.json"
     ]
-  }
+  },
+  "publication_source_commit": "19e570e1be312003389d513077010fad990543e5",
+  "publication_source_parent": "53f2bfd05872ae87e479583fbfb2fe4ade7983e4",
+  "publication_private_parent_history_included": false
 }

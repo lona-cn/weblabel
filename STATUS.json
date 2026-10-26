@@ -1074,8 +1074,8 @@
         "R05": {
           "status": "blocked",
           "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
-          "integrated_commit": "8a415bc5bde57bb9513ae68980644322920a7c84",
-          "actualcommit": "8a415bc5bde57bb9513ae68980644322920a7c84",
+          "integrated_commit": "19e570e1be312003389d513077010fad990543e5",
+          "actualcommit": "19e570e1be312003389d513077010fad990543e5",
           "commit_scope": "partial_source_only_not_task_completion",
           "evidence": [
             "reports/publication/native-html-rust-rebuild.json",
