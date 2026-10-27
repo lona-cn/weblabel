@@ -43,3 +43,24 @@
 .r07-ai-config-footer [data-testid=ai-run]{min-width:180px;border-color:var(--accent)}
 @media(max-width:1099px){.r07-workbench dialog.r07-ai-config{inset:0;height:100dvh}.r07-ai-config-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}.r07-ai-config-guide{grid-column:1/-1}}
 @media(max-width:700px){.r07-ai-config-grid{display:block}.r07-ai-config-grid>section{overflow:visible;margin-bottom:12px}.r07-ai-config-footer{flex-wrap:wrap}.r07-ai-config-footer p{flex-basis:100%}}
+
+.r07-workbench dialog.r07-help{position:fixed;inset:56px 0 0;width:100vw;height:calc(100dvh - 56px);max-width:none;max-height:none;margin:0;padding:0;border:0;border-radius:0;background:var(--surface-0);overflow:hidden}
+.r07-workbench dialog.r07-help[open]{display:flex;flex-direction:column}
+.r07-workbench dialog.r07-help::backdrop{background:transparent}
+.r07-help>h2{font-size:24px;margin:0;padding:16px 20px 0}
+.r07-help-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);align-items:start;gap:16px;flex:1;min-height:0;padding:16px 20px;overflow:auto}
+.r07-help-main{display:grid;gap:16px;min-width:0}
+.r07-help-card{min-width:0;padding:16px;border:1px solid var(--border);border-radius:6px;background:var(--surface-1)}
+.r07-help-card h3{margin:0 0 12px}
+.r07-help-card table{font-size:14px}
+.r07-help-card :is(th,td){padding:6px 10px}
+.r07-help-context{grid-template-columns:minmax(90px,auto) minmax(0,1fr);gap:8px 16px}
+.r07-help-context dt{color:var(--muted)}
+.r07-help-context dd{margin:0;overflow-wrap:anywhere}
+.r07-help-card label{display:flex;align-items:center;gap:8px;min-height:44px}
+.r07-help-card button{min-height:44px}
+.r07-help-footer{display:flex;align-items:center;gap:12px;padding:12px 20px;border-top:1px solid var(--border);background:var(--surface-1)}
+.r07-help-footer p{flex:1;color:var(--muted)}
+.r07-help-footer button{min-width:170px;min-height:44px}
+@media(max-width:1099px){.r07-workbench dialog.r07-help{inset:0;height:100dvh}.r07-help-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.r07-help-footer{flex-wrap:wrap}.r07-help-footer p{flex-basis:100%}.r07-help-footer button{width:100%}}
