@@ -57,7 +57,16 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   const assetSearch = element('input'); assetSearch.type = 'search'; assetSearch.setAttribute('aria-label', '搜索图片'); assetSearch.placeholder = '搜索图片';
   const assetList = element('ul', undefined, 'r07-asset-list'), objectsRoot = element('section');
   assetList.dataset.testid = 'asset-grid';
-  const importLaunch = action('导入图片 / 标注', 'open-import', signal, () => { transferDetails.open = true; transferSummary.focus(); });
+  const inlineMedia = element('div', undefined, 'native-delivery r07-inline-media'); inlineMedia.hidden = true;
+  let mediaContainer: HTMLElement | null = null, mediaHome: HTMLElement | null = null, inlineMediaActivated = false;
+  const importLaunch = action('导入图片 / 标注', 'open-import', signal, () => {
+    if (state.phase !== 'empty' && mediaContainer && mediaHome && mediaContainer.parentElement === inlineMedia) { mediaHome.prepend(mediaContainer); inlineMedia.hidden = true; }
+    transferDetails.open = true;
+    if (assetsDialog.element.open) {
+      assetsDialog.element.addEventListener('close', () => transferSummary.focus(), { once: true, signal });
+      assetsDialog.close();
+    } else transferSummary.focus();
+  });
   const resizeControls = element('div', undefined, 'r07-button-row'), resizeButtons: { delta: number; button: HTMLButtonElement }[] = [];
   for (const [delta, text] of [[-20, '缩窄图片与对象栏'], [20, '加宽图片与对象栏']] as const) {
     const button = action(text, 'resize-assets-' + delta, signal, () => {
@@ -74,7 +83,8 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   }
   const sidebarObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateResizeButtons);
   sidebarObserver?.observe(assetsHome); signal.addEventListener('abort', () => sidebarObserver?.disconnect(), { once: true });
-  assets.append(element('h2', '图片与对象'), labeled('搜索图片', assetSearch), importLaunch, assetList, resizeControls, objectsRoot);
+  const assetsHeading = element('h2', '图片与对象'), assetSearchField = labeled('搜索图片', assetSearch);
+  assets.append(assetsHeading, inlineMedia, assetSearchField, importLaunch, assetList, resizeControls, objectsRoot);
   const toolbar = element('div', undefined, 'r07-toolbar'), canvas = mountCanvasView(state, port, signal, context.hostOptions);
   toolbar.id = 'canvas-toolbar-row';
   const error = element('p', undefined, 'r07-workspace-error'); error.setAttribute('role', 'alert'); error.dataset.testid = 'workbench-error';
@@ -259,8 +269,8 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
     asset: state.loaded?.media ?? state.assets.find(asset => asset.asset_revision_id === state.assetId) ?? null,
     ontology: state.loaded?.ontology ?? state.ontologies.find(item => item.ontology_version_id === state.ontologyId) ?? null,
     scopeKey: state.scope, canWrite: port.canImport(), canExport: port.canExport(),
-    canUploadMedia: writableRole(state) && state.catalogReady && !state.modal && !state.preparation && !state.importing && !state.submission && !state.branchBusy,
-  }), subscribe: state.subscribe,
+    canUploadMedia: writableRole(state) && state.catalogReady && (!state.modal || assetsDialog.element.open && !state.importViewModal && shell.querySelectorAll('dialog[open]').length === 1) && !state.preparation && !state.importing && !state.submission && !state.branchBusy,
+  }), subscribe: state.subscribe, onMediaMounted(container) { mediaContainer = container; mediaHome = container.parentElement; },
     setImportViewOpen: open => { if (open) port.cancelGesture(); state.importViewModal = open; state.modal = open || !!shell.querySelector('dialog[open]'); state.notify(); },
     prepareImport: port.prepareImport, releaseImport: scopeKey => { if (state.scope === scopeKey) port.releaseImport(); }, commitImport: async (revision, scopeKey) => { if (state.scope !== scopeKey) throw new Error('导入回执作用域已变化；保留原请求。'); await port.commitImport(revision); }, prepareExport: port.prepareExport, refreshAssets: controller.refreshAssets }));
   reviewDetails.open = !!context.route.queue;
@@ -319,6 +329,11 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
       for (const norm of state.ontologies) ontology.append(option(norm.ontology_version_id, 'ontology ' + norm.version_no + (state.heads.includes(norm.ontology_version_id) ? ' · 已有标注 head' : ' · 无 head，仅显式导入')));
     }
     ontology.value = state.ontologyId; ontology.disabled = !sessionCurrent(state) || !!state.fixedTask || !!state.preparation || !!state.importing || state.submission || state.branchBusy;
+    const emptyProject = state.phase === 'empty' && !state.assets.length;
+    if (emptyProject && !inlineMediaActivated && mediaContainer) { inlineMediaActivated = true; inlineMedia.append(mediaContainer); inlineMedia.hidden = false; }
+    assetsHeading.textContent = emptyProject ? '图片 · 0' : '图片与对象';
+    assetSearchField.hidden = objectsRoot.hidden = emptyProject;
+    importLaunch.textContent = emptyProject ? '标注导入与导出' : '导入图片 / 标注';
     renderAssets();
     const selected = selectedIds(state);
     selectionSummary.hidden = !compact.matches || !selected.length;

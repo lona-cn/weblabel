@@ -136,8 +136,10 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     rescueBranch.disabled = busy || !current || !chosen;
     recoveryBanner.hidden = !branchList.childElementCount && !(state.recovery && ['restored', 'conflict', 'unreachable'].includes(state.recovery.kind));
     const retained = hasUnresolvedBranches && !snapshot.dirty && (snapshot.phase === 'idle' || snapshot.phase === 'synced');
-    status.textContent = (unresolved ? '保存结果未知，原请求已保留' : retained ? '存在待恢复或救援的本地草稿' : PHASE[snapshot.phase])
-      + (retained ? ' · 当前分支本地版本 ' : ' · 本地版本 ') + snapshot.local_generation + ' / 服务器确认 ' + snapshot.synced_generation;
+    status.textContent = !state.loaded && !record && snapshot.phase === 'idle' && !snapshot.dirty && !snapshot.last_error && !unresolved && !retained
+      ? state.phase === 'empty' ? '尚未导入图片；没有标注保存记录。' : '尚未载入标注文档；服务器确认状态未知。'
+      : (unresolved ? '保存结果未知，原请求已保留' : retained ? '存在待恢复或救援的本地草稿' : PHASE[snapshot.phase])
+        + (retained ? ' · 当前分支本地版本 ' : ' · 本地版本 ') + snapshot.local_generation + ' / 服务器确认 ' + snapshot.synced_generation;
   }
   completion.addEventListener('change', () => { if (!port.getHost()) return; negative.checked = false; if (completion.value !== 'confirmed_negative') port.dispatch({ kind: 'set_completion', completion: completion.value as Completion }); update(); }, { signal });
   negative.addEventListener('change', update, { signal });

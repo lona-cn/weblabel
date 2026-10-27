@@ -11,5 +11,6 @@ export function mountTransfersPanel(root: HTMLElement, context: TransfersMountCo
   });
   const child = { ...context, signal: reads.signal, getScope() { reads.current(); return context.getScope(); } };
   life.add(reads.dispose);
-  life.add(mountMediaImportView(media, child)); life.add(mountAnnotationImportView(annotations, child)); life.add(mountRevisionExportView(exports, child)); life.add(() => panel.remove()); reads.current(); return life.dispose;
+  life.add(mountMediaImportView(media, child)); context.onMediaMounted?.(media);
+  life.add(mountAnnotationImportView(annotations, child)); life.add(mountRevisionExportView(exports, child)); life.add(() => panel.remove()); reads.current(); return life.dispose;
 }
