@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
-  "previous_public_source_commit": "43409323ab07535ab7d436b0bbdc45fc8092102b",
-  "public_base_commit": "c48a0f7aebb0d03c1ab987431c4e4c5b9ae09363",
-  "provenance": "The seventeen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
+  "previous_public_source_commit": "3a74e895a71d58532bd506f429d2d4b40668be99",
+  "public_base_commit": "3a74e895a71d58532bd506f429d2d4b40668be99",
+  "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
     "exit": 1,
@@ -57,7 +57,12 @@
     "limitation": "The browser recorded the response body but not the outgoing request body; exact outgoing bytes are not claimed. Deliberate offline failure and diagnostic wait timeouts were retained in the private evidence.",
     "cleanup": "The owned browser and fixture stopped; synthetic default data and controller sources were archived and checked by member hash before the isolated worktree was removed without force."
   },
-  "earlier_fixture_scope_deviation": "The earlier handoff and member/terminal and partial-import UI fixture invocations used a shared seed helper that attempted unauthorized and cross-origin negative controls despite the user-skipped security scope. Earlier and latest hardware GPU runs also executed a bootstrap response password-omission assertion through their synthetic fixture despite the security skip flag. These are not security acceptance; no real user credentials were used. The GPU fixture now respects the skip flag, but the full runner still contains other user-skipped security cases.",
+  "earlier_fixture_scope_deviation": "The earlier handoff and member/terminal and partial-import UI fixture invocations used a shared seed helper that attempted unauthorized and cross-origin negative controls despite the user-skipped security scope. Earlier and latest hardware GPU runs also executed a bootstrap response password-omission assertion through their synthetic fixture despite the security skip flag. These are not security acceptance; no real user credentials were used. The GPU fixture now respects the skip flag, and the unpartitioned full runner fails closed before launching commands when security is skipped.",
+  "security_skip_runner_guard": {
+    "behavior": "With --skip-security, fast, integration, browser and release return blocked with SECURITY_SKIP_PARTITION_INCOMPLETE before starting child commands because their security cases are not fully partitioned. GPU and offline live dispatch retain their existing scope.",
+    "focused_test": "One selected regression started all four actual CLI entry points and verified exit 2, blocked status, security skipped and zero commands. No user-skipped security cases were executed by this test.",
+    "independent_smoke": "The actual release CLI with --skip-security independently returned exit 2, blocked, zero commands, security skipped and full_1_0_ready false. This is not a full suite pass or security acceptance."
+  },
   "save_recovery": {
     "reproduction": "A real native save committed with HTTP 200 before its response was deliberately dropped. The original pending operation survived continued local editing and switching images. Before the fix, unknown was not surfaced in the primary status and explicit saving of the newer edit did not send a new request.",
     "focused_tests": {"passed": 6, "failed": 0, "filtered": 43, "web_typescript_exit": 0, "test_typescript_exit": 0, "note": "Two behavior cases failed before the first fix; the primary-status case failed before its later fix."},
@@ -86,8 +91,8 @@
     "workload": {"sizes": [2000, 10000], "scenarios": 4, "warmups_each": 40, "samples_each": 1000, "raw_rows": 8000},
     "p95_2000_ms": {"pointer_drag": {"cpu": 2.359, "double_raf": 30.6}, "pan": {"cpu": 1.165, "double_raf": 30.3}, "zoom": {"cpu": 1.153, "double_raf": 30.2}, "committed_edit": {"cpu": 7.068, "double_raf": 30.0}}
   },
-  "current_hardware_gpu": {
-    "provenance": "Locally measured after the workbench display changes and before the later test-fixture-only skip correction; source snapshot SHA-256 09924d01a44124e294bf29e47502c2d2e494367ed0fe78f6205b19d6df26c766 remained unchanged during the run. The public commit was not rebuilt or measured.",
+  "latest_hardware_gpu": {
+    "provenance": "Locally measured after the workbench display changes and before the later test-fixture and runner guard corrections; source snapshot SHA-256 09924d01a44124e294bf29e47502c2d2e494367ed0fe78f6205b19d6df26c766 remained unchanged during the run. The public commit was not rebuilt or measured.",
     "status": "failed",
     "adapter": "NVIDIA Blackwell, non-fallback",
     "tests": {"collected": 3, "passed": 2, "failed": 1, "skipped": 0, "flaky": 0},
@@ -97,7 +102,7 @@
     "followup_profile": "A separate 160-edit real-hardware diagnostic found the IndexedDB write callback and native put to be the largest sampled non-idle stack. It was not an acceptance timing run and does not establish the cause of the p95 failure. Durable writes were not removed or delayed.",
     "limits": "The 10000-box run is supplemental stress, not the 2000-box threshold. Double-rAF is a scheduling proxy, not physical display latency. No GPU timestamps or physical VRAM measurements."
   },
-  "verification_scope": "The user-skipped security topic remains not verified. The full release runner is not repeated: its --skip-security option still includes security-related cases in the Rust workspace and web suite.",
+  "verification_scope": "The user-skipped security topic remains not verified. The full release runner now fails closed before commands when --skip-security is set because Rust, Web and browser cases remain unpartitioned.",
   "this_push": {"ci": "intentionally skipped for this commit to avoid repeating the user-skipped security topic; no workflow was changed", "automated_container_publication": "not run"},
   "detector_budget": {"used": 20, "limit": 20, "new_forwards": 0, "waivers": ["R05-B1", "R05-N1", "R05-R1"]},
   "status": {"R09": "done", "R10": "running", "R11": "pending", "T32": "blocked", "T35": "pending", "full_release_passed": false}

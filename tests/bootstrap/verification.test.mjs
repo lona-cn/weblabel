@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 import { executeVerificationCommand, readTestEvidence, checkEvidenceIdentity, readAcceptanceEvidence } from '../../scripts/verify.mjs';
@@ -35,6 +36,23 @@ async function nodeTests(source) {
     return await executeVerificationCommand({ name: 'actual-node-tests', kind: 'node', argv: [process.execPath, '--test', '--test-reporter=spec', ...(source !== null ? [file] : [])] }, f.context);
   } finally { f.cleanup(); }
 }
+
+test('security skip blocks unpartitioned verification gates before any command', () => {
+  const directory = fs.mkdtempSync(taskReportPath('T00', 'security-skip-scope-'));
+  try {
+    for (const gate of ['fast', 'integration', 'browser', 'release']) {
+      const reportDir = path.join(directory, gate);
+      const run = spawnSync(process.execPath, ['scripts/verify.mjs', gate, '--skip-security', '--report-dir', path.relative(root, reportDir)], { cwd: root, env, encoding: 'utf8' });
+      assert.equal(run.status, 2, `${gate}: ${run.stderr}`);
+      const result = JSON.parse(fs.readFileSync(path.join(reportDir, 'result.json'), 'utf8'));
+      assert.equal(result.status, 'blocked');
+      assert.ok(result.blockers.includes('SECURITY_SKIP_PARTITION_INCOMPLETE'));
+      assert.deepEqual(result.skipped_scope, ['security']);
+      assert.deepEqual(result.commands, []);
+      assert.equal(result.full_1_0_ready, false);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
 
 test('actual Node report distinguishes passed, skipped and failed consumer assertions', async () => {
   const success = await nodeTests("import test from 'node:test';import assert from 'node:assert/strict';test('normal',()=>assert.equal(2+2,4));test.skip('not exercised',()=>{});");

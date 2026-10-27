@@ -11,6 +11,7 @@ import { ownedReportRoot, projectOutputPath } from '../tests/support/report-path
 
 const root = fs.realpathSync(fileURLToPath(new URL('../', import.meta.url)));
 const gates = new Set(['fast', 'integration', 'browser', 'gpu', 'live', 'release']);
+const securitySkipUnpartitionedGates = new Set(['fast', 'integration', 'browser', 'release']);
 const sha = value => createHash('sha256').update(value).digest('hex');
 const relative = file => path.relative(root, file).replaceAll('\\', '/');
 const clean = text => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
@@ -317,7 +318,7 @@ export async function verify(argv = process.argv.slice(2)) {
   const runId = new Date().toISOString().replaceAll(/[:.]/g, '-') + '-' + randomUUID();
   const reportDir = ownedReportRoot(projectOutputPath(options.reportDir ?? `reports/T35/verification/${runId}`));
   const temporary = projectOutputPath(`target/defect-repair/verification/${runId}`), cache = projectOutputPath(`target/build-cache/verification/${runId}/main`);
-  fs.mkdirSync(temporary, { recursive: true }); fs.mkdirSync(cache, { recursive: true });
+  // Runtime and build-cache directories are created only after scope admission.
   const result = { schema_version: 1, evidence_kind: 'current_source_engineering_verification', gate: options.gate, status: 'blocked', base_commit: null, identity: null, source_hashes: null, manifest_sha256: null, started_at: new Date().toISOString(), ended_at: null, environment: { os: os.platform(), arch: os.arch(), release: os.release(), node: process.version, credential_environment: 'not_forwarded', account_state: 'not_inspected' }, commands: [], evidence: [], blockers: [], skipped_scope: options.skipSecurity ? ['security'] : [], excluded_tests: [], full_1_0_ready: false, outbound_model_calls: 0 };
   const controller = new AbortController();
   const interrupt = () => controller.abort('SIGINT'), terminate = () => controller.abort('SIGTERM');
@@ -325,6 +326,11 @@ export async function verify(argv = process.argv.slice(2)) {
   const signal = controller.signal;
   let env;
   try {
+    if (options.skipSecurity && securitySkipUnpartitionedGates.has(options.gate)) {
+      result.blockers.push('SECURITY_SKIP_PARTITION_INCOMPLETE');
+      return result;
+    }
+    fs.mkdirSync(temporary, { recursive: true }); fs.mkdirSync(cache, { recursive: true });
     env = childEnvironment(temporary, cache, reportDir, options.skipSecurity);
     const identity = captureEvidenceIdentity({ env });
     Object.assign(result, { identity, base_commit: identity.source_commit, source_hashes: identity.source_hashes, manifest_sha256: identity.manifest_sha256 });
