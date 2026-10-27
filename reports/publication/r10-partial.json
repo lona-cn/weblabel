@@ -2,7 +2,7 @@
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
   "previous_public_source_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
-  "public_base_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
+  "public_base_commit": "19df2fcba64129eb7d5d00d0fd99696889e4445c",
   "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
@@ -75,6 +75,13 @@
     "retained_branch": "A synthetic request failed before reaching the server. After reload, the later native release showed a visible local recovery warning rather than claiming no pending changes; explicit archival sent no automatic PUT, left the original stored branch structurally unchanged and did not change the server head.",
     "focused_recovery_tests": {"before": {"failed": 1, "filtered": 13}, "after": {"passed": 3, "failed": 0, "filtered": 11}, "note": "Covers unresolved and legacy rescue rows and no false warning for archived branches."},
     "accessibility_limit": "Forced-colors and reduced-motion browser emulation plus keyboard checks cover one workbench state, not operating-system high contrast, a screen-reader session or the full 48-state matrix."
+  },
+  "synthetic_yolo_export": {
+    "scope": "Actual native release and browser with a fresh project-owned synthetic account, procedural 48x32 image and server-created fixed revision. No user data or model calls; the public commit was not rebuilt.",
+    "loss_confirmation": "The real YOLO request returned 422 LOSS_ACK_REQUIRED with actual attributes, object_ids and completion losses. The checkbox began unchecked and confirmation disabled. After explicit confirmation, the same operation with loss_ack=true returned 200.",
+    "download": "The browser downloaded the existing 292-byte ZIP; its size and SHA-256 matched the actual receipt and independent ZIP CRC, label identity and normalized coordinates matched the original fixed xyxy. Server head and document remained unchanged.",
+    "visual_limit": "The export is inside a collapsible workbench section rather than the accepted U16 full-page reference; loss-field identifiers can wrap within words. This is a scoped behavioral observation, not visual or complete R10 acceptance.",
+    "diagnostic": "An initial automation step clicked read-only recheck instead of confirm and timed out waiting for a POST; the checked state was inspected before the actual explicit confirmation."
   },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",
