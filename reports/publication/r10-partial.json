@@ -2,7 +2,7 @@
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
   "previous_public_source_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
-  "public_base_commit": "083d60ed571811c7dc3b4eb859c469956cf95793",
+  "public_base_commit": "3ecdb558a341cadb4809810931f51f4f11823d7c",
   "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
@@ -90,6 +90,12 @@
     "visual_limit": "The export is inside a collapsible workbench section rather than the accepted U16 full-page reference; loss-field identifiers can wrap within words. This is a scoped behavioral observation, not visual or complete R10 acceptance.",
     "user_waiver": "The user accepted the existing embedded layout and waived the U16 full-page reference mismatch as an R10 blocker. Visual equivalence remains not passed; the separately observed export behavior is unchanged.",
     "diagnostic": "An initial automation step clicked read-only recheck instead of confirm and timed out waiting for a POST; the checked state was inspected before the actual explicit confirmation."
+  },
+  "u36_unconfigured_profile": {
+    "scope": "Actual native release and browser using an isolated synthetic project copy. One no-credential synthetic profile was inserted into the copied database using the fixture convention, not through product provisioning; no real model was called.",
+    "behavior": "The actual workbench showed needs_configuration and not_run, three task choices, a nonempty instruction and a disabled run-scope action. With the unavailable profile selected, a real hardware-WebGPU canvas drag added one synthetic object and one undo restored the original object list. No AI/model POST was observed.",
+    "visual_limit": "The actual controls are in a narrow workbench inspector rather than the approved dedicated three-column U36 reference. The screenshot is retained privately; U36 visual equivalence and the full visual matrix are not passed.",
+    "diagnostics": "An initial WebGPU-text wait timed out while the ontology selection was reset during loading; selection was repeated after the list settled. Eight aborted startup GET requests were observed; their cause was not established."
   },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",
