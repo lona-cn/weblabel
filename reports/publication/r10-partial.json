@@ -2,7 +2,7 @@
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
   "previous_public_source_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
-  "public_base_commit": "53b094403bfb44012c7cf94c0297a8dcb0c348ae",
+  "public_base_commit": "6a436cece437fb77d2581a2eb9320ee3293e46ac",
   "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
@@ -76,6 +76,11 @@
     "retained_branch": "A synthetic request failed before reaching the server. After reload, the later native release showed a visible local recovery warning rather than claiming no pending changes; explicit archival sent no automatic PUT, left the original stored branch structurally unchanged and did not change the server head.",
     "focused_recovery_tests": {"before": {"failed": 1, "filtered": 13}, "after": {"passed": 3, "failed": 0, "filtered": 11}, "note": "Covers unresolved and legacy rescue rows and no false warning for archived branches."},
     "accessibility_limit": "Forced-colors and reduced-motion browser emulation plus keyboard checks cover one workbench state, not operating-system high contrast, a screen-reader session or the full 48-state matrix."
+  },
+  "offline_quota_attempt": {
+    "status": "unverified",
+    "observation": "In an isolated Chromium profile, a real origin quota override reported 0 bytes, yet a small offline draft edit was stored and IndexedDB usage increased; no QuotaExceededError was observed.",
+    "limits": "A larger fill timed out and only partially typed. A separate scripted larger input was rejected by the editor's actual 4096-character limit before a draft write. Neither attempt establishes U20 quota-failure or rescue behavior; synthetic server head remained unchanged."
   },
   "synthetic_yolo_export": {
     "scope": "Actual native release and browser with a fresh project-owned synthetic account, procedural 48x32 image and server-created fixed revision. No user data or model calls; the public commit was not rebuilt.",
