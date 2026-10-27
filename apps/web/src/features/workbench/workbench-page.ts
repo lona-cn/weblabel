@@ -264,7 +264,9 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
     previousImage.disabled = switchingBlocked || index <= 0; nextImage.disabled = switchingBlocked || index < 0 || index + 1 >= state.assets.length;
     updateResizeButtons();
     mountManagementIfOpen();
-    error.textContent = state.error ?? ''; error.hidden = !state.error;
+    const rendererError = state.host?.error;
+    error.textContent = state.error ?? '';
+    error.hidden = !state.error || rendererError?.code === 'WEBGPU_UNAVAILABLE' && state.error === reportError(rendererError);
     const key = JSON.stringify([state.heads, state.ontologies.map(item => [item.ontology_version_id, item.version_no])]);
     if (headsKey !== key) {
       headsKey = key; ontology.replaceChildren(option('', '明确选择固定规范'));
