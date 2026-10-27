@@ -1188,12 +1188,12 @@
           "base_commit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd",
           "integrated_commit": null,
           "actualcommit": null,
-          "evidence": ["reports/publication/r09-native-cutover.json"],
+          "evidence": ["reports/publication/r09-native-cutover.json", "reports/publication/r10-partial.json"],
           "blockers": [],
           "original_base_commit": null,
           "original_integrated_commit": null,
           "archived_original_evidence": [],
-          "evidence_scope": "Partial standalone GPU and other synthetic engineering checks only; complete visual, recovery, operations and release acceptance remain outstanding."
+          "evidence_scope": "Scoped synthetic UI, native process and hardware GPU observations only; an earlier full release and both public CI test lanes failed. Complete R10 acceptance and live channels remain outstanding."
         },
         "R11": {
           "status": "pending",

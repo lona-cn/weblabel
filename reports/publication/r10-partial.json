@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
+  "public_source_commit": "6c4208e56b3acec64627dfdf6f89975a4404ce0e",
+  "public_base_commit": "eff4262e79e84198e749e2972fcbe4cafff65fbb",
+  "provenance": "The twelve changed product and test Git blobs match the locally exercised source; public documentation is sanitized independently. The public commit itself was not rebuilt or retested. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
+  "full_release_attempt": {
+    "status": "failed",
+    "exit": 1,
+    "scope": "earlier private source snapshot, not this public commit",
+    "rust_workspace": {"observed": 263, "passed": 262, "failed": 1, "note": "A real export-worker join exceeded its existing ten-second deadline; later isolated and full API library passes did not establish the cause."},
+    "browser": {"collected": 39, "passed": 38, "failed": 1, "note": "The failed member workflow used an obsolete hidden back control; the corrected focused path later passed."},
+    "hardware_gpu": {"collected": 3, "passed": 3, "failed": 0, "skipped": 0, "flaky": 0, "rows": 8000, "device": "NVIDIA Blackwell, non-fallback", "thresholds_unchanged": true},
+    "live": "blocked: required channel evidence absent; no real or paid model calls",
+    "full_1_0_ready": false
+  },
+  "previous_public_ci": {
+    "run": "https://github.com/lona-cn/weblabel/actions/runs/40444106437",
+    "commit": "eff4262e79e84198e749e2972fcbe4cafff65fbb",
+    "linux_build": "passed",
+    "windows_build": "passed",
+    "linux_test": "failed: platform-specific toolchain channel in the security fixture and the 1301-row test's default five-second deadline",
+    "windows_test": "failed: descendant remained observable after native process reclamation",
+    "linux_partial_copy": "passed in the Rust workspace at the earlier public commit",
+    "container": "skipped",
+    "scope_deviation": "The pre-existing workflow attempted the user-skipped security topic; its results are not security acceptance and the topic is not repeated during this session."
+  },
+  "windows_native_cleanup": {
+    "real_child_handle_before_fix": {"passed": 0, "failed": 1, "exit": 101, "observation": "The original crash-descendant process handle was not yet signaled when reclaim returned."},
+    "real_native_process_tests_after_fix": {"passed": 5, "failed": 0},
+    "ownership_tests_after_fix": {"passed": 4, "failed": 0},
+    "independent_synthetic_process_smoke": {"exit": 0, "root_exit": 7, "observed_descendants": 1, "original_descendant_signaled_before_reclaim_returned": true},
+    "mechanism": "Only the original non-breakaway job authorizes termination. The root and pre-termination observed job members are checked via retained process handles; failed or ambiguous observation is not reported as success.",
+    "limit": "New descendants racing the snapshot remain covered by job termination and active-count verification, but are not each individually proven by a retained handle."
+  },
+  "other_scoped_fixes": {
+    "toolchain": "Pinned 1.96.0 without a Windows-only host triple; local Windows rustup resolution passed. Linux was not rerun after this change.",
+    "many_page_dataset_test": "The unchanged 1301-row scope assertions passed locally with a 15-second case-specific deadline; one test passed and eleven were filtered.",
+    "member_actions": "Actual synthetic-account UI confirmed the buttons fit at 1280, 900 and 757 CSS pixels and keyboard Enter selects the exact reviewer; 757 is viewport emulation, not browser zoom.",
+    "terminal_event_race": "Two focused regressions failed before and 17 passed after; a real local synthetic run retained cancelled then later progress events while the UI remained cancelled. No response or paid model call was injected.",
+    "review": "Real synthetic roles exercised claim, renewal, release, submit, continue, independent fixed-revision approval and a later unapproved head; these are partial U28-U31 evidence, not the complete visual matrix."
+  },
+  "this_push": {"ci": "intentionally skipped for this commit to avoid repeating the user-skipped security topic; no workflow was changed", "automated_container_publication": "not run"},
+  "detector_budget": {"used": 20, "limit": 20, "new_forwards": 0, "waivers": ["R05-B1", "R05-N1", "R05-R1"]},
+  "status": {"R09": "done", "R10": "running", "R11": "pending", "T32": "blocked", "T35": "pending", "full_release_passed": false}
+}
