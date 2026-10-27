@@ -69,7 +69,7 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
     if (visualAsset !== scope.assetId) { visualAsset = scope.assetId; for (const row of rows.values()) row.render(); renderCombined(); }
     heading.textContent = '候选 ' + entry.candidate.suggestion_set_id + ' · ' + entry.asset_revision_id;
     notice.textContent = entry.schema_error ? '建议格式或范围错误，只能对照：' + entry.schema_error : entry.asset_revision_id !== scope.assetId ? '这是另一张图片的结果，只能对照。'
-      : !canDecideSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation, candidate: entry.candidate, busy: false }) ? '此结果只能对照：版本、范围、状态或授权已变化。' : pending ? '拒绝结果未知，保留原 operation 与选择；不能采纳或再次拒绝。' : rejected === null ? '拒绝状态尚未核实，不能采纳。' : !canAcceptSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation, candidate: entry.candidate, busy: false }) ? '当前运行不授权改类，不能采纳；可拒绝建议。' : '固定版本与拒绝状态已核实；显式采纳经 Native 命令，一次撤销。';
+      : !canDecideSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation, candidate: entry.candidate, busy: false }) ? '此结果只能对照：版本、范围、状态或授权已变化。' : pending ? '拒绝结果未知，不能采纳或再次拒绝。' : rejected === null ? '拒绝状态尚未核实，不能采纳。' : !canAcceptSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation, candidate: entry.candidate, busy: false }) ? '当前运行不授权改类，不能采纳；可拒绝建议。' : '固定版本与拒绝状态已核实；显式采纳经 Native 命令，一次撤销。';
     for (const [id, row] of rows) {
       row.checkbox.checked = selected.has(id); row.checkbox.disabled = !eligible || !row.projectionReady || rejected?.includes(id) === true;
       row.rejection.textContent = rejected?.includes(id) ? '已拒绝（服务器记录）' : '';
@@ -96,10 +96,10 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
       if (pending) {
         const payload = pending, receipt = result.operations.find(operation => operation.operation_id === payload.operation_id);
         if (receipt && JSON.stringify(receipt.change_ids) === JSON.stringify(payload.change_ids)) { pending = null; message.textContent = '已只读核实拒绝成功。'; context.onDecisionRecorded(); }
-        else message.textContent = '未找到匹配的原 operation 收据，结果仍未知；不要重复写入。';
+        else message.textContent = '未找到原 operation ' + payload.operation_id + ' 的匹配收据，结果仍未知；不要重复写入。';
       }
       if (!pending) for (const id of selected) if (rejected.includes(id)) selected.delete(id);
-    } catch { if (!context.signal.aborted) { rejected = null; message.textContent = '拒绝状态读取失败，不能采纳；请只读重新检查。'; } }
+    } catch { if (!context.signal.aborted) { rejected = null; message.textContent = pending ? '原 operation ' + pending.operation_id + ' 核对失败；保留选择，只读重新检查。' : '拒绝状态读取失败，不能采纳；请只读重新检查。'; } }
     refresh();
   }
   async function reject(ids: string[]): Promise<'success' | 'failed' | 'unknown'> {
@@ -114,7 +114,7 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
       rejected = [...new Set([...rejected, ...ids])]; for (const id of ids) selected.delete(id); message.textContent = '拒绝已保存到服务器。'; context.onDecisionRecorded(); return 'success';
     } catch (reason) {
       if (knownRejectionFailure(reason)) { message.textContent = '服务器明确拒绝此操作；已采纳项须先通过保存事务撤销。'; return 'failed'; }
-      pending = payload; message.textContent = '拒绝结果未知；保留原 operation 与选择，只能只读核对。'; return 'unknown';
+      pending = payload; message.textContent = '原 operation ' + payload.operation_id + ' 与选择已保留；仅可只读核对。'; return 'unknown';
     } finally { writing = false; if (!context.signal.aborted) refresh(); }
   }
   function build() {
