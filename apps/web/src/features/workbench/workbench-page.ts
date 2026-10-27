@@ -37,13 +37,14 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   const reviewSummary = element('summary', '任务与审核'), managementSummary = element('summary', '管理'), transferSummary = element('summary', '媒体导入、标注导入与固定版本导出'), activitySummary = element('summary', '自愿工时与运行摘要');
   reviewDetails.append(reviewSummary); managementDetails.append(managementSummary); transferDetails.append(transferSummary); activityDetails.append(activitySummary);
   let reviewQueue: TaskQueue = context.route.queue ?? 'all';
-  const queueLink = (queue: 'mine' | 'pending') => {
+  const queueLink = (queue: TaskQueue) => {
     if (!sessionCurrent(state)) return;
-    reviewQueue = queue; reviewDetails.open = true; reviewSummary.focus();
+    reviewQueue = queue; showReviewPage();
     const url = new URL(location.href); url.searchParams.set('project_id', state.projectId); url.searchParams.set('review_queue', queue); history.replaceState(null, '', url); state.notify();
   };
-  navigation.append(projects, currentNav, datasets, action('我的任务', 'nav-my-tasks', signal, () => queueLink('mine')), action('待审核', 'nav-review', signal, () => queueLink('pending')),
-    action('管理', 'nav-management', signal, () => { managementDetails.open = !managementDetails.open; if (managementDetails.open) managementSummary.focus(); }));
+  const myTasksNav = action('我的任务', 'nav-my-tasks', signal, () => queueLink('mine')), reviewNav = action('待审核', 'nav-review', signal, () => queueLink('pending'));
+  navigation.append(projects, currentNav, datasets, myTasksNav, reviewNav,
+    action('管理', 'nav-management', signal, () => { closeReviewPage(); managementDetails.open = !managementDetails.open; if (managementDetails.open) managementSummary.focus(); }));
   const projectName = element('span', undefined, 'r07-project-name'), identity = element('span'), logout = action('退出', 'logout', signal, () => { if (sessionCurrent(state)) void context.session.logout().catch(reason => { state.error = reportError(reason); state.notify(); }); });
   header.append(brand, navigation, projectName, identity, logout);
   const contextBar = element('section', undefined, 'r07-contextbar'), title = element('h1'), position = element('span'), ontology = element('select'); ontology.dataset.testid = 'fixed-ontology'; ontology.setAttribute('aria-label', '固定规范版本');
@@ -105,6 +106,27 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   const saveRoot = element('section', undefined, 'r07-save'), helpRoot = element('footer', undefined, 'r07-footer');
   const reviewRoot = element('div'), managementRoot = element('div'), transfersRoot = element('div'), activityRoot = element('div');
   reviewDetails.append(reviewRoot); managementDetails.append(managementRoot); transferDetails.append(transfersRoot); activityDetails.append(activityRoot);
+  const reviewPage = element('section', undefined, 'r07-review-page'); reviewPage.dataset.testid = 'review-queue-page'; reviewPage.tabIndex = -1; reviewPage.setAttribute('aria-label', '任务与审核'); reviewPage.hidden = true;
+  let reviewReturn: HTMLElement | null = null, reviewScroll = 0, reviewWasOpen = false;
+  function closeReviewPage() {
+    if (reviewPage.hidden) return;
+    shell.insertBefore(reviewDetails, managementDetails); reviewDetails.open = reviewWasOpen; reviewPage.hidden = true; delete shell.dataset.reviewPage;
+    currentNav.setAttribute('aria-current', 'page'); myTasksNav.removeAttribute('aria-current'); reviewNav.removeAttribute('aria-current');
+    const url = new URL(location.href); url.searchParams.delete('review_queue'); history.replaceState(null, '', url);
+    window.scrollTo({ top: reviewScroll, behavior: 'instant' }); if (reviewReturn?.isConnected) reviewReturn.focus({ preventScroll: true }); state.notify();
+  }
+  const reviewBack = action('返回工作台', 'review-queue-back', signal, closeReviewPage);
+  reviewPage.append(reviewBack);
+  function showReviewPage() {
+    if (reviewPage.hidden) {
+      const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+      reviewReturn = active?.isConnected && active.getClientRects().length ? active : reviewQueue === 'pending' ? reviewNav : myTasksNav; reviewScroll = window.scrollY; reviewWasOpen = reviewDetails.open;
+      port.cancelGesture(); reviewPage.append(reviewDetails); reviewDetails.open = true; reviewPage.hidden = false; shell.dataset.reviewPage = 'true'; window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+    currentNav.removeAttribute('aria-current'); myTasksNav.removeAttribute('aria-current'); reviewNav.removeAttribute('aria-current');
+    if (reviewQueue === 'mine') myTasksNav.setAttribute('aria-current', 'page'); else if (reviewQueue === 'pending') reviewNav.setAttribute('aria-current', 'page');
+    reviewPage.focus({ preventScroll: true });
+  }
   const assetsDialog = createDialog({ id: 'r07-assets-drawer', title: '图片与对象', testId: 'assets-drawer', signal }), inspectorDialog = createDialog({ id: 'r07-inspector-drawer', title: '对象属性与 AI 审校', testId: 'inspector-drawer', signal });
   assetsDialog.element.classList.add('r07-drawer', 'r07-drawer-left'); inspectorDialog.element.classList.add('r07-drawer', 'r07-drawer-right');
   for (const [dialog, id, name] of [[assetsDialog, 'close-assets', '关闭图片与对象'], [inspectorDialog, 'close-inspector', '关闭检查器']] as const) {
@@ -200,7 +222,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
     state.modal = !!shell.querySelector('dialog[open]'); state.notify();
   }, { signal });
   compact.addEventListener('change', layout, { signal });
-  shell.append(header, contextBar, workspace, saveRoot, transferDetails, reviewDetails, managementDetails, activityDetails, helpRoot, assetsDialog.element, inspectorDialog.element, aiConfigDialog.element); root.append(shell);
+  shell.append(header, contextBar, workspace, saveRoot, transferDetails, reviewDetails, managementDetails, activityDetails, helpRoot, reviewPage, assetsDialog.element, inspectorDialog.element, aiConfigDialog.element); root.append(shell);
   const cleanup = [mountToolbarView(toolbar, state, port, signal), mountObjectsView(objectsRoot, state, port, signal), mountAttributesView(attributesRoot, state, port, signal), mountSaveView(saveRoot, state, port, recovery, signal), unsubscribeAiConfig];
   const ai = mountAiWorkbenchView(aiRoot, state, port, signal, context.navigate);
   const activityDialog = createDialog({ id: 'r07-activity-expanded', title: '自愿工时与运行摘要', testId: 'activity-expanded', signal });
@@ -353,7 +375,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
     assetsLauncher.setAttribute('aria-expanded', String(compact.matches ? assetsDialog.element.open : !assetsHome.hidden)); attributesLauncher.setAttribute('aria-expanded', String(compact.matches ? inspectorDialog.element.open && inspectorView === 'attributes' : !inspectorHome.hidden && inspectorView === 'attributes')); aiLauncher.setAttribute('aria-expanded', String(compact.matches ? inspectorDialog.element.open && inspectorView === 'ai' : !inspectorHome.hidden && inspectorView === 'ai'));
   }
   assetSearch.addEventListener('input', renderAssets, { signal }); ontology.addEventListener('change', () => { void controller.selectOntology(ontology.value); }, { signal });
-  const unsubscribe = state.subscribe(update); showInspector('attributes'); layout(); update(); void controller.start();
+  const unsubscribe = state.subscribe(update); showInspector('attributes'); layout(); update(); if (context.route.queue) showReviewPage(); void controller.start();
   let disposed = false;
   function dispose() { if (disposed) return; disposed = true; controller.dispose(); for (const unsubscribe of saveSubscriptions.values()) unsubscribe(); saveSubscriptions.clear(); unsubscribe(); ai.dispose(); for (const unmount of cleanup.reverse()) unmount(); canvas.dispose(); assetsDialog.dispose(); inspectorDialog.dispose(); aiConfigDialog.dispose(); shell.remove(); }
   signal.addEventListener('abort', dispose, { once: true });
