@@ -99,12 +99,9 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
           const required = checkField(`attr-${label.id}-${j}-required`, '必填'), isNull = checkField(`attr-${label.id}-${j}-null`, '默认值为空'); required.control.checked = attribute.required; isNull.control.checked = attribute.isNull;
           required.control.addEventListener('change', () => changeAttribute(label.id, j, { required: required.control.checked }), { signal: scope.signal }); isNull.control.addEventListener('change', () => changeAttribute(label.id, j, { isNull: isNull.control.checked }), { signal: scope.signal });
           attr.append(key.element, kind.element, required.element, isNull.element);
-          const config = el('div', undefined, 'accounts-attribute-config');
+          const config = el('div', undefined, 'accounts-attribute-config'); config.dataset.kind = attribute.kind;
           const value = attribute.kind === 'boolean' ? selectField(`attr-${label.id}-${j}-value`, '默认值', [['false', 'false'], ['true', 'true']]) : inputField(`attr-${label.id}-${j}-value`, '默认值'); value.control.value = attribute.value;
-          value.control.addEventListener('input', () => changeAttribute(label.id, j, { value: value.control.value }), { signal: scope.signal }); config.append(value.element); attr.append(config);
-          const advanced = el('details', undefined, 'accounts-attribute-advanced');
-          advanced.append(el('summary', attribute.kind === 'enum' ? '选项' : '范围'));
-          if (attribute.kind === 'enum' || attribute.kind === 'number') config.append(advanced);
+          value.control.addEventListener('input', () => changeAttribute(label.id, j, { value: value.control.value }), { signal: scope.signal }); attr.append(config);
           bindings.push(() => {
             const latest = controller.getSnapshot().labels.find(l => l.id === label.id)?.attributes[j];
             if (!latest) return;
@@ -116,19 +113,20 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
             value.control.disabled = latest.isNull;
           });
           if (attribute.kind === 'enum') {
-            const values = textareaField(`attr-${label.id}-${j}-values`, '枚举值（每行一个）', '逐行原样保存；空行也是空字符串选项，重复选项不可发布。'); values.control.rows = 2; values.control.value = attribute.values; values.control.addEventListener('input', () => changeAttribute(label.id, j, { values: values.control.value }), { signal: scope.signal }); advanced.append(values.element);
+            const values = textareaField(`attr-${label.id}-${j}-values`, '枚举值（每行一个）', '空行是空串，选项不可重复。'); values.control.rows = 2; values.control.value = attribute.values; values.control.addEventListener('input', () => changeAttribute(label.id, j, { values: values.control.value }), { signal: scope.signal }); config.append(values.element);
             bindings.push(() => {
               const latest = controller.getSnapshot().labels.find(l => l.id === label.id)?.attributes[j];
               if (latest && values.control.value !== latest.values) values.control.value = latest.values;
             });
           }
           if (attribute.kind === 'number') for (const [key, text] of [['min', '最小值'], ['max', '最大值']] as const) {
-            const limit = inputField(`attr-${label.id}-${j}-${key}`, text); limit.control.value = attribute[key]; limit.control.addEventListener('input', () => changeAttribute(label.id, j, { [key]: limit.control.value }), { signal: scope.signal }); advanced.append(limit.element);
+            const limit = inputField(`attr-${label.id}-${j}-${key}`, text); limit.control.value = attribute[key]; limit.control.addEventListener('input', () => changeAttribute(label.id, j, { [key]: limit.control.value }), { signal: scope.signal }); config.append(limit.element);
             bindings.push(() => {
               const latest = controller.getSnapshot().labels.find(l => l.id === label.id)?.attributes[j];
               if (latest && limit.control.value !== latest[key]) limit.control.value = latest[key];
             });
           }
+          config.append(value.element);
           attr.append(button('删除属性', `attr-${label.id}-${j}-remove`, scope.signal, () => { const latest = controller.getSnapshot().labels.find(l => l.id === label.id); if (latest) changeLabel(label.id, { attributes: latest.attributes.filter((_, i) => i !== j) }); })); group.append(attr);
         });
         const controls = el('div', undefined, 'accounts-actions');

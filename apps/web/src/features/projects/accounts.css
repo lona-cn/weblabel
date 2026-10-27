@@ -61,7 +61,7 @@
 .accounts-page .accounts-preset-columns { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); gap: 24px; align-items: start; }
 .accounts-page .accounts-ontology-columns { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
 .accounts-page .accounts-label-fields { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; }
-.accounts-page .accounts-attribute { display: grid; grid-template-columns: minmax(120px, 1.2fr) minmax(130px, 1fr) 90px 136px minmax(200px, 1.6fr) 88px; align-items: end; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border, #3e4a52); }
+.accounts-page .accounts-attribute { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(130px, .8fr) 90px 136px minmax(300px, 2fr) 88px; align-items: start; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border, #3e4a52); }
 .accounts-page dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); margin: 0; }
 .accounts-page :is(dt, dd) { margin: 0; padding: 12px 8px; border-top: 1px solid var(--border, #3e4a52); overflow-wrap: anywhere; }
 .accounts-page dt { color: var(--muted, #adb9be); }
@@ -91,12 +91,11 @@
 :is(#root, body) .accounts-ontology-form .accounts-label { padding: 12px; margin: 0 0 12px; }
 :is(#root, body) .accounts-ontology-form .accounts-field { margin-bottom: 8px; }
 :is(#root, body) .accounts-ontology-form .accounts-attribute .accounts-field { margin: 0; }
-.accounts-page .accounts-attribute-config { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; min-width: 0; }
-.accounts-page .accounts-attribute-config:not(:has(details)) { grid-template-columns: minmax(0, 1fr); }
-:is(#root, body) .accounts-ontology-form .accounts-attribute-advanced summary,
+.accounts-page .accounts-attribute-config { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; min-width: 0; }
+.accounts-page .accounts-attribute-config[data-kind=enum] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.accounts-page .accounts-attribute-config[data-kind=number] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 :is(#root, body) .accounts-ontology-form .accounts-label-identity summary { min-height: 44px; padding: 10px 8px; border: 1px solid var(--control-border, #71858f); border-radius: 6px; white-space: nowrap; }
-.accounts-page .accounts-attribute-advanced[open] { grid-column: 1 / -1; }
-.accounts-page .accounts-attribute-advanced[open] .accounts-field { margin-top: 8px; }
+.accounts-page .accounts-attribute > :is(.accounts-check, button) { margin-top: 20px; }
 .accounts-page .accounts-label-identity[open] { flex-basis: 100%; }
 .accounts-page .accounts-label-identity code { display: block; padding: 8px; overflow-wrap: anywhere; }
 :is(#root, body) .accounts-ontology-form .accounts-check { position: relative; display: block; min-height: 44px; padding: 0; }
@@ -106,6 +105,13 @@
 .accounts-page .accounts-ontology-form .accounts-label > .accounts-actions { margin-top: 8px; }
 :is(#root, body) .accounts-ontology-form .accounts-ontology-budget { font-size: 12px; color: var(--muted, #adb9be); margin: 8px 0 12px; }
 .accounts-page .accounts-ontology-actions { justify-content: flex-end; margin-top: 8px; padding: 12px 0; background: var(--surface-0, #101417); border-top: 1px solid var(--border, #3e4a52); }
+@media (min-width: 1100px) {
+  .accounts-page .accounts-ontology-form :is([data-testid=project-name-field], [data-testid=ontology-guidelines-field]) { display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: center; column-gap: 12px; }
+  .accounts-page .accounts-ontology-form :is([data-testid=project-name-field], [data-testid=ontology-guidelines-field]) > label { margin: 0; }
+  .accounts-page .accounts-ontology-form :is([data-testid=project-name-field], [data-testid=ontology-guidelines-field]) > p { grid-column: 2; }
+  .accounts-page .accounts-ontology-form :is(input, select, textarea, button) { scroll-margin-bottom: 88px; }
+  .accounts-page .accounts-ontology-actions { position: sticky; bottom: 0; z-index: 2; }
+}
 .accounts-page .accounts-semantic-diff { table-layout: fixed; }
 .accounts-page .accounts-semantic-diff th { width: 36%; }
 .accounts-page .accounts-semantic-diff :is(th, td) { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -145,8 +151,10 @@
   .accounts-page .accounts-member-id code { white-space: normal; overflow-wrap: anywhere; }
 }
 @media (max-width: 600px) {
+  body:has(.accounts-projects .accounts-ontology-form:not([hidden])) { min-width: 0; }
   .accounts-page .accounts-delivery-steps, .accounts-page .accounts-label-fields, .accounts-page .accounts-attribute { grid-template-columns: 1fr; }
   .accounts-page .accounts-attribute-config { grid-column: auto; }
+  .accounts-page .accounts-attribute-config[data-kind] { grid-template-columns: 1fr; }
   .accounts-page .accounts-ontology-actions { justify-content: stretch; }
   .accounts-page .accounts-ontology-actions button { flex: 1 1 140px; }
   .accounts-auth .accounts-auth-card { padding: 24px; }
