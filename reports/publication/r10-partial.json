@@ -50,6 +50,14 @@
     "export": {"bytes": 3734, "sha256": "ff87812b8ecda9bcee804fe908cf6abc5cd57ab7fa060321e99c6d7469ef8824", "zip_crc": "passed", "independent_reader": "Exact server document, note attribute and xyxy [10.25,20.5,110.75,80.75] matched."},
     "limitations": "The browser recorded four aborted GETs during navigation, no pageerror entries. This one synthetic workflow does not establish all 48 visual states or complete R10. Fixture shutdown forced its own native child, not physical Ctrl+C."
   },
+  "current_synthetic_legacy_handoff": {
+    "scope": "A freshly isolated frozen old launcher used its own default data with synthetic records; the current native release took over the same origin and canonical data. No security negative controls or model calls.",
+    "backup_and_cutover": "The old backup validated before switch; all 40 database table hashes were unchanged immediately after switch, and no new bootstrap was issued.",
+    "recovery": "An offline legacy edit created one durable pending operation. Native explicit branch recovery preserved the old branch and pending request; no automatic PUT was observed before the explicit retry. One PUT returned 200; ACK operation, parent and document matched the preserved pending state, and the same actor and accepted revision remained after reload.",
+    "limitation": "The browser recorded the response body but not the outgoing request body; exact outgoing bytes are not claimed. Deliberate offline failure and diagnostic wait timeouts were retained in the private evidence.",
+    "cleanup": "The owned browser and fixture stopped; synthetic default data and controller sources were archived and checked by member hash before the isolated worktree was removed without force."
+  },
+  "earlier_legacy_scope_deviation": "The earlier handoff's shared seed helper attempted unauthorized and cross-origin negative controls despite the user-skipping security scope. They are not security acceptance; the current handoff did not repeat them.",
   "current_hardware_gpu": {
     "provenance": "Measured locally against product and test Git blobs matching the public source; the public commit was not rebuilt or directly measured.",
     "status": "passed",
