@@ -2,7 +2,7 @@ import type { AnnotationObject } from '../../../../../packages/contracts/generat
 import type { RunContext } from '../../../../../packages/contracts/generated/RunContext';
 import type { BBox } from '../../../../../packages/contracts/generated/BBox';
 import type { RunController, CandidateEntry } from './run-controller';
-import { canAcceptSuggestion } from './run-controller';
+import { canAcceptSuggestion, canDecideSuggestion } from './run-controller';
 import { checkedRejectionState, knownRejectionFailure, rejectionApi, type RejectionPayload } from './rejections';
 import { projectRelabel } from '../../lib/editor/loader';
 import { readonlyVisual } from './readonly-visual';
@@ -46,6 +46,12 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
       && canAcceptSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation,
         candidate: entry.candidate, busy: context.controller.getSnapshot().busy, schema_error: entry.schema_error });
   }
+  function rejectable() {
+    const scope = context.getScope();
+    return scope.current && !writing && !pending && rejected !== null
+      && canDecideSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation,
+        candidate: entry.candidate, busy: context.controller.getSnapshot().busy, schema_error: entry.schema_error });
+  }
   function renderCombined() {
     if (!expanded) { combined.replaceChildren(); return; }
     const before: BBox[] = [], after: BBox[] = [];
@@ -59,24 +65,23 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
     for (const [id, row] of rows) row.local.textContent = focusedChange === id ? '查看整图对照' : '定位建议局部';
   }
   function refresh() {
-    const scope = context.getScope(), eligible = allowed(), busy = context.controller.getSnapshot().busy;
+    const scope = context.getScope(), eligible = allowed(), canReject = rejectable();
     if (visualAsset !== scope.assetId) { visualAsset = scope.assetId; for (const row of rows.values()) row.render(); renderCombined(); }
     heading.textContent = '候选 ' + entry.candidate.suggestion_set_id + ' · ' + entry.asset_revision_id;
     notice.textContent = entry.schema_error ? '建议格式或范围错误，只能对照：' + entry.schema_error : entry.asset_revision_id !== scope.assetId ? '这是另一张图片的结果，只能对照。'
-      : !canAcceptSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation, candidate: entry.candidate, busy: false }) ? '此结果只能对照：版本、范围、状态或授权已变化。当前运行不授权改类。' : pending ? '拒绝结果未知，保留原 operation 与选择；不能采纳或再次拒绝。' : rejected === null ? '拒绝状态尚未核实，不能采纳。' : '固定版本与拒绝状态已核实；显式采纳经 Native 命令，一次撤销。';
+      : !canDecideSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation, candidate: entry.candidate, busy: false }) ? '此结果只能对照：版本、范围、状态或授权已变化。' : pending ? '拒绝结果未知，保留原 operation 与选择；不能采纳或再次拒绝。' : rejected === null ? '拒绝状态尚未核实，不能采纳。' : !canAcceptSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation, candidate: entry.candidate, busy: false }) ? '当前运行不授权改类，不能采纳；可拒绝建议。' : '固定版本与拒绝状态已核实；显式采纳经 Native 命令，一次撤销。';
     for (const [id, row] of rows) {
       row.checkbox.checked = selected.has(id); row.checkbox.disabled = !eligible || !row.projectionReady || rejected?.includes(id) === true;
       row.rejection.textContent = rejected?.includes(id) ? '已拒绝（服务器记录）' : '';
-      row.reject.disabled = !scope.current || scope.assetId !== entry.asset_revision_id || writing || busy || pending !== null || rejected === null || entry.schema_error !== null || rejected.includes(id);
+      row.reject.disabled = !canReject || rejected?.includes(id) === true;
       const fixed = entry.fixedDocument, ontology = entry.fixedOntology;
       row.focus.disabled = !scope.current || !row.bounds || !!entry.schema_error || scope.assetId !== entry.asset_revision_id || !fixed || fixed.asset_revision_id !== scope.assetId
         || fixed.ontology_version_id !== scope.context.ontology_version_id || ontology?.project_id !== scope.context.project_id || ontology.ontology_version_id !== scope.context.ontology_version_id
         || [entry.run_context, entry.candidate.context].some(value => value.project_id !== scope.context.project_id || value.asset_revision_id !== scope.assetId || value.ontology_version_id !== scope.context.ontology_version_id || value.canonical_sha256 !== scope.context.canonical_sha256);
     }
     accept.disabled = !eligible || !selected.size;
-    rejectSelected.disabled = !scope.current || writing || busy || pending !== null || rejected === null || !selected.size || scope.assetId !== entry.asset_revision_id || entry.schema_error !== null;
-    const rejectedIds = rejected;
-    rejectAll.disabled = rejectSelected.disabled && !(!writing && !busy && !pending && rejectedIds !== null && scope.current && scope.assetId === entry.asset_revision_id && !entry.schema_error && entry.candidate.changes.some(change => !rejectedIds.includes(change.change_id)));
+    rejectSelected.disabled = !canReject || !selected.size;
+    rejectAll.disabled = !canReject || !entry.candidate.changes.some(change => !rejected?.includes(change.change_id));
     readButton.disabled = writing || !scope.current; readButton.hidden = rejected !== null && !pending;
     readButton.textContent = pending ? '只读核对拒绝' : '只读重新检查拒绝状态';
     score.textContent = entry.candidate.score === null ? '未提供评分；采纳数量不是正确率。' : '模型评分 ' + entry.candidate.score + '，不代表正确率。';
@@ -98,8 +103,8 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
     refresh();
   }
   async function reject(ids: string[]): Promise<'success' | 'failed' | 'unknown'> {
-    const scope = context.getScope(), candidate = entry.candidate;
-    if (!scope.current || scope.assetId !== entry.asset_revision_id || writing || pending || !rejected || context.controller.getSnapshot().busy || !ids.length || entry.schema_error) return 'failed';
+    const candidate = entry.candidate;
+    if (!rejectable() || rejected === null || !ids.length) return 'failed';
     writing = true; refresh();
     const payload: RejectionPayload = { operation_id: crypto.randomUUID(), change_ids: [...ids] };
     try {
@@ -168,7 +173,7 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
   build(); refresh(); void read();
   return { element: root, refresh, update(next) { if (next === entry) { refresh(); return; } entry = next; build(); refresh(); },
     setExpanded(value) { if (expanded === value) return; expanded = value; focusedChange = null; combined.hidden = !expanded; for (const row of rows.values()) row.render(); renderCombined(); },
-    rejectSelected: () => reject([...selected]), selectedCount: () => selected.size };
+    rejectSelected: () => reject([...selected]), selectedCount: () => rejectable() ? selected.size : 0 };
 }
 export function mountCandidatesView(root: HTMLElement, context: CandidateViewContext): { update(entries: readonly CandidateEntry[]): void; setExpanded(expanded: boolean): void; dispose(): void } {
   const list = element('div'), message = element('p'); message.setAttribute('role', 'status');

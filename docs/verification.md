@@ -95,6 +95,7 @@ Windows 原生子树的回收不能仅凭 Job 活动计数为零或已退出的�
 真实 hardware GPUDevice.destroy 的工程检查在本地有未同步编辑时进行：只拦截标注 PUT，实际 loss 为 destroyed，重新申请第二个设备后同页恢复 WebGPU；本地文档、代数及 undo 保留，画布前后 PNG 完全相同，一次 undo 回到服务器原文。设备观察仅向浏览器接收的原始发行模块前置 hook，不替换 adapter/device，磁盘发行与 CSP 不变。pointercancel、blur 和切图在真实拖动及 pointer capture 后验证无半框；IME 使用 Chrome 合成输入法组合并记录 trusted 事件，不冒充物理系统输入法。
 `navigator.gpu` 存在不保证能取得 adapter：实际浏览器禁用 GPU 后 `requestAdapter()` 返回 null。`WEBGPU_UNAVAILABLE` 应归类为 unsupported，保留结构化 code/message/request_id 和原 GPU 诊断，不能显示 `[object Object]` 或伪装 Canvas2D；对象可只读选择，画布、几何、属性及编辑快捷键均不能写入。前后截图和单项回归分别保留，软件 GPU 不计硬件性能证明。
 属性审校候选在窄检查器中只展开本次变更键的原值和建议值，完整对象与几何仍保留在可展开技术详情中；缺少键、null、false、空字符串必须分别显示，不能改写建议或绕过版本、拒绝状态与采纳确认。真实原生服务上的合成 loopback 属性建议分别拒绝一项、采纳另一项并撤销；每个实际决策与对应不可变 revision 核对，未调用真实模型或本地检测。
+U40 的同图旧 generation 候选必须只读：单项、所选、本组及跨组拒绝与采纳均不可发起，原有选择保留；当前匹配范围的正常拒绝仍可用，未知拒绝仍保留原 operation 供只读核对。真实原生发行与硬件 WebGPU 上，本机合成协议先生成两项属性建议，勾选一项后改动完成状态使本地 generation 变化：旧版仍可拒绝，新版采纳和各拒绝入口均禁用，服务端 journal 没有该候选的决定。前后各两次 loopback 协议 POST，无真实模型或检测器调用；未检查异图、未知拒绝、跨组或完整 U40。
 
 U39 展开对照使用同一候选控制器、单组只读 canonical 投影和原有选择及决策流程；重合原轮廓的虚线绘制在建议实线上方。真实合成服务和硬件 WebGPU 中，两项属性建议在 1536×1024 显示一张投影及两条差异；局部定位、返回主画布、900×600 双层抽屉焦点及 Escape 已局部检查。明确拒绝一项、采纳另一项、撤销后，服务器 journal 与 revision 链均已核对；三次局部合成运行共六个 loopback 协议 POST，没有真实或付费模型调用、没有检测器 forward。候选后的完整多组、全部参考状态、当前硬件性能和完整门禁仍未验收。
 

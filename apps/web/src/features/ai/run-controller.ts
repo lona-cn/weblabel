@@ -72,7 +72,7 @@ export function candidateCacheKey(runId: string, assetId: string): string {
   return JSON.stringify([runId, assetId]);
 }
 
-export function canAcceptSuggestion(input: {
+export function canDecideSuggestion(input: {
   active_asset: string;
   candidate_asset: string;
   active_context: RunContext;
@@ -86,9 +86,12 @@ export function canAcceptSuggestion(input: {
   if (input.run_context && !contextMatches(input.run_context, input.candidate.context)) return false;
   if (input.active_generation !== undefined && input.candidate.context.draft_generation !== input.active_generation) return false;
   if (!['pending', 'partially_accepted'].includes(input.candidate.state) || !input.candidate.changes.length) return false;
-  // Production run intents do not grant relabel operations; projection is comparison only.
-  if (input.candidate.changes.some(change => change.kind === 'set_label')) return false;
   return contextMatches(input.active_context, input.candidate.context, false);
+}
+
+export function canAcceptSuggestion(input: Parameters<typeof canDecideSuggestion>[0]): boolean {
+  // Production run intents do not grant relabel operations; projection is comparison only.
+  return canDecideSuggestion(input) && !input.candidate.changes.some(change => change.kind === 'set_label');
 }
 
 function defaultApi(csrfToken: string | null): RunApi {
