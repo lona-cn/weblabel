@@ -18,6 +18,7 @@ export interface CandidateViewContext {
 export interface CandidateCard {
   element: HTMLElement;
   update(entry: CandidateEntry): void;
+  setExpanded(expanded: boolean): void;
   refresh(): void;
   rejectSelected(): Promise<'success' | 'failed' | 'unknown'>;
   selectedCount(): number;
@@ -27,25 +28,39 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
   const selected = new Set<string>(), root = element('article', undefined, 'r07-candidate-card'), heading = element('h3'), notice = element('p'), message = element('p');
   notice.setAttribute('role', 'status'); message.setAttribute('role', 'status');
   const readButton = action('只读重新检查拒绝状态', 'check-rejection-' + entry.candidate.suggestion_set_id, context.signal, () => void read());
-  const changesRoot = element('ul'), issues = element('div'), score = element('p'), accept = action('采纳所选建议', 'accept-selected', context.signal, () => {
+  const changesRoot = element('ul'), combined = element('div', undefined, 'r07-candidate-combined'), comparisonGrid = element('div', undefined, 'r07-candidate-comparison');
+  combined.dataset.testid = 'candidate-combined-visual'; combined.hidden = true; comparisonGrid.append(combined, changesRoot);
+  const issues = element('div'), score = element('p'), accept = action('采纳所选建议', 'accept-selected', context.signal, () => {
     const scope = context.getScope();
     if (!allowed() || !scope.current || !scope.writable || !selected.size || pending || !rejected) return;
     void context.controller.acceptSelected(entry.candidate, entry.asset_revision_id, [...selected], entry.schema_error, rejected).then(context.onDecisionRecorded);
   });
   const rejectSelected = action('拒绝所选建议', 'reject-selected', context.signal, () => void reject([...selected]));
   const rejectAll = action('拒绝本组未拒绝建议', 'reject-all', context.signal, () => void reject(entry.candidate.changes.filter(change => !rejected?.includes(change.change_id)).map(change => change.change_id)));
-  root.append(heading, notice, message, readButton, changesRoot, issues, score, accept, rejectSelected, rejectAll);
-  const rows = new Map<string, { checkbox: HTMLInputElement; rejection: HTMLElement; reject: HTMLButtonElement; focus: HTMLButtonElement; bounds: BBox | null; projectionReady: boolean; render(): void }>();
-  let visualAsset = context.getScope().assetId;
+  root.append(heading, notice, message, readButton, comparisonGrid, issues, score, accept, rejectSelected, rejectAll);
+  const rows = new Map<string, { checkbox: HTMLInputElement; rejection: HTMLElement; reject: HTMLButtonElement; focus: HTMLButtonElement; local: HTMLButtonElement; bounds: BBox | null; projectionReady: boolean; geometry(): { before: BBox | null; after: BBox | null }; render(): void }>();
+  let visualAsset = context.getScope().assetId, expanded = false, focusedChange: string | null = null;
   function allowed() {
     const scope = context.getScope();
     return scope.current && scope.writable && !writing && !pending && rejected !== null
       && canAcceptSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation,
         candidate: entry.candidate, busy: context.controller.getSnapshot().busy, schema_error: entry.schema_error });
   }
+  function renderCombined() {
+    if (!expanded) { combined.replaceChildren(); return; }
+    const before: BBox[] = [], after: BBox[] = [];
+    for (const [id, row] of rows) {
+      if (focusedChange && id !== focusedChange) continue;
+      const geometry = row.geometry();
+      if (geometry.before) before.push(geometry.before);
+      if (geometry.after) after.push(geometry.after);
+    }
+    combined.replaceChildren(readonlyVisual(entry.fixedDocument, context.getScope().assetId, before, after, !!focusedChange));
+    for (const [id, row] of rows) row.local.textContent = focusedChange === id ? '查看整图对照' : '定位建议局部';
+  }
   function refresh() {
     const scope = context.getScope(), eligible = allowed(), busy = context.controller.getSnapshot().busy;
-    if (visualAsset !== scope.assetId) { visualAsset = scope.assetId; for (const row of rows.values()) row.render(); }
+    if (visualAsset !== scope.assetId) { visualAsset = scope.assetId; for (const row of rows.values()) row.render(); renderCombined(); }
     heading.textContent = '候选 ' + entry.candidate.suggestion_set_id + ' · ' + entry.asset_revision_id;
     notice.textContent = entry.schema_error ? '建议格式或范围错误，只能对照：' + entry.schema_error : entry.asset_revision_id !== scope.assetId ? '这是另一张图片的结果，只能对照。'
       : !canAcceptSuggestion({ active_asset: scope.assetId, candidate_asset: entry.asset_revision_id, active_context: scope.context, run_context: entry.run_context, active_generation: scope.generation, candidate: entry.candidate, busy: false }) ? '此结果只能对照：版本、范围、状态或授权已变化。当前运行不授权改类。' : pending ? '拒绝结果未知，保留原 operation 与选择；不能采纳或再次拒绝。' : rejected === null ? '拒绝状态尚未核实，不能采纳。' : '固定版本与拒绝状态已核实；显式采纳经 Native 命令，一次撤销。';
@@ -98,7 +113,7 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
     } finally { writing = false; if (!context.signal.aborted) refresh(); }
   }
   function build() {
-    rows.clear(); changesRoot.replaceChildren(); issues.replaceChildren();
+    focusedChange = null; rows.clear(); changesRoot.replaceChildren(); issues.replaceChildren();
     for (const change of entry.candidate.changes) {
       const li = element('li'); li.dataset.testid = 'candidate-' + change.change_id;
       const checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.setAttribute('aria-label', '选择建议 ' + change.change_id);
@@ -113,7 +128,10 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
         const details = element('details'); details.append(element('summary', '完整对象对照（技术详情）'), values);
         comparison.append(attributeDiff, details);
       } else comparison.append(values);
-      const visual = element('div'), focusLocal = action('定位建议局部', 'candidate-local-' + change.change_id, context.signal, () => { localFocus = !localFocus; renderProjection(); }), focusMain = action('定位主画布', 'candidate-focus-' + change.change_id, context.signal, () => { const row = rows.get(change.change_id); refresh(); if (row && !row.focus.disabled && row.bounds && !context.focusRegion(row.bounds)) message.textContent = '当前主画布或建议区域不可用，未改变视图。'; });
+      const visual = element('div'), focusLocal = action('定位建议局部', 'candidate-local-' + change.change_id, context.signal, () => {
+        if (expanded) { focusedChange = focusedChange === change.change_id ? null : change.change_id; renderCombined(); }
+        else { localFocus = !localFocus; renderProjection(); }
+      }), focusMain = action('定位主画布', 'candidate-focus-' + change.change_id, context.signal, () => { const row = rows.get(change.change_id); refresh(); if (row && !row.focus.disabled && row.bounds && !context.focusRegion(row.bounds)) message.textContent = '当前主画布或建议区域不可用，未改变视图。'; });
       let localFocus = false;
       function renderProjection() {
         beforeValue.textContent = before ? JSON.stringify({ label_id: before.label_id, attributes: before.attributes, geometry: before.geometry }) : '—';
@@ -127,29 +145,34 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
             element('dt', key + ' · 建议值'), element('dd', show(after, key)),
           );
         }
-        visual.replaceChildren(readonlyVisual(entry.fixedDocument, context.getScope().assetId, before ? [before.geometry] : [], after ? [after.geometry] : [], localFocus));
-        focusLocal.textContent = localFocus ? '查看整图对照' : '定位建议局部';
+        if (expanded) visual.replaceChildren();
+        else visual.replaceChildren(readonlyVisual(entry.fixedDocument, context.getScope().assetId, before ? [before.geometry] : [], after ? [after.geometry] : [], localFocus));
+        focusLocal.textContent = expanded ? focusedChange === change.change_id ? '查看整图对照' : '定位建议局部' : localFocus ? '查看整图对照' : '定位建议局部';
       }
       const rejectButton = action('拒绝此项', 'candidate-reject-' + change.change_id, context.signal, () => void reject([change.change_id]));
       const rejection = element('p'); rejection.setAttribute('role', 'status');
-      const row = { checkbox, rejection, reject: rejectButton, focus: focusMain, bounds: change.kind === 'create' ? change.object.geometry : before?.geometry ?? null, projectionReady: change.kind !== 'set_label', render: renderProjection };
+      const row = { checkbox, rejection, reject: rejectButton, focus: focusMain, local: focusLocal, bounds: change.kind === 'create' ? change.object.geometry : before?.geometry ?? null, projectionReady: change.kind !== 'set_label',
+        geometry: () => ({ before: before?.geometry ?? null, after: after?.geometry ?? null }), render: renderProjection };
       rows.set(change.change_id, row);
       li.append(labeled(({ create: '新增对象', set_attributes: '修改属性', set_label: '修改类别（仅对照）' }[change.kind]) + ' · ' + objectId, checkbox), rejection, comparison, element('p', change.reason || '未提供理由'), visual, focusLocal, focusMain, rejectButton); changesRoot.append(li); renderProjection();
       if (change.kind === 'set_label' && entry.fixedDocument && entry.fixedOntology && entry.fixedDocument.asset_revision_id === entry.candidate.context.asset_revision_id
         && entry.fixedDocument.ontology_version_id === entry.candidate.context.ontology_version_id && entry.fixedOntology.project_id === entry.candidate.context.project_id
         && entry.candidate.context.object_hashes[change.object_id] === change.before_hash) {
         const fixed = entry;
-        void projectRelabel(entry.fixedDocument, entry.fixedOntology, change).then(object => { if (!context.signal.aborted && entry === fixed) { after = object; row.projectionReady = true; renderProjection(); refresh(); } }).catch(() => { if (!context.signal.aborted && entry === fixed) afterValue.textContent = '固定建议投影失败，仅可对照。'; });
+        void projectRelabel(entry.fixedDocument, entry.fixedOntology, change).then(object => { if (!context.signal.aborted && entry === fixed) { after = object; row.projectionReady = true; renderProjection(); renderCombined(); refresh(); } }).catch(() => { if (!context.signal.aborted && entry === fixed) afterValue.textContent = '固定建议投影失败，仅可对照。'; });
       }
     }
+    renderCombined();
     for (const issue of entry.candidate.issues) { const note = element('p', '问题：' + issue.message + ' · ' + issue.code); note.setAttribute('role', 'note'); issues.append(note); }
   }
   build(); refresh(); void read();
-  return { element: root, refresh, update(next) { if (next === entry) { refresh(); return; } entry = next; build(); refresh(); }, rejectSelected: () => reject([...selected]), selectedCount: () => selected.size };
+  return { element: root, refresh, update(next) { if (next === entry) { refresh(); return; } entry = next; build(); refresh(); },
+    setExpanded(value) { if (expanded === value) return; expanded = value; focusedChange = null; combined.hidden = !expanded; for (const row of rows.values()) row.render(); renderCombined(); },
+    rejectSelected: () => reject([...selected]), selectedCount: () => selected.size };
 }
-export function mountCandidatesView(root: HTMLElement, context: CandidateViewContext): { update(entries: readonly CandidateEntry[]): void; dispose(): void } {
+export function mountCandidatesView(root: HTMLElement, context: CandidateViewContext): { update(entries: readonly CandidateEntry[]): void; setExpanded(expanded: boolean): void; dispose(): void } {
   const list = element('div'), message = element('p'); message.setAttribute('role', 'status');
-  const cards = new Map<string, CandidateCard>(); let batchBusy = false, showingEmpty = false;
+  const cards = new Map<string, CandidateCard>(); let batchBusy = false, showingEmpty = false, expanded = false;
   const batch = action('跨组拒绝所选（独立请求）', 'reject-cross-groups', context.signal, () => {
     if (batchBusy || !context.getScope().current) return;
     batchBusy = true; batch.disabled = true;
@@ -165,9 +188,9 @@ export function mountCandidatesView(root: HTMLElement, context: CandidateViewCon
   return { update(entries) {
     const present = new Set(entries.map(entry => entry.key));
     for (const [key, card] of cards) if (!present.has(key)) { card.element.remove(); cards.delete(key); }
-    for (const entry of entries) { let card = cards.get(entry.key); if (!card) { card = createCandidateCard(entry, context, refreshBatch); cards.set(entry.key, card); list.append(card.element); } else card.update(entry); }
+    for (const entry of entries) { let card = cards.get(entry.key); if (!card) { card = createCandidateCard(entry, context, refreshBatch); card.setExpanded(expanded); cards.set(entry.key, card); list.append(card.element); } else card.update(entry); }
     if (!entries.length) { message.textContent = '暂无建议。人工标注仍可继续。'; showingEmpty = true; }
     else if (showingEmpty) { message.textContent = ''; showingEmpty = false; }
     batch.hidden = entries.length < 2; refreshBatch();
-  }, dispose() { cards.clear(); } };
+  }, setExpanded(value) { expanded = value; for (const card of cards.values()) card.setExpanded(value); }, dispose() { cards.clear(); } };
 }

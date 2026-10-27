@@ -13,11 +13,12 @@ export function readonlyVisual(document: AnnotationDocument | null, assetId: str
   svg.setAttribute('viewBox', exactBounds ? `${exactBounds.x_min} ${exactBounds.y_min} ${exactBounds.x_max - exactBounds.x_min} ${exactBounds.y_max - exactBounds.y_min}` : focus && boxes.length ? `${left} ${top} ${right - left} ${bottom - top}` : `0 0 ${width} ${height}`);
   svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', '只读 canonical 对照：原轮廓虚线，建议轮廓实线');
   const image = window.document.createElementNS(ns, 'image'); image.setAttribute('href', '/api/assets/' + encodeURIComponent(assetId) + '/image'); image.setAttribute('width', String(width)); image.setAttribute('height', String(height)); svg.append(image);
-  for (const [index, group] of [before, after].entries()) for (const box of group) {
+  // Draw the dashed original last so coincident attribute-only outlines show both styles.
+  for (const [suggested, group] of [[true, after], [false, before]] as const) for (const box of group) {
     const rect = window.document.createElementNS(ns, 'rect');
     for (const [key, value] of Object.entries({ x: box.x_min, y: box.y_min, width: box.x_max - box.x_min, height: box.y_max - box.y_min })) rect.setAttribute(key, String(value));
-    rect.setAttribute('fill', 'none'); rect.setAttribute('stroke', index ? '#69d9bb' : '#f1c975'); rect.setAttribute('stroke-width', '2'); rect.setAttribute('vector-effect', 'non-scaling-stroke');
-    if (!index) rect.setAttribute('stroke-dasharray', '5 3'); svg.append(rect);
+    rect.setAttribute('fill', 'none'); rect.setAttribute('stroke', suggested ? '#69d9bb' : '#f1c975'); rect.setAttribute('stroke-width', '2'); rect.setAttribute('vector-effect', 'non-scaling-stroke');
+    if (!suggested) rect.setAttribute('stroke-dasharray', '5 3'); svg.append(rect);
   }
   figure.append(svg, element('figcaption', '只读 SVG 投影，不是可编辑 wgpu；原值虚线，建议值实线。'));
   return figure;

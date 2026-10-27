@@ -4,7 +4,7 @@ import type { RunContext } from '../../../../../packages/contracts/generated/Run
 import type { RunIntent } from '../../../../../packages/contracts/generated/RunIntent';
 import type { AiConsentResponse } from '../../../../../packages/contracts/generated/AiConsentResponse';
 import type { AiApprovedGrants } from '../../../../../packages/contracts/generated/AiApprovedGrants';
-import type { RunController, RunControllerOptions, ConsentPreview, RunScope, CandidateEntry } from './run-controller';
+import type { RunController, RunControllerOptions, ConsentPreview, RunScope } from './run-controller';
 import { createRunController, isTerminalRunEvent } from './run-controller';
 import { mountCandidatesView } from './candidates-view';
 import { mountOutcomeView } from './outcome-view';
@@ -69,7 +69,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   let profileList: readonly ModelProfile[] = [], controller: RunController | null = null, disposeControllerSubscription: (() => void) | null = null;
   let lastReady: { context: RunContext; ontology: OntologyVersion } | null = null, preview: ConsentPreview | null = null, previewIdentity: string | null = null;
   let preparing = false, preparation = 0, decisionRevision = 0, disposed = false, previousEvents: unknown = null, currentOptions: RunControllerOptions | null = null;
-  let profileRead: AbortController | null = null, candidates: { update(entries: readonly CandidateEntry[]): void; dispose(): void } | null = null;
+  let profileRead: AbortController | null = null, candidates: ReturnType<typeof mountCandidatesView> | null = null;
   let lastWaiting = false, lastRun: RunScope | null = null;
   let hashedHost = state.host, hashedGeneration: number | null | undefined, objectHashes: Record<string, string> = {}, selectedProjection: readonly string[] = [], ruleOntology: OntologyVersion | null = null;
   const outcome = mountOutcomeView(outcomeRoot, { signal: readSignal, isCurrent: () => sessionCurrent(state), navigate });
@@ -77,6 +77,39 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
     const modal = !!modalRoot.querySelector('dialog[open]');
     if (state.modal !== modal) { state.modal = modal; state.notify(); }
   }
+  const candidateDialog = createDialog({ id: 'r07-candidates-expanded', title: '候选差异与决定', testId: 'candidates-expanded', signal, fallbackFocus: () => modalRoot.querySelector<HTMLElement>('[data-testid="toggle-ai"]') });
+  candidateDialog.element.classList.add('r07-candidates-expanded'); candidateDialog.content.classList.add('r07-candidates-content');
+  const candidateHeading = candidateDialog.element.querySelector('h2')!; candidateHeading.tabIndex = -1; candidateHeading.setAttribute('autofocus', '');
+  const candidateClose = candidateDialog.element.querySelector<HTMLButtonElement>('button')!; candidateClose.textContent = '返回工作台';
+  const candidateFooter = element('footer', undefined, 'r07-candidates-footer');
+  candidateFooter.append(element('p', '只读对照；采纳和拒绝仍使用当前候选的原有决策流程。'), candidateClose);
+  candidateDialog.element.append(candidateFooter); modalRoot.append(candidateDialog.element);
+  let candidateShowing = false, candidateToCanvas = false;
+  let candidateReturnScroll: { element: Element; top: number; left: number } | null = null;
+  function restoreCandidateScroll() {
+    if (!candidateReturnScroll) return;
+    candidateReturnScroll.element.scrollTop = candidateReturnScroll.top;
+    candidateReturnScroll.element.scrollLeft = candidateReturnScroll.left;
+    candidateReturnScroll = null;
+  }
+  const candidateLauncher = action('展开候选对照', 'candidates-expand', signal, () => {
+    if (!sessionCurrent(state) || candidateShowing || !controller?.getSnapshot().candidates.length || !candidates) return;
+    const scrolling = document.scrollingElement;
+    if (scrolling) { candidateReturnScroll = { element: scrolling, top: scrolling.scrollTop, left: scrolling.scrollLeft }; scrolling.scrollTop = 0; scrolling.scrollLeft = 0; }
+    candidateShowing = true; port.cancelGesture(); candidateDialog.content.append(candidatesRoot); candidates.setExpanded(true);
+    try { candidateDialog.open(candidateLauncher); }
+    catch (cause) { root.insertBefore(candidatesRoot, outcomeRoot); candidates.setExpanded(false); candidateShowing = false; restoreCandidateScroll(); throw cause; }
+    candidateLauncher.setAttribute('aria-expanded', 'true'); syncModalState();
+  });
+  candidateLauncher.hidden = true; candidateLauncher.setAttribute('aria-haspopup', 'dialog'); candidateLauncher.setAttribute('aria-controls', candidateDialog.element.id); candidateLauncher.setAttribute('aria-expanded', 'false');
+  candidateDialog.element.addEventListener('close', () => {
+    root.insertBefore(candidatesRoot, outcomeRoot); candidates?.setExpanded(false); candidateShowing = false;
+    candidateLauncher.setAttribute('aria-expanded', 'false'); syncModalState();
+    if (candidateToCanvas) {
+      candidateReturnScroll = null; candidateToCanvas = false;
+      requestAnimationFrame(() => { const canvas = modalRoot.querySelector<HTMLCanvasElement>('[data-testid="annotation-canvas"]'); if (canvas?.isConnected && !canvas.inert) canvas.focus(); });
+    } else restoreCandidateScroll();
+  }, { signal });
   const invalidatePreview = () => { preparation++; preview = null; previewIdentity = null; checked.checked = false; consentDialog.close(); syncModalState(); };
   function requestedGrants(): AiApprovedGrants | null {
     const grants: AiApprovedGrants = { allow_image: allowImage.checked, allow_object_context: allowObjects.checked, preview_crop: null };
@@ -183,7 +216,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
       error.textContent = ''; update();
     } catch (reason) { if (!read.signal.aborted && !disposed) error.textContent = '模型列表读取失败；人工标注可继续：' + reportError(reason); }
   };
-  root.append(element('h2', 'AI 审校'), rules, labeled('模型预设', profiles), profileIdentity, profileInfo, action('只读重新检查模型列表', 'ai-profiles-refresh', signal, () => void refreshProfiles()), intent, labeled('指令', prompt), access, scopeText, run, error, progress, candidatesRoot, outcomeRoot);
+  root.append(element('h2', 'AI 审校'), rules, labeled('模型预设', profiles), profileIdentity, profileInfo, action('只读重新检查模型列表', 'ai-profiles-refresh', signal, () => void refreshProfiles()), intent, labeled('指令', prompt), access, scopeText, run, error, candidateLauncher, progress, candidatesRoot, outcomeRoot);
   function updateControls() {
     const snapshot = controller?.getSnapshot(), profile = profileList.find(item => item.profile_id === profiles.value);
     if (ruleOntology !== state.loaded?.ontology) {
@@ -214,6 +247,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
     if (!controller || disposed) return;
     const snapshot = controller.getSnapshot();
     root.dataset.runState = snapshot.runId || snapshot.events.length || snapshot.candidates.length || snapshot.error ? 'active' : 'idle';
+    candidateLauncher.hidden = !snapshot.candidates.length;
     if (lastWaiting !== snapshot.modelWaiting) { lastWaiting = snapshot.modelWaiting; state.activity.setKind(lastWaiting ? 'model_wait' : 'task'); }
     if (lastRun !== snapshot.runScope) { lastRun = snapshot.runScope; state.activity.setBinding({}); state.notify(); }
     const terminal = snapshot.events.find(isTerminalRunEvent);
@@ -243,7 +277,13 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
       if (!controller) {
         controller = createRunController(next);
         candidates = mountCandidatesView(candidatesRoot, { signal: readSignal, controller, getScope: () => ({ assetId: state.assetId, context: currentOptions!.context, generation: port.getReadHost()?.getGeneration() ?? -1, writable: !!port.getHost(), current: sessionCurrent(state) }),
-          focusRegion: bounds => port.getReadHost()?.focusRegion(bounds) ?? false, onDecisionRecorded() { decisionRevision++; updateRun(); } });
+          focusRegion(bounds) {
+            const focused = port.getReadHost()?.focusRegion(bounds) ?? false;
+            if (focused && candidateDialog.element.open) {
+              candidateToCanvas = true; candidateDialog.close(); root.closest<HTMLDialogElement>('dialog[open]')?.close();
+            }
+            return focused;
+          }, onDecisionRecorded() { decisionRevision++; updateRun(); } });
         disposeControllerSubscription = controller.subscribe(updateRun);
       } else if (changed) controller.update(next);
     }
@@ -258,7 +298,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   }, { signal });
   checked.addEventListener('change', updateControls, { signal });
   const unsubscribe = state.subscribe(update);
-  function dispose() { if (disposed) return; disposed = true; profileRead?.abort(); unsubscribe(); disposeControllerSubscription?.(); candidates?.dispose(); outcome.dispose(); controller?.dispose(); consentDialog.dispose(); syncModalState(); }
+  function dispose() { if (disposed) return; disposed = true; profileRead?.abort(); unsubscribe(); disposeControllerSubscription?.(); candidates?.dispose(); outcome.dispose(); controller?.dispose(); consentDialog.dispose(); candidateDialog.dispose(); syncModalState(); }
   signal.addEventListener('abort', dispose, { once: true }); update(); void refreshProfiles();
   return { refreshProfiles, getRunScope: () => controller?.getSnapshot().runScope ?? null, dispose };
 }
