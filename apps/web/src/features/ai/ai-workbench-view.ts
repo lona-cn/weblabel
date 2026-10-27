@@ -18,6 +18,7 @@ import { createDialog } from '../../ui/dialog';
 let intentSequence = 0;
 const availabilityLabels: Record<ModelProfile['availability'], string> = { ready: '可用', needs_login: '需要登录', needs_configuration: '需要配置', unsupported: '不支持', blocked: '不可用' };
 const verificationLabels: Record<ModelProfile['verification'], string> = { not_run: '未验证', mock_only: '仅模拟验证', live_passed: '真实验证通过', live_failed: '真实验证失败' };
+const runStateLabels: Record<string, string> = { queued: '等待运行', started: '已开始', progress: '正在处理', tool_call: '工具调用', candidate: '生成候选', succeeded: '运行完成', failed: '运行失败', cancelled: '已取消' };
 
 export interface AiWorkbenchView {
   refreshProfiles(): Promise<void>;
@@ -56,6 +57,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   let cropInitialized = false;
   const progress = element('section'); progress.setAttribute('aria-label', 'AI 运行进度'); progress.dataset.testid = 'ai-run-progress';
   const eventsRoot = element('ol'), progressText = element('p'); progressText.setAttribute('role', 'status'); progressText.dataset.testid = 'ai-status';
+  const terminalNotice = element('p'); terminalNotice.hidden = true;
   eventsRoot.className = 'r07-ai-events';
   const modalRoot = root.closest('.r07-workbench') ?? root;
   const consentDialog = createDialog({ id: 'ai-consent-dialog', title: '确认本次授权', testId: 'ai-consent', signal, fallbackFocus: () => modalRoot.querySelector<HTMLElement>('[data-testid="toggle-ai"]') });
@@ -77,6 +79,28 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
     const modal = !!modalRoot.querySelector('dialog[open]');
     if (state.modal !== modal) { state.modal = modal; state.notify(); }
   }
+  const progressDialog = createDialog({ id: 'r07-progress-expanded', title: 'AI 运行进度', testId: 'ai-progress-expanded', signal, fallbackFocus: () => modalRoot.querySelector<HTMLElement>('[data-testid="toggle-ai"]') });
+  progressDialog.element.classList.add('r07-progress-expanded'); progressDialog.content.classList.add('r07-progress-content');
+  const progressHeading = progressDialog.element.querySelector('h2')!; progressHeading.tabIndex = -1; progressHeading.setAttribute('autofocus', '');
+  const progressContext = element('p', undefined, 'r07-progress-context'); progressDialog.content.append(progressContext);
+  const progressClose = progressDialog.element.querySelector<HTMLButtonElement>('button')!; progressClose.textContent = '返回工作台';
+  const progressFooter = element('footer', undefined, 'r07-progress-footer'); progressFooter.append(element('p', '关闭此视图不会取消运行。'), progressClose);
+  progressDialog.element.append(progressFooter); modalRoot.append(progressDialog.element);
+  let progressShowing = false, progressReturnScroll: { element: Element; top: number; left: number } | null = null;
+  const progressLauncher = action('展开运行进度', 'ai-progress-expand', signal, () => {
+    if (!sessionCurrent(state) || progressShowing || !controller?.getSnapshot().runId) return;
+    const scrolling = document.scrollingElement;
+    if (scrolling) { progressReturnScroll = { element: scrolling, top: scrolling.scrollTop, left: scrolling.scrollLeft }; scrolling.scrollTop = 0; scrolling.scrollLeft = 0; }
+    progressShowing = true; port.cancelGesture(); progressDialog.content.append(progress);
+    try { progressDialog.open(progressLauncher); }
+    catch (cause) { root.insertBefore(progress, candidateLauncher); progressShowing = false; if (progressReturnScroll) { progressReturnScroll.element.scrollTop = progressReturnScroll.top; progressReturnScroll.element.scrollLeft = progressReturnScroll.left; progressReturnScroll = null; } throw cause; }
+    progressLauncher.setAttribute('aria-expanded', 'true'); syncModalState();
+  });
+  progressLauncher.hidden = true; progressLauncher.setAttribute('aria-haspopup', 'dialog'); progressLauncher.setAttribute('aria-controls', progressDialog.element.id); progressLauncher.setAttribute('aria-expanded', 'false');
+  progressDialog.element.addEventListener('close', () => {
+    root.insertBefore(progress, candidateLauncher); progressShowing = false; progressLauncher.setAttribute('aria-expanded', 'false'); syncModalState();
+    if (progressReturnScroll) { progressReturnScroll.element.scrollTop = progressReturnScroll.top; progressReturnScroll.element.scrollLeft = progressReturnScroll.left; progressReturnScroll = null; }
+  }, { signal });
   const candidateDialog = createDialog({ id: 'r07-candidates-expanded', title: '候选差异与决定', testId: 'candidates-expanded', signal, fallbackFocus: () => modalRoot.querySelector<HTMLElement>('[data-testid="toggle-ai"]') });
   candidateDialog.element.classList.add('r07-candidates-expanded'); candidateDialog.content.classList.add('r07-candidates-content');
   const candidateHeading = candidateDialog.element.querySelector('h2')!; candidateHeading.tabIndex = -1; candidateHeading.setAttribute('autofocus', '');
@@ -202,7 +226,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   consentDialog.content.append(consentNotice, consentProvider, consentBody, labeled('我已确认以上范围，同意本次运行。仅本次授权；范围变化或过期后须重新确认。', checked), consentActions);
   modalRoot.append(consent);
   progress.hidden = true;
-  progress.append(progressText, element('p', '关闭或切换面板不会取消运行；用量缺席仍为未知，取消不保证停止上游费用。'), cancel, eventsRoot);
+  progress.append(progressText, terminalNotice, element('p', '关闭或切换面板不会取消运行；用量缺席仍为未知，取消不保证停止上游费用。'), cancel, eventsRoot);
   const refreshProfiles = async () => {
     if (!sessionCurrent(state)) return;
     profileRead?.abort(); const read = new AbortController(); profileRead = read;
@@ -217,7 +241,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
       error.textContent = ''; update();
     } catch (reason) { if (!read.signal.aborted && !disposed) error.textContent = '模型列表读取失败；人工标注可继续：' + reportError(reason); }
   };
-  root.append(element('h2', 'AI 审校'), progress, candidateLauncher, rules, labeled('模型预设', profiles), profileIdentity, profileInfo, action('只读重新检查模型列表', 'ai-profiles-refresh', signal, () => void refreshProfiles()), intent, labeled('指令', prompt), access, scopeText, run, error, candidatesRoot, outcomeRoot);
+  root.append(element('h2', 'AI 审校'), progressLauncher, progress, candidateLauncher, rules, labeled('模型预设', profiles), profileIdentity, profileInfo, action('只读重新检查模型列表', 'ai-profiles-refresh', signal, () => void refreshProfiles()), intent, labeled('指令', prompt), access, scopeText, run, error, candidatesRoot, outcomeRoot);
   function updateControls() {
     const snapshot = controller?.getSnapshot(), profile = profileList.find(item => item.profile_id === profiles.value);
     if (ruleOntology !== state.loaded?.ontology) {
@@ -249,11 +273,19 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
     const snapshot = controller.getSnapshot();
     root.dataset.runState = snapshot.runId || snapshot.events.length || snapshot.candidates.length || snapshot.error ? 'active' : 'idle';
     progress.hidden = !snapshot.runId;
+    const scope = snapshot.runScope;
+    progressLauncher.hidden = !snapshot.runId; progressLauncher.disabled = !sessionCurrent(state) || !scope || scope.projectId !== state.projectId || scope.assetRevisionId !== state.assetId || scope.ontologyVersionId !== state.loaded?.ontology.ontology_version_id;
+    if (progressShowing && progressLauncher.disabled) progressDialog.close();
     candidateLauncher.hidden = !snapshot.candidates.length;
     if (lastWaiting !== snapshot.modelWaiting) { lastWaiting = snapshot.modelWaiting; state.activity.setKind(lastWaiting ? 'model_wait' : 'task'); }
     if (lastRun !== snapshot.runScope) { lastRun = snapshot.runScope; state.activity.setBinding({}); state.notify(); }
     const terminal = snapshot.events.find(isTerminalRunEvent);
-    progressText.textContent = snapshot.runId ? '运行 ' + snapshot.runId + ' · ' + (terminal?.type ?? snapshot.events.at(-1)?.type ?? '等待运行') : '尚未启动运行';
+    const phase = terminal?.type ?? snapshot.events.at(-1)?.type;
+    progressText.textContent = snapshot.runId ? '运行 ' + snapshot.runId + ' · ' + (phase ? (runStateLabels[phase] ?? phase) + ' (' + phase + ')' : '等待运行') : '尚未启动运行';
+    const code = terminal?.data?.code; terminalNotice.hidden = !terminal;
+    terminalNotice.textContent = terminal?.type === 'failed' ? '错误 ' + (typeof code === 'string' ? code : '未提供错误代码') + ' · ' + terminal.message + '；本次运行已结束，无法取消。' : terminal ? '本次运行已结束，无法取消。' : '';
+    const queued = snapshot.events.find(event => event.type === 'queued')?.data;
+    progressContext.textContent = scope ? '固定项目 ' + scope.projectId + ' · 图片版本 ' + scope.assetRevisionId + ' · 规范版本 ' + scope.ontologyVersionId + (typeof queued?.profile_id === 'string' ? ' · 预设 ' + queued.profile_id : '') + (typeof queued?.model_id === 'string' ? ' · model_id ' + queued.model_id : '') : '固定运行范围尚未提供。';
     if (previousEvents !== snapshot.events) {
       previousEvents = snapshot.events; eventsRoot.replaceChildren();
       for (const event of snapshot.events) {
@@ -271,7 +303,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   }
   function update() {
     if (disposed) return;
-    if (!sessionCurrent(state)) { invalidatePreview(); profileRead?.abort(); controller?.dispose(); candidates?.update(controller?.getSnapshot().candidates ?? []); updateControls(); return; }
+    if (!sessionCurrent(state)) { progressDialog.close(); invalidatePreview(); profileRead?.abort(); controller?.dispose(); candidates?.update(controller?.getSnapshot().candidates ?? []); updateControls(); return; }
     const next = options();
     if (preview && (!next || previewIdentity !== activeIdentity(next))) invalidatePreview();
     if (next) {
@@ -300,7 +332,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   }, { signal });
   checked.addEventListener('change', updateControls, { signal });
   const unsubscribe = state.subscribe(update);
-  function dispose() { if (disposed) return; disposed = true; profileRead?.abort(); unsubscribe(); disposeControllerSubscription?.(); candidates?.dispose(); outcome.dispose(); controller?.dispose(); consentDialog.dispose(); candidateDialog.dispose(); syncModalState(); }
+  function dispose() { if (disposed) return; disposed = true; profileRead?.abort(); unsubscribe(); disposeControllerSubscription?.(); candidates?.dispose(); outcome.dispose(); controller?.dispose(); consentDialog.dispose(); candidateDialog.dispose(); progressDialog.dispose(); syncModalState(); }
   signal.addEventListener('abort', dispose, { once: true }); update(); void refreshProfiles();
   return { refreshProfiles, getRunScope: () => controller?.getSnapshot().runScope ?? null, dispose };
 }
