@@ -33,6 +33,25 @@ it('keeps unknown preset writes frozen when readback model identity differs desp
   expect(root.querySelector('input[type=password],input[type=file]')).toBeNull();
 });
 
+it('shows the confirmed preset as configured after reconciling a lost save response', async () => {
+  const request = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'PUT') throw new TypeError('lost ACK');
+    if (_url.startsWith('/api/model-profile-presets')) return { items: [preset], next_cursor: null };
+    return { configuration_hash: preset.configuration_hash, profile: { ...preset } };
+  });
+  const root = mount(request as typeof api.request), select = root.querySelector<HTMLSelectElement>('select')!;
+  await vi.waitFor(() => expect(select.options.length).toBe(2));
+  select.value = preset.preset_id; select.dispatchEvent(new Event('change'));
+  const save = root.querySelector<HTMLButtonElement>('[data-testid="model-preset-save"]')!;
+  save.click();
+  await vi.waitFor(() => expect(root.textContent).toContain('配置写入结果未知'));
+  root.querySelector<HTMLButtonElement>('[data-testid="model-preset-read"]')!.click();
+  await vi.waitFor(() => expect(root.textContent).toContain('已只读核实同一配置已保存'));
+  expect(root.textContent).toContain('已配置相同哈希');
+  expect(save.disabled).toBe(true);
+  expect(request.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1);
+});
+
 it('leaves manual annotation available with an empty preset list and never auto-saves', async () => {
   const request = vi.fn(async () => ({ items: [], next_cursor: null }));
   const root = mount(request as typeof api.request);

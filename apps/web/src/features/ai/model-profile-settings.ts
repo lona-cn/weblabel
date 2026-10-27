@@ -29,7 +29,7 @@ export function mountModelProfileSettings(root: HTMLElement, context: ModelProfi
   function render() {
     if (!scope.current()) return;
     const preset = unknown ?? items.find(item => item.preset_id === select.control.value);
-    select.control.disabled = busy || !!unknown || !readValid; save.disabled = busy || !readValid || !preset || !!unknown || !canManage(); read.disabled = busy;
+    select.control.disabled = busy || !!unknown || !readValid; save.disabled = busy || !readValid || !preset || preset.configured || !!unknown || !canManage(); read.disabled = busy;
     read.textContent = unknown ? '只读核对配置' : '只读重新检查预设'; page.setAttribute('aria-busy', String(busy));
     state.textContent = busy ? '正在处理…' : unknown ? '配置写入结果未知：选择已冻结，仅可核对原配置。' : !readValid ? '预设读取尚未核实，仅可只读重新检查；原身份仅作对照。' : items.length ? `${items.length} 个固定预设 · 不会自动保存。` : '尚无固定预设，人工标注仍可继续。';
     details.replaceChildren();
@@ -63,14 +63,17 @@ export function mountModelProfileSettings(root: HTMLElement, context: ModelProfi
     try { await context.onProfilesChanged(); }
     catch { if (scope.current()) notice.textContent += '模型列表刷新失败，可只读重新检查。'; }
   }
+  function markConfigured(preset: ModelProfilePreset) {
+    items = items.map(item => item.preset_id === preset.preset_id && item.configuration_hash === preset.configuration_hash ? { ...item, configured: true } : item);
+  }
   async function savePreset() {
     const preset = items.find(item => item.preset_id === select.control.value);
-    if (!preset || !readValid || busy || unknown || !scope.current() || !canManage()) return;
+    if (!preset || preset.configured || !readValid || busy || unknown || !scope.current() || !canManage()) return;
     const submitted = Object.freeze({ ...preset, capabilities: Object.freeze({ ...preset.capabilities }) });
     busy = true; summary.set(null); notice.textContent = ''; render();
     try {
       await request<ModelProfile>(`/api/model-profiles/${encodeURIComponent(submitted.profile_id)}`, { method: 'PUT', body: JSON.stringify({ configuration_hash: submitted.configuration_hash }) });
-      if (!scope.current()) return; notice.textContent = '模型配置已保存。配置就绪不等于真实运行验收通过；本次没有调用模型。'; await changed();
+      if (!scope.current()) return; markConfigured(submitted); notice.textContent = '模型配置已保存。配置就绪不等于真实运行验收通过；本次没有调用模型。'; await changed();
     } catch (reason) {
       if (!scope.current()) return;
       if (rejected(reason)) summary.set(reason instanceof ApiFailure && reason.status === 409 ? '此 profile 已绑定另一份配置，不能覆盖历史记录。请由本机操作者准备不同 profile 的预设。' : '服务器明确拒绝配置；检查平台权限与现有固定预设。');
@@ -87,7 +90,7 @@ export function mountModelProfileSettings(root: HTMLElement, context: ModelProfi
       if (saved.configuration_hash !== pending.configuration_hash || !profile || profile.profile_id !== pending.profile_id || profile.provider_id !== pending.provider_id || profile.model_id !== pending.model_id || profile.auth_kind !== pending.auth_kind || capabilities.some(key => typeof profile.capabilities?.[key] !== 'boolean' || profile.capabilities[key] !== pending.capabilities[key])) {
         summary.set('服务器 profile 身份或配置不匹配；保留未知状态，不重复写入。'); return;
       }
-      unknown = null; summary.set(null); notice.textContent = '已只读核实同一配置已保存；此 GET 仅确认当前状态，不证明原写入的唯一归属。没有重复写入或调用模型。'; await changed();
+      markConfigured(pending); unknown = null; summary.set(null); notice.textContent = '已只读核实同一配置已保存；此 GET 仅确认当前状态，不证明原写入的唯一归属。没有重复写入或调用模型。'; await changed();
     } catch (reason) { if (scope.current()) summary.set(reason instanceof ApiFailure && reason.status === 404 ? '服务器尚无此 profile；原写入仍可能在途，请稍后再次只读核对。' : '只读核对失败；保留原配置选择，不重复写入。'); }
     finally { busy = false; render(); }
   }
