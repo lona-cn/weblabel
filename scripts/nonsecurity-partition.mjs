@@ -6,13 +6,13 @@ import { fileURLToPath } from 'node:url';
 const root = fs.realpathSync(fileURLToPath(new URL('../', import.meta.url)));
 const inputs = [
   '.node-version', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/geometry',
-  'crates/annotation-domain', 'crates/editor-core', 'tests/fixtures/golden', 'package.json', 'pnpm-lock.yaml',
+  'crates/annotation-domain', 'crates/editor-core', 'crates/dataset-formats', 'tests/fixtures/golden', 'package.json', 'pnpm-lock.yaml',
   'pnpm-workspace.yaml', 'vitest.config.ts', 'apps/web/package.json', 'apps/web/tsconfig.json',
   'apps/web/src', 'packages/contracts/generated',
 ];
-// Reviewed: geometry t03, editor t04/t12/commercial projection, and the six named Web test files in verify.mjs.
+// Reviewed: geometry t03, editor t04/t12/commercial projection, the exact format cases and six Web files named in verify.mjs.
 // Other tests, their fixtures, live/model work and GPU performance remain unreviewed.
-const reviewedFingerprint = '275ffac09eac9381ff948fb5198ad95258f6842311f35447f115db1d2ef29e58';
+const reviewedFingerprint = '0adc50840314f02f3c838c5a5064e958ff3c398b09daccd4720d19c5976f8fde';
 const sha = value => createHash('sha256').update(value).digest('hex');
 
 export function checkNonsecurityPartition() {

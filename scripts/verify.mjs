@@ -334,7 +334,7 @@ export async function verify(argv = process.argv.slice(2)) {
     if (options.gate === 'nonsecurity-audited') {
       result.skipped_scope.push('unaudited_tests', 'model_execution', 'gpu_performance');
       result.audited_partition = checkNonsecurityPartition();
-      result.audited_partition.scope = 'reviewed_geometry_editor_targets_and_six_web_files_only';
+      result.audited_partition.scope = 'reviewed_geometry_editor_format_cases_and_six_web_files_only';
       if (result.audited_partition.status !== 'passed') {
         result.blockers.push(...result.audited_partition.blockers);
         return result;
@@ -397,6 +397,17 @@ export async function verify(argv = process.argv.slice(2)) {
     const nonsecurityAudited = async () => {
       await step('nonsecurity-geometry', ['cargo', 'test', '--locked', '-p', 'geometry', '--test', 't03_geometry'], 'cargo');
       await step('nonsecurity-editor-core', ['cargo', 'test', '--locked', '-p', 'editor-core', '--test', 't04_editor', '--test', 't12_tools', '--test', 'commercial_relabel_projection'], 'cargo');
+      const formatCases = [
+        'yolo_export_import_uses_continuous_pixel_coordinates_and_reports_losses',
+        'yolo_tiny_boxes_preserve_normalized_f64_and_positive_roundtrip_sizes',
+        'yolo_ordinary_and_edge_boxes_preserve_all_normalized_values',
+        'coco_import_maps_sparse_category_ids_by_id_not_array_position',
+        'coco_export_reports_information_loss_and_uses_bbox_area_semantics',
+        'external_coco_initializes_target_defaults_and_preserves_selected_source_identity',
+        'external_yolo_initializes_only_mapped_target_defaults_and_preserves_rows',
+        'unselected_coco_objects_do_not_trigger_target_default_loss',
+      ];
+      for (const [index, name] of formatCases.entries()) await step(`nonsecurity-format-${index + 1}`, ['cargo', 'test', '--locked', '-p', 'dataset-formats', '--test', 't14_formats', name, '--', '--exact'], 'cargo');
       const output = path.join(reportDir, 'nonsecurity-web.json');
       await step('nonsecurity-web', [node, 'node_modules/vitest/vitest.mjs', 'run', '--project', 'web', 'apps/web/src/features/ai/native-outcome.test.ts', 'apps/web/src/features/workbench/native-objects.test.ts', 'apps/web/src/features/datasets/delivery-plan.test.ts', 'apps/web/src/features/import-export/protocol.test.ts', 'apps/web/src/ui/dialog.test.ts', 'apps/web/src/ui/virtual-list.test.ts', '--maxWorkers=1', '--reporter=json', `--outputFile=${output}`], 'vitest', output);
     };

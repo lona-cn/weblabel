@@ -71,6 +71,12 @@
     "admission": "A project-owned harmless source-drift probe produced NONSECURITY_AUDIT_STALE and started zero child commands; no symlink was created.",
     "limits": "The local gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2 because other tests remain unreviewed. Security topics, model execution and GPU performance were not run. The public commit was not independently rebuilt or retested."
   },
+  "audited_format_followup": {
+    "scope": "Eight reviewed COCO/YOLO conversion tests were executed individually with exact Rust test names; the rest of the mixed format target, including archive traversal and symlink cases, was compiled but not run.",
+    "actual_local_run": {"geometry": "7/7", "editor_core": "39/39", "format_cases": "8/8", "web": "11/11", "failed": 0},
+    "guard": "The 284 fingerprinted input files include dependencies and do not represent 284 individually reviewed tests. Security topics, other unaudited tests, model execution and GPU performance remain excluded.",
+    "limits": "Even with the selected tests passing, the actual gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2. The public commit itself was not independently rebuilt or retested."
+  },
   "save_recovery": {
     "reproduction": "A real native save committed with HTTP 200 before its response was deliberately dropped. The original pending operation survived continued local editing and switching images. Before the fix, unknown was not surfaced in the primary status and explicit saving of the newer edit did not send a new request.",
     "focused_tests": {"passed": 6, "failed": 0, "filtered": 43, "web_typescript_exit": 0, "test_typescript_exit": 0, "note": "Two behavior cases failed before the first fix; the primary-status case failed before its later fix."},
@@ -117,7 +123,8 @@
     "local_smoke": "On a locally built native release, a procedural COCO preview on hardware WebGPU displayed one labelled box, fixed source/mapping, two actual loss rows and a disabled confirm together at 1536x1024; 900x600 remained scrollable. A real preview POST and one explicit commit POST returned 200, the head stayed unchanged before confirmation, and the committed revision parent and canonical [4,6,24,21] were checked in the synthetic database.",
     "keyboard_and_labels": "An earlier build before the visible-label addition checked ten Tabs, reverse Tab, Escape, restored focus/scroll and acknowledgement continuity; the dialog lifecycle itself was unchanged by that addition. The final label build showed one actual label at desktop and compact widths; a focused fixture checked all 101 boxes remain while visible labels are explicitly limited to 100.",
     "checks": "Two specifically selected import regressions passed; 13 other cases in the mixed file were not executed. The reviewed non-security subset on final source reported geometry 7/7, editor core 39/39 and Web 11/11; its overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE.",
-    "limits": "The local build was dirty and its changed source hashes are bound separately in the private evidence. The public commit itself was not independently rebuilt; multi-object visual placement, all U14 states, the full 48-state matrix, security topics and current-source GPU performance remain unverified. Eight startup GETs were aborted for an unestablished reason."
+    "limits": "The local build was dirty and its changed source hashes are bound separately in the private evidence. The public commit itself was not independently rebuilt; dense multi-object behavior, all U14 states, the full 48-state matrix, security topics and current-source GPU performance remain unverified. Eight startup GETs were aborted for an unestablished reason.",
+    "multi_category_followup": "A later real browser preview displayed three synthetic objects across Person and Vehicle with matching labels, colors and boxes; explicit cancellation did not change any head or revision count. This reused a copy of the prior synthetic fixture whose original seed had a disclosed security-scope deviation; that seed helper and its negative controls were not rerun."
   },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",

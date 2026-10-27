@@ -68,6 +68,7 @@ test('audited nonsecurity verification runs reviewed consumers without claiming 
     assert.ok(result.skipped_scope.includes('security'));
     assert.ok(result.commands.some(row => row.name === 'nonsecurity-geometry' && row.status === 'passed' && row.tests.passed > 0));
     assert.ok(result.commands.some(row => row.name === 'nonsecurity-editor-core' && row.status === 'passed' && row.tests.passed > 0));
+    assert.equal(result.commands.filter(row => row.name.startsWith('nonsecurity-format-') && row.status === 'passed' && row.tests.passed === 1).length, 8);
     assert.ok(result.commands.some(row => row.name === 'nonsecurity-web' && row.status === 'passed' && row.tests.passed > 0));
     assert.ok(result.commands.every(row => row.status === 'passed'));
     assert.equal(result.full_1_0_ready, false);
