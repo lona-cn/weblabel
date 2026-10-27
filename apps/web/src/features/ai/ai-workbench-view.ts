@@ -196,17 +196,20 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
       const provider = value.profile.provider_id;
       consentProvider.textContent = provider === 'detector_local' ? '本地检测：授权图像只在本机检测进程与本地权重之间处理。' : provider === 'mock' ? '模拟渠道，不是真实模型。' : provider === 'claude_local' ? '启动官方 native 客户端；授权内容可流向官方远端服务，本地启动不等于本地推理。' : '外部 API：授权指令、图像范围与对象详情将经服务端发送到 ' + provider + '。';
       const frozen = controller!.getPreviewSnapshot(value.preview_id);
+      const selected = new Set(value.context.selected_object_ids);
+      const authorizedObjects = value.grants.allow_object_context && frozen ? frozen.document.objects.filter(object => !selected.size || selected.has(object.object_id)) : [];
       if (value.grants.allow_image) {
-        const visual = readonlyVisual(frozen?.document ?? null, value.context.asset_revision_id, value.grants.preview_crop ? [value.grants.preview_crop] : [], [], false, value.grants.preview_crop ?? undefined);
+        const visual = readonlyVisual(frozen?.document ?? null, value.context.asset_revision_id, value.grants.preview_crop ? [value.grants.preview_crop] : [], authorizedObjects.map(object => object.geometry), false, value.grants.preview_crop ?? undefined);
+        const svg = visual.querySelector('svg'); if (svg) svg.setAttribute('aria-label', value.grants.preview_crop ? '只读授权预览：虚线为图片裁剪范围，实线为授权对象。' : '只读授权预览：整张图片，实线为授权对象。');
         const caption = visual.querySelector('figcaption');
-        if (caption) caption.textContent = value.grants.preview_crop ? '服务端实际授权 crop，仅此原始 canonical 像素范围；只读 SVG，不是编辑器。' : '服务端实际授权整张 canonical 图片；只读 SVG，不是编辑器。';
+        if (caption) caption.textContent = value.grants.preview_crop ? '服务端实际授权 crop，仅此原始 canonical 像素范围；实线为授权对象，只读 SVG 不是编辑器。' : '服务端实际授权整张 canonical 图片；实线为授权对象，只读 SVG 不是编辑器。';
         visualColumn.append(visual);
       } else visualColumn.append(element('p', '服务器未授权读取图像。'));
       const dl = element('dl');
       for (const [label, text] of [['服务商 / 完整 model_id', provider + ' · ' + value.profile.model_id], ['项目', value.context.project_id], ['图片版本', value.context.asset_revision_id], ['标注版本', value.context.annotation_revision_id], ['规范版本', value.context.ontology_version_id],
         ['图片访问', value.grants.allow_image ? value.grants.preview_crop ? JSON.stringify(value.grants.preview_crop) : '整张 canonical 图片' : '不读取图片'], ['对象详情', value.grants.allow_object_context ? value.context.selected_object_ids.length ? value.context.selected_object_ids.join(', ') : '固定版本全部对象' : '不读取对象详情'], ['有效期', value.expires_at], ['指令', value.prompt]]) dl.append(element('dt', label), element('dd', text));
       consentBody.append(visualColumn, dl);
-      if (value.grants.allow_object_context && frozen) for (const object of frozen.document.objects) if (!value.context.selected_object_ids.length || value.context.selected_object_ids.includes(object.object_id)) visualColumn.append(element('p', object.object_id + ': ' + JSON.stringify(object.attributes)));
+      for (const object of authorizedObjects) visualColumn.append(element('p', object.object_id + ': ' + JSON.stringify(object.attributes)));
       checked.checked = false; consentDialog.open(run); port.cancelGesture(); syncModalState();
     }).catch(reason => { if (!disposed) error.textContent = reportError(reason); }).finally(() => { preparing = false; if (!disposed) updateControls(); });
   });
