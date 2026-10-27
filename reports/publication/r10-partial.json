@@ -2,7 +2,7 @@
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
   "previous_public_source_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
-  "public_base_commit": "6a436cece437fb77d2581a2eb9320ee3293e46ac",
+  "public_base_commit": "083d60ed571811c7dc3b4eb859c469956cf95793",
   "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
@@ -80,13 +80,15 @@
   "offline_quota_attempt": {
     "status": "unverified",
     "observation": "In an isolated Chromium profile, a real origin quota override reported 0 bytes, yet a small offline draft edit was stored and IndexedDB usage increased; no QuotaExceededError was observed.",
-    "limits": "A larger fill timed out and only partially typed. A separate scripted larger input was rejected by the editor's actual 4096-character limit before a draft write. Neither attempt establishes U20 quota-failure or rescue behavior; synthetic server head remained unchanged."
+    "limits": "A larger fill timed out and only partially typed. A separate scripted larger input was rejected by the editor's actual 4096-character limit before a draft write. Neither attempt establishes U20 quota-failure or rescue behavior; synthetic server head remained unchanged.",
+    "user_waiver": "The user waived further actual quota-failure recovery verification as an R10 blocker. No QuotaExceededError was reproduced; recovery remains unverified, not passed."
   },
   "synthetic_yolo_export": {
     "scope": "Actual native release and browser with a fresh project-owned synthetic account, procedural 48x32 image and server-created fixed revision. No user data or model calls; the public commit was not rebuilt.",
     "loss_confirmation": "The real YOLO request returned 422 LOSS_ACK_REQUIRED with actual attributes, object_ids and completion losses. The checkbox began unchecked and confirmation disabled. After explicit confirmation, the same operation with loss_ack=true returned 200.",
     "download": "The browser downloaded the existing 292-byte ZIP; its size and SHA-256 matched the actual receipt and independent ZIP CRC, label identity and normalized coordinates matched the original fixed xyxy. Server head and document remained unchanged.",
     "visual_limit": "The export is inside a collapsible workbench section rather than the accepted U16 full-page reference; loss-field identifiers can wrap within words. This is a scoped behavioral observation, not visual or complete R10 acceptance.",
+    "user_waiver": "The user accepted the existing embedded layout and waived the U16 full-page reference mismatch as an R10 blocker. Visual equivalence remains not passed; the separately observed export behavior is unchanged.",
     "diagnostic": "An initial automation step clicked read-only recheck instead of confirm and timed out waiting for a POST; the checked state was inspected before the actual explicit confirmation."
   },
   "online_backup_restore": {
@@ -116,7 +118,7 @@
     "followup_profile": "A separate 160-edit real-hardware diagnostic found the IndexedDB write callback and native put to be the largest sampled non-idle stack. It was not an acceptance timing run and does not establish the cause of the p95 failure. Durable writes were not removed or delayed.",
     "limits": "The 10000-box run is supplemental stress, not the 2000-box threshold. Double-rAF is a scheduling proxy, not physical display latency. No GPU timestamps or physical VRAM measurements."
   },
-  "verification_scope": "The user-skipped security topic remains not verified. The full release runner now fails closed before commands when --skip-security is set because Rust, Web and browser cases remain unpartitioned.",
+  "verification_scope": "The user-skipped security topic remains not verified. The full release runner now fails closed before commands when --skip-security is set because Rust, Web and browser cases remain unpartitioned. U16 layout and U20 quota-recovery waivers do not waive the other visual, recovery or authorization requirements.",
   "this_push": {"ci": "intentionally skipped for this commit to avoid repeating the user-skipped security topic; no workflow was changed", "automated_container_publication": "not run"},
   "detector_budget": {"used": 20, "limit": 20, "new_forwards": 0, "waivers": ["R05-B1", "R05-N1", "R05-R1"]},
   "status": {"R09": "done", "R10": "running", "R11": "pending", "T32": "blocked", "T35": "pending", "full_release_passed": false}
