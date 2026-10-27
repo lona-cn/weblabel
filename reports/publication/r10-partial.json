@@ -65,6 +65,13 @@
     "native_final_primary_status_smoke": "On the final local source, an actual committed HTTP 200 response was dropped and the primary unknown status was observed inside the 1536x1024 viewport. Explicit retry sent the original body byte-for-byte and returned a 200 idempotent replay; the UI then became synced.",
     "limits": "The browser recorded navigation aborts and the deliberately failed request; no pageerror was recorded. Synthetic fixture shutdown forcibly stopped its own native child. These checks do not establish full R10."
   },
+  "online_backup_restore": {
+    "scope": "Final locally built native release with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",
+    "online_backup": "The actual source service responded 200 while SQLite was in WAL mode with a WAL file; the native backup and fresh-target restore commands both exited 0.",
+    "independent_verification": "Rows of eight business tables were identical between source, backup and restored databases. All five backup manifest file sizes and SHA-256 hashes matched, and four immutable media objects matched byte-for-byte across all three locations.",
+    "restored_startup": "The actual restored native service responded 200 on /ready and the same business rows and media bytes remained equal after startup. No credentials were entered or collected.",
+    "limitations": "The source was idle, not under concurrent writes. Browser drafts are not in the server backup. No security negative controls, symlink/junction or corruption controls were run. Owned services were forcibly stopped, not with physical Ctrl+C. This is not complete R10."
+  },
   "current_hardware_gpu": {
     "provenance": "Measured locally against the final save-fix source snapshot SHA-256 101e26fa7be23889483bea288e04a1ffa5865c1f0b41219c7c7454341a337977; changed product and test blobs match this publication. The public commit itself was not rebuilt or directly measured. Snapshot identity remained unchanged during the run.",
     "status": "passed",
