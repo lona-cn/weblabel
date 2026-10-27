@@ -18,8 +18,9 @@ export function mountCanvasView(state: WorkspaceState, port: EditorPort, signal:
   const capability = document.createElement('dl'), backendValue = document.createElement('dd'), gpuValue = document.createElement('dd'), rendererValue = document.createElement('dd'), notice = document.createElement('p');
   rendererState.className = 'r07-renderer-state'; rendererState.hidden = true; rendererState.dataset.testid = 'renderer-state';
   rendererPanel.className = 'r07-renderer-panel';
-  for (const [label, value] of [['渲染后端', backendValue], ['WebGPU 接口', gpuValue], ['渲染状态', rendererValue]] as const) {
-    const term = document.createElement('dt'); term.textContent = label; capability.append(term, value);
+  const terms: HTMLElement[] = [];
+  for (const value of [backendValue, gpuValue, rendererValue]) {
+    const term = document.createElement('dt'); terms.push(term); capability.append(term, value);
   }
   notice.textContent = '仍可查看对象和属性；画布未就绪时不可编辑。不启用 Canvas2D 回退。';
   rendererPanel.append(rendererHeading, rendererDetail, capability, notice, retry); rendererState.append(rendererPanel);
@@ -65,15 +66,26 @@ export function mountCanvasView(state: WorkspaceState, port: EditorPort, signal:
       : phase === 'recovering' ? '正在恢复画布；同一 CPU 文档和撤销历史保留，成功前禁止编辑。' : phase === 'lost' ? 'GPU 连接丢失；CPU 文档和撤销历史已保留。'
       : phase === 'error' && unsupported ? 'WebGPU 不可用：浏览器不支持 WebGPU 或没有可用适配器；仍可查看对象，不启用 Canvas2D 回退。' : phase === 'error' ? '画布初始化失败；只能查看对象。' : '正在准备画布…';
     diagnosticText.textContent = [host.error ? reportError(host.error) : '', diagnostics || '未提供适配器诊断'].filter(Boolean).join('\n');
-    const unavailable = phase === 'error' && unsupported;
+    const unavailable = phase === 'error' && unsupported, continuity = phase === 'lost' || phase === 'recovering', inPanel = unavailable || continuity;
+    const active = document.activeElement;
+    const diagnosticFocus = active instanceof HTMLElement && diagnostic.contains(active) ? active : null;
+    const retryFocus = active === retry && phase !== 'lost';
     retry.hidden = phase !== 'lost';
     rendererState.hidden = phase === 'ready'; rendererState.dataset.state = unavailable ? 'unsupported' : phase;
     rendererHeading.textContent = phase === 'lost' ? 'GPU 连接丢失' : phase === 'recovering' ? '正在恢复画布' : unavailable ? 'WebGPU 不可用' : phase === 'error' ? '画布不可用' : '正在准备画布';
-    rendererDetail.textContent = unavailable ? ('gpu' in navigator ? '当前没有可用的 WebGPU 适配器，无法初始化图像渲染器。' : '当前浏览器未提供 WebGPU，无法初始化图像渲染器。') : status.textContent;
-    capability.hidden = notice.hidden = !unavailable;
-    backendValue.textContent = '无'; gpuValue.textContent = 'gpu' in navigator ? '已暴露；不可用' : '未提供'; rendererValue.textContent = '未初始化';
-    if (unavailable && diagnostic.parentElement !== rendererPanel) rendererPanel.append(diagnostic);
-    else if (!unavailable && diagnostic.parentElement !== surface) surface.append(diagnostic);
+    rendererDetail.textContent = unavailable ? ('gpu' in navigator ? '当前没有可用的 WebGPU 适配器，无法初始化图像渲染器。' : '当前浏览器未提供 WebGPU，无法初始化图像渲染器。')
+      : phase === 'lost' ? '渲染器已中断，编辑暂时不可用。' : phase === 'recovering' ? '正在重新连接 GPU，成功前不能编辑。' : status.textContent;
+    capability.hidden = !inPanel; notice.hidden = !unavailable;
+    if (unavailable) {
+      terms[0].textContent = '渲染后端'; terms[1].textContent = 'WebGPU 接口'; terms[2].textContent = '渲染状态';
+      backendValue.textContent = '无'; gpuValue.textContent = 'gpu' in navigator ? '已暴露；不可用' : '未提供'; rendererValue.textContent = '未初始化';
+    } else if (continuity) {
+      terms[0].textContent = '渲染状态'; terms[1].textContent = 'CPU 文档'; terms[2].textContent = '撤销历史';
+      backendValue.textContent = phase === 'lost' ? '连接丢失' : '恢复中'; gpuValue.textContent = '已保留'; rendererValue.textContent = '已保留';
+    }
+    if (inPanel && diagnostic.parentElement !== rendererPanel) rendererPanel.append(diagnostic);
+    else if (!inPanel && diagnostic.parentElement !== surface) surface.append(diagnostic);
+    if (document.activeElement === document.body) (diagnosticFocus ?? (retryFocus ? summary : null))?.focus({ preventScroll: true });
     if (phase === 'ready') state.tools?.reconcileSpaceRelease();
     state.notify();
   }
