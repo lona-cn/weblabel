@@ -64,6 +64,13 @@
     "focused_test": "One selected regression started all four actual CLI entry points and verified exit 2, blocked status, security skipped and zero commands. No user-skipped security cases were executed by this test.",
     "independent_smoke": "The actual release CLI with --skip-security independently returned exit 2, blocked, zero commands, security skipped and full_1_0_ready false. This is not a full suite pass or security acceptance."
   },
+  "audited_nonsecurity_subset": {
+    "gate": "node scripts/verify.mjs nonsecurity-audited --skip-security --report-dir <new project-local directory>",
+    "actual_local_run": {"geometry": "7/7", "editor_core": "39/39", "web": "11/11", "failed": 0, "skipped": 0},
+    "scope": "Explicitly reviewed geometry and editor-core targets plus six named Web files only. The 277 fingerprinted inputs include dependencies, not 277 individually reviewed tests.",
+    "admission": "A project-owned harmless source-drift probe produced NONSECURITY_AUDIT_STALE and started zero child commands; no symlink was created.",
+    "limits": "The local gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2 because other tests remain unreviewed. Security topics, model execution and GPU performance were not run. The public commit was not independently rebuilt or retested."
+  },
   "save_recovery": {
     "reproduction": "A real native save committed with HTTP 200 before its response was deliberately dropped. The original pending operation survived continued local editing and switching images. Before the fix, unknown was not surfaced in the primary status and explicit saving of the newer edit did not send a new request.",
     "focused_tests": {"passed": 6, "failed": 0, "filtered": 43, "web_typescript_exit": 0, "test_typescript_exit": 0, "note": "Two behavior cases failed before the first fix; the primary-status case failed before its later fix."},

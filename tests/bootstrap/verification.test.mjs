@@ -54,6 +54,26 @@ test('security skip blocks unpartitioned verification gates before any command',
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('audited nonsecurity verification runs reviewed consumers without claiming the unreviewed suites', () => {
+  const directory = fs.mkdtempSync(taskReportPath('T00', 'nonsecurity-partition-'));
+  try {
+    const reportDir = path.join(directory, 'report');
+    const toolEnv = { ...env };
+    for (const key of ['CARGO_HOME', 'RUSTUP_HOME', 'RUSTC_WRAPPER']) if (Object.hasOwn(process.env, key)) toolEnv[key] = process.env[key];
+    const run = spawnSync(process.execPath, ['scripts/verify.mjs', 'nonsecurity-audited', '--skip-security', '--report-dir', path.relative(root, reportDir)], { cwd: root, env: toolEnv, encoding: 'utf8', timeout: 900_000 });
+    assert.equal(run.status, 2, run.stderr);
+    const result = JSON.parse(fs.readFileSync(path.join(reportDir, 'result.json'), 'utf8'));
+    assert.equal(result.status, 'blocked');
+    assert.ok(result.blockers.includes('NONSECURITY_PARTITION_INCOMPLETE'));
+    assert.ok(result.skipped_scope.includes('security'));
+    assert.ok(result.commands.some(row => row.name === 'nonsecurity-geometry' && row.status === 'passed' && row.tests.passed > 0));
+    assert.ok(result.commands.some(row => row.name === 'nonsecurity-editor-core' && row.status === 'passed' && row.tests.passed > 0));
+    assert.ok(result.commands.some(row => row.name === 'nonsecurity-web' && row.status === 'passed' && row.tests.passed > 0));
+    assert.ok(result.commands.every(row => row.status === 'passed'));
+    assert.equal(result.full_1_0_ready, false);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('actual Node report distinguishes passed, skipped and failed consumer assertions', async () => {
   const success = await nodeTests("import test from 'node:test';import assert from 'node:assert/strict';test('normal',()=>assert.equal(2+2,4));test.skip('not exercised',()=>{});");
   assert.equal(success.status, 'passed');

@@ -7,10 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { finished } from 'node:stream/promises';
 import { runArgv, resolveArgv } from './task.mjs';
 import { captureEvidenceIdentity } from './evidence-identity.mjs';
+import { checkNonsecurityPartition } from './nonsecurity-partition.mjs';
 import { ownedReportRoot, projectOutputPath } from '../tests/support/report-paths.mjs';
 
 const root = fs.realpathSync(fileURLToPath(new URL('../', import.meta.url)));
-const gates = new Set(['fast', 'integration', 'browser', 'gpu', 'live', 'release']);
+const gates = new Set(['fast', 'integration', 'browser', 'gpu', 'live', 'release', 'nonsecurity-audited']);
 const securitySkipUnpartitionedGates = new Set(['fast', 'integration', 'browser', 'release']);
 const sha = value => createHash('sha256').update(value).digest('hex');
 const relative = file => path.relative(root, file).replaceAll('\\', '/');
@@ -281,7 +282,7 @@ export function describeReleaseGates(result) {
 function parseOptions(argv) {
   const gate = argv[0];
   if (!gates.has(gate)) throw new Error('UNKNOWN_VERIFICATION_GATE');
-  const options = { gate, skipSecurity: false };
+  const options = { gate, skipSecurity: gate === 'nonsecurity-audited' };
   const seen = new Set();
   for (let index = 1; index < argv.length; index += 1) {
     const key = argv[index];
@@ -329,6 +330,16 @@ export async function verify(argv = process.argv.slice(2)) {
     if (options.skipSecurity && securitySkipUnpartitionedGates.has(options.gate)) {
       result.blockers.push('SECURITY_SKIP_PARTITION_INCOMPLETE');
       return result;
+    }
+    if (options.gate === 'nonsecurity-audited') {
+      result.skipped_scope.push('unaudited_tests', 'model_execution', 'gpu_performance');
+      result.audited_partition = checkNonsecurityPartition();
+      result.audited_partition.scope = 'reviewed_geometry_editor_targets_and_six_web_files_only';
+      if (result.audited_partition.status !== 'passed') {
+        result.blockers.push(...result.audited_partition.blockers);
+        return result;
+      }
+      result.blockers.push('NONSECURITY_PARTITION_INCOMPLETE');
     }
     fs.mkdirSync(temporary, { recursive: true }); fs.mkdirSync(cache, { recursive: true });
     env = childEnvironment(temporary, cache, reportDir, options.skipSecurity);
@@ -383,9 +394,15 @@ export async function verify(argv = process.argv.slice(2)) {
       await step('browser', [node, 'scripts/test-e2e.mjs', '--require-device', 'tests/e2e/', '--project=chromium-webgpu', '--retries=0', '--workers=1', ...(excluded.length ? ['--grep-invert', excluded.map(escapePattern).join('|')] : []), '--reporter=json', `--output=${path.join(reportDir, 'browser-output')}`], 'browser-playwright', output);
       delete env.PLAYWRIGHT_JSON_OUTPUT_NAME;
     };
+    const nonsecurityAudited = async () => {
+      await step('nonsecurity-geometry', ['cargo', 'test', '--locked', '-p', 'geometry', '--test', 't03_geometry'], 'cargo');
+      await step('nonsecurity-editor-core', ['cargo', 'test', '--locked', '-p', 'editor-core', '--test', 't04_editor', '--test', 't12_tools', '--test', 'commercial_relabel_projection'], 'cargo');
+      const output = path.join(reportDir, 'nonsecurity-web.json');
+      await step('nonsecurity-web', [node, 'node_modules/vitest/vitest.mjs', 'run', '--project', 'web', 'apps/web/src/features/ai/native-outcome.test.ts', 'apps/web/src/features/workbench/native-objects.test.ts', 'apps/web/src/features/datasets/delivery-plan.test.ts', 'apps/web/src/features/import-export/protocol.test.ts', 'apps/web/src/ui/dialog.test.ts', 'apps/web/src/ui/virtual-list.test.ts', '--maxWorkers=1', '--reporter=json', `--outputFile=${output}`], 'vitest', output);
+    };
     const gpu = () => step('gpu', [node, 'scripts/verify-gpu.mjs', '--report-dir', relative(path.join(reportDir, 'T31'))], 'gpu', path.join(reportDir, 'T31/result.json'));
     const live = () => step('live', [node, 'scripts/verify-live.mjs', ...(options.liveEvidence ? ['--live-evidence', options.liveEvidence] : ['--check-required']), '--report-dir', relative(path.join(reportDir, 'T32')), ...(options.skipSecurity ? ['--skip-security'] : [])], 'live', path.join(reportDir, 'T32/result.json'));
-    const stages = { fast, integration, browser, gpu, live };
+    const stages = { fast, integration, browser, gpu, live, 'nonsecurity-audited': nonsecurityAudited };
     if (options.gate !== 'release') await stages[options.gate]();
     else {
       for (const action of [fast, integration, browser, gpu, live]) { signal.throwIfAborted(); await action(); }
@@ -414,7 +431,7 @@ export async function verify(argv = process.argv.slice(2)) {
       signal.throwIfAborted();
     }
     result.status = result.commands.some(row => row.status === 'failed') ? 'failed' : result.commands.some(row => row.status !== 'passed') || result.blockers.length ? 'blocked' : 'passed';
-    result.engineering_status = result.commands.length && result.commands.filter(row => row.name !== 'live').every(row => row.status === 'passed') ? 'passed' : 'blocked';
+    result.engineering_status = options.gate !== 'nonsecurity-audited' && result.commands.length && result.commands.filter(row => row.name !== 'live').every(row => row.status === 'passed') ? 'passed' : 'blocked';
   } catch (error) {
     result.status = signal.aborted ? 'cancelled' : ['ENOENT', 'ENOTDIR'].includes(error.code) ? 'blocked' : 'failed'; result.blockers.push(signal.aborted ? signal.reason : error.code ?? error.message);
   } finally {
