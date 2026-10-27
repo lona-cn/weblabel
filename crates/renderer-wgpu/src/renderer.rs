@@ -81,6 +81,7 @@ pub struct Renderer {
     stats: crate::stats::RendererStats,
     visible_ranges: Vec<std::ops::Range<u32>>,
     selected_control_ranges: Vec<std::ops::Range<u32>>,
+    presented_inert: Option<bool>,
     lost: Arc<AtomicBool>,
     loss_notification: js_sys::Promise,
 }
@@ -352,6 +353,10 @@ impl Renderer {
     }
     pub fn stats(&self) -> crate::stats::RendererStats {
         self.stats
+    }
+    /// The DOM interaction state affects only presentation, not editor state.
+    pub fn presentation_changed(&self) -> bool {
+        self.presented_inert != Some(self.canvas.has_attribute("inert"))
     }
     /// Native Rust-to-Rust transfer: no serde/JsValue round trip per object.
     pub fn apply_frame(
@@ -719,6 +724,7 @@ impl Renderer {
             },
             visible_ranges: Vec::new(),
             selected_control_ranges: Vec::new(),
+            presented_inert: None,
         };
         this.canvas.set_width(css_w);
         this.canvas.set_height(css_h);
@@ -898,6 +904,9 @@ impl Renderer {
             scene.objects.len(),
             ((now() - started) * 1_000_000.0) as u64,
         );
+        let inert = self.canvas.has_attribute("inert");
+        let show_controls = !inert && !self.selected_control_ranges.is_empty();
+        let show_overlays = !inert && !scene.overlays.is_empty();
         let s = scene.viewport;
         let uniform = s.render_uniform(scene.image.width, scene.image.height);
         self.queue
@@ -953,7 +962,7 @@ impl Renderer {
             pass.set_pipeline(&self.image_pipeline);
             pass.set_bind_group(1, &self.image_bind, &[]);
             pass.draw(0..6, 0..1);
-            if !self.visible_ranges.is_empty() || !self.selected_control_ranges.is_empty() {
+            if !self.visible_ranges.is_empty() || show_controls {
                 let bind =
                     instance_bind(&self.device, &self.instance_layout, &self.instance_buffer);
                 pass.set_pipeline(&self.box_pipeline);
@@ -961,13 +970,15 @@ impl Renderer {
                 for range in &self.visible_ranges {
                     pass.draw(0..6, range.clone());
                 }
-                // Reuse committed bbox storage; controls are CSS-space vertices, not CPU geometry.
-                pass.set_pipeline(&self.overlay_pipeline);
-                for range in &self.selected_control_ranges {
-                    pass.draw(0..48, range.clone());
+                if show_controls {
+                    // Reuse committed bbox storage; controls are CSS-space vertices, not CPU geometry.
+                    pass.set_pipeline(&self.overlay_pipeline);
+                    for range in &self.selected_control_ranges {
+                        pass.draw(0..48, range.clone());
+                    }
                 }
             }
-            if !scene.overlays.is_empty() {
+            if show_overlays {
                 let bind = instance_bind(&self.device, &self.instance_layout, &self.overlay_buffer);
                 pass.set_bind_group(1, &bind, &[]);
                 // Reuse the native preview bounds; no additional CPU geometry.
@@ -981,10 +992,11 @@ impl Renderer {
         self.queue.submit([encoder.finish()]);
         self.stats.record_submission(
             1 + self.visible_ranges.len() as u64
-                + self.selected_control_ranges.len() as u64
-                + 2 * u64::from(!scene.overlays.is_empty()),
+                + self.selected_control_ranges.len() as u64 * u64::from(show_controls)
+                + 2 * u64::from(show_overlays),
         );
         self.queue.present(frame);
+        self.presented_inert = Some(inert);
         if suboptimal {
             self.surface.configure(&self.device, &self.config);
         }

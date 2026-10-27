@@ -204,6 +204,9 @@ export class EditorHost {
     const delta = this.guard((facade) => facade.dispatch(command), 'EDITOR_BRIDGE_FAILURE');
     return this.consumeDelta(delta);
   }
+  /** Repaint presentation-only changes without editing the Native document. */
+  requestRender(): void { this.markDirty(); }
+
 
   setTool(tool: EditorTool): boolean {
     // A tool switch cancels any in-progress gesture (T12): the Rust core drops

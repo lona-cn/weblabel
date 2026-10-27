@@ -198,6 +198,8 @@ T28前端只在成功的document_changed/suggestion decision逻辑提交读取co
 
 T31原生selected controls：未锁定、未隐藏的选中对象在四角及四边中点绘制8个8CSS像素方块。锚点先做canonical→CSS变换再加±4CSS偏移，DPR不进入持久坐标；4CSS可见fringe独立于bbox描边margin，零面积视口不产生绘制ranges。复用同一48-byte实例buffer和已有bind；一次扫描生成可复用bbox/control ranges，全部bbox后再绘controls。
 
+画布为 `inert` 时，WebGPU 保留实际图片和对象轮廓，但不绘制选中手柄或手势预览；解除 inert 后按同一 Native 选择恢复。交互状态变化只请求一次呈现重绘，不改文档、generation、选中集或持久数据；设备重建后仍按当前画布状态绘制。
+
 preview flags=0 使用同一48-byte Native overlay buffer 先绘制 bbox 四边，再保留原中心控件；普通 selected 对象仍是8个屏幕空间控件。pointermove 仅更新预览，不增加generation/save/undo；工具切换或cancel必须清除已drain的旧预览。
 
 T31普通direct/gesture提交先在单一working clone上执行并校验，generation/no-op/error检查通过后move旧文档为history.before并只克隆已安装文档为history.after；undo/redo按既有snapshot history还原且保持128条/64MiB预算。WASM只同步序列化不可变当前文档借用，native owned snapshot及全部JS wire保持不变；ApplySuggestions另有既有事务working clone，不将两克隆归因外推到所有命令。

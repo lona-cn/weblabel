@@ -92,7 +92,7 @@ export function mountCanvasView(state: WorkspaceState, port: EditorPort, signal:
     }
     const blocked = !port.getHost() || state.modal;
     if (blocked && !canvas.inert && document.activeElement === canvas) restoreCanvasFocus = true;
-    canvas.inert = blocked;
+    if (canvas.inert !== blocked) { canvas.inert = blocked; host?.requestRender(); }
     if (!blocked && restoreCanvasFocus) {
       restoreCanvasFocus = false;
       if (document.activeElement === document.body) canvas.focus({ preventScroll: true });

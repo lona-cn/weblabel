@@ -2295,9 +2295,8 @@ pub mod wasm {
             }))
         }
 
-        /// A clean session performs no renderer call. Dirty viewport and
-        /// projection updates share one native call and one GPU submission;
-        /// renderer instances never round-trip through JavaScript.
+        /// Dirty viewport/projection and changed canvas interaction state share
+        /// one native call and one GPU submission; a clean session stays idle.
         pub fn render(&mut self, timestamp_ms: f64) -> Result<(), JsValue> {
             let _ = timestamp_ms;
             let mut renderer = self.renderer.borrow_mut();
@@ -2310,14 +2309,15 @@ pub mod wasm {
                     "WebGPU device is not ready; CPU editor retained",
                 )));
             }
-            let Some(frame) = self.session.prepare_frame() else {
+            let renderer = renderer.as_mut().expect("ready renderer");
+            let result = if let Some(frame) = self.session.prepare_frame() {
+                renderer.apply_frame(frame.viewport, frame.projection)
+            } else if renderer.presentation_changed() {
+                renderer.render()
+            } else {
                 return Ok(());
             };
-            if let Err(error) = renderer
-                .as_mut()
-                .expect("ready renderer")
-                .apply_frame(frame.viewport, frame.projection)
-            {
+            if let Err(error) = result {
                 self.session.invalidate_frame();
                 return Err(error);
             }

@@ -169,6 +169,7 @@ workspace 只保留实际需要的 package、crate 和脚本。一个 crate 可�
 命令、工具切换和取消在事件时重新检查 host/session/asset、真实 ready、只读 preview 与同步 submission ref fence，不能仅依赖 DOM inert 或渲染时状态。ToolState 的有效/base 工具只在 Native boolean ACK 后改变；设备或审核阻塞期间被拒绝的 Space 松开/blur 只记录有界用户意图，在 ready/解锁后协调该意图，不在一般恢复时重置工具或取消保留的预览。
 
 Renderer 用批量实例矩形、缓存 image texture、增量更新、按需重绘。预览与正式对象分层。画布标签只显示选中/悬停及视口前 100 个对象，其余通过 DOM 虚拟列表查看，不能生成万级 DOM 标签。CPU 空间索引 + 明确排序实现重叠循环选择，不做同步 GPU 回读命中。
+真实 WebGPU 画布进入 `inert` 时仍显示原图与对象轮廓，不绘制手柄或手势预览；状态切换触发一次仅呈现重绘，退出后从原 Native 选择恢复。GPU 设备重建后依据当前画布状态重绘，不以隐藏标志或更改选择代替只读呈现。
 WASM Renderer 的 `update_viewport` 专供 pan/zoom/resize，仅更新 uniform；`update_objects` 只接收 objects/overlays projection，并将连续差异写入 instance buffer；`update_scene` 用于完整 scene/image 替换，不应被普通 pointermove 调用。
 
 Rust Core 的 dispatch/Undo/Redo 共用对象差异 producer：只有对象数量与每个位置的 ID 顺序均相等时，才逐对象做完整领域值比较并按 canonical 顺序输出 replacements；成员/顺序变化保留通用按 ID 的比较与移除路径。全部文档 validation、前后 snapshot history 和预算不因快速路径减少。

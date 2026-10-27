@@ -266,6 +266,36 @@ const GOLDEN_PROJECTION = {
   overlays: [{ bounds: [60, 120, 60, 120], color: [0, 0, 1, 1] }],
 };
 
+test('inert canvas hides selection controls and previews without changing the scene', async ({ page }, testInfo) => {
+  const boot = await bootGoldenScene(page, GOLDEN_PROJECTION, { scale: 2, tx: 13, ty: -7 });
+  expect(boot.state).toBe('ready');
+  const editable = await captureScene(page, testInfo.outputPath('editable.png'));
+  expect(editable.stroke(30, 30)).toBe(true); // Corner control extends beyond the box edge.
+  expect(editable.handle(133, 233)).toBe(true); // Preview center.
+  expect(editable.stroke(100, 32)).toBe(true); // Committed box outline.
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('#target'), renderer = window.__t05;
+    if (!canvas || !renderer) throw new Error('renderer missing');
+    canvas.inert = true; renderer.render();
+  });
+  const inert = await captureScene(page, testInfo.outputPath('inert.png'));
+  expect(inert.stroke(30, 30)).toBe(false);
+  expect(inert.handle(133, 233)).toBe(false);
+  expect(inert.stroke(100, 32)).toBe(true);
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('#target'), renderer = window.__t05;
+    if (!canvas || !renderer) throw new Error('renderer missing');
+    canvas.inert = false; renderer.render();
+  });
+  const restored = await captureScene(page, testInfo.outputPath('restored.png'));
+  expect(restored.pixel(30, 30)).toEqual(editable.pixel(30, 30));
+  expect(restored.pixel(133, 233)).toEqual(editable.pixel(133, 233));
+  expect(restored.pixel(100, 32)).toEqual(editable.pixel(100, 32));
+  await page.evaluate(() => window.__t05?.dispose());
+});
+
 test('zoom keeps the bbox stroke and handle at fixed screen width at the C8 viewports', async ({
   page,
 }) => {
