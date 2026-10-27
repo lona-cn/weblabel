@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const RECLAIM_DEADLINE: Duration = Duration::from_secs(5);
-pub(crate) const JOB_MECHANISM: &str = "windows non-breakaway job; active process count verified zero and original root process signaled";
+pub(crate) const JOB_MECHANISM: &str = "windows non-breakaway job; active count zero, original root and observed descendant handles signaled";
 
 #[derive(Debug, Clone)]
 pub struct ReclaimReport {
@@ -72,6 +72,61 @@ fn ownership_error() -> SpawnError {
     SpawnError::Io("process ownership unavailable or expired".into())
 }
 
+pub(crate) struct ReclaimObservation {
+    members: Vec<u32>,
+    #[cfg(windows)]
+    processes: Vec<std::os::windows::io::OwnedHandle>,
+}
+
+impl ReclaimObservation {
+    fn capture(job: &Job, root: NativeRoot) -> Result<Self, SpawnError> {
+        let members = job.members()?;
+        #[cfg(windows)]
+        let processes = job.observe_members(&members, root.root_pid)?;
+        #[cfg(not(windows))]
+        let _ = root;
+        Ok(Self {
+            members,
+            #[cfg(windows)]
+            processes,
+        })
+    }
+
+    fn complete(&self, job: &Job) -> Result<bool, SpawnError> {
+        if !job.empty()? {
+            return Ok(false);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::{
+                Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+                System::Threading::WaitForSingleObject,
+            };
+            for process in &self.processes {
+                match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
+                    WAIT_OBJECT_0 => {}
+                    WAIT_TIMEOUT => return Ok(false),
+                    _ => {
+                        return Err(SpawnError::Io(
+                            "owned descendant exit signal unavailable".into(),
+                        ))
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+}
+
+fn begin_reclamation(job: &Job, root: NativeRoot) -> Result<ReclaimObservation, SpawnError> {
+    // Termination must still be requested if observation fails; an incomplete
+    // observation can never be reported as verified cleanup.
+    let observation = ReclaimObservation::capture(job, root);
+    job.terminate()?;
+    observation
+}
+
 pub(crate) struct OwnedTree {
     job: Arc<Job>,
     root: Option<NativeRoot>,
@@ -103,17 +158,19 @@ impl OwnedTree {
         self.root = Some(root);
         resume_primary(process, root.root_pid)
     }
-    pub(crate) fn terminate(&self) -> Result<Vec<u32>, SpawnError> {
-        let members = self.job.members();
-        self.job.terminate()?;
-        members
-    }
-    pub(crate) fn empty(&self) -> Result<bool, SpawnError> {
-        self.job.empty()
-    }
-    pub(crate) fn report(&self, members: Vec<u32>) -> Result<ReclaimReport, SpawnError> {
+    pub(crate) fn terminate(&self) -> Result<ReclaimObservation, SpawnError> {
         let root = self.root.ok_or_else(ownership_error)?;
-        Ok(report(root, members))
+        begin_reclamation(&self.job, root)
+    }
+    pub(crate) fn empty(&self, observation: &ReclaimObservation) -> Result<bool, SpawnError> {
+        observation.complete(&self.job)
+    }
+    pub(crate) fn report(
+        &self,
+        observation: ReclaimObservation,
+    ) -> Result<ReclaimReport, SpawnError> {
+        let root = self.root.ok_or_else(ownership_error)?;
+        Ok(report(root, observation.members))
     }
 }
 impl Drop for OwnedTree {
@@ -198,16 +255,18 @@ pub fn reclaim_process_tree(root: NativeRoot) -> Result<ReclaimReport, SpawnErro
 }
 
 fn reclaim_owned(job: &Job, root: NativeRoot) -> Result<ReclaimReport, SpawnError> {
-    let members = job.members();
-    job.terminate()?;
     let deadline = Instant::now() + RECLAIM_DEADLINE;
-    while !job.empty()? {
+    let observation = begin_reclamation(job, root)?;
+    loop {
         if Instant::now() >= deadline {
             return Err(SpawnError::Io("owned job reclamation timed out".into()));
         }
+        if observation.complete(job)? {
+            break;
+        }
         thread::sleep(Duration::from_millis(10));
     }
-    Ok(report(root, members?))
+    Ok(report(root, observation.members))
 }
 
 #[cfg(windows)]
@@ -363,6 +422,64 @@ impl Job {
             WAIT_TIMEOUT => Ok(false),
             _ => Err(SpawnError::Io("owned root exit signal unavailable".into())),
         }
+    }
+    fn observe_members(
+        &self,
+        members: &[u32],
+        root_pid: u32,
+    ) -> Result<Vec<std::os::windows::io::OwnedHandle>, SpawnError> {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        use windows_sys::Win32::{
+            Foundation::{GetLastError, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0},
+            System::{
+                JobObjects::IsProcessInJob,
+                Threading::{
+                    OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+                    PROCESS_SYNCHRONIZE,
+                },
+            },
+        };
+        let mut handles = Vec::with_capacity(members.len());
+        for &pid in members.iter().filter(|&&pid| pid != root_pid) {
+            // These handles are observation-only; the job, never a PID, retains
+            // sole termination authority.
+            let process = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                    0,
+                    pid,
+                )
+            };
+            if process.is_null() {
+                if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
+                    continue;
+                }
+                return Err(SpawnError::Io(
+                    "owned descendant observation unavailable".into(),
+                ));
+            }
+            let process = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(process) };
+            let mut contained = 0;
+            if unsafe { IsProcessInJob(process.as_raw_handle(), self.handle, &mut contained) } == 0
+            {
+                return Err(SpawnError::Io(
+                    "owned descendant membership unavailable".into(),
+                ));
+            }
+            if contained == 0 {
+                // A PID may have been recycled, or the member may have left
+                // the job before its process object signaled. Never claim
+                // completion from that ambiguity.
+                if unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } != WAIT_OBJECT_0 {
+                    return Err(SpawnError::Io(
+                        "owned descendant changed before observation".into(),
+                    ));
+                }
+                continue;
+            }
+            handles.push(process);
+        }
+        Ok(handles)
     }
     fn members(&self) -> Result<Vec<u32>, SpawnError> {
         use windows_sys::Win32::System::JobObjects::*;

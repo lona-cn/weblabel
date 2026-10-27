@@ -101,3 +101,24 @@ it('keeps ordered run states readable while retaining bulky provider observation
   expect(rows[0].querySelector('details pre')?.textContent).toContain('x'.repeat(1000));
   expect(progress.querySelector<HTMLButtonElement>('[data-testid="ai-cancel"]')!.disabled).toBe(true);
 });
+
+it('keeps a cancelled run terminal when a later provider observation arrives', () => {
+  const f = nativeFixture(), owner = new AbortController(), root = document.createElement('section');
+  owners.push(owner); document.body.append(root); owner.signal.addEventListener('abort', f.dispose, { once: true });
+  const events: runController.RunSnapshot['events'] = [
+    { run_id: 'run', seq: 1, type: 'cancelled', message: 'run cancelled', data: null },
+    { run_id: 'run', seq: 2, type: 'progress', message: 'provider observation checkpoint', data: { cost_display: 'unknown' } },
+  ];
+  const snapshot: runController.RunSnapshot = { runId: 'run', runScope: null, events, candidates: [], error: null, busy: false, modelWaiting: false, savedMessage: null };
+  vi.spyOn(runController, 'createRunController').mockReturnValue({
+    getSnapshot: () => snapshot, subscribe: vi.fn(() => vi.fn()), update: vi.fn(), dispose: vi.fn(),
+    run: vi.fn(), preparePreview: vi.fn(), getPreviewSnapshot: vi.fn(), cancel: vi.fn(), acceptSelected: vi.fn(),
+  });
+  vi.spyOn(api, 'request').mockResolvedValue({ items: [] });
+  mountAiWorkbenchView(root, f.state, f.port, owner.signal, vi.fn());
+  expect(root.querySelector('[data-testid="ai-status"]')?.textContent).toContain('cancelled');
+  const rows = [...root.querySelectorAll('[data-testid="ai-run-progress"] ol > li')];
+  expect(rows).toHaveLength(2);
+  expect(rows[1].textContent).toContain('provider observation checkpoint');
+  expect(root.querySelector<HTMLButtonElement>('[data-testid="ai-cancel"]')!.disabled).toBe(true);
+});

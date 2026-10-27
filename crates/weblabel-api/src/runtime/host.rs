@@ -216,14 +216,14 @@ impl NativeProcess {
             };
             #[cfg(not(target_os = "linux"))]
             let report = {
-                let members = self.ownership.terminate()?;
-                while !self.ownership.empty()? {
+                let observation = self.ownership.terminate()?;
+                while !self.ownership.empty(&observation)? {
                     if tokio::time::Instant::now() >= deadline {
                         return Err(SpawnError::Io("owned job reclamation timed out".into()));
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
-                self.ownership.report(members)?
+                self.ownership.report(observation)?
             };
             tokio::time::timeout_at(deadline, self.child.wait())
                 .await

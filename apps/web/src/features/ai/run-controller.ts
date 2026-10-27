@@ -64,6 +64,10 @@ export interface CandidateEntry {
 
 const runCache = new Map<string, CandidateEntry[]>();
 
+export function isTerminalRunEvent(event: RunEvent): boolean {
+  return event.type === 'succeeded' || event.type === 'failed' || event.type === 'cancelled';
+}
+
 export function candidateCacheKey(runId: string, assetId: string): string {
   return JSON.stringify([runId, assetId]);
 }
@@ -190,7 +194,7 @@ export function createRunController(initialOptions: RunControllerOptions): RunCo
   function publish() {
     if (disposed) return;
     const events = runId ? eventsByRun.get(runId) ?? snapshot.events : snapshot.events;
-    const modelWaiting = runIds.some(id => runContexts.get(id)?.project_id === options.context.project_id && !(eventsByRun.get(id) ?? []).some(event => ['succeeded', 'failed', 'cancelled'].includes(event.type)));
+    const modelWaiting = runIds.some(id => runContexts.get(id)?.project_id === options.context.project_id && !(eventsByRun.get(id) ?? []).some(isTerminalRunEvent));
     const savedMessage = savedNotice?.assetId === options.asset_revision_id
       ? savedNotice.generation === options.getGeneration() ? savedNotice.message : '之后的编辑或撤销已改变本次采纳结果，请查看当前保存状态。'
       : null;
@@ -313,8 +317,7 @@ export function createRunController(initialOptions: RunControllerOptions): RunCo
         }
         // The strict-after cursor is committed only after dependent suggestions.
         for (const event of incoming) lastSequences.set(id, Math.max(lastSequences.get(id) ?? 0, event.seq));
-        const latest = incoming[incoming.length - 1];
-        if (latest && ['succeeded', 'failed', 'cancelled'].includes(latest.type)) { finishedRuns.add(id); publish(); return; }
+        if (incoming.some(isTerminalRunEvent)) { finishedRuns.add(id); publish(); return; }
       } catch (cause) { if (!poller.controller.signal.aborted) fail(cause, '无法更新运行进度。'); }
       if (!poller.controller.signal.aborted) poller.timer = setTimeout(poll, document.visibilityState === 'hidden' ? 2000 : 500);
     };

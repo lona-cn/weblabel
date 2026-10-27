@@ -156,4 +156,4 @@ it('retains explicit scope across 1301 rows using the exact labelled disposition
   await vi.waitFor(() => expect(view.writes).toHaveLength(1));
   expect(view.writes[0].body.items).toEqual([0, 1300].map(index => ({ asset_revision_id: view.rows[index].media.asset_revision_id, annotation_revision_id: view.rows[index].head!.annotation_revision_id, split: 'train' })));
   expect(view.writes[0].body.excluded).toEqual([{ asset_revision_id: view.rows[1].media.asset_revision_id, reason: 'user_excluded' }]);
-});
+}, 15_000);

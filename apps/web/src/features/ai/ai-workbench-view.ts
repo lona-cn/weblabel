@@ -5,7 +5,7 @@ import type { RunIntent } from '../../../../../packages/contracts/generated/RunI
 import type { AiConsentResponse } from '../../../../../packages/contracts/generated/AiConsentResponse';
 import type { AiApprovedGrants } from '../../../../../packages/contracts/generated/AiApprovedGrants';
 import type { RunController, RunControllerOptions, ConsentPreview, RunScope, CandidateEntry } from './run-controller';
-import { createRunController } from './run-controller';
+import { createRunController, isTerminalRunEvent } from './run-controller';
 import { mountCandidatesView } from './candidates-view';
 import { mountOutcomeView } from './outcome-view';
 import { readonlyVisual } from './readonly-visual';
@@ -196,14 +196,15 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
     scopeError.hidden = !!grants; scopeError.textContent = grants ? '' : '图像范围必须是当前 canonical 图片内的有效整数像素边界；不会提交无效范围或改为整图。';
     authorize.disabled = !checked.checked || !preview || !port.getHost() || preparing || !!snapshot?.busy || !grants;
     scopeText.textContent = '固定对象范围：' + (selectedIds(state).length ? selectedIds(state).length + ' 个所选对象' : '此版本全部对象') + '；图片及 crop 以服务端授权预览为准。';
-    cancel.disabled = !sessionCurrent(state) || !snapshot?.runId || snapshot.events.some(event => ['succeeded', 'failed', 'cancelled'].includes(event.type));
+    cancel.disabled = !sessionCurrent(state) || !snapshot?.runId || snapshot.events.some(isTerminalRunEvent);
   }
   function updateRun() {
     if (!controller || disposed) return;
     const snapshot = controller.getSnapshot();
     if (lastWaiting !== snapshot.modelWaiting) { lastWaiting = snapshot.modelWaiting; state.activity.setKind(lastWaiting ? 'model_wait' : 'task'); }
     if (lastRun !== snapshot.runScope) { lastRun = snapshot.runScope; state.activity.setBinding({}); state.notify(); }
-    progressText.textContent = snapshot.runId ? '运行 ' + snapshot.runId + ' · ' + (snapshot.events.at(-1)?.type ?? '等待运行') : '尚未启动运行';
+    const terminal = snapshot.events.find(isTerminalRunEvent);
+    progressText.textContent = snapshot.runId ? '运行 ' + snapshot.runId + ' · ' + (terminal?.type ?? snapshot.events.at(-1)?.type ?? '等待运行') : '尚未启动运行';
     if (previousEvents !== snapshot.events) {
       previousEvents = snapshot.events; eventsRoot.replaceChildren();
       for (const event of snapshot.events) {

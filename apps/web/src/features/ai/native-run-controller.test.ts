@@ -112,6 +112,21 @@ it('retains strict-after event delivery and aborts owned polling without cancell
   f.controller.dispose(); expect(signal?.aborted).toBe(true); await vi.advanceTimersByTimeAsync(5000);
   expect(f.api.events).toHaveBeenCalledTimes(2); expect(f.api.cancel).not.toHaveBeenCalled();
 });
+it('stops polling a terminal run even when its last received event is a later observation', async () => {
+  vi.useFakeTimers(); const f = fixture();
+  vi.mocked(f.api.events).mockResolvedValueOnce([
+    { ...f.terminal, type: 'cancelled', message: 'run cancelled' },
+    { ...f.terminal, seq: 2, type: 'progress', message: 'provider observation checkpoint' },
+  ]).mockResolvedValue([]);
+  const preview = await f.controller.preparePreview(); await f.controller.run(preview!);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.controller.getSnapshot().events.map(event => event.type)).toEqual(['cancelled', 'progress']);
+  expect(f.controller.getSnapshot().modelWaiting).toBe(false);
+  expect(f.api.events).toHaveBeenCalledTimes(1);
+  document.dispatchEvent(new Event('visibilitychange'));
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.api.events).toHaveBeenCalledTimes(1);
+});
 it('checks run/asset/generation/object hashes and explicit rejection evidence before acceptance', async () => {
   const f = fixture();
   expect(candidateCacheKey(f.runId, 'asset')).not.toBe(candidateCacheKey(f.runId, 'next'));

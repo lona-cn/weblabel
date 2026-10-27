@@ -2043,7 +2043,9 @@ mod commercial_d_private_tests {
                         }
                         let outcome = tokio::time::timeout(Duration::from_secs(10), worker)
                             .await
-                            .unwrap()
+                            .unwrap_or_else(|_| {
+                                panic!("export worker did not finish after release: phase={phase}, mode={mode}")
+                            })
                             .unwrap();
                         if mode == 0 {
                             outcome.unwrap();

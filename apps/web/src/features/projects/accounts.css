@@ -123,6 +123,7 @@
 @media (min-width: 1100px) and (max-width: 1399px) {
   .accounts-page .accounts-attribute { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 90px; }
   .accounts-page .accounts-attribute-config { grid-column: span 2; }
+  .accounts-page.accounts-members .accounts-admin-columns { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 1099px) {
   .accounts-page { padding: 20px; }
@@ -136,6 +137,12 @@
   .accounts-page .accounts-attribute-config { grid-column: span 2; }
   .accounts-auth .accounts-auth-wide .accounts-auth-columns { grid-template-columns: 1fr; }
   .accounts-auth .accounts-auth-aside { border-left: 0; border-top: 1px solid var(--border, #3e4a52); padding: 20px 0 0; }
+}
+@media (max-width: 899px) {
+  .accounts-page.accounts-members table { min-width: 0; }
+  .accounts-page.accounts-members :is(th, td) { padding-inline: 8px; }
+  .accounts-page :is(.accounts-member-id, .accounts-member-role) { min-width: 0; }
+  .accounts-page .accounts-member-id code { white-space: normal; overflow-wrap: anywhere; }
 }
 @media (max-width: 600px) {
   .accounts-page .accounts-delivery-steps, .accounts-page .accounts-label-fields, .accounts-page .accounts-attribute { grid-template-columns: 1fr; }

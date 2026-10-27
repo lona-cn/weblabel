@@ -15,7 +15,6 @@ test('new local installation creates a real independent reviewer through GUI', a
     await page.getByTestId('bootstrap-password').fill('synthetic-browser-ux18');
     await page.getByTestId('bootstrap-password-confirm').fill('synthetic-browser-ux18');
     await page.getByTestId('bootstrap-submit').click();
-    await page.getByTestId('project-editor-back').click();
     await expect(page.getByRole('heading', { name: '项目', exact: true })).toBeVisible();
     await page.getByTestId('platform-accounts-open').click();
     await page.getByLabel('新账号用户名').fill('browser-reviewer');
@@ -39,6 +38,24 @@ test('new local installation creates a real independent reviewer through GUI', a
     await page.getByRole('button', { name: '确认设置项目成员' }).click();
     const member = page.getByTestId('member-manager').getByRole('row').filter({ has: page.getByRole('cell', { name: 'browser-reviewer', exact: true }) });
     await expect(member).toContainText('reviewer');
+    const selectMember = member.getByTestId(`member-select-${account.user_id}`);
+    for (const width of [1280, 900, 757]) {
+      await page.setViewportSize({ width, height: 800 });
+      const bounds = await selectMember.evaluate(button => {
+        const visible = button.closest('.accounts-table-scroll')!.getBoundingClientRect();
+        const action = button.getBoundingClientRect();
+        return { left: action.left, right: action.right, visibleLeft: visible.left, visibleRight: visible.right };
+      });
+      expect(bounds.left).toBeGreaterThanOrEqual(bounds.visibleLeft);
+      expect(bounds.right).toBeLessThanOrEqual(bounds.visibleRight);
+    }
+    await page.getByLabel('目标 user_id').fill('');
+    await selectMember.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel('目标 user_id')).toHaveValue(account.user_id);
+    await expect(page.getByRole('combobox', { name: /项目角色/ })).toHaveValue('reviewer');
+    await page.screenshot({ path: testInfo.outputPath('independent-reviewer-narrow.png') });
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.screenshot({ path: testInfo.outputPath('independent-reviewer.png') });
     const actual = await page.evaluate(async projectId => { const response = await fetch(`/api/projects/${projectId}/members`); return { status: response.status, body: await response.json() }; }, project.project_id);
     expect(actual.status).toBe(200); expect(actual.body.items).toEqual(expect.arrayContaining([expect.objectContaining({ user_id: account.user_id, role: 'reviewer' })]));

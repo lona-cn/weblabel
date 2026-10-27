@@ -40,6 +40,7 @@ pnpm contracts:check
 ```
 
 scripts/task.mjs 读取 manifest 的 argv 数组调用进程，不通过拼接 shell string。Windows 的 pnpm wrapper 需用已解析的 Node CLI 入口或明确 shell 适配，不能假设 `.cmd` 可以按 POSIX 可执行文件运行。产品运行时仍严格禁止 shell:true。
+Rust 工具链固定版本 `1.96.0`，由 rustup 选择本机 host，不能把 Windows target triple 写进跨平台 channel；安全专题是否执行仍由本轮授权决定。1301 项逐页范围回归保留全部选择与请求断言，仅为该长用例使用 15 秒独立测试期限，不能把此期限当作产品性能指标。
 
 每个命令保存实际 argv/cwd、完整 stdout/stderr、native exit/signal、runner 结果及实际 collected/passed/failed/skipped/flaky（不可观察为 null），非测试命令 tests 为 null。取消后不启动下一阶段，先回收自有操作并落盘。原生 Startup 的物理键盘 0x03 正常停机必须真实退出 0，不沿用旧 Node 前门的 130 例外。缺工具/证据为 blocked2，实际失败为1，外层验证被 SIGINT/SIGTERM 取消保留130/143。
 
@@ -56,7 +57,11 @@ T13 offline 双页场景既有 120s deadline 在 describe 配置时声明，覆�
 原生 AI 审校可逐次收窄图像、固定对象详情和 canonical 整数 crop；无效、非整数或越界范围阻止预览，不静默退回整图。授权确认使用共享原生 dialog 的大尺寸只读 SVG/固定版本视图，显示服务端实际 grants、完整 model_id、对象详情、有效期与未知费用；默认不勾选，不重用旧授权。Tab 在可用可见控件间循环；Esc 返回原触发器，1100↔1099 布局隐藏原触发器时返回 AI 启动按钮。native close 事件可能仍聚焦已不渲染的旧标题，不能仅以 body 判断焦点是否需要归还。授权范围变化清空旧预览和勾选；过期还由 run-controller 与服务端拒绝。该工程 smoke 仅使用本地合成数据和预览，不等于模型运行、外发或 live 验收，wire 仍为 v1。
 原生项目列表的成功空态、读取中、读取失败与403保留同一导航、四步指南和退出入口；空列表不自动打开创建表单。创建与提交都要求完整的最新列表基线，失败时隐藏缓存项目及其成员入口。已开始的新建草稿可在基线未知时查看，但不能提交；重新读取、返回列表及再次打开不清除名称、类别或指南。读取中的静态骨架对辅助技术隐藏，不冒充项目或百分比；只读重试完成后，仅在焦点仍丢失于 body 时归还重试按钮，不抢走用户的新焦点。创建入口禁用时，从保留草稿返回到仍可用的草稿入口或重新读取按钮。403 smoke 的网络故障仅针对 GET 列表，不冒充真实服务端权限撤销。
 原生会话恢复必须同时取得当前会话与非空的标签页 CSRF，不能仅凭仍有效的 Cookie 显示可写页面。缺少 CSRF 时复用既有只读诊断及本站 Cookie 的恢复说明，不放宽服务端校验、不自动重发初始化，也不清除项目数据或 IndexedDB。真实合成账户经正常登录可恢复 CSRF；账号创建丢 ACK 的控制在原生201提交之后仅丢弃响应，随后只 GET 核对、保留冻结输入，不把同名账户当作原写入收据或再发 POST。
+项目成员表在中等宽度改为纵向排列；窄宽允许完整 user_id 和操作换行，不截短身份或扩大成员权限。新账户设置成功后进入项目成功空态，无需点击隐藏的编辑器返回按钮。真实原生发行的合成管理员在1280、900、757 CSSpx核对全部成员操作未横向裁切，并用 Enter 选择原 reviewer ID；757px 是 viewport 检查，不冒称 200% 缩放。
 真实事件列表按服务端 seq、type 与 message 展示简短状态，原始 data 保留为可展开的技术详情，不把嵌套模型收据铺满窄检查器。合成 loopback SSE 的失败验证确认排队、开始、工具调用、终态失败、费用 unknown 与终态禁用取消；真实模型或付费验证仍未取得。provider 日志不得因折叠而删除，也不能将合成失败计为 live 验收。
+终态事件之后仍可能到达 provider observation checkpoint：事件列表按 seq 全部保留，但运行摘要以已发生的 succeeded/failed/cancelled 终态为准，不能回退成 progress；同批含终态时完成原严格 after 游标后停止轮询。原生服务的合成 loopback 验证先真实复现 `cancelled → progress` 显示错误，再仅延迟一次真实 GET，在修复发行核对两条服务端事件、终态摘要和禁用取消；不伪造响应、不删除诊断或调用真实模型。
+原生任务演练使用分离的合成管理员、标注者和审核者：真实 lease 领取、20秒续期、释放、固定版本提交及继续下一任务均经服务端确认。转交提交成功但响应被丢弃时只读核对，不重复写入；原请求和未知结果保持可见。独立审核批准原 revision 后，新 lease 下的后续编辑产生新 head，交付范围显示未经审批；旧固定页面仍读取原几何。这些局部截图不等于全部视觉状态已验收。
+Windows 原生子树的回收不能仅凭 Job 活动计数为零或已退出的根进程句柄认定已观察到的子进程完成退出。终止前仅为当前 Job 成员获取可等待的原始进程对象句柄并核对归属；Job 本身仍是唯一终止授权。等待活动数归零、原根句柄及已观察子进程句柄发出退出信号，观察失败保持失败，现有五秒期限不放宽。新增后代与终止并发时仍以 Job 包含和计数保护；不能声称每个未观察到的后代均有单独句柄证明。
 数据集范围表及冻结确认明细放在有名称、可键盘聚焦的独立滚动区，保留真实分页100项和逐行权限/划分选择；PageDown 可滚动，焦点到末行时必须实际可见。滚动容器不缩减冻结范围或绕过第二次显式确认。实测1536个已审批修订按 seed 17 形成1024/512两批，两个固定版本的 ID 集合与已选择范围完全一致；512项原生ZIP逐一独立核对 revision、原图、canonical 图和批准身份，wire 仍为 v1。
 旧默认目录交接在项目内隔离旧工作树执行，旧启动器不传 `--data-dir`；迁移前核对其 canonical 数据目录和备份。旧浏览器保留的原 pending/journal 不在服务端备份内，必须显式选择分支后恢复；新原生服务沿用同源、旧身份与数据目录，只在用户明确重试时发送完全相同的 operation 和 payload。原分支保留，服务端 ACK 与新 fork 的本地提交分别确认；不能把这项合成数据证据写成真实业务数据迁移或授权跳过 lease/fencing。
 响应式截图分别记录 viewport/DPR 模拟与真正的浏览器页面缩放，不能把 DPR 或 CSS 缩放冒充 200% 页面缩放。项目内隔离 Chrome profile 通过实际外观设置从 100% 切到 200%，关闭 device-metrics 覆盖，并在结束后恢复 100%；画布仍为 hardware WebGPU，原生抽屉的 Tab/Shift-Tab 保持内部、Esc 归还焦点并解除画布 inert。这些结果不替代输入法、设备丢失、对比度或全部视觉状态验收。
@@ -69,6 +74,7 @@ R1 中 healthy ACK 本地回执屏障只阻断远端传输，不撤销当前合�
 
 T31 的所属 Vite 由当前 Node 直接启动 `owned-vite-service.mjs`。正常收尾关闭所属 stdin pipe，等待真实 `server.close()` 与 native close，再观察独占 loopback listener 已关闭；不以 Windows `taskkill /T` 冒充正常关闭。超时或非零/signal/仍监听保持 failed；有界 forced backstop 仅用于回收，不洗绿。fast 登记真实 listener 的运行中 EOF 与启动中 EOF 两项回归。硬件 workload、2000/10000 数量、sample seed 与性能阈值不变；任何实测 P95 越界仍失败。
 真实生命周期会多次重新加载同一 WASM：GPU 门禁要求至少一次实际加载，且每一次捕获的 SHA-256 都与本次发行构建完全相同；空列表、缺失或任意一次不一致均失败。第一次独占运行中两项 hardware 测试各实际捕获六次相同 hash，但外层错误地只接受单元素数组而失败，原结果与全部8000行保留；不得把重读该材料写成原命令通过，也不得改变样本、warmup、阈值或挑选性能结果。
+随后固定阈值的独占GPU命令通过3/3、8000行；一次完整 release 中的GPU子关亦通过3/3。该完整 release 自身仍 failed：Rust workspace 有一项工作器等待超时、浏览器有一项旧隐藏返回按钮假设；后续API库103/103及定向浏览器通过不抹去失败，也不能证明超时根因。该次 `skipped_scope` 为空，live证据和完整 smoke/review 仍缺失；R10/R11与完整发布不因此通过。
 release 的 release_gates 逐项列出 G0..G5 的 scope、实际 required_commands、SHA 绑定 evidence_refs、engineering_status 与完整 status。缺少命令为 not_started，缺少材料为 missing，不能从总状态或历史 commit 推导通过。G1/G3/G5 必须同时读取当前源码的 smoke；G5 还必须有独立完整规格/质量 review。smoke 的十三项场景只能引用同文件中已校验 SHA 的 artifacts；部分或损坏材料不能通过。
 
 G3/G4/G5 在本轮安全 skipped_by_user 时完整 status 为 blocked，即使各自工程子集通过。G4 的 live 未授权/未实际验收同样阻断；G5 不声称已经完成商业30%效率试点。release 的 engineering_status 也检查实际 review/smoke，不能只看子命令退出码。执行失败优先 failed，其余任何必需 missing/blocked/skipped/not_verified 保持 blocked；只有六关及全部范围满足才允许 full_1_0_ready。

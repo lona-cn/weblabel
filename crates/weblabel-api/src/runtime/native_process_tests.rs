@@ -44,6 +44,29 @@ fn original_handle(process: &NativeProcess) -> std::os::windows::io::OwnedHandle
     unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(duplicate) }
 }
 
+#[cfg(windows)]
+fn observed_process(pid: u32) -> std::os::windows::io::OwnedHandle {
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    assert!(!handle.is_null(), "cannot observe the original descendant");
+    unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) }
+}
+
+#[cfg(windows)]
+fn process_signaled(process: &std::os::windows::io::OwnedHandle) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::{
+        Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+        System::Threading::WaitForSingleObject,
+    };
+    match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
+        WAIT_OBJECT_0 => true,
+        WAIT_TIMEOUT => false,
+        result => panic!("process observation failed: {result}"),
+    }
+}
+
 #[test]
 fn api_runtime_shutdown_joins_cleanup_after_complete_native_owner_drop() {
     let directory = scratch();
@@ -170,8 +193,15 @@ async fn native_crash_and_normal_orphan_exit_reclaim_detached_descendants() {
         let path = directory.path().join("owned.json");
         let mut process = spawn_native(&config(directory.path(), mode, &path)).unwrap();
         let child = descendant(&path);
+        assert!(
+            usable(&child),
+            "{mode} descendant must be responsive before reclamation"
+        );
+        #[cfg(windows)]
+        let observed = observed_process(child["pid"].as_u64().unwrap() as u32);
+        #[cfg(windows)]
+        assert!(!process_signaled(&observed));
         if mode == "crash" {
-            assert!(usable(&child));
             std::fs::write(path.with_extension("go"), b"crash now").unwrap();
         }
         let status = tokio::time::timeout(Duration::from_secs(5), process.child.wait())
@@ -180,6 +210,12 @@ async fn native_crash_and_normal_orphan_exit_reclaim_detached_descendants() {
             .unwrap();
         assert_eq!(status.code(), Some(if mode == "crash" { 7 } else { 0 }));
         process.reclaim().await.unwrap();
+        #[cfg(windows)]
+        assert!(
+            process_signaled(&observed),
+            "{mode} descendant's original process handle must be signaled before reclamation returns"
+        );
+        #[cfg(target_os = "linux")]
         assert!(!process_alive(child["pid"].as_u64().unwrap() as u32));
     }
 }
