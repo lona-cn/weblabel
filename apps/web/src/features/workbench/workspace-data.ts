@@ -42,7 +42,7 @@ export function createWorkspaceState(sessionController: SessionController, initi
     signal, readonlyRequests: new AbortController(), catalogRead: null, assetRead: null,
     project: null, assets: [], ontologies: [], catalogReady: false, assetId: initial.assetId, ontologyId: initial.ontologyId,
     heads: [], loadToken: {}, scope: {}, phase: 'loading', error: null, loaded: null, host: null, hostStatus: 'idle', document: null, objects: [], flags: {},
-    selection: new SelectionStore(), previewSelection: [], tools: null, canUndo: false, canRedo: false, activeLabel: '', paused: false, modal: false,
+    selection: new SelectionStore(), previewSelection: [], tools: null, canUndo: false, canRedo: false, activeLabel: '', paused: false, modal: false, importViewModal: false,
     ...persistence, owner, assignedAssets: null, fixedTask: initial.taskId ? { task_id: initial.taskId, project_id: initial.projectId, asset_revision_id: initial.assetId, ontology_version_id: initial.ontologyId } : null,
     lease: null, leaseActor: null, preparation: null, submission: false, importing: null,
     branches: [], legacyRows: [], recovery: null, branchBusy: false, activity: new ActivityCollector(initial.projectId, session?.user_id ?? '', undefined, () => window.localStorage), nativeDocuments: new WeakMap(), futureProof: null, continuation: null,

@@ -112,6 +112,13 @@
     "limits": "The local release was built from a dirty worktree; exact changed source hashes are recorded above. Configured-provider preview and active-run presentation were not exercised, and no model forward or live call was made. This scoped U36 observation is not all-48-state or full R10 acceptance; the changed UI source has no new GPU performance benchmark.",
     "diagnostics": "Eight startup GET requests were reported aborted in the final browser; their cause was not established."
   },
+  "u14_import_redesign": {
+    "scope": "The existing annotation import form moves to an accessible expanded dialog without duplicating its state or operation. Native, YOLO and COCO use one radio group; returning preserves a held preview and its acknowledgement.",
+    "local_smoke": "On a locally built native release, a procedural COCO preview on hardware WebGPU displayed one labelled box, fixed source/mapping, two actual loss rows and a disabled confirm together at 1536x1024; 900x600 remained scrollable. A real preview POST and one explicit commit POST returned 200, the head stayed unchanged before confirmation, and the committed revision parent and canonical [4,6,24,21] were checked in the synthetic database.",
+    "keyboard_and_labels": "An earlier build before the visible-label addition checked ten Tabs, reverse Tab, Escape, restored focus/scroll and acknowledgement continuity; the dialog lifecycle itself was unchanged by that addition. The final label build showed one actual label at desktop and compact widths; a focused fixture checked all 101 boxes remain while visible labels are explicitly limited to 100.",
+    "checks": "Two specifically selected import regressions passed; 13 other cases in the mixed file were not executed. The reviewed non-security subset on final source reported geometry 7/7, editor core 39/39 and Web 11/11; its overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE.",
+    "limits": "The local build was dirty and its changed source hashes are bound separately in the private evidence. The public commit itself was not independently rebuilt; multi-object visual placement, all U14 states, the full 48-state matrix, security topics and current-source GPU performance remain unverified. Eight startup GETs were aborted for an unestablished reason."
+  },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",
     "online_backup": "The actual source service responded 200 while SQLite was in WAL mode with a WAL file; the native backup and fresh-target restore commands both exited 0.",

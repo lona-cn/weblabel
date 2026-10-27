@@ -24,6 +24,24 @@
 .native-delivery .delivery-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 16px; }
 .native-delivery .delivery-import-grid { grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); }
 .native-delivery .delivery-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+.native-delivery .delivery-import-formats { display: flex; gap: 0; margin: 8px 0 16px; }
+.native-delivery .delivery-import-formats label { position: relative; flex: 1; justify-content: center; margin: 0; padding: 8px; border: 1px solid var(--control-border); cursor: pointer; }
+.native-delivery .delivery-import-formats input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.native-delivery .delivery-import-formats label:has(input:checked) { color: var(--accent); border-color: var(--accent); background: var(--surface-2); }
+.native-delivery .delivery-import-formats label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.native-delivery .delivery-import-formats label:has(input:disabled) { color: var(--muted); cursor: not-allowed; }
+.r07-workbench dialog.native-import-dialog { position: fixed; inset: 56px 0 0; width: 100vw; height: calc(100dvh - 56px); max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden; background: var(--surface-0); }
+.r07-workbench dialog.native-import-dialog[open] { display: flex; flex-direction: column; }
+.r07-workbench dialog.native-import-dialog::backdrop { background: transparent; }
+.native-import-dialog > h2 { margin: 0; padding: 16px 20px 0; font-size: 24px; }
+.native-import-dialog > div { flex: 1; min-height: 0; overflow: auto; padding: 12px 20px 20px; }
+.native-import-dialog > button { position: absolute; top: 12px; right: 16px; }
+.native-delivery .native-import-dialog [aria-label='标注格式导入'] { margin: 0; padding: 0; border: 0; background: transparent; }
+.native-import-dialog .delivery-import-visual svg { max-height: min(38dvh, 400px); }
+.native-delivery .delivery-import-label { fill: var(--fg); stroke: var(--surface-0); paint-order: stroke fill; stroke-linejoin: round; font-weight: 600; pointer-events: none; }
+.native-import-dialog [aria-label='格式损失报告'] table { table-layout: fixed; }
+.native-import-dialog [aria-label='格式损失报告'] th { width: 18%; overflow-wrap: normal; }
+@media (max-width: 1099px) { .r07-workbench dialog.native-import-dialog { inset: 0; height: 100dvh; } }
 .native-delivery .delivery-warning { color: var(--warning); }
 @media (max-width: 1099px) {
   .native-delivery { padding: 16px; }

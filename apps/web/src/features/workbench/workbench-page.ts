@@ -210,6 +210,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
     scopeKey: state.scope, canWrite: port.canImport(), canExport: port.canExport(),
     canUploadMedia: writableRole(state) && state.catalogReady && !state.modal && !state.preparation && !state.importing && !state.submission && !state.branchBusy,
   }), subscribe: state.subscribe,
+    setImportViewOpen: open => { if (open) port.cancelGesture(); state.importViewModal = open; state.modal = open || !!shell.querySelector('dialog[open]'); state.notify(); },
     prepareImport: port.prepareImport, releaseImport: scopeKey => { if (state.scope === scopeKey) port.releaseImport(); }, commitImport: async (revision, scopeKey) => { if (state.scope !== scopeKey) throw new Error('导入回执作用域已变化；保留原请求。'); await port.commitImport(revision); }, prepareExport: port.prepareExport, refreshAssets: controller.refreshAssets }));
   reviewDetails.open = !!context.route.queue;
   let headsKey = '', routeKey = '';

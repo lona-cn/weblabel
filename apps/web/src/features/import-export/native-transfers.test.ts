@@ -24,7 +24,7 @@ function fixture(empty = false) {
   const controller: SessionController = { getSnapshot: () => ({ kind: 'authenticated', session, createdUsername: null }), subscribe: listener => { authListeners.add(listener); return () => authListeners.delete(listener); }, login: vi.fn(), bootstrap: vi.fn(), recover: vi.fn(), logout: vi.fn(), refresh: vi.fn(), dispose: vi.fn() };
   const originalKey = Object.freeze({}); let scope = { asset: empty ? null : asset, ontology, scopeKey: originalKey, canWrite: !empty, canExport: !empty, canUploadMedia: true }; const listeners = new Set<() => void>();
   const owner = new AbortController(); owners.push(owner); const root = window.document.createElement('div'); window.document.body.append(root);
-  const context: TransfersMountContext = { session: controller, signal: owner.signal, route: readRoute(new URL('http://localhost')), navigate: vi.fn(), projectId: project, getScope: () => scope, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, prepareImport: vi.fn(async () => ({ asset_revision_id: 'image', ontology_version_id: 'ontology', base_revision_id: null, lease: null })), releaseImport: vi.fn(), commitImport: vi.fn(async () => {}), prepareExport: vi.fn(async () => revision), refreshAssets: vi.fn(async () => {}) };
+  const context: TransfersMountContext = { session: controller, signal: owner.signal, route: readRoute(new URL('http://localhost')), navigate: vi.fn(), projectId: project, getScope: () => scope, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, setImportViewOpen: vi.fn(), prepareImport: vi.fn(async () => ({ asset_revision_id: 'image', ontology_version_id: 'ontology', base_revision_id: null, lease: null })), releaseImport: vi.fn(), commitImport: vi.fn(async () => {}), prepareExport: vi.fn(async () => revision), refreshAssets: vi.fn(async () => {}) };
   vi.spyOn(api, 'image').mockResolvedValue(new Blob(['image'], { type: 'image/png' }));
   const NativeURL = URL; vi.stubGlobal('URL', class extends NativeURL { static createObjectURL() { return 'blob:synthetic'; } static revokeObjectURL() {} });
   const dispose = mountTransfersPanel(root, context);
@@ -34,7 +34,7 @@ function button(root: HTMLElement, name: string) { const value = [...root.queryS
 function control<T extends HTMLElement>(root: HTMLElement, text: string): T { const label = [...root.querySelectorAll('label')].find(label => label.firstChild?.textContent === text); if (!label?.control) throw new Error(`Missing ${text}`); return label.control as T; }
 function chooseFile(input: HTMLInputElement, files: File[]) { Object.defineProperty(input, 'files', { configurable: true, value: files }); input.dispatchEvent(new Event('change', { bubbles: true })); }
 async function nativePreview(view: { root: HTMLElement }) {
-  const format = control<HTMLSelectElement>(view.root, '标注格式'); format.value = 'native'; format.dispatchEvent(new Event('change', { bubbles: true }));
+  const format = control<HTMLInputElement>(view.root, 'Native原生包'); format.checked = true; format.dispatchEvent(new Event('change', { bubbles: true }));
   chooseFile(control(view.root, '标注源文件'), [new File(['synthetic'], 'native.zip', { type: 'application/zip' })]); button(view.root, '生成只读预览').click();
   await vi.waitFor(() => expect(button(view.root, '确认导入').hidden).toBe(false));
 }
@@ -49,7 +49,7 @@ it('uses a nullable fresh-media base and the identical opaque scope for commit a
 });
 it('releases only the original opaque preview fence when scope changes before a preview ACK', async () => {
   const view = fixture(); let finish!: (value: AnnotationImportPreview) => void; vi.spyOn(api, 'previewAnnotationImport').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-  const format = control<HTMLSelectElement>(view.root, '标注格式'); format.value = 'native'; format.dispatchEvent(new Event('change')); chooseFile(control(view.root, '标注源文件'), [new File(['x'], 'native.zip')]); button(view.root, '生成只读预览').click();
+  const format = control<HTMLInputElement>(view.root, 'Native原生包'); format.checked = true; format.dispatchEvent(new Event('change', { bubbles: true })); chooseFile(control(view.root, '标注源文件'), [new File(['x'], 'native.zip')]); button(view.root, '生成只读预览').click();
   await vi.waitFor(() => expect(api.previewAnnotationImport).toHaveBeenCalledTimes(1)); view.move(); finish(view.preview);
   await vi.waitFor(() => expect(view.context.releaseImport).toHaveBeenCalledWith(view.originalKey)); expect(view.context.commitImport).not.toHaveBeenCalled();
 });
@@ -123,4 +123,48 @@ it.each(['role', 'epoch'] as const)('aborts pending media reads and polling afte
   if (kind === 'role') view.revokeRole(); else setCsrfToken(`revoked-epoch-${serial}`);
   expect(signal?.aborted).toBe(true); vi.useFakeTimers(); finish({ job_id: 'revoked-job', kind: 'media_import', state: 'queued', progress_completed: 0, progress_total: 1, result: null });
   await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(5000); expect(read).toHaveBeenCalledTimes(1); expect(view.context.refreshAssets).not.toHaveBeenCalled();
+});
+
+it('preserves a loss-confirmed annotation preview when its expanded view closes and reopens', async () => {
+  const show = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
+  const close = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close');
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value(this: HTMLDialogElement) { this.open = true; } });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value(this: HTMLDialogElement) { this.open = false; this.dispatchEvent(new Event('close')); } });
+  try {
+    const view = fixture();
+    vi.spyOn(api, 'previewAnnotationImport').mockResolvedValue({ ...view.preview, loss_report: { losses: [{ field: 'other_images', reason: 'Only one source image is imported.' }] } });
+    button(view.root, '展开标注导入').click();
+    await nativePreview(view);
+    const ack = control<HTMLInputElement>(view.root, '我已阅读并确认导入损失');
+    expect(button(view.root, '确认导入').disabled).toBe(true);
+    ack.checked = true; ack.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(button(view.root, '确认导入').disabled).toBe(false);
+    button(view.root, '返回工作台').click();
+    button(view.root, '展开标注导入').click();
+    expect(control<HTMLInputElement>(view.root, '我已阅读并确认导入损失').checked).toBe(true);
+    expect(button(view.root, '确认导入').disabled).toBe(false);
+    button(view.root, '取消预览').click();
+    expect(button(view.root, '确认导入').hidden).toBe(true);
+    expect(control<HTMLInputElement>(view.root, 'Native原生包').matches(':disabled')).toBe(false);
+    button(view.root, '返回工作台').click(); view.dispose();
+  } finally {
+    if (show) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', show); else Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+    if (close) Object.defineProperty(HTMLDialogElement.prototype, 'close', close); else Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
+  }
+});
+
+it('keeps all preview boxes while explaining the 100 visible category-label limit', async () => {
+  const view = fixture();
+  const objects = Array.from({ length: 101 }, (_, index) => ({
+    object_id: `object-${index}`, label_id: 'label', geometry: { type: 'bbox_xyxy' as const, x_min: 1, y_min: 1, x_max: 4, y_max: 4 },
+    attributes: {}, origin: { type: 'import' as const, prediction_id: null, model_run_id: null, import_batch_id: null },
+  }));
+  vi.spyOn(api, 'previewAnnotationImport').mockResolvedValue({ ...view.preview, document: { ...view.preview.document, objects } });
+  await nativePreview(view);
+  await vi.waitFor(() => expect(view.root.querySelectorAll('.delivery-import-visual svg rect')).toHaveLength(101));
+  const labels = view.root.querySelectorAll('.delivery-import-visual svg text');
+  expect(labels).toHaveLength(100);
+  expect(labels[0].textContent).toBe('对象 #1');
+  expect(labels[99].textContent).toBe('对象 #100');
+  expect(view.root.textContent).toContain('只显示前 100 个对象的类别标签');
 });

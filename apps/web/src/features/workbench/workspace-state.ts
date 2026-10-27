@@ -28,7 +28,7 @@ export interface WorkspaceState {
   loaded: LoadedAsset | null; host: EditorHost | null; hostStatus: EditorHostStatus;
   document: AnnotationDocument | null; objects: readonly AnnotationObject[]; flags: LocalObjectFlagMap;
   selection: SelectionStore; previewSelection: readonly string[]; tools: ToolState | null;
-  canUndo: boolean; canRedo: boolean; activeLabel: string; paused: boolean; modal: boolean;
+  canUndo: boolean; canRedo: boolean; activeLabel: string; paused: boolean; modal: boolean; importViewModal: boolean;
   queue: SaveQueue; storage: IndexedDbDraftStorage; owner: SaveQueueOwner;
   assignedAssets: ReadonlySet<string> | null; fixedTask: FixedTask | null; lease: LocalTaskLease | null; leaseActor: string | null;
   preparation: symbol | null; submission: boolean; importing: { scope: object; context: AnnotationImportContext | null; receipt: AnnotationRevision | null } | null;

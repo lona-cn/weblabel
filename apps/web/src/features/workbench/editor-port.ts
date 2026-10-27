@@ -67,7 +67,7 @@ export function createEditorPort(state: WorkspaceState): EditorPort {
     const media = state.assets.find(asset => asset.asset_revision_id === state.assetId && asset.project_id === state.projectId);
     const ontology = state.ontologies.find(item => item.ontology_version_id === state.ontologyId && item.project_id === state.projectId);
     const held = state.importing?.scope === state.scope;
-    if (!media || !ontology?.labels.length || !state.catalogReady || !writableRole(state) || state.paused || state.modal || state.preparation || state.submission || state.branchBusy
+    if (!media || !ontology?.labels.length || !state.catalogReady || !writableRole(state) || state.paused || (state.modal && !state.importViewModal) || state.preparation || state.submission || state.branchBusy
       || state.importing && !held || !matchesTask(state, media.asset_revision_id, ontology.ontology_version_id)
       || hasUnconfirmedImportForTarget(state.projectId, media.asset_revision_id, ontology.ontology_version_id) && !held) return false;
     if (held && state.importing?.context) return state.importing.context.asset_revision_id === media.asset_revision_id && state.importing.context.ontology_version_id === ontology.ontology_version_id;

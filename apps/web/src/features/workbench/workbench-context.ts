@@ -24,6 +24,7 @@ export interface TransfersMountContext extends PageContext {
   projectId: string;
   getScope(): Readonly<{ asset: ApiMedia | null; ontology: OntologyVersion | null; scopeKey: object; canWrite: boolean; canExport: boolean; canUploadMedia: boolean }>;
   subscribe(listener: () => void): () => void;
+  setImportViewOpen(open: boolean): void;
   prepareImport(): Promise<AnnotationImportContext>;
   releaseImport(scopeKey: object): void;
   commitImport(revision: AnnotationRevision, scopeKey: object): Promise<void>;
