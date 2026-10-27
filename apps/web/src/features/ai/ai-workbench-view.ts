@@ -201,7 +201,8 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   const consentActions = element('div', undefined, 'r07-button-row'); consentActions.append(authorize, cancelPreview);
   consentDialog.content.append(consentNotice, consentProvider, consentBody, labeled('我已确认以上范围，同意本次运行。仅本次授权；范围变化或过期后须重新确认。', checked), consentActions);
   modalRoot.append(consent);
-  progress.append(progressText, eventsRoot, element('p', '用量缺席仍为未知；取消不保证停止上游费用。'), cancel);
+  progress.hidden = true;
+  progress.append(progressText, element('p', '关闭或切换面板不会取消运行；用量缺席仍为未知，取消不保证停止上游费用。'), cancel, eventsRoot);
   const refreshProfiles = async () => {
     if (!sessionCurrent(state)) return;
     profileRead?.abort(); const read = new AbortController(); profileRead = read;
@@ -216,7 +217,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
       error.textContent = ''; update();
     } catch (reason) { if (!read.signal.aborted && !disposed) error.textContent = '模型列表读取失败；人工标注可继续：' + reportError(reason); }
   };
-  root.append(element('h2', 'AI 审校'), rules, labeled('模型预设', profiles), profileIdentity, profileInfo, action('只读重新检查模型列表', 'ai-profiles-refresh', signal, () => void refreshProfiles()), intent, labeled('指令', prompt), access, scopeText, run, error, candidateLauncher, progress, candidatesRoot, outcomeRoot);
+  root.append(element('h2', 'AI 审校'), progress, candidateLauncher, rules, labeled('模型预设', profiles), profileIdentity, profileInfo, action('只读重新检查模型列表', 'ai-profiles-refresh', signal, () => void refreshProfiles()), intent, labeled('指令', prompt), access, scopeText, run, error, candidatesRoot, outcomeRoot);
   function updateControls() {
     const snapshot = controller?.getSnapshot(), profile = profileList.find(item => item.profile_id === profiles.value);
     if (ruleOntology !== state.loaded?.ontology) {
@@ -247,6 +248,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
     if (!controller || disposed) return;
     const snapshot = controller.getSnapshot();
     root.dataset.runState = snapshot.runId || snapshot.events.length || snapshot.candidates.length || snapshot.error ? 'active' : 'idle';
+    progress.hidden = !snapshot.runId;
     candidateLauncher.hidden = !snapshot.candidates.length;
     if (lastWaiting !== snapshot.modelWaiting) { lastWaiting = snapshot.modelWaiting; state.activity.setKind(lastWaiting ? 'model_wait' : 'task'); }
     if (lastRun !== snapshot.runScope) { lastRun = snapshot.runScope; state.activity.setBinding({}); state.notify(); }

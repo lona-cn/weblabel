@@ -53,7 +53,7 @@ WASM 构建缺固定工具时输出结构化前置诊断并退出2，实际编�
 这些标题排除不是完整安全专题排除：`cargo test --workspace` 和 Web 测试集中仍有安全相关用例，`scripts/release-smoke.mjs` 的 `exerciseRuntime` seed helper 也含未认证和跨源负控。用户要求跳过安全专题时，不得直接运行包含这些路径的完整 runner 或该 fixture；既有误执行如实记录，不作为安全验收。
 安全跳过范围尚未完成拆分，因此 `verify.mjs fast|integration|browser|release --skip-security` 必须在启动任何子命令之前返回 blocked、退出 2 并记录 `SECURITY_SKIP_PARTITION_INCOMPLETE`；不能将被阻断写成通过。独立 GPU 或离线 live 的既有入口不受此 guard 影响。
 `node scripts/verify.mjs nonsecurity-audited --skip-security --report-dir <项目内新目录>` 是显式的已审非安全子集：运行几何 `t03_geometry`、编辑内核 `t04_editor / t12_tools / commercial_relabel_projection`，以及 `t01_contracts` 中五个标注契约用例、`t14_formats` 中八个 COCO/YOLO 转换用例（均按完整名称精确选择）；Web 运行 `native-help-layout / native-attributes-escape / native-project-publication / delivery-plan / protocol / dialog / virtual-list` 七个指定测试文件。此前 `native-outcome` 和 `native-objects` 被误列入，实际引用含安全负载和撤销清理的共享 fixture；本轮及历史原结果保留，但这五项不计非安全验收，现已从入口移除。混合的 `t01_contracts` 和 `t14_formats` 不能整文件运行；实际用例名称见 runner。启动前核对已审测试、依赖源码及固定工具清单的指纹；新增或修改输入时先返回 `NONSECURITY_AUDIT_STALE`，不启动子命令，须重新审查后更新指纹。未审的其他非安全测试、安全专题、模型运行和 GPU 性能均不运行；即使子集通过，结果仍为 `blocked / NONSECURITY_PARTITION_INCOMPLETE`，不冒充完整门禁。
-保留的早期单文件 smoke 曾执行 `native-outcome` 四项；U14 两次子集各执行上述五项；U36 的 `native-outcome` 定向文件也曾运行两次。这些共享 fixture 执行均属于范围偏差，不计非安全验收。修正入口后的一次 69 项子集通过，但随后 U26 焦点移动修复以及 U21、U22/U23、U45、U43、U39 源码改动未覆盖在该次子集中，不能把前次子集绑定到当前源码。
+保留的早期单文件 smoke 曾执行 `native-outcome` 四项；U14 两次子集各执行上述五项；U36 的 `native-outcome` 定向文件也曾运行两次。这些共享 fixture 执行均属于范围偏差，不计非安全验收。修正入口后的一次 69 项子集通过，但随后 U26 焦点移动修复以及 U21、U22/U23、U45、U43、U39、U27 源码改动未覆盖在该次子集中，不能把前次子集绑定到当前源码。
 标注导入可将同一实际表单与预览移入共享原生 dialog：三种格式、固定目标和映射、只读投影、实际 loss 与确认同时可见；关闭后保留已生成预览及勾选，显式取消和完成提交继续遵守原有范围锁与未知请求保留规则。合成 COCO 在真实原生服务和硬件 WebGPU 工作台完成一次预览与一次明确确认；预览前后 head 未变，确认后新 revision 的 parent 与坐标经服务器数据库核对。1536×1024 的图片、两项 loss 和确认位于视口内，900×600 可滚动到确认；Tab/Esc 与画布恢复仅作局部检查。额外三对象、两类别合成预览中的标签、类别颜色和框在真实浏览器可见，明确取消不改变 head；101 个框/100 个文字标签的上限为定向 fixture 验证，不代表高密度性能验收。其余 U14 参考状态及完整 48 态未因此通过。
 项目规范编辑器的枚举选项、数值范围和默认值直接显示在属性行，桌面提交操作保持可见，窄屏字段按列排列。一次真实原生服务的合成草稿在 1536×1024 同时显示四种类型与只读预览，并在 320×640 核对数值最小值与提交按钮可达、无横向滚动；明确创建后，数据库中的四种默认值、枚举选项和数值范围与输入一致，未产生标注 revision。此次仅覆盖该草稿与单次创建，不代表完整视觉矩阵或全设备验收。
 有固定基线的规范发布结果未知时，保留输入并直接展示只读差异；版本切换和重新发布仍禁用。真实合成服务分别演练发布已提交但 201 响应丢失、以及收到 201 后版本读取失败：前者只读核对匹配版本仍不能认领或再发，后者按已确认版本 ID 只读核对后恢复操作；两次核对均未产生新 POST。两个定向行为回归通过；这不是全部视觉状态或安全专题验收。
@@ -90,6 +90,8 @@ Windows 原生子树的回收不能仅凭 Job 活动计数为零或已退出的�
 属性审校候选在窄检查器中只展开本次变更键的原值和建议值，完整对象与几何仍保留在可展开技术详情中；缺少键、null、false、空字符串必须分别显示，不能改写建议或绕过版本、拒绝状态与采纳确认。真实原生服务上的合成 loopback 属性建议分别拒绝一项、采纳另一项并撤销；每个实际决策与对应不可变 revision 核对，未调用真实模型或本地检测。
 
 U39 展开对照使用同一候选控制器、单组只读 canonical 投影和原有选择及决策流程；重合原轮廓的虚线绘制在建议实线上方。真实合成服务和硬件 WebGPU 中，两项属性建议在 1536×1024 显示一张投影及两条差异；局部定位、返回主画布、900×600 双层抽屉焦点及 Escape 已局部检查。明确拒绝一项、采纳另一项、撤销后，服务器 journal 与 revision 链均已核对；三次局部合成运行共六个 loopback 协议 POST，没有真实或付费模型调用、没有检测器 forward。候选后的完整多组、全部参考状态、当前硬件性能和完整门禁仍未验收。
+
+U27 的 AI 检查器将实际运行状态和取消入口置于配置之前，事件保留在可滚动区域；关闭或切换检查器不取消运行。真实合成工作台在 1024×768 显示状态及 44px 取消按钮，关闭后切换属性及 AI 仍为同一运行，明确取消后服务端显示 cancelled。前后共两次本地 loopback 协议 POST，没有真实模型、付费调用或检测器 forward；这不是完整 U27 或视觉矩阵验收。
 
 
 R1 中 healthy ACK 本地回执屏障只阻断远端传输，不撤销当前合法 Native 编辑。Workbench 使用 SaveQueue.canAcceptEdits(asset, ontology) 判断本地 admission；已由 Native 提交的完整文档与 ordered journal 仍由 queue 保留，非 barrier paused/rescue 的既有内存政策不变。writes_paused、原 owner/scope guard、真实 receipt、write-token CAS、one-shot continuation 与 local_commit 保持 fail-closed；最新完整本地记录真正持久之前不得准备下一次 HTTP。真实回归在 pointerdown/up 之间释放实际服务端提交的旧 ACK，并保持物理 IndexedDB 回执 transaction，验证完整 canonical 文档、单次 undo/redo、精确新请求与 reload；48 步独立几何 oracle 的串行等待不能替代该时序证明。

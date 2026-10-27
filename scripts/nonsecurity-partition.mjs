@@ -12,7 +12,7 @@ const inputs = [
 ];
 // Reviewed: geometry t03, editor t04/t12/commercial projection, exact domain/format cases and seven Web files named in verify.mjs.
 // Other tests, their fixtures, live/model work and GPU performance remain unreviewed.
-const reviewedFingerprint = 'e0a38f79540c45e38cfd248b841b9041866b4f8c65ded4626e17f390535992dc';
+const reviewedFingerprint = 'bbf93789e654d61f0314399a22d378362f0174d6605133ee1201d33be54ad519';
 const sha = value => createHash('sha256').update(value).digest('hex');
 
 export function checkNonsecurityPartition() {

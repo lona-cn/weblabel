@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
-  "previous_public_source_commit": "3e8b652306f7e09299e71b24b537c05d0e043b3f",
-  "public_base_commit": "3e8b652306f7e09299e71b24b537c05d0e043b3f",
-  "provenance": "This publication changes the scoped candidate-comparison dialog, read-only projection order, reviewed-input fingerprint and guidance. The transferred product, fingerprint and user-guide Git blobs match the locally exercised source commit; individual smokes below identify which predate later changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
+  "previous_public_source_commit": "a10c4aaacbb35a29adbcd02cf150732e3a59c062",
+  "public_base_commit": "a10c4aaacbb35a29adbcd02cf150732e3a59c062",
+  "provenance": "This publication changes scoped compact AI run controls, the reviewed-input fingerprint and guidance. The transferred product, fingerprint and user-guide Git blobs match the locally exercised source commit; individual smokes below identify which predate later changes. The public commit itself was not rebuilt. Raw synthetic data and authentication material remain private.",
   "shared_fixture_scope_deviation": {
     "error": "The earlier supposedly nonsecurity Web subset mistakenly included native-outcome and native-objects, both importing native-test-support. Its synthetic fixture contains markup-like security payloads and revoke cleanup; three outcome cases and the objects case invoke it. The fourth outcome case imports the same module. This execution was outside the user-skipped boundary and does not constitute security acceptance.",
     "historical_raw_and_excluded": "A retained initial single-Web-file smoke reported raw 50/50, with four native-outcome cases excluded. The expanded gate, two U14 gates, format, domain and U26 gates reported raw 57/57, 57/57, 57/57, 65/65, 73/73 and 74/74 respectively, with five cases from each excluded from nonsecurity acceptance. The original totals remain historical observations. The format consumer regression spawned the then-current subset once more. The earlier two-file consumer did not retain its exact allowlist, so fixture execution there is unknown.",
     "u36_focused_file": "The native-outcome file was also run twice for U36; neither invocation counts as nonsecurity acceptance. Separate real-browser observations remain as recorded.",
-    "correction": "Both shared-fixture files were removed from the audited Web allowlist. A separate corrected run passed 69/69 selected cases across seven Web files, while the overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2. That run predates the later U26 focus-movement fix and U21, U22/U23, U45, U43 and U39 changes; it is not claimed for current source.",
+    "correction": "Both shared-fixture files were removed from the audited Web allowlist. A separate corrected run passed 69/69 selected cases across seven Web files, while the overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2. That run predates the later U26 focus-movement fix and U21, U22/U23, U45, U43, U39 and U27 changes; it is not claimed for current source.",
     "security_acceptance": "not_verified"
   },
   "full_release_attempt": {
@@ -244,6 +244,13 @@
     "fixture": "Three explicitly authorized local protocol runs used six loopback fixture POSTs. They are not real or paid model execution, model quality evidence or detector inference. The R05 ledger was unchanged.",
     "diagnostics": "In the initial comparison-build browser, one object-selection wait timed out immediately after asset navigation. The same page later allowed both selections; the final-build scenario completed without that timeout. The cause is not established and the failed attempt is not counted as a pass.",
     "limits": "The local release was built from dirty source with the hashes above; the public commit itself was not rebuilt. Multiple-group behavior, exact reference equivalence, the complete 48-state matrix, skipped security topics, live channels and current-source GPU performance remain unverified. The corrected 69-case subset predates this source and was not rerun; the candidate test file imports the excluded shared security fixture and was not run. Owned processes were forcibly terminated rather than physically interrupted."
+  },
+  "u27_running_drawer": {
+    "scope": "The existing run status and cancel control appear ahead of configuration, with existing events retained in a scrollable region.",
+    "source_sha256": {"ai-workbench-view.ts": "f4ff607d2c835042a6a0a0b0bc265a285294f51d17ea7ef550edaf498d149398", "native-workbench.css": "e7685bbd8b2dd55e04500b4d463b29f5a42060a7f1c347fa665aab4b52ddb8d9"},
+    "actual_smoke": "A local native release and hardware WebGPU browser at 1024x768 showed the actual progress and enabled 44px cancel control inside the viewport; before the change both were below it. Closing and switching drawers preserved the same run; one explicit cancel request reached the server and the UI displayed cancelled.",
+    "fixture": "Two held loopback-only synthetic protocol requests, no real or paid model calls or detector forwards. The earlier copied fixture seed had a disclosed security-scope deviation and was not rerun.",
+    "limits": "The local build used dirty source with the hashes above; the public commit was not rebuilt. One state and viewport do not establish full U27, all 48 states, current GPU performance, skipped security or full R10. The corrected 69-case subset predates this source."
   },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",
