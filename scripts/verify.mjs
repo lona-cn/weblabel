@@ -334,7 +334,7 @@ export async function verify(argv = process.argv.slice(2)) {
     if (options.gate === 'nonsecurity-audited') {
       result.skipped_scope.push('unaudited_tests', 'model_execution', 'gpu_performance');
       result.audited_partition = checkNonsecurityPartition();
-      result.audited_partition.scope = 'reviewed_geometry_editor_domain_format_cases_and_eight_web_files_only';
+      result.audited_partition.scope = 'reviewed_geometry_editor_domain_format_cases_and_seven_web_files_only';
       if (result.audited_partition.status !== 'passed') {
         result.blockers.push(...result.audited_partition.blockers);
         return result;
@@ -417,7 +417,7 @@ export async function verify(argv = process.argv.slice(2)) {
       ];
       for (const [index, name] of formatCases.entries()) await step(`nonsecurity-format-${index + 1}`, ['cargo', 'test', '--locked', '-p', 'dataset-formats', '--test', 't14_formats', name, '--', '--exact'], 'cargo');
       const output = path.join(reportDir, 'nonsecurity-web.json');
-      await step('nonsecurity-web', [node, 'node_modules/vitest/vitest.mjs', 'run', '--project', 'web', 'apps/web/src/features/ai/native-outcome.test.ts', 'apps/web/src/features/workbench/native-objects.test.ts', 'apps/web/src/features/workbench/native-help-layout.test.ts', 'apps/web/src/features/projects/native-project-publication.test.ts', 'apps/web/src/features/datasets/delivery-plan.test.ts', 'apps/web/src/features/import-export/protocol.test.ts', 'apps/web/src/ui/dialog.test.ts', 'apps/web/src/ui/virtual-list.test.ts', '--maxWorkers=1', '--reporter=json', `--outputFile=${output}`], 'vitest', output);
+      await step('nonsecurity-web', [node, 'node_modules/vitest/vitest.mjs', 'run', '--project', 'web', 'apps/web/src/features/workbench/native-help-layout.test.ts', 'apps/web/src/features/workbench/native-attributes-escape.test.ts', 'apps/web/src/features/projects/native-project-publication.test.ts', 'apps/web/src/features/datasets/delivery-plan.test.ts', 'apps/web/src/features/import-export/protocol.test.ts', 'apps/web/src/ui/dialog.test.ts', 'apps/web/src/ui/virtual-list.test.ts', '--maxWorkers=1', '--reporter=json', `--outputFile=${output}`], 'vitest', output);
     };
     const gpu = () => step('gpu', [node, 'scripts/verify-gpu.mjs', '--report-dir', relative(path.join(reportDir, 'T31'))], 'gpu', path.join(reportDir, 'T31/result.json'));
     const live = () => step('live', [node, 'scripts/verify-live.mjs', ...(options.liveEvidence ? ['--live-evidence', options.liveEvidence] : ['--check-required']), '--report-dir', relative(path.join(reportDir, 'T32')), ...(options.skipSecurity ? ['--skip-security'] : [])], 'live', path.join(reportDir, 'T32/result.json'));

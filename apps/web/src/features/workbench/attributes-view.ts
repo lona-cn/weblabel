@@ -72,13 +72,24 @@ export function mountAttributesView(root: HTMLElement, state: WorkspaceState, po
     const input = element('input'); input.inputMode = 'decimal'; input.dataset.testid = 'geometry-' + key; input.setAttribute('aria-label', key + ' canonical 像素'); inputs.set(key, input);
     input.addEventListener('input', () => { geometryDirty = true; }, { signal });
     input.addEventListener('compositionstart', () => { composingGeometry = true; }, { signal }); input.addEventListener('compositionend', () => { composingGeometry = false; }, { signal });
-    input.addEventListener('keydown', event => { if (event.isComposing || composingGeometry) return; if (event.key === 'Enter') { event.preventDefault(); commitGeometry(); } else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); resetGeometry(); } }, { signal });
+    input.addEventListener('keydown', event => { if (event.isComposing || composingGeometry) return; if (event.key === 'Enter') { event.preventDefault(); commitGeometry(); } else if (event.key === 'Escape' && (geometryDirty || geometryError.textContent)) { event.preventDefault(); event.stopPropagation(); resetGeometry(); } }, { signal });
     geometryFields.append(labeled(key + ' (px)', input));
   }
   const apply = action('应用完整几何', 'geometry-apply', signal, commitGeometry), cancel = action('取消几何输入', 'geometry-cancel', signal, resetGeometry);
   geometry.append(element('h3', '几何 · canonical 连续像素'), geometryError, geometryFields, apply, cancel, explanation);
   root.append(title, info, warning, labeled('类别', category), element('small', '必填表示键必须存在；null、false、空字符串与缺少键不同。默认值不回填已有对象。'), fieldsRoot, other, geometry);
   const fields = new Map<string, AttributeField>();
+  root.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.isComposing || composingGeometry) return;
+    for (const field of fields.values()) if (field.composing) return;
+    if (geometryDirty || geometryError.textContent) {
+      event.preventDefault(); event.stopPropagation(); resetGeometry(); return;
+    }
+    for (const field of fields.values()) {
+      if (!field.dirty) continue;
+      event.preventDefault(); event.stopPropagation(); field.dirty = false; field.error.textContent = ''; update(); return;
+    }
+  }, { signal });
   let identity = '', schema = '', editScope = state.scope, categoryOntology: OntologyVersion | null = null;
   function commitField(field: AttributeField, explicit?: Scalar) {
     if (field.composing || !port.selectionWritable() || field.baseline !== state.scope) return;
@@ -111,14 +122,14 @@ export function mountAttributesView(root: HTMLElement, state: WorkspaceState, po
       input.inputMode = definition.kind === 'number' ? 'decimal' : 'text'; input.autocomplete = 'off';
       input.addEventListener('input', () => { field.dirty = true; field.error.textContent = ''; field.input.setAttribute('aria-invalid', 'false'); }, { signal });
       input.addEventListener('compositionstart', () => { field.composing = true; }, { signal }); input.addEventListener('compositionend', () => { field.composing = false; }, { signal });
-      input.addEventListener('keydown', event => { if (event.isComposing || field.composing) return; if (event.key === 'Enter') { event.preventDefault(); commitField(field); } else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); field.dirty = false; field.error.textContent = ''; update(); } }, { signal });
+      input.addEventListener('keydown', event => { if (event.isComposing || field.composing) return; if (event.key === 'Enter') { event.preventDefault(); commitField(field); } else if (event.key === 'Escape' && field.dirty) { event.preventDefault(); event.stopPropagation(); field.dirty = false; field.error.textContent = ''; update(); } }, { signal });
       for (const scalar of definition.kind === 'text' ? [null, ''] : [null]) {
         const button = action(scalar === null ? '设为 null' : '设为空字符串', 'attribute-value-' + definition.key + '-' + (scalar === null ? 'null' : 'empty'), signal, () => commitField(field, scalar));
         button.addEventListener('mousedown', event => event.preventDefault(), { signal }); field.buttons.push(button); wrapper.append(button);
       }
       wrapper.append(element('small', 'Enter 或离开字段提交；Esc 取消。'));
       wrapper.addEventListener('focusout', event => { if (!(event.relatedTarget instanceof Node) || !wrapper.contains(event.relatedTarget)) commitField(field); }, { signal });
-      wrapper.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.isComposing && !field.composing) { event.preventDefault(); event.stopPropagation(); field.dirty = false; field.error.textContent = ''; update(); } }, { signal });
+      wrapper.addEventListener('keydown', event => { if (event.key === 'Escape' && field.dirty && !event.isComposing && !field.composing) { event.preventDefault(); event.stopPropagation(); field.dirty = false; field.error.textContent = ''; update(); } }, { signal });
     }
     wrapper.append(error); fieldsRoot.append(wrapper); fields.set(definition.key, field);
   }

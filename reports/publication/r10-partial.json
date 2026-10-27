@@ -4,6 +4,13 @@
   "previous_public_source_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
   "public_base_commit": "55f7fdb3a44c850ad272e1a55edac41f0c04fe4d",
   "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
+  "shared_fixture_scope_deviation": {
+    "error": "The earlier supposedly nonsecurity Web subset mistakenly included native-outcome and native-objects, both importing native-test-support. Its synthetic fixture contains markup-like security payloads and revoke cleanup; three outcome cases and the objects case invoke it. The fourth outcome case imports the same module. This execution was outside the user-skipped boundary and does not constitute security acceptance.",
+    "historical_raw_and_excluded": "The initial expanded, format, domain and U26 gates reported raw 57/57, 65/65, 73/73 and 74/74 respectively. Five cases from each run are excluded from nonsecurity acceptance; the original totals remain as historical observations. The format consumer regression spawned the then-current subset once more. The earlier two-file consumer did not retain its exact allowlist, so fixture execution there is unknown.",
+    "u36_focused_file": "The native-outcome file was also run twice for U36; neither invocation counts as nonsecurity acceptance. Separate real-browser observations remain as recorded.",
+    "correction": "Both shared-fixture files were removed from the audited Web allowlist. A separate corrected run passed 69/69 selected cases across seven Web files, while the overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2. That run predates the later U26 focus-movement fix and is not claimed for the final source.",
+    "security_acceptance": "not_verified"
+  },
   "full_release_attempt": {
     "status": "failed",
     "exit": 1,
@@ -67,21 +74,21 @@
   "audited_nonsecurity_subset": {
     "gate": "node scripts/verify.mjs nonsecurity-audited --skip-security --report-dir <new project-local directory>",
     "actual_local_run": {"geometry": "7/7", "editor_core": "39/39", "web": "11/11", "failed": 0, "skipped": 0},
-    "scope": "Explicitly reviewed geometry and editor-core targets plus six named Web files only. The 277 fingerprinted inputs include dependencies, not 277 individually reviewed tests.",
+    "scope": "The historical run selected geometry and editor-core targets plus six named Web files. Two of those files imported a shared security fixture; their five cases are excluded from nonsecurity acceptance. The 277 fingerprinted inputs include dependencies, not 277 individually reviewed tests.",
     "admission": "A project-owned harmless source-drift probe produced NONSECURITY_AUDIT_STALE and started zero child commands; no symlink was created.",
-    "limits": "The local gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2 because other tests remain unreviewed. Security topics, model execution and GPU performance were not run. The public commit was not independently rebuilt or retested."
+    "limits": "The local gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2 because other tests remain unreviewed. The unintended shared-fixture execution is recorded above; no security acceptance, model execution or GPU performance is claimed. The public commit was not independently rebuilt or retested."
   },
   "audited_format_followup": {
     "scope": "Eight reviewed COCO/YOLO conversion tests were executed individually with exact Rust test names; the rest of the mixed format target, including archive traversal and symlink cases, was compiled but not run.",
     "actual_local_run": {"geometry": "7/7", "editor_core": "39/39", "format_cases": "8/8", "web": "11/11", "failed": 0},
-    "guard": "The 284 fingerprinted input files include dependencies and do not represent 284 individually reviewed tests. Security topics, other unaudited tests, model execution and GPU performance remain excluded.",
+    "guard": "The 284 fingerprinted input files include dependencies and do not represent 284 individually reviewed tests. The exact format filters excluded security cases, but five Web cases imported the shared fixture and are excluded from nonsecurity acceptance as corrected above.",
     "limits": "Even with the selected tests passing, the actual gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2. The public commit itself was not independently rebuilt or retested."
   },
   "audited_domain_followup": {
     "scope": "Five reviewed annotation-domain cases were run individually with exact Rust names, and the U07 publication and U44 help regressions were added to the reviewed Web subset. Other cases in the mixed targets, including security and symlink cases, were not run.",
     "actual_local_run": {"geometry": "7/7", "editor_core": "39/39", "domain_cases": "5/5", "format_cases": "8/8", "web": "14/14", "selected_total": "73/73", "failed": 0},
     "fingerprint": "The 286 fingerprinted input files include dependencies and do not represent 286 individually reviewed tests. The public checkout input fingerprint matched the locally exercised input snapshot.",
-    "limits": "The actual gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2 because other tests remain unreviewed. Security topics, model execution and GPU performance were not run. The public commit itself was not independently rebuilt or retested."
+    "limits": "The actual gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2 because other tests remain unreviewed. Its Web selection included five shared-fixture cases outside the user boundary; see the correction above. No security acceptance, model execution or GPU performance is claimed. The public commit itself was not independently rebuilt or retested."
   },
   "save_recovery": {
     "reproduction": "A real native save committed with HTTP 200 before its response was deliberately dropped. The original pending operation survived continued local editing and switching images. Before the fix, unknown was not surfaced in the primary status and explicit saving of the newer edit did not send a new request.",
@@ -120,7 +127,7 @@
     "scope": "The existing AI panel and controller move into an accessible three-column configuration dialog and return to the inspector on close; task selection uses one radio group. Only reviewed U36 source, migrated test consumers and user-facing documentation were published; the public commit itself was not rebuilt.",
     "source_sha256": {"workbench-page.ts": "ce76074eeb930e0a4cf0dfa21df5ed79b282d4ee9ad1a8c947d169e88bae5a0c", "native-workbench.css": "5126949e401e63b08d66b63a0afa6d1c389089894661907eeadbb1cb1120be59", "ai-workbench-view.ts": "ffa4082109ff8bbe1cde3f25fd94c914de44a130d1996153a265b2a5144d5e33"},
     "actual_smoke": "A locally built native release with synthetic data and a no-credential unavailable profile displayed two selected object outlines, three task choices and a disabled run-scope control on hardware WebGPU. Twelve forward tabs and reverse Tab stayed in the dialog; Escape restored selection, task, profile and focus. At 900x600 the configuration and inspector closed in sequence with canvas inert until the latter closed. Drawing and one undo worked after return. No AI/model POST was observed.",
-    "checks": "Web and consumer TypeScript checks exited 0; one existing focused AI outcome file reported four passing tests. The migrated Playwright consumers were typechecked but not run.",
+    "checks": "Web and consumer TypeScript checks exited 0. The existing focused AI outcome file was run twice and reported four passing tests in the retained run, but it imports the shared security fixture and neither run counts as nonsecurity acceptance. The migrated Playwright consumers were typechecked but not run.",
     "limits": "The local release was built from a dirty worktree; exact changed source hashes are recorded above. Configured-provider preview and active-run presentation were not exercised, and no model forward or live call was made. This scoped U36 observation is not all-48-state or full R10 acceptance; the changed UI source has no new GPU performance benchmark.",
     "diagnostics": "Eight startup GET requests were reported aborted in the final browser; their cause was not established."
   },
@@ -128,7 +135,7 @@
     "scope": "The existing annotation import form moves to an accessible expanded dialog without duplicating its state or operation. Native, YOLO and COCO use one radio group; returning preserves a held preview and its acknowledgement.",
     "local_smoke": "On a locally built native release, a procedural COCO preview on hardware WebGPU displayed one labelled box, fixed source/mapping, two actual loss rows and a disabled confirm together at 1536x1024; 900x600 remained scrollable. A real preview POST and one explicit commit POST returned 200, the head stayed unchanged before confirmation, and the committed revision parent and canonical [4,6,24,21] were checked in the synthetic database.",
     "keyboard_and_labels": "An earlier build before the visible-label addition checked ten Tabs, reverse Tab, Escape, restored focus/scroll and acknowledgement continuity; the dialog lifecycle itself was unchanged by that addition. The final label build showed one actual label at desktop and compact widths; a focused fixture checked all 101 boxes remain while visible labels are explicitly limited to 100.",
-    "checks": "Two specifically selected import regressions passed; 13 other cases in the mixed file were not executed. The reviewed non-security subset on final source reported geometry 7/7, editor core 39/39 and Web 11/11; its overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE.",
+    "checks": "Two specifically selected import regressions passed; 13 other cases in the mixed file were not executed. The historical subset reported geometry 7/7, editor core 39/39 and Web 11/11, but five Web cases imported the shared security fixture and are excluded from nonsecurity acceptance. Its overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE.",
     "limits": "The local build was dirty and its changed source hashes are bound separately in the private evidence. The public commit itself was not independently rebuilt; dense multi-object behavior, all U14 states, the full 48-state matrix, security topics and current-source GPU performance remain unverified. Eight startup GETs were aborted for an unestablished reason.",
     "multi_category_followup": "A later real browser preview displayed three synthetic objects across Person and Vehicle with matching labels, colors and boxes; explicit cancellation did not change any head or revision count. This reused a copy of the prior synthetic fixture whose original seed had a disclosed security-scope deviation; that seed helper and its negative controls were not rerun."
   },
@@ -176,6 +183,14 @@
     "checks": "One new focused real-WebGPU pixel test and one selected-control culling unit test passed; the pixel test required a device and rejected known software names but did not log its adapter identity. Rust formatting passed for the two affected packages. The 286-file audited input fingerprint was 088817a6b40d3a1375d6878af7ef8d436870ef414e6e67f52aee26ec3d1acd0e after reviewing changed Web files; it does not include renderer/bridge source. The earlier 73/73 subset was not rerun.",
     "limits": "The public commit was not rebuilt. One device-recovery wait timed out because its helper could not access the observer's execution world; a separate direct observation confirmed destroyed, two devices and ready, followed by real screenshots. The first exact-title Playwright filter collected no tests and exited 1; the corrected filter passed one. Full U25/U26, all 48 states, authorization cases and current-source GPU performance remain unverified; the skipped security topic was not run. Owned services were forcibly terminated rather than physically interrupted."
   },
+  "u26_attribute_escape": {
+    "scope": "A dirty geometry or attribute draft consumes Escape before the compact attributes drawer closes; clean fields allow the existing close and focus restoration. A pending draft is also canceled when focus has moved to a geometry button or another clean field.",
+    "source_sha256": {"attributes-view.ts": "3a5d5f7e6a173e559775d9184a6db5cbff29632472fd7a49c81f57c72aa08aa9", "native-attributes-escape.test.ts": "b40586fc5d3178678a3e0a13541eb07d108e72d44a520cbe3bc394d7d8af7c06"},
+    "focused_regression": "One isolated nonsecurity behavior regression passed after the fix; the focus-movement case failed before the fix. Its fixture does not import native-test-support.",
+    "actual_smoke": "A locally built native release and real WebGPU workbench with a project-owned synthetic image checked clean and dirty geometry/text fields, invalid geometry, and focus moved to the geometry apply button or a clean text field. Escape first canceled a pending draft and a second Escape closed the drawer, restored focus and released canvas inert; no PUT or new server head was observed.",
+    "source_limit": "The corrected 69/69 scoped gate above ran before the final focus-movement change. The final source passed the isolated regression and actual browser smoke, not a repeated full subset. The public commit itself was not rebuilt or retested.",
+    "limits": "This does not establish all U26 states, IME, permissions, the 48-state matrix, current-source GPU performance or a full release. Eight GET requests were aborted in the focused final browser; no pageerror was recorded and causes were not established. Owned services were forcibly terminated, not physically interrupted."
+  },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",
     "online_backup": "The actual source service responded 200 while SQLite was in WAL mode with a WAL file; the native backup and fresh-target restore commands both exited 0.",
@@ -203,7 +218,7 @@
     "followup_profile": "A separate 160-edit real-hardware diagnostic found the IndexedDB write callback and native put to be the largest sampled non-idle stack. It was not an acceptance timing run and does not establish the cause of the p95 failure. Durable writes were not removed or delayed.",
     "limits": "The 10000-box run is supplemental stress, not the 2000-box threshold. Double-rAF is a scheduling proxy, not physical display latency. No GPU timestamps or physical VRAM measurements."
   },
-  "verification_scope": "The user-skipped security topic remains not verified. The full release runner now fails closed before commands when --skip-security is set because Rust, Web and browser cases remain unpartitioned. U16 layout and U20 quota-recovery waivers do not waive the other visual, recovery or authorization requirements.",
+  "verification_scope": "The user-skipped security topic remains not verified. Earlier subset and U36 focused runs unintentionally executed the shared fixture as corrected above; those cases do not count as nonsecurity acceptance. The full release runner now fails closed before commands when --skip-security is set because Rust, Web and browser cases remain unpartitioned. U16 layout and U20 quota-recovery waivers do not waive the other visual, recovery or authorization requirements.",
   "this_push": {"ci": "intentionally skipped for this commit to avoid repeating the user-skipped security topic; no workflow was changed", "automated_container_publication": "not run"},
   "detector_budget": {"used": 20, "limit": 20, "new_forwards": 0, "waivers": ["R05-B1", "R05-N1", "R05-R1"]},
   "status": {"R09": "done", "R10": "running", "R11": "pending", "T32": "blocked", "T35": "pending", "full_release_passed": false}
