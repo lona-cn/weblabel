@@ -1,3 +1,103 @@
+[中文](#chinese)
+
+# WebLabel
+
+WebLabel is a locally hosted image annotation tool. In your browser, you can draw bounding boxes, assign classes and attributes, review annotations, and export datasets. It supports PNG/JPEG images and YOLO, COCO, and native annotation formats.
+
+To try manual annotation, use the pre-release package below; no AI setup is required. AI is an optional assistant that proposes candidates for you to accept or reject. The pre-release is for evaluation; full validation with real models and target hardware is still incomplete.
+
+## Annotation interface
+
+Select an image on the left, draw boxes in the center, and edit object classes and attributes on the right.
+
+![Annotation interface: a selected bounding box, class and attribute panels, and a “synced to server” status](docs/images/readme/editor-rc3.png)
+
+<details>
+<summary>View class and attribute settings</summary>
+
+![Class and attribute settings: names, colors, shortcuts, attribute options, and annotation guidelines](docs/images/readme/02-project-ontology.png)
+
+</details>
+
+The workbench screenshot uses v0.1.0-rc.3 and a synthetic sample image; the class settings screenshot is from an earlier version.
+
+## Try it
+
+### Download and launch
+
+The pre-release package supports x64 Windows and Linux computers. Bounding-box editing also requires a desktop browser and graphics hardware with WebGPU support; desktop Chrome or Edge is recommended.
+
+1. Go to the [v0.1.0-rc.3 downloads](https://github.com/lona-cn/weblabel/releases/tag/v0.1.0-rc.3). Choose the package ending in `win32-x64.tar.gz` for Windows or `linux-x64.tar.gz` for Linux, and download its corresponding `.sha256` checksum file.
+2. Verify the SHA256 checksum using the [download and verification instructions](docs/getting-started.md#下载预发布包), extract the entire archive, and open a terminal in the extracted directory.
+3. Run the launch command for your platform below. Keep the terminal open; press Ctrl+C to stop the service when finished.
+
+Windows (PowerShell):
+
+```powershell
+.\launch.cmd
+```
+
+Linux:
+
+```sh
+sh ./launch.sh
+```
+
+The historical rc.3 package includes Node; manual annotation does not require a separate installation of pnpm, Rust, Python, or model tools. **The current source instead builds a v2 native distribution that runs a single Rust executable and has no Node/Python product runtime; a new download package has not yet been released.** Neither is a signed installer. Linux still requires compatible system libraries; see each package's `BUNDLE.md` for maintenance instructions.
+
+After launch, open the `WEBLABEL_LOCAL_URL` displayed in the terminal, which defaults to `http://127.0.0.1:48100`. Without usable WebGPU, you can only view or diagnose the application, not draw boxes.
+
+When launched as above, data is stored in `data` under the extracted directory. Continue using the same data directory on subsequent launches, [back it up](docs/backup-restore.md) before upgrading, and do not delete it along with an old application package.
+
+### Annotate your first image
+
+1. On first launch, enter the terminal's `WEBLABEL_BOOTSTRAP_CODE` in the web page, then set and confirm a password. The default administrator is `local-admin`. The bootstrap code is valid for ten minutes and can be used only once; do not share it or capture it in screenshots.
+2. Create a project, configure classes and attributes, upload a PNG/JPEG image, and wait for processing to finish.
+3. Open the image and select the newly created specification under “固定标注规范”. Select a class under “绘制类别”, click “画框” and drag a rectangle, then fill in attributes on the right. The change is saved to the server only once the status shows “已同步到服务器”.
+
+If you already have an account, sign in with your username and password. If a service is already running, open its web address instead of starting another instance. See the [getting started guide](docs/getting-started.md) for review, importing existing annotations, and export.
+
+<details>
+<summary>Build from source</summary>
+
+First prepare the pinned tool versions using the [development environment instructions](docs/getting-started.md#开发者从源码准备本地服务), then run the following commands one at a time from the repository root. If any step fails, resolve the error before starting the service:
+
+```text
+pnpm install --frozen-lockfile
+pnpm build
+.\target\local-release\weblabel.exe doctor --mode runtime --build-dir target/local-release
+.\target\local-release\weblabel.exe serve --build-dir target/local-release --data-dir data --port 48100
+```
+
+The default build directory is `target/local-release`. On Linux, use `./target/local-release/weblabel`. Repeated builds do not overwrite the old directory; choose a new directory as described in [build and launch](docs/getting-started.md#构建与启动). When upgrading, explicitly pass the original data directory and keep the same browser origin; do not reinitialize the database or clear IndexedDB. `doctor --mode runtime` does not require build tools and does not prove that a GPU or model is available.
+
+</details>
+
+## Before you begin
+
+- **Use locally only.** The default service is accessible only on the local machine; LAN and public deployment are not supported. The current scope is rectangular image boxes and attributes, not segmentation, video, or cloud deployment.
+- **Check the save status.** “本地待同步” (pending local sync) does not mean the server has saved the change. If a conflict or save failure occurs, preserve the draft first, then follow the [troubleshooting guide](docs/troubleshooting.md).
+- **An empty annotation is not a negative sample.** Explicitly confirm that an image contains no target objects; do not infer a negative sample from empty annotations alone.
+- **Review requires a separate account.** By default, you cannot review your own submitted annotations; another account with review permission is required. Review applies only to the submitted version, and later changes must be resubmitted. A single account can still edit and save.
+- **Check format differences before export.** Select the images and annotation versions to export and create a fixed snapshot. The application asks for confirmation if the target format would lose information such as attributes.
+- **AI does not decide for you.** Candidates require explicit acceptance and can be undone. Before sending an image to an external model, project settings and server-side permissions must permit it, and you must authorize it. See the [known limitations](docs/known-limitations.md#模型事实矩阵) for models that have not yet been fully validated.
+
+The repository is currently **UNLICENSED**; no permission for redistribution or commercial use has been granted.
+
+## Further reading
+
+- [Getting started](docs/getting-started.md): sign-in, import, annotation, review, and export.
+- [Supported capabilities](docs/current-capabilities.md) · [Known limitations](docs/known-limitations.md) · [Troubleshooting](docs/troubleshooting.md).
+- [Operations](docs/operations.md) · [Backup and restore](docs/backup-restore.md).
+- [Development guide](docs/development.md) · [Continuing development](START_HERE.md).
+- [Verification](docs/verification.md) · [Verification records](reports/index.md).
+
+See the [documentation index](docs/README.md) for the complete list.
+
+---
+
+<a id="chinese"></a>
+
 # WebLabel
 
 WebLabel 是一个在本机运行的图片标注工具。你可以在浏览器里给对象画框、填写类别和属性，审核标注后导出数据集。支持 PNG/JPEG 图片，以及 YOLO、COCO 和原生标注格式。
