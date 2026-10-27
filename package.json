@@ -16,11 +16,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "start:local": "node scripts/start-local.mjs",
     "build": "node scripts/build.mjs",
-    "backup": "node scripts/backup.mjs",
-    "restore": "node scripts/restore.mjs",
-    "doctor": "node scripts/doctor.mjs",
     "docs:check": "node tools/check-docs.mjs",
     "test:task": "node scripts/task.mjs",
     "verify:fast": "node scripts/verify.mjs fast",
@@ -29,16 +25,13 @@
     "verify:gpu": "node scripts/verify.mjs gpu",
     "verify:live": "node scripts/verify.mjs live",
     "verify:release": "node scripts/verify.mjs release",
-    "typecheck:host": "pnpm --filter @weblabel/web exec tsc --noEmit -p ../agent-host/tsconfig.json",
     "test:unit": "vitest run",
     "media:fixtures": "node scripts/generate-media-fixtures.mjs",
     "wasm:probe-build": "node scripts/build-wgpu-probe.mjs",
-    "host:build": "node scripts/build-agent-host.mjs",
     "test:e2e": "node scripts/test-e2e.mjs",
     "test:gpu:software": "node scripts/test-e2e.mjs --project=e2e --grep @software-gpu --require-device",
     "test:contracts": "node --test tests/contracts-validation.test.mjs && node --disallow-code-generation-from-strings --test tests/contracts-browser-csp.test.mjs",
     "contracts:generate": "cargo run -p xtask -- contracts-generate && node tools/generate-browser-validators.mjs",
-    "contracts:check": "cargo run -p xtask -- contracts-check && node tools/generate-browser-validators.mjs --check",
-    "demo:seed": "cargo run -p weblabel-api -- demo-seed"
+    "contracts:check": "cargo run -p xtask -- contracts-check && node tools/generate-browser-validators.mjs --check"
   }
 }

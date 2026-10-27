@@ -42,7 +42,8 @@ test('T05 Rust renderer submits the asymmetric scene to a real WebGPU canvas', a
   const probe = await page.evaluate(async () => {
     try {
       // The wasm-bindgen module is generated under target/ and served locally; it is not a source module.
-      const module = (await import('/renderer_wgpu_probe.js')) as unknown as RendererModule;
+      const moduleUrl = '/renderer_wgpu_probe.js';
+      const module = (await import(/* @vite-ignore */ moduleUrl)) as RendererModule;
       await module.default();
       const canvas = document.querySelector<HTMLCanvasElement>('#target');
       if (!canvas) return { state: 'blocked', reason: 'canvas missing' };
@@ -110,6 +111,7 @@ test('T05 Rust renderer submits the asymmetric scene to a real WebGPU canvas', a
   }, probe);
   assertGateRequirements(probe as BootResult);
   if (probe.state === 'ready') {
+    if (!('canvasWidth' in probe)) throw new Error('Ready renderer did not return its actual canvas dimensions');
     const dpr = await page.evaluate(() => window.devicePixelRatio || 1);
     expect(probe.canvasWidth).toBe(Math.round(640 * dpr));
     expect(probe.canvasHeight).toBe(Math.round(480 * dpr));
@@ -134,6 +136,7 @@ test('T05 Rust renderer submits the asymmetric scene to a real WebGPU canvas', a
     expect(bboxPixel[1]).toBeGreaterThan(200);
     expect(bboxPixel[2]).toBeLessThan(60);
   } else {
+    if (!('reason' in probe)) throw new Error(`Renderer not ready: ${probe.state}`);
     expect(probe.reason).toBeTruthy();
     console.warn(`T05_RUST_RENDERER ${probe.state}: ${probe.reason}`);
   }
@@ -190,7 +193,8 @@ async function bootGoldenScene(
         // The wasm-bindgen module is generated under target/ and served
         // locally; it is not a source module, so it cannot be statically
         // imported here.
-        const module = (await import('/renderer_wgpu_probe.js')) as unknown as RendererModule;
+        const moduleUrl = '/renderer_wgpu_probe.js';
+        const module = (await import(/* @vite-ignore */ moduleUrl)) as RendererModule;
         await module.default();
         const canvas = document.querySelector<HTMLCanvasElement>('#target');
         if (!canvas) return { state: 'blocked', reason: 'canvas missing' };

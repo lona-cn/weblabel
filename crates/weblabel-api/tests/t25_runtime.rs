@@ -1,5 +1,5 @@
-//! Engineering evidence only: real supervised Node + real API tool boundary,
-//! synthetic in-memory loopback model protocol. No live account/model claim.
+//! Native production factory + real API/queue boundary; synthetic loopback HTTP.
+//! No detector, official CLI, account, or paid model is exercised.
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
@@ -8,18 +8,15 @@ use axum::{
 };
 use image::{DynamicImage, ImageFormat, RgbImage};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::Path, time::Duration};
 use tower::ServiceExt;
 use weblabel_api::{
     auth::{hash_launch_code, AuthConfig},
     config::ServerConfig,
-    jobs::{
-        model_jobs::{process_model_next, ProductionRunner},
-        queue::JobQueue,
-    },
+    jobs::{model_jobs::process_model_next, queue::JobQueue},
     media::ingest::{import_one, ImportInput},
     router,
-    runtime::host::HostConfig,
+    runtime::runner::ProductionRunner,
     AppState,
 };
 
@@ -64,15 +61,15 @@ async fn call(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn supervised_real_host_submits_validated_predictions_and_reclaims_tokens() {
+async fn native_factory_submits_validated_predictions_and_reclaims_tokens() {
     scenario("success").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn timeout_reclaims_host_and_revokes_token_without_retry() {
+async fn timeout_revokes_token_without_retry() {
     scenario("timeout").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn cancellation_reclaims_host_while_provider_is_silent() {
+async fn cancellation_stops_silent_provider() {
     scenario("cancel").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -84,7 +81,7 @@ async fn unconfigured_real_profile_fails_without_mock_or_model_call() {
     scenario("unconfigured").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn changed_host_parameters_cannot_reuse_approved_configuration() {
+async fn changed_native_parameters_cannot_reuse_approved_configuration() {
     scenario("changed_config").await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -99,8 +96,56 @@ async fn policy_revocation_stops_silent_provider_and_revokes_token() {
 async fn membership_demotion_stops_silent_provider_before_deadline() {
     scenario("membership_revoke").await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn malformed_native_output_never_publishes_or_adopts_candidates() {
+    scenario("invalid_output").await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn truncated_native_stream_never_publishes_or_retries() {
+    scenario("truncated_output").await;
+}
 async fn scenario(scenario: &'static str) {
-    let temp = tempfile::tempdir().unwrap();
+    // Give only this fixture process a synthetic credential, without mutating
+    // the parallel test harness environment or inspecting any user credential.
+    if std::env::var("R09_SYNTHETIC_CONSUMER").as_deref() != Ok(scenario) {
+        let name = match scenario {
+            "success" => "native_factory_submits_validated_predictions_and_reclaims_tokens",
+            "timeout" => "timeout_revokes_token_without_retry",
+            "cancel" => "cancellation_stops_silent_provider",
+            "crop" => "crop_only_run_never_requests_or_sends_full_image",
+            "unconfigured" => "unconfigured_real_profile_fails_without_mock_or_model_call",
+            "changed_config" => "changed_native_parameters_cannot_reuse_approved_configuration",
+            "expired" => "expired_capability_cannot_start_provider_or_issue_new_token",
+            "policy_revoke" => "policy_revocation_stops_silent_provider_and_revokes_token",
+            "membership_revoke" => "membership_demotion_stops_silent_provider_before_deadline",
+            "invalid_output" => "malformed_native_output_never_publishes_or_adopts_candidates",
+            "truncated_output" => "truncated_native_stream_never_publishes_or_retries",
+            _ => unreachable!(),
+        };
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env("R09_SYNTHETIC_CONSUMER", scenario)
+            .env("SYNTHETIC_KEY", "engineering-synthetic-key")
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "the isolated consumer must actually execute exactly one test"
+        );
+        return;
+    }
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-artifacts/R09-runtime");
+    std::fs::create_dir_all(&root).unwrap();
+    let temp = tempfile::tempdir_in(root).unwrap();
     let config = ServerConfig {
         bind: HOST.parse::<SocketAddr>().unwrap(),
         database_url: format!("sqlite:{}", temp.path().join("runtime.sqlite").display()),
@@ -212,80 +257,41 @@ async fn scenario(scenario: &'static str) {
     }
     let model_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = model_calls.clone();
-    let model = Router::new().route("/chat/completions", post(move |axum::Json(body): axum::Json<Value>| { let counter=counter.clone(); async move { counter.fetch_add(1,std::sync::atomic::Ordering::SeqCst); assert_eq!(body.to_string().contains("data:image/png;base64,"), scenario == "crop"); if !matches!(scenario,"success"|"crop") { std::future::pending::<()>().await; } let draft=json!({"changes":[],"issues":[{"issue_id":"runtime-issue","object_id":null,"code":"synthetic_review","message":"Engineering fixture only","region":null}],"score":null}); let frame=json!({"choices":[{"index":0,"delta":{"content":draft.to_string()},"finish_reason":"stop"}]}); ([("content-type","text/event-stream")], format!("data: {frame}\n\ndata: [DONE]\n\n")) } }));
+    let model = Router::new().route("/chat/completions", post(move |axum::Json(body): axum::Json<Value>| {
+        let counter = counter.clone();
+        async move {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(body.to_string().contains("data:image/png;base64,"), scenario == "crop");
+            if !matches!(scenario, "success" | "crop" | "invalid_output" | "truncated_output") {
+                std::future::pending::<()>().await;
+            }
+            let draft = json!({"changes":[],"issues":[{"issue_id":"runtime-issue","object_id":null,"code":"synthetic_review","message":"Engineering fixture only","region":null}],"score":null});
+            let text = if scenario == "invalid_output" { "not candidate JSON".to_owned() } else { draft.to_string() };
+            let frame = json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":"stop"}]});
+            let response = if scenario == "truncated_output" { "data: {\"choices\":".to_owned() } else { format!("data: {frame}\n\ndata: [DONE]\n\n") };
+            ([("content-type", "text/event-stream")], response)
+        }
+    }));
     let model_server = tokio::spawn(async move {
         axum::serve(model_listener, model).await.unwrap();
     });
-    // Bearer tools share the server Host/Origin policy, not browser-session CSRF.
-    let api_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api_address = api_listener.local_addr().unwrap();
-    let api_base = format!("http://{api_address}");
-    let mut tool_auth = state.auth.clone();
-    tool_auth.config.allowed_hosts = vec![api_address.to_string()];
-    tool_auth.config.allowed_origins = vec![api_base.clone()];
-    let tools = weblabel_api::runtime::agent_tools::router(
-        state.repository.clone(),
-        state.run_tokens.clone(),
-        tool_auth,
-    );
-    let api_server = tokio::spawn(async move {
-        axum::serve(api_listener, tools).await.unwrap();
-    });
-    let host_config = temp.path().join("host.json");
-    let mut host_execution = execution_config.clone();
+    // Native HTTP invokes the shared authorized tool service in-process. The
+    // API address is used only by providers that actually spawn MCP children.
+    let api_address = config.bind;
+    let native_config = temp.path().join("runtime.json");
+    let mut native_execution = execution_config.clone();
     if scenario == "changed_config" {
-        host_execution["budgets"] = json!({"max_tool_turns":500});
+        native_execution["budgets"] = json!({"max_tool_turns":500});
     }
-    std::fs::write(&host_config,json!({"apiBase":api_base,"timeoutMs":10000,"providers":[{"provider":"mimo_api","config":host_execution}]}).to_string()).unwrap();
-    let node = std::env::var_os("WEBLABEL_TEST_NODE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(if cfg!(windows) {
-                "C:/Program Files/nodejs/node.exe"
-            } else {
-                "/usr/bin/node"
-            })
-        });
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap();
-    let script = root.join("target/agent-host/runtime.mjs");
-    assert!(
-        script.is_file(),
-        "Build actual Node host before running tests"
-    );
-    let mut extra = BTreeMap::new();
-    extra.insert(
-        "WEBLABEL_HOST_CONFIG".to_owned(),
-        host_config.to_string_lossy().into_owned(),
-    );
-    extra.insert(
-        "SYNTHETIC_KEY".to_owned(),
-        "engineering-synthetic-key".to_owned(),
-    );
-    for key in ["SystemRoot", "SystemDrive", "TEMP", "TMP", "WINDIR"] {
-        if let Ok(value) = std::env::var(key) {
-            extra.insert(key.to_owned(), value);
-        }
-    }
-    let mut allowed = extra.keys().cloned().collect::<Vec<_>>();
-    allowed.push("WEBLABEL_RUN_TOKEN".to_owned());
-    let host = HostConfig {
-        executable: node.clone(),
-        argv: vec![script.to_string_lossy().replace(r"\\?\", "")],
-        cwd: temp.path().to_path_buf(),
-        allowed_env: allowed,
-        source_env: BTreeMap::new(),
-        extra_env: extra,
-        trusted_executable_roots: vec![node.parent().unwrap().to_path_buf()],
-        trusted_cwd_roots: vec![temp.path().to_path_buf()],
-    };
+    std::fs::write(&native_config, json!({"schema_version":1,"timeout_ms":10000,"providers":[{"provider":"mimo_api","config":native_execution}]}).to_string()).unwrap();
     let runner = if scenario == "unconfigured" {
         ProductionRunner::unconfigured(state.run_tokens.clone())
     } else {
         ProductionRunner::new(
-            host,
+            state.repository.clone(),
+            api_address,
+            &native_config.canonicalize().unwrap(),
+            &["SYNTHETIC_KEY".to_owned()],
             state.run_tokens.clone(),
             Duration::from_secs(if scenario == "timeout" { 2 } else { 10 }),
         )
@@ -350,6 +356,7 @@ async fn scenario(scenario: &'static str) {
         cancel
     );
     assert!(execution.unwrap().is_some());
+    runner.shutdown().await.unwrap();
     let mut tx = state.repository.begin_write().await.unwrap();
     let status: String = sqlx::query_scalar("SELECT state FROM model_runs WHERE run_id=?")
         .bind(run_id)
@@ -368,6 +375,28 @@ async fn scenario(scenario: &'static str) {
     .fetch_all(tx.connection())
     .await
     .unwrap();
+    let revisions: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM annotation_revisions WHERE project_id=?")
+            .bind(project)
+            .fetch_one(tx.connection())
+            .await
+            .unwrap();
+    assert_eq!(
+        revisions, 1,
+        "provider output must never adopt itself into a human revision"
+    );
+    let decisions: i64 = sqlx::query_scalar("SELECT count(*) FROM suggestion_decisions d JOIN suggestion_sets s ON s.suggestion_set_id=d.suggestion_set_id WHERE s.run_id=?")
+        .bind(run_id).fetch_one(tx.connection()).await.unwrap();
+    assert_eq!(
+        decisions, 0,
+        "generation cannot create an adoption journal entry"
+    );
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM suggestion_sets s JOIN suggestion_set_states st ON st.suggestion_set_id=s.suggestion_set_id JOIN predictions p ON p.prediction_id=s.prediction_id WHERE s.run_id=? AND st.state='pending' AND p.source='provider'")
+        .bind(run_id).fetch_one(tx.connection()).await.unwrap();
+    assert_eq!(
+        pending, predictions,
+        "only validated, transactionally published provider candidates remain pending"
+    );
     tx.commit().await.unwrap();
     assert_eq!(
         status,
@@ -402,14 +431,16 @@ async fn scenario(scenario: &'static str) {
             .is_some_and(|data| data.contains("RUN_CAPABILITY_EXPIRED"))));
     }
     if scenario == "timeout" {
-        assert!(events.iter().any(|(_, _, data)| data
-            .as_deref()
-            .is_some_and(|data| data.contains("RUN_TIMEOUT"))));
+        assert!(events.iter().any(|(_, _, data)| {
+            data.as_deref().is_some_and(|data| {
+                serde_json::from_str::<Value>(data).unwrap()["code"] == "timeout"
+            })
+        }));
     }
     if scenario == "changed_config" {
         assert!(events.iter().any(|(_, _, data)| data
             .as_deref()
-            .is_some_and(|data| data.contains("profile_configuration_changed"))));
+            .is_some_and(|data| data.contains("PROFILE_CONFIGURATION_CONFLICT"))));
     }
     if scenario == "crop" {
         assert!(events
@@ -419,5 +450,4 @@ async fn scenario(scenario: &'static str) {
             .any(|data| data["kind"] == "crop" && data["pixel_count"] == 256));
     }
     model_server.abort();
-    api_server.abort();
 }

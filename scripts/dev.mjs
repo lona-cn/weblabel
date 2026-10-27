@@ -4,7 +4,6 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { resolveArgv } from './task.mjs';
-import { validateAdminRecoveryEnvironment, nonApiEnvironment } from './start-local.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 
@@ -19,8 +18,13 @@ function stopTree(child, signal) {
   }
 }
 
+function nonApiEnvironment(parent) {
+  const env = { ...parent };
+  for (const key of Object.keys(env)) if (key.startsWith('WEBLABEL_ADMIN_RECOVERY_')) delete env[key];
+  return env;
+}
+
 export function developmentEnvironments(parent) {
-  validateAdminRecoveryEnvironment(parent);
   const api = { ...parent, WEBLABEL_COOKIE_SECURE: parent.WEBLABEL_COOKIE_SECURE ?? 'false' };
   const web = nonApiEnvironment(api);
   return [api, web];
@@ -90,7 +94,7 @@ function main() {
     return 1;
   }
   return runProcessGroup([
-    ['cargo', 'run', '-p', 'weblabel-api'],
+    ['cargo', 'run', '-p', 'weblabel-api', '--bin', 'weblabel', '--', 'serve-api'],
     ['pnpm', '--filter', '@weblabel/web', 'run', 'dev'],
   ], root, environments);
 }

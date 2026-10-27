@@ -21,8 +21,9 @@ fn port() -> u16 {
         .port()
 }
 fn command(database: &std::path::Path, objects: &std::path::Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_weblabel-api"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_weblabel"));
     command
+        .arg("serve-api")
         .env("WEBLABEL_BIND", format!("127.0.0.1:{}", port()))
         .env(
             "WEBLABEL_DATABASE_URL",
@@ -34,7 +35,8 @@ fn command(database: &std::path::Path, objects: &std::path::Path) -> Command {
         .env_remove("WEBLABEL_RESTORE_AUTH")
         .env_remove("WEBLABEL_ADMIN_RECOVERY_REQUEST_ID")
         .env_remove("WEBLABEL_ADMIN_RECOVERY_USERNAME")
-        .env_remove("WEBLABEL_HOST_EXECUTABLE")
+        .env_remove("WEBLABEL_RUNTIME_CONFIG")
+        .env_remove("WEBLABEL_RUNTIME_ALLOWED_ENV")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
@@ -52,7 +54,7 @@ fn another_api_cannot_open_the_same_database_and_process_exit_releases_ownership
     let (ready, receiver) = mpsc::channel();
     let output = std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
-            if line.unwrap().contains("WebLabel API listening") {
+            if line.unwrap().starts_with("WEBLABEL_LOCAL_URL=") {
                 let _ = ready.send(());
                 break;
             }
@@ -84,7 +86,7 @@ fn another_api_cannot_open_the_same_database_and_process_exit_releases_ownership
     let (ready, receiver) = mpsc::channel();
     let output = std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
-            if line.unwrap().contains("WebLabel API listening") {
+            if line.unwrap().starts_with("WEBLABEL_LOCAL_URL=") {
                 let _ = ready.send(());
                 break;
             }

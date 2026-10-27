@@ -12,6 +12,10 @@ const PHASE: Record<SavePhase, string> = { idle: '无待保存更改', unsaved: 
 export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: EditorPort, recovery: DraftRecovery, signal: AbortSignal): () => void {
   const status = element('p'); status.dataset.testid = 'save-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const receipts = element('p'), error = element('p'); error.setAttribute('role', 'alert');
+  const certificate = element('details'), certificateValues = element('dl');
+  certificateValues.dataset.testid = 'save-certificate';
+  certificate.append(element('summary', '保存记录与确认凭证（技术详情）'), certificateValues);
+  let lastCertificate: SaveStatusSnapshot | null = null;
   const controls = element('div', undefined, 'r07-button-row');
   let busy = false;
   const perform = async (callback: () => Promise<void>) => {
@@ -39,7 +43,7 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
   const diagnostics = element('details'); diagnostics.dataset.testid = 'save-diagnostic'; const diagnosticText = element('pre'); diagnostics.append(element('summary', '保存技术诊断（上次操作）'), diagnosticText);
   const recoveryBanner = element('section'); recoveryBanner.dataset.testid = 'recovery-banner';
   const conflictBanner = element('p'); conflictBanner.dataset.testid = 'conflict-banner'; conflictBanner.setAttribute('role', 'status');
-  root.append(status, receipts, conflictBanner, recoveryBanner, controls, labeled('完成状态（保存的文档状态）', completion), negativeLabel, complete, diagnostics, error);
+  root.append(status, receipts, certificate, conflictBanner, recoveryBanner, controls, labeled('完成状态（保存的文档状态）', completion), negativeLabel, complete, diagnostics, error);
   const branchList = element('div'), compare = element('div'), branchActions = element('div', undefined, 'r07-button-row');
   recoveryBanner.append(element('h2', '草稿恢复'), element('p', '明确选择一个本地分支后恢复或使用服务器版本并留档。不会自动选择最新分支，不会自动合并；原记录与来源始终保留。'), branchList, compare, branchActions);
   let chosen: string | null = null, branchRows: readonly DraftBranchEnvelope[] | null = null, lastDocument = state.document, legacyRows = state.legacyRows, differenceIndex = 0;
@@ -72,6 +76,15 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     const snapshot = state.queue.getStatus(state.assetId), record = state.queue.toRecord(state.assetId), current = sessionCurrent(state);
     status.textContent = PHASE[snapshot.phase] + ' · 本地版本 ' + snapshot.local_generation + ' / 服务器确认 ' + snapshot.synced_generation;
     status.dataset.state = snapshot.phase;
+    status.dataset.phase = snapshot.phase; status.dataset.dirty = String(snapshot.dirty);
+    if (lastCertificate !== snapshot) {
+      lastCertificate = snapshot; certificateValues.replaceChildren();
+      const values: [string, string | number][] = [['local_commit', snapshot.local_commit ? '本地提交凭证' : 'null（无本地提交凭证）']];
+      if (snapshot.local_commit) for (const key of ['draft_id', 'write_token', 'persist_seq', 'edit_seq', 'generation'] as const) values.push(['local_commit.' + key, snapshot.local_commit[key]]);
+      values.push(['last_ack', snapshot.last_ack ? '服务器确认凭证' : 'null（无服务器确认）']);
+      if (snapshot.last_ack) for (const key of ['revision_id', 'generation', 'at'] as const) values.push(['last_ack.' + key, snapshot.last_ack[key]]);
+      for (const [key, value] of values) certificateValues.append(element('dt', key), element('dd', String(value)));
+    }
     receipts.textContent = (snapshot.local_commit ? '✓ 本地事务已持久化 · ' + snapshot.local_commit.draft_id + ' / ' + snapshot.local_commit.write_token + ' · 编辑序号 ' + snapshot.local_commit.edit_seq : '本地事务尚未完成或凭证不可用')
       + ' ｜ ' + (snapshot.last_ack ? '服务器 ACK：' + snapshot.last_ack.revision_id + ' · 版本 ' + snapshot.last_ack.generation : '服务器尚未确认') + ' ｜ dirty=' + snapshot.dirty;
     conflictBanner.hidden = !snapshot.writes_paused && state.recovery?.kind !== 'conflict';

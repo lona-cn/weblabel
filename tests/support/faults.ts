@@ -13,6 +13,7 @@ import type { ApiClient, TestApp } from './app';
 import type { AnnotationDocument } from '../../packages/contracts/generated/AnnotationDocument';
 import type { AnnotationRevision } from '../../packages/contracts/generated/AnnotationRevision';
 import type { Viewport } from '../../apps/web/src/lib/editor/types';
+import type { EditorHost } from '../../apps/web/src/lib/editor/EditorHost';
 
 // Test-only output seam; callers select a fresh owned root before importing this module.
 const t30Root = process.env.WEBLABEL_T30_TEST_ROOT ? ownedReportRoot(process.env.WEBLABEL_T30_TEST_ROOT) : taskReportPath('T30');
@@ -77,12 +78,12 @@ export async function actualResponse(route:Route, base:string) {
 interface Device { destroy():void; lost:Promise<{reason:string;message:string}> }
 interface Adapter { requestDevice(...args:unknown[]):Promise<Device> }
 interface GPU { requestAdapter(...args:unknown[]):Promise<Adapter|null> }
-interface ReadOnlyHost {getSnapshot():AnnotationDocument|null;getGeneration():number|null;getViewport():Viewport|null;getObjectHashes():Record<string,string>|null}
+type ObservedHost = Pick<EditorHost, 'getSnapshot' | 'getGeneration' | 'getViewport' | 'getObjectHashes' | 'dispatch'>;
 export interface BrowserFaultControl {
   quota:boolean;
   devices:Device[];
   losses:{reason:string;message:string}[];
-  hosts:ReadOnlyHost[];
+  hosts:ObservedHost[];
   destroyDevice():Promise<{reason:string;message:string}>;
 }
 declare global { interface Window {__t30Faults:BrowserFaultControl} }
@@ -115,7 +116,7 @@ export async function observeEditor(page:Page):Promise<void> {
   await page.evaluate(async()=>{
     const moduleUrl='/src/lib/editor/EditorHost.ts';
     // Runs in the browser realm; a Node static import would instantiate a different module, not the page's Vite module.
-    const {EditorHost}=await import(/* @vite-ignore */ moduleUrl) as {EditorHost:{prototype:{mount(this:ReadOnlyHost,canvas:HTMLCanvasElement):void}}};
+    const {EditorHost}=await import(/* @vite-ignore */ moduleUrl) as {EditorHost:{prototype:{mount(this:ObservedHost,canvas:HTMLCanvasElement):void}}};
     const mount=EditorHost.prototype.mount;
     EditorHost.prototype.mount=function(canvas){window.__t30Faults.hosts.push(this);return Reflect.apply(mount,this,[canvas]);};
   });
@@ -168,7 +169,7 @@ export async function persistentCopy(app:TestApp, directory:string):Promise<Pers
       const address=listener.address();if(!address||typeof address==='string')throw new Error('No API port');
       const closed=Promise.withResolvers<void>();listener.close(()=>closed.resolve());await closed.promise;base=`http://127.0.0.1:${address.port}`;
       const configured=typeof extra==='function'?await extra(base):extra;
-      child=spawn(binary,[],{cwd:process.cwd(),env:{...process.env,...configured,WEBLABEL_BIND:`127.0.0.1:${address.port}`,WEBLABEL_DATABASE_URL:`sqlite:${database}`,WEBLABEL_OBJECT_ROOT:path.join(directory,'objects'),WEBLABEL_ENV:'development',WEBLABEL_COOKIE_SECURE:'false',WEBLABEL_TEST_MANUAL_MODEL_WORKER:'0'},stdio:['ignore','pipe','pipe']});
+      child=spawn(binary,['serve-api'],{cwd:process.cwd(),env:{...Object.fromEntries(['PATH','Path','PATHEXT','SystemRoot','SystemDrive','WINDIR','TEMP','TMP','TMPDIR'].filter(key=>process.env[key]).map(key=>[key,process.env[key]])),...configured,WEBLABEL_BIND:`127.0.0.1:${address.port}`,WEBLABEL_DATABASE_URL:`sqlite:${database}`,WEBLABEL_OBJECT_ROOT:path.join(directory,'objects'),WEBLABEL_ENV:'development',WEBLABEL_COOKIE_SECURE:'false',WEBLABEL_TEST_MANUAL_MODEL_WORKER:'0'},stdio:['ignore','pipe','pipe']});
       let output='';child.stdout?.on('data',chunk=>{output+=String(chunk);});child.stderr?.on('data',chunk=>{output+=String(chunk);});
       const deadline=Date.now()+20000;
       while(Date.now()<deadline){if(child.exitCode!==null)throw new Error(`Restart exited: ${output}`);try{if((await fetch(`${base}/health`)).status===204)return;}catch{}await delay(50);}

@@ -5,81 +5,25 @@ import type { AnnotationDocument } from '../../packages/contracts/generated/Anno
 import type { AnnotationRevision } from '../../packages/contracts/generated/AnnotationRevision';
 import type { SaveRequest } from '../../packages/contracts/generated/SaveRequest';
 import type { SaveResponse } from '../../packages/contracts/generated/SaveResponse';
-import type { EditorHost } from '../../apps/web/src/lib/editor/EditorHost';
-import type { LocalObjectFlagMap } from '../../apps/web/src/lib/editor/types';
+import type { WorkbenchTestObserver } from '../../apps/web/src/features/workbench/test-observer';
 
 interface TransientObservation {
   counters: { snapshots: number; committedDocuments: number };
   serializedObjects: number;
   validationObjects: number;
   generation: number | null;
-  objects: AnnotationDocument['objects'];
+  objects: ReadonlyArray<AnnotationDocument['objects'][number]>;
 }
 
-// No production hook: resolve the host which CanvasView actually mounted. Only
-// snapshot methods are instrumented; both wrappers always execute the original.
+// Test-build-only observation of the controller that the real route mounted,
+// not the separate synthetic dense laboratory. Every mutation uses that host.
 async function mounted(page: Page, action: 'observe' | 'document' | 'nativeDelete' | 'consumerInvalidSelect' = 'observe', objectId = '') {
+  await page.waitForFunction(() => window.__wl_workbench_test?.surface === 'routed-native-workbench');
   return page.evaluate(({ action, objectId }) => {
-    interface Fiber {
-      type?: { name?: string }; return?: Fiber; child?: Fiber; sibling?: Fiber;
-      stateNode?: { current?: Fiber }; memoizedState?: Hook; memoizedProps?: unknown;
-    }
-    interface Hook { memoizedState: unknown; next?: Hook }
-    interface Counters { snapshots: number; committedChecks: number; committedDocuments: number }
-    interface Probe { host: EditorHost; counters: Counters }
-    type FiberElement = HTMLElement & { __t28Probe?: Probe };
-    function owner(element: HTMLElement, name: string): Fiber {
-      const key = Object.keys(element).find(key => key.startsWith('__reactFiber$'));
-      if (!key) throw new Error(`No React fiber on ${element.dataset.testid}`);
-      let root = (element as unknown as Record<string, Fiber>)[key];
-      while (root.return) root = root.return;
-      // DOM's fiber pointer can retain the previous alternate after a commit.
-      // Read the committed tree, not stale props from that pointer.
-      const current = root.stateNode?.current;
-      if (!current) throw new Error('Committed React root not found');
-      const pending = [current];
-      while (pending.length) {
-        const fiber = pending.pop()!;
-        if (fiber.type?.name === name) return fiber;
-        if (fiber.sibling) pending.push(fiber.sibling);
-        if (fiber.child) pending.push(fiber.child);
-      }
-      throw new Error(`Actual ${name} owner not found`);
-    }
-    const canvas = document.querySelector<FiberElement>('[data-testid="annotation-canvas"]');
-    const list = document.querySelector<HTMLElement>('[data-testid="object-list"]');
-    if (!canvas || !list) throw new Error('Production Workbench is not mounted');
-    const ref = owner(canvas, 'CanvasView').memoizedState?.next?.next?.memoizedState as { current: EditorHost | null };
-    const host = ref.current;
-    if (!host || host.status !== 'ready') throw new Error('Actual mounted host is not ready');
-    if (!canvas.__t28Probe) {
-      const counters: Counters = { snapshots: 0, committedChecks: 0, committedDocuments: 0 };
-      const snapshot = host.getSnapshot;
-      const committed = host.getCommittedSnapshot;
-      host.getSnapshot = function () { counters.snapshots += 1; return snapshot.call(this); };
-      host.getCommittedSnapshot = function (delta) {
-        counters.committedChecks += 1;
-        const document = committed.call(this, delta);
-        if (document !== null) counters.committedDocuments += 1;
-        return document;
-      };
-      canvas.__t28Probe = { host, counters };
-    }
-    if (canvas.__t28Probe.host !== host) throw new Error('Canvas host changed during observation');
-    const delta = action === 'nativeDelete' ? host.dispatch({ kind: 'delete', object_ids: [objectId] }) : null;
-    const documentSnapshot = action === 'document' ? host.getSnapshot() : null;
-    const consumer = owner(list, 'ObjectList').memoizedProps as {
-      objects: AnnotationDocument['objects']; selectedIds: string[]; localFlags: LocalObjectFlagMap; onSelect(id: string): void;
-    };
-    if (action === 'consumerInvalidSelect') consumer.onSelect(objectId);
-    return {
-      document: documentSnapshot, delta, error: host.error,
-      objects: consumer.objects, selectedIds: consumer.selectedIds,
-      consumerFlags: consumer.localFlags, nativeFlags: host.getLocalFlags(),
-      generation: host.getGeneration(), counters: { ...canvas.__t28Probe.counters },
-      serializedObjects: host.getSerializedInputObjects(), validationObjects: host.getValidationInputObjects(),
-      adapter: host.getAdapterDiagnostics(),
-    };
+    const observedWindow: Window & { __wl_workbench_test?: WorkbenchTestObserver } = window;
+    const observer = observedWindow.__wl_workbench_test;
+    if (!observer || document.querySelector('.dense-harness')) throw new Error('Actual routed workbench observer required');
+    return observer.inspect(action, objectId);
   }, { action, objectId });
 }
 
@@ -183,7 +127,7 @@ test('T28 actual Workbench: transient flags, locked native delete recovery, pers
     await page.getByTestId('login-password').fill(seededProject.login.password);
     await page.getByTestId('login-submit').click();
     await expect(page.getByTestId('login-submit')).toHaveCount(0);
-    await page.goto(`${origin}/?project_id=${seededProject.project_id}&asset_revision_id=${asset.asset_revision_id}`);
+    await page.goto(`${origin}/?project_id=${seededProject.project_id}&asset_revision_id=${asset.asset_revision_id}&ontology_version_id=${seededProject.ontology_version_id}`);
     await hardwareReady(page);
     evidence.denseDom = await boundedObjects(page, 2000);
     const start = await mounted(page, 'document');
@@ -218,7 +162,7 @@ test('T28 actual Workbench: transient flags, locked native delete recovery, pers
     await expect(page.getByTestId('object-hide-selected')).toHaveAttribute('aria-pressed', 'true');
     await page.getByTestId('object-lock-selected').click();
     await expect(first).toHaveAttribute('data-locked', 'true');
-    await expect(first).toHaveAccessibleName(`对象 ${firstId}，已隐藏，已锁定`);
+    await expect(first).toHaveAccessibleName('Person #1，已隐藏，已锁定');
     const flagged = await mounted(page);
     expect(flagged.selectedIds).toEqual([firstId]);
     expect(flagged.consumerFlags).toEqual({ [firstId]: { hidden: true, locked: true } });
@@ -264,7 +208,7 @@ test('T28 actual Workbench: transient flags, locked native delete recovery, pers
     await page.getByTestId('object-lock-selected').click();
     const beforeLockedDelete = await mounted(page);
     // Keep this direct-native error check distinct from the production keyboard
-    // regression: this CanvasView's real WASM -> onDelta -> SaveQueue.
+    // regression: this routed host's real WASM -> applyDelta -> SaveQueue.
     const lockedDelete = await mounted(page, 'nativeDelete', firstId);
     expect(lockedDelete.error?.code).toBe('OBJECT_LOCKED');
     if (lockedDelete.delta) {
@@ -379,7 +323,8 @@ test('T28 actual Workbench: transient flags, locked native delete recovery, pers
     const beforeRejectedSelection = await mounted(page);
     expect(beforeRejectedSelection.nativeFlags[firstId]?.locked).toBe(true);
     await mounted(page, 'consumerInvalidSelect', 't28-no-longer-present-object');
-    await expect(page.getByRole('alert').filter({ hasText: 'OBJECT_NOT_FOUND' })).toBeVisible();
+    // Native EditorPort rejects a stale list identity before calling Rust.
+    // Unlike the direct-native error path, the consumer does not invent an error.
     await expect(first).toHaveAttribute('aria-selected', 'true');
     await expect(first).toHaveAttribute('data-locked', 'true');
     await expect(page.getByTestId('undo')).toBeDisabled();
@@ -388,6 +333,7 @@ test('T28 actual Workbench: transient flags, locked native delete recovery, pers
     noTransientDocument(beforeRejectedSelection, afterRejectedSelection);
     expect(afterRejectedSelection.selectedIds).toEqual([firstId]);
     expect(afterRejectedSelection.nativeFlags).toEqual(beforeRejectedSelection.nativeFlags);
+    expect(afterRejectedSelection.consumerError).toBe(beforeRejectedSelection.consumerError);
     await page.waitForTimeout(1000);
     expect(puts).toHaveLength(2);
     expect(await readHead()).toEqual(undoHead);
@@ -397,6 +343,9 @@ test('T28 actual Workbench: transient flags, locked native delete recovery, pers
       transientPUTs: 0, lockedDelete: lockedDelete.error?.code,
       savedObjectCounts: puts.map(put => put.document.objects.length),
       committedDocuments: undone.counters.committedDocuments, adapter: undone.adapter }));
+    await page.getByTestId('nav-projects').click();
+    await page.waitForFunction(() => window.__wl_workbench_test === undefined);
+    expect(await page.evaluate(() => '__wl_test' in window)).toBe(false);
   } finally {
     await Promise.allSettled(pendingResponses);
     await writeFile(`${evidencePrefix}.raw.json`, JSON.stringify({ ...evidence, puts, putResponses, browserErrors }, null, 2));

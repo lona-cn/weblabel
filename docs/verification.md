@@ -25,37 +25,50 @@ G1/G2 可以供内部继续开发，但不是所有模型已接入的发布声�
 
 ```text
 pnpm dev                       Vite + Rust API；关闭时清理子进程树
-pnpm build                     contracts check + WASM + Web + Node Host + Rust release
-pnpm start:local               启动已构建的本地版本，缺构建即报错
-pnpm run doctor                只读检查工具、WebGPU诊断入口、运行时/权重状态；不打印凭证
+pnpm build                     contracts check + release WASM + native Web + single Rust product
+weblabel serve                 启动已校验的 v2 发行，显式指定原 data-dir 与 port
+weblabel doctor --mode runtime  只读核对预编译发行、容量/锁与可选 readiness，不要求 Node/Python
 pnpm test:task T03              按 TASKS.json 精确运行本任务 checks；不存在/零匹配为失败
-pnpm verify:fast                fmt/contracts/三组strict TS/Node/实际Web+Host Vitest；先新建WASM与Host
-pnpm verify:integration         显式Rust targets与fresh API/Host/WASM/发行，再跑真实临时DB集成
+pnpm verify:fast                fmt/contracts/Web与全部活跃测试strict TS/实际Web Vitest；先构建原生API和WASM
+pnpm verify:integration         完整Rust workspace、fresh API/WASM/v2发行，再跑真实临时DB集成
 pnpm verify:browser             当前Playwright非付费端到端，记录native cases与实际adapter
 pnpm verify:gpu                 当前API/正式WASM/hardware工作负载；缺设备/前置为blocked2
 pnpm verify:live                默认四渠道session-free诊断；--live-evidence只离线聚合，不做模型调用
 pnpm verify:release             执行上述全图、独立复构/doctor/真实同源Startup与G5证据检查；缺项非零
 pnpm contracts:generate
 pnpm contracts:check
-pnpm demo:seed                  只生成程序化测试图片与示例项目，不下载私人/未知许可图片
 ```
 
 scripts/task.mjs 读取 manifest 的 argv 数组调用进程，不通过拼接 shell string。Windows 的 pnpm wrapper 需用已解析的 Node CLI 入口或明确 shell 适配，不能假设 `.cmd` 可以按 POSIX 可执行文件运行。产品运行时仍严格禁止 shell:true。
 
-每个命令保存实际 argv/cwd、完整 stdout/stderr、native exit/signal、归一化 runner 结果及原生收集/通过/失败/skipped/flaky（无法观察为 null），非测试命令的 tests 为 null；不得编造全零统计。gate 全生命周期取消后不再启动下一阶段，先回收所属操作并落盘。正常 Startup 的物理键盘130是登记过的例外，不把任意非零命令当成功。缺工具/证据为blocked2，执行/解析失败为1，SIGINT/SIGTERM取消为130/143。
+每个命令保存实际 argv/cwd、完整 stdout/stderr、native exit/signal、runner 结果及实际 collected/passed/failed/skipped/flaky（不可观察为 null），非测试命令 tests 为 null。取消后不启动下一阶段，先回收自有操作并落盘。原生 Startup 的物理键盘 0x03 正常停机必须真实退出 0，不沿用旧 Node 前门的 130 例外。缺工具/证据为 blocked2，实际失败为1，外层验证被 SIGINT/SIGTERM 取消保留130/143。
 
-`build-web-bridge.mjs` 与 `build-wgpu-probe.mjs` 缺少锁定版本的 wasm-pack/wasm-bindgen 时输出结构化前置诊断并退出2；实际构建失败仍为1。`test-e2e.mjs` 使用当前 Node 执行 probe，保留其前置诊断/exit2，不把实际 Playwright 失败变成前置缺失。`build.mjs` 的 Node/工具版本前置保留具体 blocker/exit2，实际编译、产物/schema 或参数失败为1。`doctor.mjs` 保留 tools/release/capabilities 原字段，补充 status/blockers：缺工具、版本不符、process-tree 工具或发行 manifest 为 blocked2，已存在但无效的发行/hash 优先 failed1。未知 wrapper 参数始终失败1。统一 runner 仅为已登记的这些描述符解析对应结构化 prerequisite2；正常构建/doctor 为非测试命令，浏览器正常执行仍要求真实 Playwright 报表。不把任意命令 exit2 视为 blocked，native exit/signal 原值保留。
+Startup截图必须等刷新后的实际WebGPU设备再次ready、backend为webgpu且adapter为hardware，并等待渲染帧；对象DOM出现、API回读成功或刷新前设备ready不替代刷新后的已绘制画面。回执分别记录刷新前后设备状态，保留先前捕获到loading的原始截图，不将其称为稳定画布证明。
+
+WASM 构建缺固定工具时输出结构化前置诊断并退出2，实际编译失败仍为1；Playwright 实际失败不能变成缺前置。原生 doctor 保留 tools/release/capabilities 与 status/blockers：runtime 不要求编译工具，build 另查固定工具；已有无效发行/hash/配置优先 failed1。未知参数失败1。runner 只解析已登记描述符的结构化 prerequisite2，不把任意 exit2 洗成 blocked；浏览器成功仍要求真实报表与设备证据。
 
 `--skip-security` 的 browser 子图以完整标题排除 `F11 two actual pages sharing head and lease have exactly one complete save and unsynced loser draft`，登记到 excluded_tests；非权限 task lineage 与 late ACK 保留。integration 继续排除既有 `F10/F11 concurrent real CAS plus transferred and expired lease reject without partial revisions`。本轮只用实际 Playwright `--list` 核对 F11 未调度，不运行该权限/lease race。
 `--skip-security` 同时按完整标题排除 T33 packaging 的凭据碰撞/脱敏、不可变审核审计故障注入、带 origin 拒绝的混合启动和含秘密断言的 doctor 用例；完整标题登记在 excluded_tests。正常包装缺前置、产物完整性、owned 子树退出和正常 WAL 备份/恢复仍保留。生命周期由独立物理 Ctrl+C startup 证明，不以运行被排除安全断言替代。此前门禁误漏排这些标题的原始结果保留，不计为安全验收；失败凭据碰撞用例在 bootstrap 前中止，也不能计为专题验证。
 
 根 Playwright 配置显式启动独占的 recovery origin（默认 `127.0.0.1:5191`，可用 `WEBLABEL_T30_ORIGIN` 指定独立 loopback 端口），供 T13/T30 使用；不得以用户已有服务替代。T25/T30 通过实际 `AI 审校` 按钮展开折叠面板后再输入，不修改产品默认折叠状态。T09-D 验证真实 Native 文档、canonical 几何、generation 与 undo/redo 在 hover 前后不变，保留真实 GPU idle/resize 验证；不再把合法初始化的累计 `get_snapshot` 次数当作 pointermove 违规，也不重钉实现计数。
-单图新导出要求当前 LoadedAsset 的 Native 初始化已经交付 ready 或真实 terminal-error Host；初始化期不能启动 preflight，避免首次 Host 安装改变 scope 而吞掉过早的点击。该条件不是写角色或 editableHost 门禁：只读服务端导出仍可用，未知请求重放、原范围救援下载、损失确认与 stale-scope 保护不变。内部 CanvasView 回调统一为 onHostSettled，所有实际消费者迁移；DenseHarness 仍只对 ready Host 执行工作负载。Native load lifecycle 绑定实际不可变 request 身份；同资产或重复查看同一服务器版本产生的新 request 必须重新加载并交付当前 Host，不能只改变引用后让旧加载被拒绝且没有替代。
-T13 offline 双页场景既有 120s deadline 在 describe 配置时声明，覆盖 cold app/seed/login fixtures；其余场景和性能阈值不变。T15 readonly preview 的完整 CPU 文档断言先安装实际 observeEditor mount observer，再等待当前父级 export admission；只有 installBrowserFaults 的空 hosts 数组不是 Native 初始化失败，不能以新增等待或产品 fallback 代替缺失 observer。
+单图新导出由同一 `EditorPort.canExport()` 约束父级 admission 与 `prepareExport()`：当前固定 LoadedAsset 的 Host 必须 ready 或真实 terminal-error，读取/初始化/恢复期间不能开始新导出。该条件不是写角色或 editableHost 门禁：只读服务端版本仍可导出；原产物显式下载、未知操作保留、损失确认与 stale-scope 围栏不变。切图卸载期间 GPU 诊断明确回到 idle/none，不沿用前一设备的 ready 标记。
+T13 offline 双页场景既有 120s deadline 在 describe 配置时声明，覆盖 cold app/seed/login fixtures；显式恢复分支后等待实际替换 Host，再读当前 CPU 文档。T15 在选择固定规范及首次 Host 创建之前安装实际 mount observer；空 observer 数组不是 Native 初始化失败。真实 GPU 恢复造成 canvas inert 时保留焦点归还意图，仅在恢复可编辑且焦点仍为空 body 时归还画布，不抢走用户已移至控件的焦点。初始化、预算、48步几何 oracle 和性能阈值不变。
+原生 AI 审校可逐次收窄图像、固定对象详情和 canonical 整数 crop；无效、非整数或越界范围阻止预览，不静默退回整图。授权确认使用共享原生 dialog 的大尺寸只读 SVG/固定版本视图，显示服务端实际 grants、完整 model_id、对象详情、有效期与未知费用；默认不勾选，不重用旧授权。Tab 在可用可见控件间循环；Esc 返回原触发器，1100↔1099 布局隐藏原触发器时返回 AI 启动按钮。native close 事件可能仍聚焦已不渲染的旧标题，不能仅以 body 判断焦点是否需要归还。授权范围变化清空旧预览和勾选；过期还由 run-controller 与服务端拒绝。该工程 smoke 仅使用本地合成数据和预览，不等于模型运行、外发或 live 验收，wire 仍为 v1。
+原生项目列表的成功空态、读取中、读取失败与403保留同一导航、四步指南和退出入口；空列表不自动打开创建表单。创建与提交都要求完整的最新列表基线，失败时隐藏缓存项目及其成员入口。已开始的新建草稿可在基线未知时查看，但不能提交；重新读取、返回列表及再次打开不清除名称、类别或指南。读取中的静态骨架对辅助技术隐藏，不冒充项目或百分比；只读重试完成后，仅在焦点仍丢失于 body 时归还重试按钮，不抢走用户的新焦点。创建入口禁用时，从保留草稿返回到仍可用的草稿入口或重新读取按钮。403 smoke 的网络故障仅针对 GET 列表，不冒充真实服务端权限撤销。
+原生会话恢复必须同时取得当前会话与非空的标签页 CSRF，不能仅凭仍有效的 Cookie 显示可写页面。缺少 CSRF 时复用既有只读诊断及本站 Cookie 的恢复说明，不放宽服务端校验、不自动重发初始化，也不清除项目数据或 IndexedDB。真实合成账户经正常登录可恢复 CSRF；账号创建丢 ACK 的控制在原生201提交之后仅丢弃响应，随后只 GET 核对、保留冻结输入，不把同名账户当作原写入收据或再发 POST。
+真实事件列表按服务端 seq、type 与 message 展示简短状态，原始 data 保留为可展开的技术详情，不把嵌套模型收据铺满窄检查器。合成 loopback SSE 的失败验证确认排队、开始、工具调用、终态失败、费用 unknown 与终态禁用取消；真实模型或付费验证仍未取得。provider 日志不得因折叠而删除，也不能将合成失败计为 live 验收。
+数据集范围表及冻结确认明细放在有名称、可键盘聚焦的独立滚动区，保留真实分页100项和逐行权限/划分选择；PageDown 可滚动，焦点到末行时必须实际可见。滚动容器不缩减冻结范围或绕过第二次显式确认。实测1536个已审批修订按 seed 17 形成1024/512两批，两个固定版本的 ID 集合与已选择范围完全一致；512项原生ZIP逐一独立核对 revision、原图、canonical 图和批准身份，wire 仍为 v1。
+旧默认目录交接在项目内隔离旧工作树执行，旧启动器不传 `--data-dir`；迁移前核对其 canonical 数据目录和备份。旧浏览器保留的原 pending/journal 不在服务端备份内，必须显式选择分支后恢复；新原生服务沿用同源、旧身份与数据目录，只在用户明确重试时发送完全相同的 operation 和 payload。原分支保留，服务端 ACK 与新 fork 的本地提交分别确认；不能把这项合成数据证据写成真实业务数据迁移或授权跳过 lease/fencing。
+响应式截图分别记录 viewport/DPR 模拟与真正的浏览器页面缩放，不能把 DPR 或 CSS 缩放冒充 200% 页面缩放。项目内隔离 Chrome profile 通过实际外观设置从 100% 切到 200%，关闭 device-metrics 覆盖，并在结束后恢复 100%；画布仍为 hardware WebGPU，原生抽屉的 Tab/Shift-Tab 保持内部、Esc 归还焦点并解除画布 inert。这些结果不替代输入法、设备丢失、对比度或全部视觉状态验收。
+真实 hardware GPUDevice.destroy 的工程检查在本地有未同步编辑时进行：只拦截标注 PUT，实际 loss 为 destroyed，重新申请第二个设备后同页恢复 WebGPU；本地文档、代数及 undo 保留，画布前后 PNG 完全相同，一次 undo 回到服务器原文。设备观察仅向浏览器接收的原始发行模块前置 hook，不替换 adapter/device，磁盘发行与 CSP 不变。pointercancel、blur 和切图在真实拖动及 pointer capture 后验证无半框；IME 使用 Chrome 合成输入法组合并记录 trusted 事件，不冒充物理系统输入法。
+`navigator.gpu` 存在不保证能取得 adapter：实际浏览器禁用 GPU 后 `requestAdapter()` 返回 null。`WEBGPU_UNAVAILABLE` 应归类为 unsupported，保留结构化 code/message/request_id 和原 GPU 诊断，不能显示 `[object Object]` 或伪装 Canvas2D；对象可只读选择，画布、几何、属性及编辑快捷键均不能写入。前后截图和单项回归分别保留，软件 GPU 不计硬件性能证明。
+属性审校候选在窄检查器中只展开本次变更键的原值和建议值，完整对象与几何仍保留在可展开技术详情中；缺少键、null、false、空字符串必须分别显示，不能改写建议或绕过版本、拒绝状态与采纳确认。真实原生服务上的合成 loopback 属性建议分别拒绝一项、采纳另一项并撤销；每个实际决策与对应不可变 revision 核对，未调用真实模型或本地检测。
+
 
 R1 中 healthy ACK 本地回执屏障只阻断远端传输，不撤销当前合法 Native 编辑。Workbench 使用 SaveQueue.canAcceptEdits(asset, ontology) 判断本地 admission；已由 Native 提交的完整文档与 ordered journal 仍由 queue 保留，非 barrier paused/rescue 的既有内存政策不变。writes_paused、原 owner/scope guard、真实 receipt、write-token CAS、one-shot continuation 与 local_commit 保持 fail-closed；最新完整本地记录真正持久之前不得准备下一次 HTTP。真实回归在 pointerdown/up 之间释放实际服务端提交的旧 ACK，并保持物理 IndexedDB 回执 transaction，验证完整 canonical 文档、单次 undo/redo、精确新请求与 reload；48 步独立几何 oracle 的串行等待不能替代该时序证明。
 
 T31 的所属 Vite 由当前 Node 直接启动 `owned-vite-service.mjs`。正常收尾关闭所属 stdin pipe，等待真实 `server.close()` 与 native close，再观察独占 loopback listener 已关闭；不以 Windows `taskkill /T` 冒充正常关闭。超时或非零/signal/仍监听保持 failed；有界 forced backstop 仅用于回收，不洗绿。fast 登记真实 listener 的运行中 EOF 与启动中 EOF 两项回归。硬件 workload、2000/10000 数量、sample seed 与性能阈值不变；任何实测 P95 越界仍失败。
+真实生命周期会多次重新加载同一 WASM：GPU 门禁要求至少一次实际加载，且每一次捕获的 SHA-256 都与本次发行构建完全相同；空列表、缺失或任意一次不一致均失败。第一次独占运行中两项 hardware 测试各实际捕获六次相同 hash，但外层错误地只接受单元素数组而失败，原结果与全部8000行保留；不得把重读该材料写成原命令通过，也不得改变样本、warmup、阈值或挑选性能结果。
 release 的 release_gates 逐项列出 G0..G5 的 scope、实际 required_commands、SHA 绑定 evidence_refs、engineering_status 与完整 status。缺少命令为 not_started，缺少材料为 missing，不能从总状态或历史 commit 推导通过。G1/G3/G5 必须同时读取当前源码的 smoke；G5 还必须有独立完整规格/质量 review。smoke 的十三项场景只能引用同文件中已校验 SHA 的 artifacts；部分或损坏材料不能通过。
 
 G3/G4/G5 在本轮安全 skipped_by_user 时完整 status 为 blocked，即使各自工程子集通过。G4 的 live 未授权/未实际验收同样阻断；G5 不声称已经完成商业30%效率试点。release 的 engineering_status 也检查实际 review/smoke，不能只看子命令退出码。执行失败优先 failed，其余任何必需 missing/blocked/skipped/not_verified 保持 blocked；只有六关及全部范围满足才允许 full_1_0_ready。
@@ -141,14 +154,13 @@ Playwright chromium-webgpu 可以使用软件适配器验证功能，但报告 s
 
 ### 检测器运行与回执边界
 
-- `services/detector` 的真实运行额外依赖使用 `transformers[vision]`，同时需要 torch、Pillow 和 torchvision；metadata 探针必须将缺少的图像依赖报告为 `needs_configuration`。默认离线安装不下载这些运行依赖或模型。
-
-  CPU wheel 的实际来源/版本必须单独留证，不能仅凭依赖解析结果声称 CPU 已运行。
-- Windows stdio worker 在开始阻塞读取 stdin 前初始化已安装的 NumPy 原生模块，避免模型线程的首次 torch/NumPy 导入与打开的 stdin 管道互相阻塞；此准备不导入 torch/transformers，也不加载权重。缺少 NumPy 时保留可选服务的诊断路径；原生模块无法导入时在协议启动前明确失败，metadata 可见不代表原生库可用。
-- RT-DETR v2 从框架输出 `pred_boxes` 和 `logits` 进入同一个 canonical 解码器；不使用不存在的 `pred_logits`，不再调用带 `target_sizes` 的二次反缩放。
-- 生产 worker 只在真实 forward 和解码完成后将 execution receipt 附在 `succeeded.data`；记录锁定 model_id、实际运行版本/device、query/检测数量。`response_id` 是本地 worker 的 run_id 关联，不是外部供应商响应 ID；注入的调度 double 不产生真实执行回执。
+- 产品检测器使用`weblabel detector-worker`与已固定CPU ONNX Runtime；运行不需要Python、torch、Transformers、Pillow或torchvision。`tools/detector-export`保留的Python环境仅用于开发导出与参考比较，不是产品fallback。
+- 默认doctor不加载动态模型runtime或建立Session。只有经过真实授权、scope与文件hash校验的运行才可载入模型；metadata可见、配置存在或包已复制都不等于真实forward。
+- RT-DETR v2从原生ORT的`boxes`与`logits`进入同一个canonical解码器；Python参考原始字段为`pred_boxes`，不使用不存在的`pred_logits`，不进行二次反缩放。
+- 生产worker只在真实forward和解码完成后将execution receipt附在`succeeded.data`，记录锁定model_id、实际runtime/device与检测数量；本地`response_id`是run_id关联，不是外部供应商响应ID。synthetic进程/HTTP夹具不产生真实模型证明。
 - 零检测也可以是实际执行成功，但不证明检测质量，也不完成候选接受/撤销/保存验收。`verification` 仍须保持未完整验收状态；缺少候选时不得降低锁定阈值、注入候选或把空文档标成 negative 来凑闭环。
 - 2026-10-09 授权实测见 `reports/T32/detector-live-2026-10-09/`：五次请求额度全部使用，最后遮挡图完成 CPU forward/300 queries、零检测。清晰图最终仍有失败记录，双图成功/候选闭环/取消和完整 T32/G4 未通过。
+- R05唯一账本已耗尽20/20；六普通图、五同tensor实际来源及11路保留输出的生产Rust解码重放分别绑定。叶文件symlink负控、严格raw logits门槛和独立旋转tensor路径为用户明确豁免，不记为通过，不为R09/R10追加forward、warmup、导出或新账本。原始失败及[公开接受结果](../reports/publication/r05-accepted.json)保留；不升级检测质量、产品采纳闭环或T32/G4。
 
 无商业密钥时 fast/integration 的非安全工程子集可以通过；live 默认和缺完整离线证据时返回blocked2。实际采集必须另行运行 `node scripts/verify-live.mjs --run --config <公开配置.json> --report-dir <新目录>` 并经用户对账号、外发图像、调用预算与费用的明确授权；本轮没有该授权，也不执行采集。`--prepare-inputs` 只生成本地PNG，不是真模型结果。当前四渠道的完整clear/occluded、回执、Native差异、人工判读、接受/撤销保存及错误路径证据均未补齐，T32/T35仍不可通过。
 

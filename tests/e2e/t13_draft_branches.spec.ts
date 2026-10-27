@@ -44,9 +44,11 @@ async function readBranch(page: Page, asset: string, draft: string): Promise<Dra
   }, { asset, draft });
 }
 async function choose(page: Page, draft: string) {
-  const radio = page.getByTestId('draft-branches').getByRole('radio', { name: new RegExp(draft) });
+  const mountedBefore = await page.evaluate(() => window.__t30Faults.hosts.length);
+  const radio = page.getByTestId('recovery-banner').getByRole('radio', { name: new RegExp(draft) });
   await radio.check();
-  await page.getByTestId('draft-branches').locator(':scope > div').filter({ has: page.getByRole('radio', { name: new RegExp(draft) }) }).getByRole('button', { name: '恢复选中分支', exact: true }).click();
+  await page.getByTestId('recover-selected-branch').click();
+  await page.waitForFunction(previous => window.__t30Faults.hosts.length > previous, mountedBefore);
   await ready(page);
 }
 
@@ -68,8 +70,9 @@ test('T13 two same-context offline tabs retain independent Native documents, jou
   for (const tab of [page, second]) {
     await tab.getByTestId(`asset-item-${asset.asset_revision_id}`).click(); await ready(tab);
     await expect(tab.getByTestId('tool-box')).toBeEnabled();
-    await tab.getByRole('button', { name: 'AI 审校', exact: true }).click();
-    await tab.locator('#ai-intent').selectOption('detect'); await tab.getByTestId('ai-prompt').fill('Synthetic Engineering Mock only; retain this tab’s selected acceptance.');
+    await tab.getByTestId('inspector-ai').click();
+    await tab.getByTestId('ai-provider').selectOption('profile_mock_local');
+    await tab.getByRole('combobox', { name: '运行任务' }).selectOption('detect'); await tab.getByTestId('ai-prompt').fill('Synthetic Engineering Mock only; retain this tab’s selected acceptance.');
     await tab.getByTestId('ai-run').click(); await tab.getByTestId('ai-consent').getByRole('checkbox').check(); await tab.getByTestId('ai-authorize').click();
     await expect(tab.locator('[data-testid^="candidate-"] input[type="checkbox"]').first()).toBeEnabled();
     await tab.locator('[data-testid^="candidate-"] input[type="checkbox"]').first().check();
@@ -84,8 +87,8 @@ test('T13 two same-context offline tabs retain independent Native documents, jou
     await expect(tab.getByTestId('save-status')).toHaveAttribute('data-phase', 'save_failed');
     const accepted = await cpuSnapshot(tab);
     await tab.getByTestId('object-item-mock-object-1').click();
-    await tab.getByRole('button', { name: '属性', exact: true }).click();
-    await tab.getByTestId('attribute-helmet_state').selectOption(originals.length === 0 ? 'wearing' : 'not_wearing');
+    await tab.getByTestId('inspector-attributes').click();
+    await tab.getByTestId('attribute-helmet_state').selectOption({ label: originals.length === 0 ? 'wearing' : 'not_wearing' });
     await expect.poll(() => certificate(tab, 'generation')).toBe('2');
     const draft_id = await certificate(tab, 'draft_id'), write_token = await certificate(tab, 'write_token');
     const envelope = await readBranch(tab, asset.asset_revision_id, draft_id), document = await cpuSnapshot(tab), record = envelope.record as DraftRecord;
@@ -139,7 +142,7 @@ test('T13 actual never-dispatched prepared fork retains outcome and cannot borro
   await page.getByTestId('asset-item-' + asset.asset_revision_id).click(); await ready(page);
   let puts = 0; page.on('request', request => { if (request.method() === 'PUT' && request.url().includes('/assets/' + asset.asset_revision_id + '/annotation')) puts += 1; });
   await page.evaluate(asset => { const state = window as PreparedWindow; const captured = state.__prepared!; captured.queue.subscribe(asset, () => { if (captured.queue.getStatus(asset).saving) captured.owner.canPrepareOperation = () => false; }); }, asset.asset_revision_id);
-  await page.getByText('完成状态与交付', { exact: true }).click(); await page.getByTestId('completion-state').selectOption('complete');
+  await page.getByTestId('completion-state').selectOption('complete');
   await expect.poll(() => page.evaluate(asset => { const state = window as PreparedWindow; const record = state.__prepared?.queue.toRecord(asset); return record?.pending && record.pending_outcome === 'prepared' && record.writes_paused === true; }, asset.asset_revision_id)).toBe(true);
   await expect.poll(() => certificate(page, 'generation')).toBe('1');
   const sourceId = await certificate(page, 'draft_id'), source = await readBranch(page, asset.asset_revision_id, sourceId);
@@ -164,17 +167,17 @@ test('T13 actual get failure exports complete listed raw cache with warning and 
     window.dispatchEvent(new Event('focus'));
   }, { asset: asset.asset_revision_id, raw });
   await page.getByRole('radio', { name: /cached-json/ }).check();
-  const row = page.getByTestId('draft-branches').locator(':scope > div').filter({ has: page.getByRole('radio', { name: /cached-json/ }) }); await expect(row.getByRole('button', { name: '下载选中分支原始草稿' })).toBeEnabled();
+  const row = page.getByTestId('recovery-banner'); await expect(row.getByTestId('rescue-selected-branch')).toBeEnabled();
   const failLaterRead = async () => page.evaluate(async () => {
     // Only the adapter's later read fails; list and actual IDB values remain untouched.
     const modulePath = '/src/lib/persistence/draft-store.ts'; const { IndexedDbDraftStorage } = await import(modulePath); IndexedDbDraftStorage.prototype.get = async () => { throw new Error('owned later raw read failed'); };
   });
-  await failLaterRead(); const download = page.waitForEvent('download'); await row.getByRole('button', { name: '下载选中分支原始草稿' }).click();
+  await failLaterRead(); const download = page.waitForEvent('download'); await row.getByTestId('rescue-selected-branch').click();
   const saved = await download, path = info.outputPath('cached-raw.json'); await saved.saveAs(path); expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(raw);
-  await expect(page.getByRole('alert')).toContainText('缓存快照'); await expect(page.getByRole('alert')).toContainText('读取失败'); await expect(row.getByRole('button', { name: '恢复选中分支', exact: true })).toBeDisabled();
+  await expect(page.getByRole('alert').filter({ hasText: '缓存快照' })).toContainText('不是最新读取确认'); await expect(row.getByTestId('recover-selected-branch')).toBeDisabled();
   await page.reload(); await observeEditor(page); await page.getByTestId('asset-item-' + asset.asset_revision_id).click(); await ready(page); await page.getByRole('radio', { name: /cached-map/ }).check();
-  const mapRow = page.getByTestId('draft-branches').locator(':scope > div').filter({ has: page.getByRole('radio', { name: /cached-map/ }) }); await expect(mapRow.getByRole('button', { name: '下载选中分支原始草稿' })).toBeEnabled(); await failLaterRead();
-  let extraDownloads = 0; page.on('download', () => extraDownloads += 1); await mapRow.getByRole('button', { name: '下载选中分支原始草稿' }).click(); await expect(page.getByRole('alert')).toContainText('无法无损表示'); expect(extraDownloads).toBe(0);
+  const mapRow = page.getByTestId('recovery-banner'); await expect(mapRow.getByTestId('rescue-selected-branch')).toBeEnabled(); await failLaterRead();
+  let extraDownloads = 0; page.on('download', () => extraDownloads += 1); await mapRow.getByTestId('rescue-selected-branch').click(); await expect(page.getByRole('alert').filter({ hasText: '无法无损表示' })).toBeVisible(); expect(extraDownloads).toBe(0);
   const preservedMap = await page.evaluate(async asset => { const db = await new Promise<IDBDatabase>((resolve, reject) => { const r = indexedDB.open('weblabel-drafts'); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); }); try { return await new Promise<boolean>((resolve, reject) => { const tx = db.transaction('draft_branches', 'readonly'), request = tx.objectStore('draft_branches').get([asset, 'cached-map']); request.onsuccess = () => { const record = request.result.record; resolve(record.future instanceof Map && record.future.get('preserved') === true); }; request.onerror = () => reject(request.error); }); } finally { db.close(); } }, asset.asset_revision_id); expect(preservedMap).toBe(true);
   await page.screenshot({ path: info.outputPath('cached-rescue.png'), fullPage: true });
   await writeFile(info.outputPath('cached-rescue.json'), JSON.stringify({ original_raw: raw, explicit_cached_warning: true, lossy_record_preserved: true, extra_downloads: extraDownloads, external_model_calls: 0 }, null, 2));

@@ -31,7 +31,7 @@
         "apps/*/package.json",
         "crates/*/Cargo.toml",
         "crates/renderer-wgpu/src/lib.rs",
-        "scripts/{dev,task,verify,doctor}.mjs",
+        "scripts/{dev,task,verify}.mjs",
         "scripts/{verify-plan,build-wgpu-probe,serve-wgpu-probe,test-e2e}.mjs",
         "tests/bootstrap/{t00.test,stdio-probe}.mjs",
         "tests/e2e/{t00-webgpu-probe.html,t00-webgpu-probe.spec.ts}",
@@ -279,9 +279,9 @@
         "media-fixtures"
       ],
       "files": [
-        "apps/api/src/media/{mod,ingest,canonical,previews,limits}.rs",
-        "apps/api/src/jobs/{mod,queue,worker}.rs",
-        "apps/api/tests/t07_media.rs",
+        "crates/weblabel-api/src/media/{mod,ingest,canonical,previews,limits}.rs",
+        "crates/weblabel-api/src/jobs/{mod,queue,worker}.rs",
+        "crates/weblabel-api/tests/t07_media.rs",
         "tests/fixtures/media/*",
         "scripts/generate-media-fixtures.mjs"
       ],
@@ -314,11 +314,11 @@
         "apps/web/package.json",
         "apps/web/index.html",
         "apps/web/vite.config.ts",
-        "apps/web/src/app/{App,routes,providers}.tsx",
+        "apps/web/src/app/*.ts",
         "apps/web/src/features/projects/*",
-        "apps/web/src/features/workbench/{Workbench,Toolbar,ObjectList,AttributePanel}.tsx",
+        "apps/web/src/features/workbench/{workbench-page,toolbar-view,objects-view,attributes-view,controller,workspace-state}.ts",
         "apps/web/src/styles/tokens.css",
-        "apps/web/src/features/workbench/t08_shell.test.tsx"
+        "apps/web/src/features/workbench/native-*.test.ts"
       ],
       "checks": [
         [
@@ -326,7 +326,11 @@
           "exec",
           "vitest",
           "run",
-          "apps/web/src/features/workbench/t08_shell.test.tsx"
+          "--project",
+          "web",
+          "apps/web/src/app/native-routes.test.ts",
+          "apps/web/src/features/workbench/native-controls.test.ts",
+          "apps/web/src/features/projects/native-accounts.test.ts"
         ]
       ],
       "external_gate": false,
@@ -349,7 +353,7 @@
       "files": [
         "crates/wasm-bridge/src/{lib,facade,input}.rs",
         "apps/web/src/lib/editor/{loader,EditorHost}.ts",
-        "apps/web/src/features/workbench/CanvasView.tsx",
+        "apps/web/src/features/workbench/canvas-view.ts",
         "apps/web/src/lib/editor/t09_lifecycle.test.ts",
         "tests/e2e/t09_canvas.spec.ts"
       ],
@@ -378,9 +382,9 @@
         "project-api"
       ],
       "files": [
-        "apps/api/src/auth/{mod,session,password,csrf,policy}.rs",
-        "apps/api/src/projects/{mod,users,ontology}.rs",
-        "apps/api/tests/t10_auth.rs",
+        "crates/weblabel-api/src/auth/{mod,session,password,csrf,policy}.rs",
+        "crates/weblabel-api/src/projects/{mod,users,ontology}.rs",
+        "crates/weblabel-api/tests/t10_auth.rs",
         "tests/integration/t10_auth.test.ts",
         "tests/support/app.ts"
       ],
@@ -418,8 +422,8 @@
         "annotation-store"
       ],
       "files": [
-        "apps/api/src/annotations/{mod,save,revision,idempotency}.rs",
-        "apps/api/tests/t11_save.rs",
+        "crates/weblabel-api/src/annotations/{mod,save,revision,idempotency}.rs",
+        "crates/weblabel-api/tests/t11_save.rs",
         "tests/integration/t11_save.test.ts"
       ],
       "checks": [
@@ -457,7 +461,7 @@
       ],
       "files": [
         "crates/editor-core/src/tools/*.rs",
-        "apps/web/src/features/workbench/{Keyboard,SelectionLink,NumericGeometry,ToolSettings}.tsx",
+        "apps/web/src/features/workbench/{controller,tool-state,selection-store,geometry-values,toolbar-view,attributes-view}.ts",
         "crates/editor-core/tests/t12_tools.rs",
         "tests/e2e/t12_tools.spec.ts"
       ],
@@ -490,7 +494,7 @@
       "files": [
         "apps/web/src/lib/persistence/{draft-store,save-queue,recovery,types}.ts",
         "apps/web/src/lib/persistence/t13_queue.test.ts",
-        "apps/web/src/features/workbench/SaveStatus.tsx"
+        "apps/web/src/features/workbench/save-view.ts"
       ],
       "checks": [
         [
@@ -512,33 +516,14 @@
         "draft-branches-workbench"
       ],
       "repair_write_set": [
-        "apps/web/src/lib/persistence/types.ts",
-        "apps/web/src/lib/persistence/draft-store.ts",
-        "apps/web/src/lib/persistence/save-queue.ts",
-        "apps/web/src/lib/persistence/recovery.ts",
-        "apps/web/src/features/workbench/Workbench.tsx",
-        "apps/web/src/features/workbench/SaveStatus.tsx",
-        "apps/web/src/features/workbench/DenseHarness.tsx",
-        "apps/web/src/features/workbench/fixed-ontology.ts",
-        "apps/web/src/lib/persistence/t13_queue.test.ts",
-        "apps/web/src/lib/persistence/save-owner.test.ts",
-        "apps/web/src/lib/persistence/raw-draft-admission.test.ts",
-        "apps/web/src/features/workbench/save-feedback.test.tsx",
-        "apps/web/src/features/workbench/import-cutover.test.tsx",
-        "apps/web/src/features/workbench/outbox-guard.test.tsx",
-        "apps/web/src/features/workbench/t34_model_wait.test.tsx",
-        "apps/web/src/features/projects/commercial-core.test.tsx",
-        "apps/web/src/features/review/commercial_task_context.test.tsx",
-        "apps/web/src/features/ai/t24_ui.test.tsx",
-        "tests/e2e/t15_vertical.spec.ts",
-        "tests/e2e/t24_acceptance.spec.ts",
-        "tests/e2e/t30_recovery.spec.ts",
+        "apps/web/src/lib/persistence/*",
+        "apps/web/src/features/workbench/{workbench-page,save-view,dense-harness,workspace-state,controller,draft-recovery,fixed-ontology}.ts",
+        "apps/web/src/features/workbench/{native-recovery,import-cutover,t34_model_wait}.test.ts",
+        "apps/web/src/features/ai/*",
+        "apps/web/src/features/projects/*",
+        "apps/web/src/features/review/*",
         "apps/web/src/styles/tokens.css",
-        "apps/web/src/lib/persistence/t13_branches.test.ts",
-        "tests/e2e/t13_draft_branches.spec.ts",
-        "apps/web/src/features/review/api.ts",
-        "apps/web/src/features/review/ReviewPanel.tsx",
-        "apps/web/src/features/review/t26_review_ui.test.tsx"
+        "tests/e2e/{t15_vertical,t24_acceptance,t30_recovery,t13_draft_branches}.spec.ts"
       ]
     },
     {
@@ -587,9 +572,16 @@
       "external_gate": false,
       "card": "tasks/T14.md",
       "report_dir": "reports/T14",
-      "repair_defects": ["WL-07"],
-      "repair_locks": ["yolo-format"],
-      "repair_write_set": ["crates/dataset-formats/src/yolo.rs", "crates/dataset-formats/tests/t14_formats.rs"]
+      "repair_defects": [
+        "WL-07"
+      ],
+      "repair_locks": [
+        "yolo-format"
+      ],
+      "repair_write_set": [
+        "crates/dataset-formats/src/yolo.rs",
+        "crates/dataset-formats/tests/t14_formats.rs"
+      ]
     },
     {
       "id": "T15",
@@ -645,23 +637,22 @@
         "T10"
       ],
       "locks": [
-        "agent-host-core",
+        "native-runtime-core",
         "runtime-protocol"
       ],
       "files": [
-        "apps/agent-host/src/{index,registry,protocol}.ts",
-        "apps/agent-host/src/security/{spawn,grants,redaction}.ts",
-        "crates/weblabel-api/src/runtime/{mod,host,supervisor}.rs",
-        "tests/support/fake-runtime.mjs",
-        "apps/agent-host/test/t16_host.test.ts"
+        "crates/weblabel-api/src/runtime/{mod,host,supervisor,native_process_tests}.rs",
+        "tests/fixtures/active-host-shutdown/native.rs"
       ],
       "checks": [
         [
-          "pnpm",
-          "exec",
-          "vitest",
-          "run",
-          "apps/agent-host/test/t16_host.test.ts"
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--lib",
+          "runtime::",
+          "--locked"
         ]
       ],
       "external_gate": false,
@@ -721,23 +712,20 @@
         "detector"
       ],
       "files": [
-        "services/detector/pyproject.toml",
-        "services/detector/src/weblabel_detector/{__main__,protocol,model,transforms,labels}.py",
-        "services/detector/tests/test_t18.py",
-        "services/detector/models.lock.json",
-        "apps/agent-host/src/providers/detector-local.ts"
+        "crates/weblabel-api/src/runtime/detector/*.rs",
+        "crates/weblabel-api/tests/r05_detector.rs",
+        "tools/detector-export/*",
+        "services/detector/models.lock.json"
       ],
       "checks": [
         [
-          "uv",
-          "run",
-          "--project",
-          "services/detector",
-          "python",
-          "-m",
-          "pytest",
-          "services/detector/tests/test_t18.py",
-          "-q"
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r05_detector",
+          "--locked"
         ]
       ],
       "external_gate": false,
@@ -749,11 +737,9 @@
         "detector-lifecycle"
       ],
       "repair_write_set": [
-        "apps/agent-host/src/providers/detector-local.ts",
-        "apps/agent-host/test/t18_detector.test.ts",
-        "apps/agent-host/test/fixtures/detector-worker.mjs",
-        "apps/agent-host/src/registry.ts",
-        "apps/agent-host/src/runtime/context.ts"
+        "crates/weblabel-api/src/runtime/detector/*.rs",
+        "crates/weblabel-api/tests/r05_detector.rs",
+        "crates/weblabel-api/src/runtime/{config,runner}.rs"
       ],
       "report_dir": "reports/T18"
     },
@@ -773,7 +759,7 @@
         "crates/annotation-domain/src/suggestion_validation.rs",
         "crates/editor-core/src/suggestions.rs",
         "crates/editor-core/tests/t19_suggestions.rs",
-        "apps/api/src/ai/acceptance.rs"
+        "crates/weblabel-api/src/ai/acceptance.rs"
       ],
       "checks": [
         [
@@ -801,18 +787,18 @@
         "http-providers"
       ],
       "files": [
-        "apps/agent-host/src/providers/{openai-api,anthropic-api,mimo-api}.ts",
-        "apps/agent-host/src/providers/http/{client,images,errors,usage}.ts",
-        "apps/agent-host/test/t20_http.test.ts",
-        "apps/agent-host/test/fixtures/http/*"
+        "crates/weblabel-api/src/runtime/providers/{http,openai,anthropic,mimo}.rs",
+        "crates/weblabel-api/tests/r03_http_providers.rs"
       ],
       "checks": [
         [
-          "pnpm",
-          "exec",
-          "vitest",
-          "run",
-          "apps/agent-host/test/t20_http.test.ts"
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r03_http_providers",
+          "--locked"
         ]
       ],
       "external_gate": false,
@@ -832,19 +818,10 @@
         "agent-tools-api"
       ],
       "files": [
-        "apps/agent-host/src/mcp/{main,server,tools}.ts",
-        "apps/api/src/runtime/{agent_tools,run_tokens}.rs",
-        "apps/agent-host/test/t21_mcp.test.ts",
-        "apps/api/tests/t21_agent_tools.rs"
+        "crates/weblabel-api/src/runtime/{mcp,agent_tools,run_tokens}.rs",
+        "crates/weblabel-api/tests/{t21_agent_tools,r04_claude_mcp}.rs"
       ],
       "checks": [
-        [
-          "pnpm",
-          "exec",
-          "vitest",
-          "run",
-          "apps/agent-host/test/t21_mcp.test.ts"
-        ],
         [
           "cargo",
           "test",
@@ -852,6 +829,15 @@
           "weblabel-api",
           "--test",
           "t21_agent_tools",
+          "--locked"
+        ],
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r04_claude_mcp",
           "--locked"
         ]
       ],
@@ -871,14 +857,12 @@
         "provider-retirement"
       ],
       "files": [
-        "apps/agent-host/src/runtime/{dispatch,main}.ts",
         "crates/annotation-domain/src/prediction.rs",
         "crates/weblabel-api/src/ai/{profiles,runs}.rs",
         "crates/weblabel-api/src/jobs/model_jobs.rs",
-        "crates/weblabel-api/tests/t22_provider_retirement.rs",
-        "apps/agent-host/test/t25_runtime.test.ts",
-        "apps/web/src/features/ai/{Panel,ProviderPicker,Consent,useRun}.*",
-        "apps/web/src/features/ai/t24_ui.test.tsx",
+        "crates/weblabel-api/src/runtime/{config,runner}.rs",
+        "crates/weblabel-api/tests/{t22_provider_retirement,t25_runtime}.rs",
+        "apps/web/src/features/ai/*",
         "docs/providers/codex.md"
       ],
       "checks": [
@@ -892,13 +876,13 @@
           "--locked"
         ],
         [
-          "pnpm",
-          "exec",
-          "vitest",
-          "run",
-          "apps/agent-host/test/t25_runtime.test.ts",
-          "--project",
-          "agent-host"
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t25_runtime",
+          "--locked"
         ]
       ],
       "external_gate": false,
@@ -918,17 +902,19 @@
         "claude-adapter"
       ],
       "files": [
-        "apps/agent-host/src/providers/claude/{adapter,protocol,session,permissions}.ts",
-        "apps/agent-host/test/t23_claude.test.ts",
+        "crates/weblabel-api/src/runtime/providers/claude/*.rs",
+        "crates/weblabel-api/tests/r04_claude_mcp.rs",
         "docs/providers/claude.md"
       ],
       "checks": [
         [
-          "pnpm",
-          "exec",
-          "vitest",
-          "run",
-          "apps/agent-host/test/t23_claude.test.ts"
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r04_claude_mcp",
+          "--locked"
         ]
       ],
       "external_gate": false,
@@ -948,12 +934,8 @@
         "consent"
       ],
       "files": [
-        "apps/web/src/features/ai/{Panel,ProviderPicker,Consent,RunProgress,CandidateList,DiffView}.tsx",
-        "apps/web/src/features/ai/useRun.ts",
-        "apps/web/src/features/ai/t24_ui.test.tsx",
-        "apps/web/src/features/ai/WorkbenchAi.tsx",
-        "apps/web/src/features/ai/runCoordinator.ts",
-        "apps/web/src/features/workbench/{Workbench,CanvasView,SaveStatus}.tsx",
+        "apps/web/src/features/ai/*.ts",
+        "apps/web/src/features/workbench/{workbench-page,canvas-view,save-view,controller,workspace-state}.ts",
         "apps/web/src/styles/tokens.css",
         "apps/web/src/lib/editor/{EditorHost,types,loader}.ts",
         "apps/web/src/lib/editor/t09_lifecycle.test.ts",
@@ -962,8 +944,7 @@
         "crates/wasm-bridge/src/facade.rs",
         "crates/weblabel-api/src/ai/{mod,profiles,consent}.rs",
         "crates/weblabel-api/tests/t24_ai_prerequisites.rs",
-        "tests/e2e/{t09_canvas,t12_tools}.spec.ts",
-        "tests/e2e/t24_acceptance.spec.ts",
+        "tests/e2e/{t09_canvas,t12_tools,t24_acceptance}.spec.ts",
         "playwright.t24.config.ts"
       ],
       "checks": [
@@ -972,7 +953,11 @@
           "exec",
           "vitest",
           "run",
-          "apps/web/src/features/ai/t24_ui.test.tsx"
+          "--project",
+          "web",
+          "apps/web/src/features/ai/native-run-controller.test.ts",
+          "apps/web/src/features/ai/native-candidates.test.ts",
+          "apps/web/src/features/ai/native-outcome.test.ts"
         ],
         [
           "pnpm",
@@ -983,7 +968,13 @@
           "--project=chromium-webgpu"
         ],
         [
-          "cargo", "test", "-p", "weblabel-api", "--test", "t24_ai_prerequisites", "--locked"
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "t24_ai_prerequisites",
+          "--locked"
         ]
       ],
       "external_gate": false,
@@ -997,7 +988,6 @@
       "depends_on": [
         "T18",
         "T20",
-
         "T23",
         "T24"
       ],
@@ -1052,7 +1042,7 @@
         "crates/weblabel-api/src/lib.rs",
         "crates/weblabel-api/src/storage/db.rs",
         "apps/web/src/features/review/*",
-        "apps/web/src/features/workbench/Workbench.tsx",
+        "apps/web/src/features/workbench/workbench-page.ts",
         "apps/web/src/lib/persistence/{save-queue,types}.ts",
         "apps/web/src/lib/persistence/t13_queue.test.ts",
         "tests/integration/t26_review.test.ts",
@@ -1089,14 +1079,19 @@
           "exec",
           "vitest",
           "run",
-          "apps/web/src/features/review/t26_review_ui.test.tsx"
+          "--project",
+          "web",
+          "apps/web/src/features/review/native-review-panel.test.ts",
+          "apps/web/src/features/review/native-review-list.test.ts"
         ],
         [
           "pnpm",
           "exec",
           "vitest",
           "run",
-          "apps/web/src/features/review/submission.test.tsx"
+          "--project",
+          "web",
+          "apps/web/src/features/review/submission.test.ts"
         ]
       ],
       "external_gate": false,
@@ -1116,10 +1111,10 @@
         "export-ui"
       ],
       "files": [
-        "apps/api/src/datasets/{mod,snapshot,split,export,download}.rs",
-        "apps/api/migrations/0004_datasets.sql",
+        "crates/weblabel-api/src/datasets/*.rs",
+        "crates/weblabel-api/migrations/0010_datasets.sql",
         "apps/web/src/features/datasets/*",
-        "apps/api/tests/t27_snapshot.rs",
+        "crates/weblabel-api/tests/t27_snapshot.rs",
         "tests/integration/t27_export.test.ts"
       ],
       "checks": [
@@ -1193,7 +1188,7 @@
       ],
       "files": [
         "tests/integration/t29_security.test.ts",
-        "apps/agent-host/test/t29_injection.test.ts",
+        "crates/weblabel-api/tests/{r03_http_providers,r04_claude_mcp}.rs",
         "tests/fixtures/security/*",
         "docs/security-model.md",
         "reports/T29/*"
@@ -1207,11 +1202,22 @@
           "tests/integration/t29_security.test.ts"
         ],
         [
-          "pnpm",
-          "exec",
-          "vitest",
-          "run",
-          "apps/agent-host/test/t29_injection.test.ts"
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r03_http_providers",
+          "--locked"
+        ],
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r04_claude_mcp",
+          "--locked"
         ]
       ],
       "external_gate": false,
@@ -1257,7 +1263,9 @@
       ],
       "external_gate": false,
       "card": "tasks/T30.md",
-      "repair_defects": ["WL-01"],
+      "repair_defects": [
+        "WL-01"
+      ],
       "repair_group": "T13 draft-branches-workbench",
       "report_dir": "reports/T30"
     },
@@ -1341,7 +1349,8 @@
         "packaging"
       ],
       "files": [
-        "scripts/{build,start-local,doctor,backup,restore}.mjs",
+        "scripts/{build,release-manifest,package-release,release-smoke,unpack-release}.mjs",
+        "crates/weblabel-api/src/{cli,server,ops}/*.rs",
         "tests/integration/t33_packaging.test.ts",
         "docs/{getting-started,operations,backup-restore,known-limitations}.md",
         "README.md"
@@ -1376,7 +1385,7 @@
       ],
       "files": [
         "apps/web/src/features/workbench/activity.ts",
-        "apps/api/src/review/metrics.rs",
+        "crates/weblabel-api/src/review/metrics.rs",
         "tests/integration/t34_metrics.test.ts",
         "docs/pilot-protocol.md",
         "scripts/analyze-pilot.mjs"
@@ -1425,122 +1434,528 @@
       "card": "tasks/T35.md",
       "report_dir": "reports/T35"
     }
-  ]
-  ,
+  ],
   "refactor_tasks": [
     {
-      "id": "R00", "title": "可恢复基线、独立任务图和全套设计预览关卡", "owner": "main",
-      "depends_on": [], "locks": ["rebuild-metadata", "ui-preview-catalog"],
-      "files": ["TASKS.json", "STATUS.json", "tasks/R*.md", "tools/check-plan.mjs", "tools/check-plan.test.mjs", "tools/check-ui-previews.mjs", "tools/check-ui-previews.test.mjs", "scripts/task.mjs", "reports/T08/html-rust-rebuild/previews", "reports/T35/html-rust-rebuild", "reports/index.md"],
-      "checks": [["node", "tools/check-plan.mjs"], ["node", "--test", "tools/check-plan.test.mjs", "tools/check-ui-previews.test.mjs"], ["node", "tools/check-ui-previews.mjs", "reports/T08/html-rust-rebuild/previews/catalog.json"]],
-      "external_gate": false, "card": "tasks/R00.md", "report_dir": "reports/T35/html-rust-rebuild"
-    },
-    {
-      "id": "R01", "title": "无框架状态机和页面挂载共享接缝", "owner": "wl-web",
-      "depends_on": ["R00"], "locks": ["ui-shared-controllers"],
-      "files": [
-        "apps/web/src/app/session.ts", "apps/web/src/app/route-state.ts", "apps/web/src/app/providers.tsx", "apps/web/src/app/routes.tsx", "apps/web/src/ui",
-        "apps/web/package.json", "pnpm-lock.yaml", "vitest.config.ts", "apps/web/src/lib/t15/api.ts",
-        "apps/web/src/features/workbench/selection-store.ts", "apps/web/src/features/workbench/tool-state.ts",
-        "apps/web/src/features/ai/run-controller.ts", "apps/web/src/features/ai/useRun.ts", "apps/web/src/features/review/task-session-port.ts",
-        "apps/web/src/features/projects/Login.tsx", "apps/web/src/features/projects/AdminRecoveryForm.tsx",
-        "apps/web/src/features/workbench/SelectionLink.tsx", "apps/web/src/features/workbench/ToolSettings.tsx", "apps/web/src/features/workbench/Keyboard.tsx", "apps/web/src/features/workbench/NumericGeometry.tsx", "apps/web/src/features/workbench/Workbench.tsx",
-        "apps/web/src/features/ai/CandidateList.tsx", "apps/web/src/features/ai/Consent.tsx", "apps/web/src/features/ai/Panel.tsx", "apps/web/src/features/ai/WorkbenchAi.tsx", "apps/web/src/features/review/ReviewPanel.tsx",
-        "apps/web/src/features/workbench/commercial-core.test.tsx", "apps/web/src/features/workbench/t34_model_wait.test.tsx",
-        "apps/web/src/features/ai/commercial_projection.test.tsx", "apps/web/src/features/ai/t24_ui.test.tsx", "apps/web/src/features/ai/ux-ai.test.tsx",
-        "apps/web/src/features/review/commercial_task_context.test.tsx", "apps/web/src/features/review/t26_review_ui.test.tsx", "apps/web/src/features/review/ux_panel.test.tsx",
-        "crates/xtask/src/main.rs", "tests/support/app.ts", "docs/architecture.md"
+      "id": "R00",
+      "title": "可恢复基线、独立任务图和全套设计预览关卡",
+      "owner": "main",
+      "depends_on": [],
+      "locks": [
+        "rebuild-metadata",
+        "ui-preview-catalog"
       ],
-      "checks": [["pnpm", "contracts:check"], ["pnpm", "--filter", "@weblabel/web", "exec", "tsc", "--noEmit"], ["pnpm", "exec", "vitest", "run", "--project", "web"]],
-      "external_gate": false, "card": "tasks/R01.md", "report_dir": "reports/T08/html-rust-rebuild"
+      "files": [
+        "TASKS.json",
+        "STATUS.json",
+        "tasks/R*.md",
+        "tools/check-plan.mjs",
+        "tools/check-plan.test.mjs",
+        "tools/check-ui-previews.mjs",
+        "tools/check-ui-previews.test.mjs",
+        "scripts/task.mjs",
+        "reports/T08/html-rust-rebuild/previews",
+        "reports/T35/html-rust-rebuild",
+        "reports/index.md"
+      ],
+      "checks": [
+        [
+          "node",
+          "tools/check-plan.mjs"
+        ],
+        [
+          "node",
+          "--test",
+          "tools/check-plan.test.mjs",
+          "tools/check-ui-previews.test.mjs"
+        ],
+        [
+          "node",
+          "tools/check-ui-previews.mjs",
+          "reports/T08/html-rust-rebuild/previews/catalog.json"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R00.md",
+      "report_dir": "reports/T35/html-rust-rebuild"
     },
     {
-      "id": "R02", "title": "Rust server、永久 CLI、运维和运行契约", "owner": "main",
-      "depends_on": ["R00"], "locks": ["rust-shared-runtime", "root-manifests"],
+      "id": "R01",
+      "title": "无框架状态机和页面挂载共享接缝",
+      "owner": "wl-web",
+      "depends_on": [
+        "R00"
+      ],
+      "locks": [
+        "ui-shared-controllers"
+      ],
       "files": [
-        "crates/weblabel-api/Cargo.toml", "crates/weblabel-api/src/bin/weblabel.rs",
-        "crates/weblabel-api/src/lib.rs", "crates/weblabel-api/src/main.rs", "crates/weblabel-api/src/startup.rs",
-        "crates/weblabel-api/src/server", "crates/weblabel-api/src/cli", "crates/weblabel-api/src/ops",
-        "crates/weblabel-api/src/ai/mod.rs", "crates/weblabel-api/src/ai/profiles.rs",
+        "apps/web/src/app/{session,route-state,main,routes}.ts",
+        "apps/web/src/ui",
+        "apps/web/package.json",
+        "pnpm-lock.yaml",
+        "vitest.config.ts",
+        "apps/web/src/lib/t15/api.ts",
+        "apps/web/src/features/workbench/{selection-store,tool-state,controller,workspace-state,workbench-page,toolbar-view,attributes-view,objects-view}.ts",
+        "apps/web/src/features/ai/{run-controller,ai-workbench-view,candidates-view,outcome-view}.ts",
+        "apps/web/src/features/review/{task-session-port,review-panel,revision-review-view}.ts",
+        "apps/web/src/features/projects/{login-page,projects-page,project-controller}.ts",
+        "apps/web/src/features/workbench/{native-consumers,native-controls,t34_model_wait}.test.ts",
+        "apps/web/src/features/ai/native-*.test.ts",
+        "apps/web/src/features/review/native-*.test.ts",
+        "crates/xtask/src/main.rs",
+        "tests/support/app.ts",
+        "docs/architecture.md"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "contracts:check"
+        ],
+        [
+          "pnpm",
+          "--filter",
+          "@weblabel/web",
+          "exec",
+          "tsc",
+          "--noEmit"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--project",
+          "web"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R01.md",
+      "report_dir": "reports/T08/html-rust-rebuild"
+    },
+    {
+      "id": "R02",
+      "title": "Rust server、永久 CLI、运维和运行契约",
+      "owner": "main",
+      "depends_on": [
+        "R00"
+      ],
+      "locks": [
+        "rust-shared-runtime",
+        "root-manifests"
+      ],
+      "files": [
+        "crates/weblabel-api/Cargo.toml",
+        "crates/weblabel-api/src/bin/weblabel.rs",
+        "crates/weblabel-api/src/lib.rs",
+        "crates/weblabel-api/src/startup.rs",
+        "crates/weblabel-api/src/server",
+        "crates/weblabel-api/src/cli",
+        "crates/weblabel-api/src/ops",
+        "crates/weblabel-api/src/ai/mod.rs",
+        "crates/weblabel-api/src/ai/profiles.rs",
         "crates/weblabel-api/src/auth/session.rs",
-        "crates/weblabel-api/src/projects/ontology.rs", "crates/weblabel-api/src/storage/mod.rs",
-        "crates/weblabel-api/src/storage/db.rs", "crates/weblabel-api/src/jobs/queue.rs", "crates/weblabel-api/src/review/submissions.rs",
-        "crates/weblabel-api/src/runtime/mod.rs", "crates/weblabel-api/src/runtime/config.rs",
-        "crates/weblabel-api/src/runtime/agent_tools.rs", "crates/weblabel-api/src/runtime/run_tokens.rs",
-        "crates/weblabel-api/src/runtime/runner.rs", "crates/weblabel-api/tests/r02_runtime.rs",
-        "Cargo.toml", "Cargo.lock", "package.json", "pnpm-lock.yaml",
-        "packages/contracts/package.json", "packages/contracts/src/validate-browser.js",
-        "packages/contracts/src/validate.js", "packages/contracts/src/browser-contracts.js",
-        "packages/contracts/src/numeric-formats.js", "packages/contracts/src/browser-validators.generated.js",
-        "tools/generate-browser-validators.mjs", "tests/contracts-browser-csp.test.mjs",
-        "apps/web/src/features/projects/Projects.tsx", "apps/web/src/features/projects/project-delivery.css",
-        "docs/development.md", "docs/contracts.md", "docs/architecture.md"
+        "crates/weblabel-api/src/projects/ontology.rs",
+        "crates/weblabel-api/src/storage/mod.rs",
+        "crates/weblabel-api/src/storage/db.rs",
+        "crates/weblabel-api/src/jobs/queue.rs",
+        "crates/weblabel-api/src/review/submissions.rs",
+        "crates/weblabel-api/src/runtime/mod.rs",
+        "crates/weblabel-api/src/runtime/config.rs",
+        "crates/weblabel-api/src/runtime/agent_tools.rs",
+        "crates/weblabel-api/src/runtime/run_tokens.rs",
+        "crates/weblabel-api/src/runtime/runner.rs",
+        "crates/weblabel-api/tests/r02_runtime.rs",
+        "Cargo.toml",
+        "Cargo.lock",
+        "package.json",
+        "pnpm-lock.yaml",
+        "packages/contracts/package.json",
+        "packages/contracts/src/validate-browser.js",
+        "packages/contracts/src/validate.js",
+        "packages/contracts/src/browser-contracts.js",
+        "packages/contracts/src/numeric-formats.js",
+        "packages/contracts/src/browser-validators.generated.js",
+        "tools/generate-browser-validators.mjs",
+        "tests/contracts-browser-csp.test.mjs",
+        "docs/development.md",
+        "docs/contracts.md",
+        "docs/architecture.md",
+        "apps/web/src/features/projects/projects-page.ts",
+        "apps/web/src/features/projects/accounts.css"
       ],
-      "checks": [["cargo", "test", "-p", "weblabel-api", "--lib", "--test", "r02_runtime", "--test", "t21_agent_tools", "--locked"], ["pnpm", "contracts:check"], ["pnpm", "test:contracts"]],
-      "external_gate": false, "card": "tasks/R02.md", "report_dir": "reports/T16/html-rust-rebuild"
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--lib",
+          "--test",
+          "r02_runtime",
+          "--test",
+          "t21_agent_tools",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "contracts:check"
+        ],
+        [
+          "pnpm",
+          "test:contracts"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R02.md",
+      "report_dir": "reports/T16/html-rust-rebuild"
     },
     {
-      "id": "R03", "title": "Rust 三种 HTTP provider 执行器", "owner": "wl-ai",
-      "depends_on": ["R02"], "locks": ["runtime-http-providers"],
-      "files": ["crates/weblabel-api/src/runtime/providers/http.rs", "crates/weblabel-api/src/runtime/providers/openai.rs", "crates/weblabel-api/src/runtime/providers/anthropic.rs", "crates/weblabel-api/src/runtime/providers/mimo.rs", "crates/weblabel-api/tests/r03_http_providers.rs"],
-      "checks": [["cargo", "test", "-p", "weblabel-api", "--test", "r03_http_providers", "--locked"]],
-      "external_gate": false, "card": "tasks/R03.md", "report_dir": "reports/T20/html-rust-rebuild"
+      "id": "R03",
+      "title": "Rust 三种 HTTP provider 执行器",
+      "owner": "wl-ai",
+      "depends_on": [
+        "R02"
+      ],
+      "locks": [
+        "runtime-http-providers"
+      ],
+      "files": [
+        "crates/weblabel-api/src/runtime/providers/http.rs",
+        "crates/weblabel-api/src/runtime/providers/openai.rs",
+        "crates/weblabel-api/src/runtime/providers/anthropic.rs",
+        "crates/weblabel-api/src/runtime/providers/mimo.rs",
+        "crates/weblabel-api/tests/r03_http_providers.rs"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r03_http_providers",
+          "--locked"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R03.md",
+      "report_dir": "reports/T20/html-rust-rebuild"
     },
     {
-      "id": "R04", "title": "官方 native Claude、Rust MCP 和子进程监管", "owner": "wl-ai",
-      "depends_on": ["R02"], "locks": ["runtime-claude-mcp", "runtime-process-supervision"],
-      "files": ["crates/weblabel-api/src/runtime/providers/claude", "crates/weblabel-api/src/runtime/mcp.rs", "crates/weblabel-api/src/runtime/host.rs", "crates/weblabel-api/src/runtime/supervisor.rs", "crates/weblabel-api/tests/r04_claude_mcp.rs"],
-      "checks": [["cargo", "test", "-p", "weblabel-api", "--test", "r04_claude_mcp", "--locked"]],
-      "external_gate": true, "card": "tasks/R04.md", "report_dir": "reports/T23/html-rust-rebuild"
+      "id": "R04",
+      "title": "官方 native Claude、Rust MCP 和子进程监管",
+      "owner": "wl-ai",
+      "depends_on": [
+        "R02"
+      ],
+      "locks": [
+        "runtime-claude-mcp",
+        "runtime-process-supervision"
+      ],
+      "files": [
+        "crates/weblabel-api/src/runtime/providers/claude",
+        "crates/weblabel-api/src/runtime/mcp.rs",
+        "crates/weblabel-api/src/runtime/host.rs",
+        "crates/weblabel-api/src/runtime/supervisor.rs",
+        "crates/weblabel-api/tests/r04_claude_mcp.rs"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r04_claude_mcp",
+          "--locked"
+        ]
+      ],
+      "external_gate": true,
+      "card": "tasks/R04.md",
+      "report_dir": "reports/T23/html-rust-rebuild"
     },
     {
-      "id": "R05", "title": "Rust ORT 检测、开发期转换和数值等价验证", "owner": "wl-ai",
-      "depends_on": ["R02"], "locks": ["runtime-detector", "detector-forward-budget"],
-      "files": ["crates/weblabel-api/src/runtime/detector", "crates/weblabel-api/tests/r05_detector.rs", "tools/detector-export", "models/detector"],
-      "checks": [["cargo", "test", "-p", "weblabel-api", "--test", "r05_detector", "--locked"]],
-      "external_gate": true, "card": "tasks/R05.md", "report_dir": "reports/T18/html-rust-rebuild"
+      "id": "R05",
+      "title": "Rust ORT 检测、开发期转换和数值等价验证",
+      "owner": "wl-ai",
+      "depends_on": [
+        "R02"
+      ],
+      "locks": [
+        "runtime-detector",
+        "detector-forward-budget"
+      ],
+      "files": [
+        "crates/weblabel-api/src/runtime/detector",
+        "crates/weblabel-api/tests/r05_detector.rs",
+        "tools/detector-export",
+        "models/detector"
+      ],
+      "checks": [
+        [
+          "cargo",
+          "test",
+          "-p",
+          "weblabel-api",
+          "--test",
+          "r05_detector",
+          "--locked"
+        ]
+      ],
+      "external_gate": true,
+      "card": "tasks/R05.md",
+      "report_dir": "reports/T18/html-rust-rebuild"
     },
     {
-      "id": "R06", "title": "原生账户、项目、规范和管理页面", "owner": "wl-web",
-      "depends_on": ["R01"], "locks": ["ui-projects-admin"],
-      "files": ["apps/web/src/features/projects", "apps/web/src/features/ai/model-profile-settings.ts", "apps/web/src/features/ai/model-profile-settings.test.ts", "apps/web/src/lib/t15/api.ts"],
-      "checks": [["pnpm", "--filter", "@weblabel/web", "exec", "tsc", "--noEmit"], ["pnpm", "exec", "vitest", "run", "--project", "web", "apps/web/src/features/projects"]],
-      "external_gate": false, "card": "tasks/R06.md", "report_dir": "reports/T08/html-rust-rebuild"
+      "id": "R06",
+      "title": "原生账户、项目、规范和管理页面",
+      "owner": "wl-web",
+      "depends_on": [
+        "R01"
+      ],
+      "locks": [
+        "ui-projects-admin"
+      ],
+      "files": [
+        "apps/web/src/features/projects",
+        "apps/web/src/features/ai/model-profile-settings.ts",
+        "apps/web/src/features/ai/model-profile-settings.test.ts",
+        "apps/web/src/lib/t15/api.ts"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "--filter",
+          "@weblabel/web",
+          "exec",
+          "tsc",
+          "--noEmit"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--project",
+          "web",
+          "apps/web/src/features/projects"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R06.md",
+      "report_dir": "reports/T08/html-rust-rebuild"
     },
     {
-      "id": "R07", "title": "原生工作台、保存恢复和 AI 页面", "owner": "wl-web",
-      "depends_on": ["R01"], "locks": ["ui-workbench-ai"],
-      "files": ["apps/web/src/features/workbench", "apps/web/src/features/ai"],
-      "checks": [["pnpm", "--filter", "@weblabel/web", "exec", "tsc", "--noEmit"], ["pnpm", "exec", "vitest", "run", "--project", "web", "apps/web/src/features/workbench", "apps/web/src/features/ai"]],
-      "external_gate": false, "card": "tasks/R07.md", "report_dir": "reports/T12/html-rust-rebuild"
+      "id": "R07",
+      "title": "原生工作台、保存恢复和 AI 页面",
+      "owner": "wl-web",
+      "depends_on": [
+        "R01"
+      ],
+      "locks": [
+        "ui-workbench-ai"
+      ],
+      "files": [
+        "apps/web/src/features/workbench",
+        "apps/web/src/features/ai"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "--filter",
+          "@weblabel/web",
+          "exec",
+          "tsc",
+          "--noEmit"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--project",
+          "web",
+          "apps/web/src/features/workbench",
+          "apps/web/src/features/ai"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R07.md",
+      "report_dir": "reports/T12/html-rust-rebuild"
     },
     {
-      "id": "R08", "title": "原生任务审核、导入导出和数据集页面", "owner": "wl-web",
-      "depends_on": ["R01"], "locks": ["ui-review-delivery"],
-      "files": ["apps/web/src/features/review", "apps/web/src/features/datasets", "apps/web/src/features/import-export"],
-      "checks": [["pnpm", "--filter", "@weblabel/web", "exec", "tsc", "--noEmit"], ["pnpm", "exec", "vitest", "run", "--project", "web", "apps/web/src/features/review", "apps/web/src/features/datasets", "apps/web/src/features/import-export"]],
-      "external_gate": false, "card": "tasks/R08.md", "report_dir": "reports/T13/html-rust-rebuild"
+      "id": "R08",
+      "title": "原生任务审核、导入导出和数据集页面",
+      "owner": "wl-web",
+      "depends_on": [
+        "R01"
+      ],
+      "locks": [
+        "ui-review-delivery"
+      ],
+      "files": [
+        "apps/web/src/features/review",
+        "apps/web/src/features/datasets",
+        "apps/web/src/features/import-export"
+      ],
+      "checks": [
+        [
+          "pnpm",
+          "--filter",
+          "@weblabel/web",
+          "exec",
+          "tsc",
+          "--noEmit"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--project",
+          "web",
+          "apps/web/src/features/review",
+          "apps/web/src/features/datasets",
+          "apps/web/src/features/import-export"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R08.md",
+      "report_dir": "reports/T13/html-rust-rebuild"
     },
     {
-      "id": "R09", "title": "统一切换、Rust 运维发行和旧生产路径移除", "owner": "main",
-      "depends_on": ["R03", "R04", "R05", "R06", "R07", "R08"], "locks": ["rebuild-cutover", "root-manifests", "rust-shared-runtime", "ui-routing"],
-      "files": ["apps", "crates", "scripts", "tools", "tests", ".github", "package.json", "pnpm-lock.yaml", "Cargo.toml", "Cargo.lock", "TASKS.json", "docs"],
-      "checks": [["node", "tools/check-plan.mjs"], ["pnpm", "contracts:check"], ["cargo", "test", "--workspace", "--locked"], ["pnpm", "exec", "vitest", "run", "--project", "web", "--project", "integration"]],
-      "external_gate": false, "card": "tasks/R09.md", "report_dir": "reports/T33/html-rust-rebuild"
+      "id": "R09",
+      "title": "统一切换、Rust 运维发行和旧生产路径移除",
+      "owner": "main",
+      "depends_on": [
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08"
+      ],
+      "locks": [
+        "rebuild-cutover",
+        "root-manifests",
+        "rust-shared-runtime",
+        "ui-routing"
+      ],
+      "files": [
+        "apps",
+        "crates",
+        "scripts",
+        "tools",
+        "tests",
+        ".github",
+        "package.json",
+        "pnpm-lock.yaml",
+        "Cargo.toml",
+        "Cargo.lock",
+        "TASKS.json",
+        "docs"
+      ],
+      "checks": [
+        [
+          "node",
+          "tools/check-plan.mjs"
+        ],
+        [
+          "pnpm",
+          "contracts:check"
+        ],
+        [
+          "cargo",
+          "test",
+          "--workspace",
+          "--locked"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "--project",
+          "web",
+          "--project",
+          "integration"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R09.md",
+      "report_dir": "reports/T33/html-rust-rebuild"
     },
     {
-      "id": "R10", "title": "全量行为、视觉、发行、恢复和硬件 GPU 回归", "owner": "wl-qa",
-      "depends_on": ["R09"], "locks": ["rebuild-acceptance", "hardware-gpu"],
-      "files": ["tests", "scripts/verify*.mjs", "reports/T31/html-rust-rebuild", "reports/T35/html-rust-rebuild", "START_HERE.md", "PLAN.md", "docs"],
-      "checks": [["node", "scripts/verify.mjs", "release"], ["node", "scripts/verify-gpu.mjs", "--report-dir", "reports/T31/html-rust-rebuild/r10"]],
-      "external_gate": true, "card": "tasks/R10.md", "report_dir": "reports/T35/html-rust-rebuild"
+      "id": "R10",
+      "title": "全量行为、视觉、发行、恢复和硬件 GPU 回归",
+      "owner": "wl-qa",
+      "depends_on": [
+        "R09"
+      ],
+      "locks": [
+        "rebuild-acceptance",
+        "hardware-gpu"
+      ],
+      "files": [
+        "tests",
+        "scripts/verify*.mjs",
+        "reports/T31/html-rust-rebuild",
+        "reports/T35/html-rust-rebuild",
+        "START_HERE.md",
+        "PLAN.md",
+        "docs"
+      ],
+      "checks": [
+        [
+          "node",
+          "scripts/verify.mjs",
+          "release"
+        ],
+        [
+          "node",
+          "scripts/verify-gpu.mjs",
+          "--report-dir",
+          "reports/T31/html-rust-rebuild/r10"
+        ]
+      ],
+      "external_gate": true,
+      "card": "tasks/R10.md",
+      "report_dir": "reports/T35/html-rust-rebuild"
     },
     {
-      "id": "R11", "title": "独立规格质量审查和真实交付结论", "owner": "main",
-      "depends_on": ["R10"], "locks": ["rebuild-release-review"],
-      "files": ["STATUS.json", "reports/index.md", "reports/T35/html-rust-rebuild"],
-      "checks": [["node", "tools/check-plan.mjs"], ["node", "tools/check-ui-previews.mjs", "reports/T08/html-rust-rebuild/previews/catalog.json"], ["pnpm", "docs:check"]],
-      "external_gate": false, "card": "tasks/R11.md", "report_dir": "reports/T35/html-rust-rebuild"
+      "id": "R11",
+      "title": "独立规格质量审查和真实交付结论",
+      "owner": "main",
+      "depends_on": [
+        "R10"
+      ],
+      "locks": [
+        "rebuild-release-review"
+      ],
+      "files": [
+        "STATUS.json",
+        "reports/index.md",
+        "reports/T35/html-rust-rebuild"
+      ],
+      "checks": [
+        [
+          "node",
+          "tools/check-plan.mjs"
+        ],
+        [
+          "node",
+          "tools/check-ui-previews.mjs",
+          "reports/T08/html-rust-rebuild/previews/catalog.json"
+        ],
+        [
+          "pnpm",
+          "docs:check"
+        ]
+      ],
+      "external_gate": false,
+      "card": "tasks/R11.md",
+      "report_dir": "reports/T35/html-rust-rebuild"
     }
   ]
 }

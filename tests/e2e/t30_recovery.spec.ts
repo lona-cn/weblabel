@@ -96,7 +96,7 @@ test('F03 pointercancel, blur and asset switch never commit a partial real WASM 
 test('F08/F09 generation8 late ACK cannot synchronize generation9; failed network draft survives reload',async({adminPage:page,seededProject},info)=>{
   const asset=seededProject.assets.find(item=>item.width===320)!;await openAsset(page,asset);await createBox(page);await synced(page);
   const objectId=(await cpuSnapshot(page)).objects[0].object_id;await page.getByTestId(`object-item-${objectId}`).click();
-  for(let generation=2;generation<=7;generation+=1){await page.getByTestId('attribute-helmet_state').selectOption(generation%2===0?'wearing':'not_wearing');await synced(page);}
+  for(let generation=2;generation<=7;generation+=1){await page.getByTestId('attribute-helmet_state').selectOption({label:generation%2===0?'wearing':'not_wearing'});await synced(page);}
   const released=Promise.withResolvers<void>(),held=Promise.withResolvers<SaveResponse>();let count=0;let fail=true;
   await page.route(`**/api/assets/${asset.asset_revision_id}/annotation`,async route=>{
     if(route.request().method()!=='PUT'){await route.fallback();return;}
@@ -104,9 +104,9 @@ test('F08/F09 generation8 late ACK cannot synchronize generation9; failed networ
     if(count===1){const response=await actualResponse(route,seededProject.apiBaseUrl);expect(response.status()).toBe(200);held.resolve(await response.json());await released.promise;await route.fulfill({response});}
     else if(fail)await route.abort('failed');else await route.fallback();
   });
-  await page.getByTestId('attribute-helmet_state').selectOption('wearing');const ack8=await held.promise;
+  await page.getByTestId('attribute-helmet_state').selectOption({label:'wearing'});const ack8=await held.promise;
   expect(await page.evaluate(()=>window.__t30Faults.hosts.at(-1)?.getGeneration())).toBe(8);
-  await page.getByTestId('attribute-helmet_state').selectOption('not_wearing');const local9=await cpuSnapshot(page);
+  await page.getByTestId('attribute-helmet_state').selectOption({label:'not_wearing'});const local9=await cpuSnapshot(page);
   expect(await page.evaluate(()=>window.__t30Faults.hosts.at(-1)?.getGeneration())).toBe(9);
   expect(ack8.revision.document.objects[0].attributes.helmet_state).toBe('wearing');
   released.resolve();
@@ -116,14 +116,14 @@ test('F08/F09 generation8 late ACK cannot synchronize generation9; failed networ
   await evidence(page,info,'late-ack-network',{ack8,rescue,requests:count});
   const branchId = await page.getByTestId('save-certificate').locator('dt').filter({ hasText: /^local_commit.draft_id$/ }).evaluate(element => { const id = element.nextElementSibling?.textContent; if (!id) throw new Error('Expected genuine source branch certificate'); return id; });
   await page.reload();await observeEditor(page);await openAsset(page,asset);
-  const sourceRadio = page.getByTestId('draft-branches').getByRole('radio', { name: new RegExp(branchId) });
+  const sourceRadio = page.getByTestId('recovery-banner').getByRole('radio', { name: new RegExp(branchId) });
   await sourceRadio.check();
-  await page.getByTestId('draft-branches').locator(':scope > div').filter({ has: page.getByRole('radio', { name: new RegExp(branchId) }) }).getByRole('button', { name: '恢复选中分支', exact: true }).click();
+  await page.getByTestId('recover-selected-branch').click();
   await expect(page.getByTestId('recovery-banner')).toBeVisible();
   await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state','ready');
   await expect.poll(() => page.evaluate(() => window.__t30Faults.hosts.at(-1)?.getSnapshot())).toEqual(local9);
   await expect(page.getByTestId('save-status')).not.toHaveAttribute('data-phase','synced');
-  fail=false;await page.getByTestId('save-retry').click();await synced(page);await page.getByTestId("object-item-"+objectId).click();await page.getByTestId('attribute-helmet_state').selectOption('unknown');await synced(page);
+  fail=false;await page.getByTestId('save-retry').click();await synced(page);await page.getByTestId("object-item-"+objectId).click();await page.getByTestId('attribute-helmet_state').selectOption({label:'unknown'});await synced(page);
   const recovered=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id);expect(recovered.document.objects[0].attributes.helmet_state).toBe('unknown');
   await evidence(page,info,'late-ack-recovered',{rescue,recovered});
 });
@@ -132,13 +132,13 @@ test('F09 actual IndexedDB quota rejection remains visible and exact unsaved CPU
   const asset=seededProject.assets.find(item=>item.width===320)!;await openAsset(page,asset);await createBox(page);await synced(page);
   const original=(await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).document,objectId=original.objects[0].object_id;
   await page.route(`**/api/assets/${asset.asset_revision_id}/annotation`,async route=>{if(route.request().method()==='PUT')await route.abort('failed');else await route.fallback();});
-  await page.evaluate(()=>{window.__t30Faults.quota=true;});await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('attribute-helmet_state').selectOption('wearing');
+  await page.evaluate(()=>{window.__t30Faults.quota=true;});await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('attribute-helmet_state').selectOption({label:'wearing'});
   await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','storage_error');await expect(page.getByTestId('save-status')).toHaveAttribute('data-dirty','true');
   const local=await cpuSnapshot(page),rescue=await draft(page,info);expect(rescue.document).toEqual(local);expect(rescue.generation).toBe(2);
   expect((await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).document).toEqual(original);
   await evidence(page,info,'quota-draft',{original,rescue});
   await page.evaluate(()=>{window.__t30Faults.quota=false;});await page.unroute(`**/api/assets/${asset.asset_revision_id}/annotation`);
-  await page.getByTestId('attribute-helmet_state').selectOption('not_wearing');await synced(page);
+  await page.getByTestId('attribute-helmet_state').selectOption({label:'not_wearing'});await synced(page);
   expect((await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id)).document.objects[0].attributes.helmet_state).toBe('not_wearing');
 });
 
@@ -148,8 +148,9 @@ test('F07 late runA at assetB cannot overwrite either asset or newer before_hash
   const [asset,other]=seededProject.assets.filter(item=>item.width===320).slice(0,2);await openAsset(page,asset);await createBox(page);await synced(page);
   const original=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id),objectId=original.document.objects[0].object_id;
   const otherBefore=await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id);
-  await page.getByRole('button', { name: 'AI 审校', exact: true }).click();
-  await page.getByTestId(`object-item-${objectId}`).click();await page.locator('#ai-intent').selectOption('audit_attributes');await page.getByTestId('ai-prompt').fill('Engineering Mock attribute boundary; no live inference');
+  await page.getByTestId('inspector-ai').click();
+  await page.getByTestId('ai-provider').selectOption('profile_mock_local');
+  await page.getByTestId(`object-item-${objectId}`).click();await page.getByRole('combobox',{name:'运行任务'}).selectOption('audit_attributes');await page.getByTestId('ai-prompt').fill('Engineering Mock attribute boundary; no live inference');
   const release=Promise.withResolvers<void>(),held=Promise.withResolvers<{items:SuggestionSet[];run:{run_id:string}}>();
   await page.route('**/api/ai/runs/*/suggestions*',async route=>{const response=await actualResponse(route,seededProject.apiBaseUrl);const body=await response.json();if(body.items.length){held.resolve(body);await release.promise;}await route.fulfill({response});});
   const previewResponse=page.waitForResponse(response=>response.url().includes('/api/ai/previews')&&response.request().method()==='POST');
@@ -162,7 +163,7 @@ test('F07 late runA at assetB cannot overwrite either asset or newer before_hash
   await expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(0);
   for(const button of await page.getByTestId('accept-selected').all())await expect(button).toBeDisabled();
   expect(await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id)).toEqual(otherBefore);
-  await openAsset(page,asset);await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('toggle-attributes').click();await expect(page.getByTestId('toggle-attributes')).toHaveAttribute('aria-expanded','true');await page.getByTestId('attribute-helmet_state').selectOption('wearing');await synced(page);
+  await openAsset(page,asset);await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('inspector-attributes').click();await expect(page.getByTestId('inspector-attributes')).toHaveAttribute('aria-selected','true');await page.getByTestId('attribute-helmet_state').selectOption({label:'wearing'});await synced(page);
   const newer=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id);
   for(const button of await page.getByTestId('accept-selected').all())await expect(button).toBeDisabled();
   const stale=await seededProject.api.request('PUT',`/api/assets/${asset.asset_revision_id}/annotation`,{operation_id:crypto.randomUUID(),base_revision_id:newer.annotation_revision_id,document:newer.document,lease:null,suggestion_decisions:[{suggestion_set_id:result.items[0].suggestion_set_id,change_ids:result.items[0].changes.map(change=>change.change_id),decision:'accept'}]});
@@ -179,13 +180,13 @@ test('F11 two actual pages sharing head and lease have exactly one complete save
   const session=await page.evaluate(async()=>await(await fetch('/api/session')).json());
   const task=await seededProject.api.request<{task_id:string}>('POST',`/api/projects/${seededProject.project_id}/tasks`,{asset_revision_id:asset.asset_revision_id,ontology_version_id:seededProject.ontology_version_id,assignee_id:session.user_id});expect(task.status).toBe(200);
   await page.reload();await observeEditor(page);await openAsset(page,asset);
-  await page.getByTestId('review-options').locator(':scope > summary').click();
+  await page.locator('summary').filter({hasText:/^任务与审核$/}).click();
   await page.getByTestId(`review-task-${task.json.task_id}`).getByRole('button', { name: '领取任务' }).click();
   const secondContext=await browser.newContext({viewport:{width:1440,height:1000}}),second=await secondContext.newPage();try{
     await installBrowserFaults(second);await proxyPage(second,seededProject.apiBaseUrl);await second.goto(privateOrigin);
     await second.getByTestId('login-username').fill(seededProject.login.username);await second.getByTestId('login-password').fill(seededProject.login.password);await second.getByTestId('login-submit').click();await expect(second.getByTestId('login-submit')).toHaveCount(0);
-    await second.goto(`${privateOrigin}/?project_id=${seededProject.project_id}`);await observeEditor(second);await openAsset(second,asset);
-    await second.getByTestId('review-options').locator(':scope > summary').click();
+    await second.goto(`${privateOrigin}/?project_id=${seededProject.project_id}&ontology_version_id=${seededProject.ontology_version_id}`);await observeEditor(second);await openAsset(second,asset);
+    await second.locator('summary').filter({hasText:/^任务与审核$/}).click();
     await second.getByTestId(`review-task-${task.json.task_id}`).getByRole('button', { name: '领取任务' }).click();
     const gate=Promise.withResolvers<void>();let ready=0;const bodies:unknown[]=[];
     for(const tab of [page,second])await tab.route(`**/api/assets/${asset.asset_revision_id}/annotation`,async route=>{if(route.request().method()!=='PUT'){await route.fallback();return;}bodies.push(route.request().postDataJSON());ready+=1;await gate.promise;await route.fallback();});
@@ -285,7 +286,7 @@ test('R1 held prior HTTP ACK during real Native gesture preserves one commit thr
   });
   try{
     await page.getByTestId(`object-item-${objectId}`).click();
-    await page.getByTestId('attribute-helmet_state').selectOption('wearing');
+    await page.getByTestId('attribute-helmet_state').selectOption({label:'wearing'});
     const prior=await held.promise;
     const before:AnnotationDocument={...original,objects:original.objects.map(object=>({...object,attributes:{...object.attributes,helmet_state:'wearing'}}))};
     expect(await cpuSnapshot(page)).toEqual(before);expect(prior.revision.document).toEqual(before);
@@ -397,7 +398,7 @@ test('fixed seed create/move/undo/save/reload matches independent document refer
       const object=model.objects.at(-1)!;history.push(structuredClone(model));const dx=3+Math.floor(random()*9),dy=2+Math.floor(random()*8);await page.getByTestId('tool-select').click();
       // The real object list is virtualized; End selects and scrolls its last row through its public keyboard interface.
       await page.getByTestId('object-list').focus();await page.keyboard.press('End');await page.getByTestId(`object-item-${object.object_id}`).click();
-      await page.getByRole('button', { name: '适配画布', exact: true }).click();
+      await page.getByTestId('fit-image').click();
       const view=await viewport(page);
       expect(Math.min(object.geometry.x_max-object.geometry.x_min,object.geometry.y_max-object.geometry.y_min)*view.scale/2,'body center must lie outside the 6 CSS px resize grab band').toBeGreaterThan(6);
       const x=(object.geometry.x_min+object.geometry.x_max)/2,y=(object.geometry.y_min+object.geometry.y_max)/2;
@@ -431,7 +432,7 @@ test('F09/F17 actual API crash never claims a dirty native edit saved; same data
     const asset=seededProject.assets.find(item=>item.width===320)!;await openAsset(page,asset);await createBox(page);await synced(page);
     const original=await head(client,asset.asset_revision_id,seededProject.ontology_version_id),objectId=original.document.objects[0].object_id;
     await service.crash();
-    await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('attribute-helmet_state').selectOption('wearing');
+    await page.getByTestId(`object-item-${objectId}`).click();await page.getByTestId('attribute-helmet_state').selectOption({label:'wearing'});
     await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase','save_failed');await expect(page.getByTestId('save-status')).toHaveAttribute('data-dirty','true');
     await expect(page.getByTestId('save-status')).not.toHaveAttribute('data-phase', 'synced');const rescue=await draft(page,info);expect(rescue.document).toEqual(await cpuSnapshot(page));expect(rescue.document.objects[0].attributes).toEqual({helmet_state:'wearing'});
     await evidence(page,info,'killed-api-unsynced',{original,rescue,api_port:new URL(service.base).port});
@@ -448,7 +449,7 @@ test('F09/F17 actual API crash never claims a dirty native edit saved; same data
     const replayed=await head(client,asset.asset_revision_id,seededProject.ontology_version_id);
     expect(replayed.annotation_revision_id).toBe(replayReceipt.revision.annotation_revision_id);
     expect(replayed.parent_revision_id).toBe(original.annotation_revision_id);expect(replayed.document).toEqual(rescue.document);
-    await page.getByTestId('attribute-helmet_state').selectOption('not_wearing');await synced(page);
+    await page.getByTestId('attribute-helmet_state').selectOption({label:'not_wearing'});await synced(page);
     const recovered=await head(client,asset.asset_revision_id,seededProject.ontology_version_id);
     expect(recovered.parent_revision_id).toBe(replayed.annotation_revision_id);expect(recovered.revision_no).toBe(original.revision_no+2);
     expect(recovered.document).toEqual({...original.document,objects:original.document.objects.map(object=>({...object,attributes:{helmet_state:'not_wearing'}}))});
@@ -461,8 +462,9 @@ test('F07 late actual engineering Mock detect result is scoped to A while B is o
   const db=new DatabaseSync(database_path_for_test(app));try{db.exec('PRAGMA busy_timeout=5000');db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES('profile_mock_local','mock','weblabel-mock-source-v1','none',?,'ready','mock_only','builtin-mock-1',NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(JSON.stringify({image_input:true,tools:false,structured_output:true,bbox_output:true,attributes:true}));}finally{db.close();}
   await page.reload();await observeEditor(page);const [asset,other]=seededProject.assets.filter(item=>item.width===320).slice(0,2);await openAsset(page,asset);
   const first=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id),second=await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id);
-  await page.getByRole('button', { name: 'AI 审校', exact: true }).click();
-  await page.locator('#ai-intent').selectOption('detect');await page.getByTestId('ai-prompt').fill('Explicit engineering Mock late result; no live inference');
+  await page.getByTestId('inspector-ai').click();
+  await page.getByTestId('ai-provider').selectOption('profile_mock_local');
+  await page.getByRole('combobox',{name:'运行任务'}).selectOption('detect');await page.getByTestId('ai-prompt').fill('Explicit engineering Mock late result; no live inference');
   const gate=Promise.withResolvers<void>(),held=Promise.withResolvers<{items:SuggestionSet[]}>();
   await page.route('**/api/ai/runs/*/suggestions*',async route=>{const response=await actualResponse(route,seededProject.apiBaseUrl),body=await response.json();if(body.items.length){held.resolve(body);await gate.promise;}await route.fulfill({response});});
   await page.getByTestId('ai-run').click();await page.getByTestId('ai-consent').getByRole('checkbox').check();await page.getByTestId('ai-authorize').click();

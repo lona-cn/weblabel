@@ -16,6 +16,7 @@ async function context(session?: Session): Promise<PageContext> {
   vi.spyOn(api, 'adminRecoveryStatus').mockResolvedValue({ state: 'disabled', request_id: null, username: null });
   vi.spyOn(api, 'session').mockImplementation(async () => { if (session) return session; throw new ApiFailure(401, 'UNAUTHENTICATED', 'sign in'); });
   vi.spyOn(api, 'bootstrapStatus').mockResolvedValue({ mode: 'login', bootstrap_available: false });
+  if (session) sessionStorage.setItem('weblabel_csrf', 'synthetic-account-csrf');
   const controller = createSessionController(); controllers.push(controller); await controller.refresh();
   return { session: controller, navigate: vi.fn(), signal: new AbortController().signal, route: readRoute(new URL('http://localhost/')) };
 }
@@ -84,6 +85,8 @@ it('keeps unknown project creation locked after finding a same-name project, wit
   const create = vi.spyOn(api, 'createProject').mockRejectedValue(new TypeError('lost ACK')), publish = vi.spyOn(api, 'publishOntology');
   disposers.push(mountProjectsPage(host(), { ...ctx, onOpen: vi.fn(), createdUsername: null }));
   await vi.waitFor(() => expect((document.querySelector('[data-testid="project-submit"]') as HTMLButtonElement).disabled).toBe(false));
+  expect(document.querySelector<HTMLFormElement>('[data-testid="project-create"]')!.hidden).toBe(true);
+  click('project-create-toggle');
   enter('project-name', 'Synthetic'); click('project-submit');
   await vi.waitFor(() => expect((document.querySelector('[data-testid="project-reconcile"]') as HTMLButtonElement).hidden).toBe(false));
   projects.mockResolvedValue({ items: [project], next_cursor: null }); click('project-reconcile');
@@ -169,6 +172,7 @@ it('publishes all four typed defaults without confusing empty strings, false, ze
   });
   disposers.push(mountProjectsPage(host(), { ...ctx, onOpen: vi.fn(), createdUsername: null }));
   await vi.waitFor(() => expect((document.querySelector('[data-testid="project-submit"]') as HTMLButtonElement).disabled).toBe(false));
+  click('project-create-toggle');
   enter('project-name', 'Synthetic');
   const labelName = document.querySelector<HTMLInputElement>('[data-testid^="label-"][data-testid$="-name"]')!;
   const labelId = labelName.id.slice('label-'.length, -'-name'.length);
@@ -366,6 +370,7 @@ it('keeps the attribute type change keyboard-focused and retains the text contro
   const ctx = await context(admin); vi.spyOn(api, 'projects').mockResolvedValue({ items: [], next_cursor: null });
   const root = host(); disposers.push(mountProjectsPage(root, { ...ctx, onOpen: vi.fn(), createdUsername: null }));
   await vi.waitFor(() => expect((root.querySelector('[data-testid="project-submit"]') as HTMLButtonElement).disabled).toBe(false));
+  click('project-create-toggle');
   const labelName = root.querySelector<HTMLInputElement>('[data-testid^="label-"][data-testid$="-name"]')!;
   const labelId = labelName.id.slice('label-'.length, -'-name'.length);
   click(`label-${labelId}-add-attribute`);
@@ -374,4 +379,30 @@ it('keeps the attribute type change keyboard-focused and retains the text contro
   expect(document.activeElement).toBe(root.querySelector(`[data-testid="${id}"]`));
   const key = field(`attr-${labelId}-0-key`); key.focus(); enter(`attr-${labelId}-0-key`, '保留输入');
   expect(field(`attr-${labelId}-0-key`)).toBe(key); expect(document.activeElement).toBe(key); expect(key.value).toBe('保留输入');
+});
+
+it('hides revoked project authority while retaining the draft and forbidding writes until a fresh complete list', async () => {
+  const ctx = await context(admin), privateProject = { ...project, name: 'Private cached project' };
+  const projects = vi.spyOn(api, 'projects').mockResolvedValue({ items: [privateProject], next_cursor: null });
+  const create = vi.spyOn(api, 'createProject'), publish = vi.spyOn(api, 'publishOntology');
+  const root = host(); disposers.push(mountProjectsPage(root, { ...ctx, onOpen: vi.fn(), createdUsername: null }));
+  await vi.waitFor(() => expect(root.querySelector('[data-testid="project-p-open"]')).not.toBeNull());
+  click('project-create-toggle'); enter('project-name', 'Retained local draft'); click('project-editor-back');
+  projects.mockRejectedValue(new ApiFailure(403, 'FORBIDDEN', 'Synthetic permission revoked')); click('projects-reload');
+  await vi.waitFor(() => expect(root.querySelector('form')!.getAttribute('aria-busy')).toBe('false'));
+  expect(root.querySelector<HTMLButtonElement>('[data-testid="project-create-toggle"]')!.disabled).toBe(true);
+  expect(root.textContent).not.toContain(privateProject.name); expect(field('project-name').value).toBe('Retained local draft');
+  click('project-draft-view');
+  expect(root.querySelector<HTMLFormElement>('[data-testid="project-create"]')!.hidden).toBe(false);
+  expect(field('project-name').value).toBe('Retained local draft');
+  expect(root.querySelector<HTMLButtonElement>('[data-testid="project-submit"]')!.disabled).toBe(true);
+  click('project-editor-back');
+  expect(document.activeElement).toBe(root.querySelector('[data-testid="project-draft-view"]'));
+  root.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  expect(create).not.toHaveBeenCalled(); expect(publish).not.toHaveBeenCalled();
+  projects.mockResolvedValue({ items: [], next_cursor: null }); click('projects-reload');
+  await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-testid="project-create-toggle"]')!.disabled).toBe(false));
+  expect(root.querySelector<HTMLFormElement>('[data-testid="project-create"]')!.hidden).toBe(true);
+  expect(field('project-name').value).toBe('Retained local draft'); expect(create).not.toHaveBeenCalled();
+  click('project-create-toggle'); expect(field('project-name').value).toBe('Retained local draft');
 });

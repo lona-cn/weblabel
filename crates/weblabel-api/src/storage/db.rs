@@ -116,7 +116,8 @@ impl Repository {
         let root = self.objects.root();
         if !std::fs::metadata(root)?.is_dir() {
             return Err(sqlx::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::NotADirectory, "Object store is not a directory",
+                std::io::ErrorKind::NotADirectory,
+                "Object store is not a directory",
             )));
         }
         std::fs::read_dir(root)?;

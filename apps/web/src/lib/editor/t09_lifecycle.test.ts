@@ -1,14 +1,9 @@
-// T09 canvas lifecycle suite. Each test drives real EditorHost/loader/CanvasView
+// Native EditorHost/loader lifecycle suite. DOM mounter coverage is in native-canvas.test.ts.
 // code through their declared seams (EditorFacadeFactory, RenderScheduler,
 // EditorWasmBridge); the seams have precise types in ./types.ts and stand in for
 // the WASM/GPU boundary that jsdom cannot provide. Real WebGPU + real wasm glue
 // verification lives in tests/e2e/t09_canvas.spec.ts.
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { createElement, StrictMode, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CanvasView } from '../../features/workbench/CanvasView';
-import { RevisionExportPanel } from '../../features/import-export/RevisionExportPanel';
-import { ApiFailure } from '../t15/api';
 import { EditorHost } from './EditorHost';
 import { createEditorFacadeFactory, decodeCanonicalFrame, toApiError } from './loader';
 import type {
@@ -299,8 +294,14 @@ function stubDevicePixelRatio(value: number): void {
   Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value });
 }
 
+function pointer(target: HTMLElement, type: string, init: MouseEventInit & { pointerId: number }) {
+  const event = new MouseEvent(type, { bubbles: true, ...init });
+  Object.defineProperty(event, 'pointerId', { value: init.pointerId });
+  target.dispatchEvent(event);
+}
+
 afterEach(() => {
-  cleanup();
+  document.body.replaceChildren();
   vi.restoreAllMocks();
   FakeResizeObserver.instances = [];
   delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
@@ -340,8 +341,8 @@ describe('T09 stale-asset async initialization', () => {
     const loadOld = host.loadAsset(makeRequest({ media: { ...makeMedia(), asset_revision_id: 'asset-rev-old' } }));
     const loadNew = host.loadAsset(makeRequest());
 
-    await act(async () => { factory.creations[1].settle(); });
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[1].settle();
+    factory.creations[0].settle();
     await loadOld;
     await loadNew;
 
@@ -368,7 +369,7 @@ describe('T09 stale-asset async initialization', () => {
     const load = host.loadAsset(makeRequest());
 
     host.dispose();
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
 
     expect(factory.creations[0].facade.disposeCount).toBe(1);
@@ -392,8 +393,8 @@ describe('UX01 transient rendering', () => {
     await load;
     scheduler.flush();
     const facade = factory.creations[0].facade;
-    fireEvent.pointerDown(canvas, { pointerId: 7, clientX: 20, clientY: 30, buttons: 1 });
-    fireEvent.pointerMove(canvas, { pointerId: 7, clientX: 80, clientY: 90, buttons: 1 });
+    pointer(canvas, 'pointerdown', { pointerId: 7, clientX: 20, clientY: 30, buttons: 1 });
+    pointer(canvas, 'pointermove', { pointerId: 7, clientX: 80, clientY: 90, buttons: 1 });
     scheduler.flush();
     const renders = facade.renderCalls.length;
     expect(host.setTool('select')).toBe(true);
@@ -438,14 +439,14 @@ describe('T09 canvas sizing and cleanup', () => {
     stubDevicePixelRatio(2);
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
 
     expect(factory.creations[0].facade.viewportCalls[0]).toEqual({
       scale: 1, tx: 0, ty: 0, css_width: 640, css_height: 480, dpr: 2,
     });
 
-    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 125, pointerId: 7, button: 0, buttons: 0, shiftKey: true });
+    pointer(canvas, 'pointermove', { clientX: 150, clientY: 125, pointerId: 7, button: 0, buttons: 0, shiftKey: true });
     expect(factory.creations[0].facade.pointerCalls).toEqual([{
       phase: 'move', pointer_id: 7, x_css: 100, y_css: 100,
       button: 0, buttons: 0, shift: true, ctrl: false, alt: false, meta: false,
@@ -459,7 +460,7 @@ describe('T09 canvas sizing and cleanup', () => {
     stubCanvasRect(canvas, { width: 640, height: 480 });
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
     scheduler.flush();
     const facade = factory.creations[0].facade;
@@ -468,7 +469,7 @@ describe('T09 canvas sizing and cleanup', () => {
 
     stubCanvasRect(canvas, { width: 800, height: 480 });
     const observer = FakeResizeObserver.instances.at(-1) as ObservedResize;
-    act(() => { observer.trigger(canvas); });
+    observer.trigger(canvas);
     expect(facade.viewportCalls.slice(viewportBefore)).toEqual([
       { scale: 1, tx: 0, ty: 0, css_width: 800, css_height: 480, dpr: 1 },
     ]);
@@ -477,7 +478,7 @@ describe('T09 canvas sizing and cleanup', () => {
     expect(facade.renderCalls.length).toBe(rendersBefore + 1);
 
     // Spurious observer callbacks with an unchanged size are inert.
-    act(() => { observer.trigger(canvas); });
+    observer.trigger(canvas);
     expect(facade.viewportCalls).toHaveLength(viewportBefore + 1);
     expect(scheduler.pending.size).toBe(0);
   });
@@ -489,7 +490,7 @@ describe('T09 canvas sizing and cleanup', () => {
     stubCanvasRect(canvas, { width: 0, height: 0 });
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
     const facade = factory.creations[0].facade;
 
@@ -501,7 +502,7 @@ describe('T09 canvas sizing and cleanup', () => {
 
     stubCanvasRect(canvas, { width: 640, height: 480 });
     const observer = FakeResizeObserver.instances.at(-1) as ObservedResize;
-    act(() => { observer.trigger(canvas); });
+    observer.trigger(canvas);
     expect(scheduler.flush()).toBe(1);
     expect(facade.renderCalls).toHaveLength(1);
   });
@@ -537,10 +538,10 @@ describe('T09 canvas sizing and cleanup', () => {
 
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
 
-    fireEvent.pointerMove(canvas, { clientX: 10, clientY: 10, pointerId: 1, button: 0, buttons: 0 });
+    pointer(canvas, 'pointermove', { clientX: 10, clientY: 10, pointerId: 1, button: 0, buttons: 0 });
     const facade = factory.creations[0].facade;
     expect(facade.pointerCalls).toHaveLength(1);
     expect(scheduler.pending.size).toBe(1);
@@ -556,7 +557,7 @@ describe('T09 canvas sizing and cleanup', () => {
     expect(canvasAdds.length).toBe(canvasRemoves.length);
     expect(windowAdds.length).toBe(windowRemoves.length);
 
-    fireEvent.pointerMove(canvas, { clientX: 10, clientY: 10, pointerId: 1, button: 0, buttons: 0 });
+    pointer(canvas, 'pointermove', { clientX: 10, clientY: 10, pointerId: 1, button: 0, buttons: 0 });
     expect(facade.pointerCalls).toHaveLength(1);
   });
 });
@@ -572,7 +573,7 @@ describe('T09 pointer streaming', () => {
     stubCanvasRect(canvas, { left: 0, top: 0, width: 640, height: 480 });
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
     const facade = factory.creations[0].facade;
     const returned: EditorDelta[] = [];
@@ -583,7 +584,7 @@ describe('T09 pointer streaming', () => {
         returned.push(delta);
         return delta;
       };
-      fireEvent.pointerMove(canvas, { clientX: 100 + index, clientY: 50, pointerId: 3, button: 0, buttons: 1 });
+      pointer(canvas, 'pointermove', { clientX: 100 + index, clientY: 50, pointerId: 3, button: 0, buttons: 1 });
     }
 
     expect(facade.pointerCalls).toHaveLength(5);
@@ -601,63 +602,6 @@ describe('T09 pointer streaming', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Behavior 4: React StrictMode double mount.
-// ---------------------------------------------------------------------------
-
-describe('T09 StrictMode double mounting', () => {
-  it('keeps one listener set and one submit per pointer round under StrictMode', async () => {
-    const factory = new FakeFacadeFactory();
-    const scheduler = new FakeRenderScheduler();
-    const canvasAdds: string[] = [];
-    const canvasRemoves: string[] = [];
-    const proto = HTMLCanvasElement.prototype;
-    const spyAdd = vi.spyOn(proto, 'addEventListener').mockImplementation(function (this: HTMLCanvasElement, type: string, ...rest: [EventListenerOrEventListenerObject?, ...unknown[]]) {
-      canvasAdds.push(type);
-      return EventTarget.prototype.addEventListener.call(this, type, ...(rest as [EventListenerOrEventListenerObject]));
-    });
-    const spyRemove = vi.spyOn(proto, 'removeEventListener').mockImplementation(function (this: HTMLCanvasElement, type: string, ...rest: [EventListenerOrEventListenerObject?, ...unknown[]]) {
-      canvasRemoves.push(type);
-      return EventTarget.prototype.removeEventListener.call(this, type, ...(rest as [EventListenerOrEventListenerObject]));
-    });
-    void spyAdd; void spyRemove;
-
-    render(
-      createElement(
-        StrictMode,
-        null,
-        createElement(CanvasView, {
-          request: makeRequest(),
-          hostOptions: { facadeFactory: factory, scheduler },
-          activeTool: 'select',
-          onDelta: () => {},
-          onHostSettled: () => {},
-        }),
-      ),
-    );
-    const canvas = screen.getByTestId('annotation-canvas');
-    await act(async () => {
-      await Promise.resolve();
-      for (const creation of factory.creations) creation.settle();
-    });
-
-    expect(factory.creations).toHaveLength(1);
-    const active = factory.creations.filter(({ facade }) => facade.disposeCount === 0);
-    expect(active).toHaveLength(1);
-    for (const { facade } of factory.creations) {
-      if (facade !== active[0].facade) expect(facade.disposeCount).toBeGreaterThanOrEqual(1);
-    }
-
-    fireEvent.pointerMove(canvas, { clientX: 20, clientY: 30, pointerId: 1, button: 0, buttons: 0 });
-    const submits = factory.creations.reduce((sum, { facade }) => sum + facade.pointerCalls.length, 0);
-    expect(submits).toBe(1);
-    expect(active[0].facade.pointerCalls).toHaveLength(1);
-
-    const livePointerListeners = canvasAdds.filter((type) => type === 'pointermove').length
-      - canvasRemoves.filter((type) => type === 'pointermove').length;
-    expect(livePointerListeners).toBe(1);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Behavior 5: canonical decode path + measured binary copyBytes.
@@ -709,7 +653,7 @@ describe('T09 canonical decode and binary transfer', () => {
     stubCanvasRect(canvas, { width: 640, height: 480 });
     const request = makeRequest({ frame: makeFrame(640, 480) });
     host.mount(canvas);
-    await act(async () => { await host.loadAsset(request); });
+    await host.loadAsset(request);
 
     expect(bridge.received).toHaveLength(1);
     const handedOver = bridge.received[0];
@@ -744,7 +688,7 @@ describe('T09 structured error surfaces', () => {
     stubCanvasRect(canvas, { width: 640, height: 480 });
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
     const facade = factory.creations[0].facade;
     const error = makeApiError({ code: 'ACTIVE_LABEL_REQUIRED' });
@@ -757,7 +701,7 @@ describe('T09 structured error surfaces', () => {
     expect(host.status).toBe('ready');
 
     // The page keeps serving input after the domain error.
-    fireEvent.pointerMove(canvas, { clientX: 5, clientY: 5, pointerId: 1, button: 0, buttons: 0 });
+    pointer(canvas, 'pointermove', { clientX: 5, clientY: 5, pointerId: 1, button: 0, buttons: 0 });
     expect(facade.pointerCalls).toHaveLength(1);
   });
 
@@ -767,7 +711,7 @@ describe('T09 structured error surfaces', () => {
     stubCanvasRect(canvas, { width: 640, height: 480 });
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
     const facade = factory.creations[0].facade;
     facade.throwOn.dispatch = 'wasm unreachable';
@@ -780,33 +724,13 @@ describe('T09 structured error surfaces', () => {
     expect(normalized?.request_id).toBeTruthy();
     expect(host.status).toBe('ready');
 
-    fireEvent.pointerMove(canvas, { clientX: 5, clientY: 5, pointerId: 1, button: 0, buttons: 0 });
+    pointer(canvas, 'pointermove', { clientX: 5, clientY: 5, pointerId: 1, button: 0, buttons: 0 });
     expect(facade.pointerCalls).toHaveLength(1);
     expect(toApiError('boom', 'X', () => 'req-2')).toEqual({
       code: 'X', message: 'boom', request_id: 'req-2', details: null,
     });
   });
 
-  it('rejects a failed asset load with a structured ApiError and shows it instead of a blank canvas', async () => {
-    const factory = new FakeFacadeFactory();
-    const hostOptions: Partial<EditorHostOptions> = { facadeFactory: factory, scheduler: new FakeRenderScheduler() };
-    render(createElement(CanvasView, {
-      request: makeRequest(),
-      hostOptions,
-      activeTool: 'select',
-      onDelta: () => {},
-      onHostSettled: () => {},
-    }));
-    await act(async () => {
-      await Promise.resolve();
-      factory.creations[0].fail('bridge exploded');
-    });
-
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('bridge exploded');
-    expect(screen.getByTestId('annotation-canvas')).not.toBeNull();
-    expect(factory.creations[0].facade.disposeCount).toBe(0);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -821,7 +745,7 @@ describe('T09 dirty-flag render scheduling', () => {
     stubCanvasRect(canvas, { width: 640, height: 480 });
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
     scheduler.flush();
     const facade = factory.creations[0].facade;
@@ -832,7 +756,7 @@ describe('T09 dirty-flag render scheduling', () => {
     scheduler.flush();
     scheduler.flush();
     const observer = FakeResizeObserver.instances.at(-1) as ObservedResize;
-    act(() => { observer.trigger(canvas); });
+    observer.trigger(canvas);
     scheduler.flush();
     expect(facade.renderCalls).toHaveLength(settled);
     expect(scheduler.pending.size).toBe(0);
@@ -845,7 +769,7 @@ describe('T09 dirty-flag render scheduling', () => {
     stubCanvasRect(canvas, { width: 640, height: 480 });
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
     scheduler.flush();
     const facade = factory.creations[0].facade;
@@ -853,10 +777,8 @@ describe('T09 dirty-flag render scheduling', () => {
 
     stubCanvasRect(canvas, { width: 700, height: 480 });
     const observer = FakeResizeObserver.instances.at(-1) as ObservedResize;
-    act(() => {
-      observer.trigger(canvas);
-      host.select(['object_person_001']);
-    });
+    observer.trigger(canvas);
+    host.select(['object_person_001']);
 
     expect(scheduler.pending.size).toBe(1);
     expect(scheduler.flush()).toBe(1);
@@ -870,13 +792,13 @@ describe('T09 dirty-flag render scheduling', () => {
     stubCanvasRect(canvas, { width: 640, height: 480 });
     host.mount(canvas);
     const load = host.loadAsset(makeRequest());
-    await act(async () => { factory.creations[0].settle(); });
+    factory.creations[0].settle();
     await load;
     scheduler.flush();
     const facade = factory.creations[0].facade;
     const settled = facade.renderCalls.length;
 
-    act(() => { host.select(['object_person_001']); });
+    host.select(['object_person_001']);
     expect(scheduler.pending.size).toBe(1);
     expect(scheduler.flush()).toBe(1);
     expect(facade.renderCalls.length).toBe(settled + 1);
@@ -897,14 +819,16 @@ describe('T30 renderer-only recovery lifecycle', () => {
     const facade = factory.creations[0].facade;
     host.setLocalFlags(['object_person_001'], { locked: true });
     const flags = host.getLocalFlags();
-    await act(async () => { facade.loseDevice(); });
+    facade.loseDevice();
+    await vi.waitFor(() => expect(host.status).toBe('recovering'));
     expect(host.status).toBe('recovering');
     expect(host.getSnapshot()).toEqual(makeDocument());
     expect(host.dispatch({ kind: 'undo' })).toBeNull();
-    fireEvent.pointerMove(canvas, { clientX: 10, clientY: 10, pointerId: 1 });
+    pointer(canvas, 'pointermove', { clientX: 10, clientY: 10, pointerId: 1 });
     expect(facade.pointerCalls).toEqual([]);
     expect(scheduler.flush()).toBe(0);
-    await act(async () => { facade.recovery.resolve(); });
+    facade.recovery.resolve();
+    await vi.waitFor(() => expect(host.status).toBe('ready'));
     expect(host.status).toBe('ready');
     expect(host.error).toBeNull();
     expect(host.getLocalFlags()).toBe(flags);
@@ -922,18 +846,21 @@ describe('T30 renderer-only recovery lifecycle', () => {
     factory.creations[0].settle();
     await first;
     const old = factory.creations[0].facade;
-    await act(async () => { old.loseDevice(); });
+    old.loseDevice();
+    await vi.waitFor(() => expect(host.status).toBe('recovering'));
     const next = host.loadAsset(makeRequest({ media: { ...makeMedia(), asset_revision_id: 'next' } }));
     factory.creations[1].settle();
     await next;
     scheduler.flush();
-    await act(async () => { old.recovery.resolve(); });
+    old.recovery.resolve();
+    await Promise.resolve();
     expect(host.status).toBe('ready');
     expect(host.error).toBeNull();
     expect(scheduler.flush()).toBe(0);
     expect(old.disposeCount).toBe(1);
     host.dispose();
-    await act(async () => { factory.creations[1].facade.loseDevice(); });
+    factory.creations[1].facade.loseDevice();
+    await Promise.resolve();
     expect(host.status).toBe('disposed');
     expect(scheduler.flush()).toBe(0);
   });
@@ -947,8 +874,10 @@ describe('T30 renderer-only recovery lifecycle', () => {
     factory.creations[0].settle();
     await load;
     const facade = factory.creations[0].facade;
-    await act(async () => { facade.loseDevice(); });
-    await act(async () => { facade.recovery.reject('adapter request denied'); });
+    facade.loseDevice();
+    await vi.waitFor(() => expect(host.status).toBe('recovering'));
+    facade.recovery.reject('adapter request denied');
+    await vi.waitFor(() => expect(host.status).toBe('lost'));
     expect(host.status).toBe('lost');
     expect(host.error).toMatchObject({ code: 'GPU_RECOVERY_FAILED', message: 'adapter request denied' });
     expect(host.getSnapshot()).toEqual(makeDocument());
@@ -961,94 +890,8 @@ describe('T30 renderer-only recovery lifecycle', () => {
     expect(facade.renderCalls).toEqual([]);
   });
 
-  it('projects recovery diagnostics and inert canvas without reinitializing the workbench host', async () => {
-    const factory = new FakeFacadeFactory();
-    let settledHost: EditorHost | null = null;
-    render(createElement(CanvasView, { request: makeRequest(), activeTool: 'select',
-      hostOptions: { facadeFactory: factory, scheduler: new FakeRenderScheduler() },
-      onDelta: () => {}, onHostSettled: host => { settledHost = host; } }));
-    await act(async () => { await Promise.resolve(); factory.creations[0].settle(); });
-    const canvas = screen.getByTestId('annotation-canvas');
-    await act(async () => { factory.creations[0].facade.loseDevice(); });
-    expect(screen.getByTestId('gpu-status').getAttribute('data-device-state')).toBe('recovering');
-    expect(canvas.inert).toBe(true);
-    await act(async () => { factory.creations[0].facade.recovery.resolve(); });
-    expect(screen.getByTestId('gpu-status').getAttribute('data-device-state')).toBe('ready');
-    expect(canvas.inert).toBe(false);
-    expect(settledHost!.status).toBe('ready');
-    expect(settledHost!.getSnapshot()).toEqual(makeDocument());
-  });
 });
 
-describe('T15 same-asset immutable request replacement', () => {
-  it.each(['ready', 'held initialization'] as const)('installs only the latest full document after replacement from %s', async (phase) => {
-    const factory = new FakeFacadeFactory();
-    const hostOptions = { facadeFactory: factory, scheduler: new FakeRenderScheduler() };
-    const firstRequest = makeRequest();
-    const replacement = makeRequest({ document: { ...makeDocument(), completion: 'in_progress', objects: [{
-      ...makeDocument().objects[0], attributes: { helmet_state: 'wearing' },
-      geometry: { type: 'bbox_xyxy', x_min: 30, y_min: 40, x_max: 130, y_max: 240 },
-    }] } });
-    let currentHost: EditorHost | null = null;
-    function Consumer({ request }: { request: EditorAssetRequest }) {
-      const [settled, setSettled] = useState<{ request: EditorAssetRequest; host: EditorHost } | null>(null);
-      return createElement('div', null,
-        createElement(CanvasView, { request, readOnly: true, activeTool: 'select', hostOptions, onDelta: () => {},
-          onHostSettled: host => { currentHost = host; setSettled({ request, host }); } }),
-        createElement(RevisionExportPanel, { scopeKey: 'same-asset-preview', media: request.media,
-          canStart: settled?.request === request && settled.host.status === 'ready',
-          prepareExport: async () => { throw new ApiFailure(409, 'REVISION_CONFLICT', 'unsynced local branch', null, 'same-asset-preview'); } }));
-    }
-    const view = render(createElement(Consumer, { request: firstRequest }));
-    await act(async () => { await Promise.resolve(); });
-    const oldFacade = factory.creations[0].facade;
-    if (phase === 'ready') {
-      await act(async () => { factory.creations[0].settle(); });
-      expect(currentHost!.getSnapshot()).toEqual(firstRequest.document);
-      expect((screen.getByRole('button', { name: '检查损失并导出' }) as HTMLButtonElement).disabled).toBe(false);
-    }
-    const oldHost = currentHost as EditorHost | null;
-    view.rerender(createElement(Consumer, { request: replacement }));
-    await act(async () => { await Promise.resolve(); });
-    expect((screen.getByRole('button', { name: '检查损失并导出' }) as HTMLButtonElement).disabled).toBe(true);
-    if (phase === 'held initialization') {
-      await act(async () => { factory.creations[0].settle(); });
-      expect(currentHost).toBeNull();
-    }
-    await act(async () => { factory.creations[1]?.settle(); });
-    expect((screen.getByRole('button', { name: '检查损失并导出' }) as HTMLButtonElement).disabled).toBe(false);
-    expect(currentHost!.status).toBe('ready');
-    expect(currentHost!.getSnapshot()).toEqual(replacement.document);
-    expect(currentHost).not.toBe(oldHost);
-    expect(oldFacade.get_device_state()).toBe('disposed');
-    if (oldHost) expect(oldHost.status).toBe('disposed');
-    expect(screen.getByTestId('annotation-canvas').inert).toBe(true);
-  });
-});
-
-
-it('keeps read-only export unavailable during initialization but surfaces preflight errors after terminal Native failure', async () => {
-  const pending = deferred<CreatedEditor>();
-  const request = makeRequest();
-  const factory: EditorFacadeFactory = { create: () => pending.promise };
-  const prepare = vi.fn(async () => { throw new ApiFailure(404, 'REVISION_NOT_FOUND', 'fixed server revision unavailable', null, 'terminal-readonly-preflight'); });
-  function Consumer() {
-    const [host, setHost] = useState<EditorHost | null>(null);
-    return createElement('div', null,
-      createElement(CanvasView, { request, readOnly: true, activeTool: 'select', hostOptions: { facadeFactory: factory, scheduler: new FakeRenderScheduler() }, onDelta: () => {}, onHostSettled: setHost }),
-      createElement(RevisionExportPanel, { scopeKey: host ? 'terminal-native-export' : 'loading-native-export', media: { ...request.media, project_id: 'terminal-native-export' }, canStart: !!host && ['ready', 'error', 'lost'].includes(host.status), prepareExport: prepare }));
-  }
-  render(createElement(Consumer));
-  await act(async () => { await Promise.resolve(); });
-  const button = screen.getByRole('button', { name: '检查损失并导出' }) as HTMLButtonElement;
-  expect(button.disabled).toBe(true);
-  fireEvent.click(button); expect(prepare).not.toHaveBeenCalled();
-  await act(async () => { pending.reject(new Error('adapter unavailable')); });
-  expect(screen.getByTestId('annotation-canvas').inert).toBe(true);
-  expect(button.disabled).toBe(false);
-  await act(async () => { fireEvent.click(button); });
-  expect(screen.getAllByRole('alert').some(alert => alert.textContent?.includes('terminal-readonly-preflight'))).toBe(true);
-});
 
 // ---------------------------------------------------------------------------
 // Card entry case.

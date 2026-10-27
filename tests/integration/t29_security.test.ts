@@ -3,7 +3,7 @@ import { readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { inflateRawSync } from 'node:zlib';
-import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterAll, expect, it } from 'vitest';
 import { authorize, type Seeded } from '../support/t25-ai';
 import { startSecurityApp, raw, session, text, object, type SecurityApp, type Login } from '../fixtures/security/harness';
 import { hostileZip, highRatioZip, imageBomb } from '../fixtures/security/attacks';
@@ -14,34 +14,15 @@ let admin: Login;
 let seeded: Seeded;
 let runId: string;
 let validToken: string;
-let recovery: { username: string; password: string; userId: string; expired: Login };
-let setupStopped = false;
 beforeAll(async () => {
   app = await startSecurityApp(); admin = app.admin;
-  try {
   seeded = await seedSecurity(admin.client, app);
   const request = await authorize(admin.client, startRunBody(seeded, randomUUID(), 'T29 isolated scope'));
   const started = await admin.client.request('POST', '/api/ai/runs', request);
   expect(started.status).toBe(202); runId = text(started.json, 'run_id');
   validToken = await app.issue(runId, seeded.projectId);
-  const username = `t29-recovery-${randomUUID()}`; const password = 'T29-recovery-password';
-  const created = await admin.client.request('POST', '/api/users', { username, password });
-  expect(created.status).toBe(201);
-  const initial = await raw(app.base_url, 'POST', '/api/session/login', { username, password });
-  expect(initial.status).toBe(200);
-  const expired = session(app.base_url, initial);
-  const token = expired.cookie.slice('weblabel_session='.length);
-  const database = new DatabaseSync(join(app.directory, 'api.sqlite'));
-  try { expect(database.prepare('UPDATE sessions SET expires_at=? WHERE session_id=?').run('1', createHash('sha256').update(token).digest('hex')).changes).toBe(1); }
-  finally { database.close(); }
-  recovery = { username, password, userId: text(created.json, 'user_id'), expired };
-  } catch (error) {
-    setupStopped = true;
-    await app.stop();
-    throw error;
-  }
 }, 120_000);
-afterAll(async () => { if (app && !setupStopped) await app.stop(); });
+afterAll(async () => { if (app) await app.stop(); });
 
 it.each([
   ['Origin', { origin: 'https://evil.invalid' }, 'ORIGIN_NOT_ALLOWED'],
@@ -85,7 +66,16 @@ it('actualRouter preserves active-session CSRF and Origin on login and writes', 
 // Before-state is user-observed ground truth, not rerun: invalid cookie GET=401
 // without deletion; login with that cookie and no CSRF=403 CSRF_REQUIRED.
 it('stale or expired cookies recover through GET expiry and fresh authenticated login', async () => {
-  const { username, password, userId, expired } = recovery;
+  const username = `t29-recovery-${randomUUID()}`; const password = 'T29-recovery-password';
+  const created = await admin.client.request('POST', '/api/users', { username, password });
+  expect(created.status).toBe(201);
+  const initial = await raw(app.base_url, 'POST', '/api/session/login', { username, password });
+  expect(initial.status).toBe(200);
+  const expired = session(app.base_url, initial);
+  const token = expired.cookie.slice('weblabel_session='.length);
+  const database = new DatabaseSync(join(app.directory, 'api.sqlite'));
+  try { expect(database.prepare('UPDATE sessions SET expires_at=? WHERE session_id=?').run('1', createHash('sha256').update(token).digest('hex')).changes).toBe(1); }
+  finally { database.close(); }
   for (const cookie of ['weblabel_session=T29-nonexistent-credential', expired.cookie]) {
     const current = await raw(app.base_url, 'GET', '/api/session', undefined, { cookie });
     expect(current.status).toBe(401); expect(current.json.code).toBe('UNAUTHENTICATED');
@@ -102,7 +92,7 @@ it('stale or expired cookies recover through GET expiry and fresh authenticated 
     expect(recovered.status).toBe(200);
     const fresh = session(app.base_url, recovered);
     const principal = await fresh.client.request('GET', '/api/session');
-    expect(principal.status).toBe(200); expect(text(principal.json, 'user_id')).toBe(userId);
+    expect(principal.status).toBe(200); expect(text(principal.json, 'user_id')).toBe(text(created.json, 'user_id'));
     const noCsrf = await raw(app.base_url, 'POST', '/api/projects', { name: 'not permitted' }, { cookie: fresh.cookie });
     expect(noCsrf.status).toBe(403); expect(noCsrf.json.code).toBe('CSRF_REQUIRED');
   }
@@ -140,31 +130,10 @@ it('run tokens cannot replace sessions, override project, expire, or survive can
   expect(revoked.status).toBe(401); expect(revoked.json.code).toBe('RUN_TOKEN_REVOKED');
 });
 
-describe('F22 isolated approval fixtures', () => {
-  let isolated: SecurityApp | undefined;
-  let pins: Seeded;
-  beforeEach(async () => {
-    isolated = undefined;
-    isolated = await startSecurityApp();
-    try {
-      // Cold bootstrap and media/pins are fixture work, not approval behavior.
-      // Each mutation still owns a fresh backend, database and object storage.
-      pins = await seedSecurity(isolated.admin.client, isolated);
-    } catch (error) {
-      const failed = isolated;
-      isolated = undefined;
-      await failed.stop();
-      throw error;
-    }
-  });
-  afterEach(async () => {
-    const finished = isolated;
-    isolated = undefined;
-    await finished?.stop();
-  });
-
-  it.each(['content', 'provider'] as const)('F22 approval becomes invalid when approved %s changes and fresh approval is required', async mutation => {
-    if (!isolated) throw new Error('F22 fixture was not prepared');
+it.each(['content', 'provider'] as const)('F22 approval becomes invalid when approved %s changes and fresh approval is required', async mutation => {
+  const isolated = await startSecurityApp();
+  try {
+    const pins = await seedSecurity(isolated.admin.client, isolated);
     const fixed = await authorize(isolated.admin.client, startRunBody(pins, randomUUID(), 'T29 F22 approval'));
     if (mutation === 'content') {
       const head = await isolated.admin.client.request('GET', `/api/assets/${pins.assetRevisionId}/annotation?ontology_version_id=${pins.ontologyId}`);
@@ -187,7 +156,7 @@ describe('F22 isolated approval fixtures', () => {
     const queued = await isolated.admin.client.request('POST', '/api/ai/runs', fresh);
     expect(queued.status).toBe(202);
     expect((await isolated.admin.client.request('POST', `/api/ai/runs/${text(queued.json, 'run_id')}/cancel`, {})).status).toBe(200);
-  });
+  } finally { await isolated.stop(); }
 });
 
 const archiveAttacks = [

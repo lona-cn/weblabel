@@ -75,7 +75,7 @@ it('aborts its actual catalog GET and refuses late installation when the owning 
   const f = setup(); let received: AbortSignal | undefined;
   vi.spyOn(api, 'projects').mockImplementation(signal => new Promise((_resolve, reject) => { received = signal; signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }); }));
   vi.spyOn(api, 'ontologies').mockResolvedValue({ items: [], next_cursor: null }); vi.spyOn(api, 'assets').mockResolvedValue([]);
-  const controller = createWorkbenchController({ session: f.state.sessionController, navigate: vi.fn(), signal: f.owner.signal, route: { projectId: f.state.projectId, assetId: 'asset', ontologyId: 'ontology', dataset: false, revisionId: null, queue: undefined } }, { projectId: f.state.projectId, assetId: 'asset', ontologyId: 'ontology', taskId: null });
+  const controller = createWorkbenchController({ session: f.state.sessionController, navigate: vi.fn(), signal: f.owner.signal, route: { projectId: f.state.projectId, assetId: 'asset', ontologyId: 'ontology', dataset: false, revisionId: null, queue: undefined, taskId: null } }, { projectId: f.state.projectId, assetId: 'asset', ontologyId: 'ontology', taskId: null });
   cleanups.push(controller.dispose); const start = controller.start(); expect(received?.aborted).toBe(false); controller.dispose(); await start;
   expect(received?.aborted).toBe(true); expect(controller.state.loaded).toBeNull(); expect(controller.state.queue.toRecord('asset')).toBeNull();
 });

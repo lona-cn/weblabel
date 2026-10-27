@@ -163,25 +163,36 @@ impl Editor {
         let mut bounds: Option<annotation_domain::BBox> = None;
         for object in &self.document.objects {
             if !self.selection.ids().contains(&object.object_id)
-                || self.selection.flags(&object.object_id).hidden {
+                || self.selection.flags(&object.object_id).hidden
+            {
                 continue;
             }
             let bbox = &object.geometry;
             bounds = Some(match bounds {
-                None => annotation_domain::BBox::new(bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max),
+                None => {
+                    annotation_domain::BBox::new(bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max)
+                }
                 Some(previous) => annotation_domain::BBox::new(
-                    previous.x_min.min(bbox.x_min), previous.y_min.min(bbox.y_min),
-                    previous.x_max.max(bbox.x_max), previous.y_max.max(bbox.y_max),
+                    previous.x_min.min(bbox.x_min),
+                    previous.y_min.min(bbox.y_min),
+                    previous.x_max.max(bbox.x_max),
+                    previous.y_max.max(bbox.y_max),
                 ),
             });
         }
-        let Some(bounds) = bounds else { return Ok(false); };
-        let scale = 0.9 * (view.css_width / (bounds.x_max - bounds.x_min))
-            .min(view.css_height / (bounds.y_max - bounds.y_min));
+        let Some(bounds) = bounds else {
+            return Ok(false);
+        };
+        let scale = 0.9
+            * (view.css_width / (bounds.x_max - bounds.x_min))
+                .min(view.css_height / (bounds.y_max - bounds.y_min));
         let next = Viewport::try_new(
-            scale, view.css_width / 2.0 - (bounds.x_min + bounds.x_max) / 2.0 * scale,
+            scale,
+            view.css_width / 2.0 - (bounds.x_min + bounds.x_max) / 2.0 * scale,
             view.css_height / 2.0 - (bounds.y_min + bounds.y_max) / 2.0 * scale,
-            view.css_width, view.css_height, view.dpr,
+            view.css_width,
+            view.css_height,
+            view.dpr,
         )?;
         self.set_viewport(next)?;
         Ok(true)
@@ -278,7 +289,12 @@ impl Editor {
             .iter()
             .zip(ids)
             .any(|(old, id)| *old != self.selection.flags(id));
-        Ok(self.delta(false, changed || metadata_changed || preview_changed, Vec::new(), Vec::new()))
+        Ok(self.delta(
+            false,
+            changed || metadata_changed || preview_changed,
+            Vec::new(),
+            Vec::new(),
+        ))
     }
 
     pub fn local_flags(&self, id: &Id) -> LocalFlags {

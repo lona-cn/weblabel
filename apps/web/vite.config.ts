@@ -1,7 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { defineConfig, type Plugin } from 'vitest/config';
-import react from '@vitejs/plugin-react';
 
 const wasmBridgeDir = process.env.WEBLABEL_WASM_BRIDGE_DIR === undefined
   ? path.resolve(import.meta.dirname, '../../crates/wasm-bridge/target/weblabel-web-public/wasm')
@@ -35,7 +34,7 @@ function wasmBridgeAssets(): Plugin {
   };
 }
 export default defineConfig({
-  plugins: [react(), wasmBridgeAssets()],
+  plugins: [wasmBridgeAssets()],
   publicDir: false,
   cacheDir: path.resolve(import.meta.dirname, '../../target/build-cache/vite'),
   server: {
@@ -46,7 +45,7 @@ export default defineConfig({
   },
   test: {
     root: path.resolve(import.meta.dirname, '../..'),
-    include: ['apps/web/src/**/*.test.ts', 'apps/web/src/**/*.test.tsx'],
+    include: ['apps/web/src/**/*.test.ts'],
     environment: 'jsdom',
     globals: true,
     restoreMocks: true,

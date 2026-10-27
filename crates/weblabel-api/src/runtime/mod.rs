@@ -1,21 +1,18 @@
-//! Private NDJSON runtime protocol and host supervision (docs/contracts.md C5).
-//!
-//! The wire format mirrors `apps/agent-host/src/protocol.ts`: one JSON message
-//! per line, a 4 MiB per-line cap enforced BEFORE decoding, and controlled
-//! failures for truncation, multi-line input, unknown methods and duplicate
-//! request ids.
+//! Private bounded NDJSON codec for native detector workers (contract C5).
+//! One JSON message per line; raw size is bounded before decoding.
 
 pub mod agent_tools;
 pub mod config;
 pub mod detector;
+pub mod host;
 pub mod mcp;
 pub mod providers;
-pub mod host;
 pub mod run_tokens;
 pub mod runner;
 pub mod supervisor;
 
-use std::collections::HashSet;
+#[cfg(test)]
+mod native_process_tests;
 
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +25,6 @@ const MAX_ID_LENGTH: usize = 128;
 pub enum EnvelopeKind {
     Request,
     Response,
-    Event,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,9 +32,6 @@ pub enum EnvelopeKind {
 pub enum EnvelopeMethod {
     Probe,
     StartRun,
-    CancelRun,
-    Shutdown,
-    RunEvent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,43 +61,13 @@ pub enum ProtocolError {
     InvalidKind(String),
     #[error("unknown_method: {0}")]
     UnknownMethod(String),
-    #[error("invalid_kind_method_pair: {0}")]
-    KindMethodPair(String),
-    #[error("truncated_message: stream ended in the middle of a message")]
-    Truncated,
-    #[error("duplicate_request_id: request id {0} was already used")]
-    DuplicateRequestId(String),
 }
 
 fn method_from_str(raw: &str) -> Result<EnvelopeMethod, ProtocolError> {
     match raw {
         "probe" => Ok(EnvelopeMethod::Probe),
         "start_run" => Ok(EnvelopeMethod::StartRun),
-        "cancel_run" => Ok(EnvelopeMethod::CancelRun),
-        "shutdown" => Ok(EnvelopeMethod::Shutdown),
-        "run_event" => Ok(EnvelopeMethod::RunEvent),
         other => Err(ProtocolError::UnknownMethod(other.to_owned())),
-    }
-}
-
-fn check_pair(kind: EnvelopeKind, method: EnvelopeMethod) -> Result<(), ProtocolError> {
-    let valid = match kind {
-        EnvelopeKind::Request => matches!(
-            method,
-            EnvelopeMethod::Probe
-                | EnvelopeMethod::StartRun
-                | EnvelopeMethod::CancelRun
-                | EnvelopeMethod::Shutdown
-        ),
-        EnvelopeKind::Event => matches!(method, EnvelopeMethod::RunEvent),
-        EnvelopeKind::Response => true,
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(ProtocolError::KindMethodPair(format!(
-            "{method:?} with {kind:?}"
-        )))
     }
 }
 
@@ -144,7 +107,6 @@ pub fn parse_envelope(line: &str) -> Result<RuntimeEnvelope, ProtocolError> {
     let kind = match kind_raw {
         "request" => EnvelopeKind::Request,
         "response" => EnvelopeKind::Response,
-        "event" => EnvelopeKind::Event,
         other => return Err(ProtocolError::InvalidKind(other.to_owned())),
     };
     let method_raw = object
@@ -152,7 +114,6 @@ pub fn parse_envelope(line: &str) -> Result<RuntimeEnvelope, ProtocolError> {
         .and_then(|value| value.as_str())
         .ok_or_else(|| ProtocolError::UnknownMethod("missing".to_owned()))?;
     let method = method_from_str(method_raw)?;
-    check_pair(kind, method)?;
     if !object.contains_key("payload") {
         return Err(ProtocolError::InvalidEnvelope("payload field is required"));
     }
@@ -186,85 +147,154 @@ impl RuntimeEnvelope {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct RequestTracker {
-    seen: HashSet<String>,
-}
-
-impl RequestTracker {
-    pub fn track(&mut self, id: &str) -> Result<(), ProtocolError> {
-        if id.is_empty() || id.len() > MAX_ID_LENGTH {
-            return Err(ProtocolError::InvalidId);
-        }
-        if self.seen.insert(id.to_owned()) {
-            Ok(())
-        } else {
-            Err(ProtocolError::DuplicateRequestId(id.to_owned()))
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::path::PathBuf;
-    use std::process::Command;
+    use crate::runtime::{host::HostConfig, supervisor};
+    use std::{
+        collections::BTreeMap,
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+        path::{Path, PathBuf},
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
 
-    use crate::runtime::supervisor;
-
-    /// Locate the Node.js executable the same way the host would: an absolute
-    /// path found on PATH, then pinned as a trusted root for the test config.
-    pub fn node_executable() -> PathBuf {
-        if let Ok(configured) = std::env::var("WEBLABEL_NODE_RUNTIME") {
-            return PathBuf::from(configured);
-        }
-        let program = if cfg!(windows) { "node.exe" } else { "node" };
-        let path_var = std::env::var("PATH").unwrap_or_default();
-        for entry in std::env::split_paths(&path_var) {
-            let candidate = entry.join(program);
-            if candidate.is_file() {
-                return candidate;
+    const FIXTURE: &str = "runtime::test_support::native_process_fixture";
+    pub fn scratch() -> tempfile::TempDir {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/test-artifacts/R09-native-process");
+        std::fs::create_dir_all(&root).unwrap();
+        tempfile::tempdir_in(root).unwrap()
+    }
+    pub fn config(directory: &Path, mode: &str, marker: &Path) -> HostConfig {
+        let executable = std::env::current_exe().unwrap();
+        let mut env = BTreeMap::from([
+            ("R09_NATIVE_MODE".into(), mode.into()),
+            (
+                "R09_NATIVE_MARKER".into(),
+                marker.to_string_lossy().into_owned(),
+            ),
+        ]);
+        for key in ["SystemRoot", "SystemDrive", "WINDIR"] {
+            if let Ok(value) = std::env::var(key) {
+                env.insert(key.into(), value);
             }
         }
-        // Fall back to asking the platform tool once; the result is still pinned
-        // to an absolute path before any spawn.
-        let output = Command::new(if cfg!(windows) { "where" } else { "which" })
-            .arg(program)
-            .output()
-            .expect("failed to locate node executable");
-        let text = String::from_utf8_lossy(&output.stdout);
-        PathBuf::from(
-            text.lines()
-                .find(|line| !line.trim().is_empty())
-                .expect("node executable not found")
-                .trim(),
-        )
-    }
-
-    fn strip_verbatim(path: PathBuf) -> PathBuf {
-        // Rust canonicalize() yields \\?\-prefixed verbatim paths on Windows;
-        // Node's module loader rejects those as entry arguments.
-        let text = path.to_string_lossy().into_owned();
-        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-            PathBuf::from(format!(r"\\{rest}"))
-        } else if let Some(rest) = text.strip_prefix(r"\\?\") {
-            PathBuf::from(rest.to_owned())
-        } else {
-            path
+        for key in ["TEMP", "TMP", "TMPDIR"] {
+            env.insert(key.into(), directory.to_string_lossy().into_owned());
+        }
+        HostConfig {
+            trusted_executable_roots: vec![executable.parent().unwrap().to_owned()],
+            executable,
+            argv: vec!["--exact".into(), FIXTURE.into(), "--nocapture".into()],
+            cwd: directory.to_owned(),
+            trusted_cwd_roots: vec![directory.to_owned()],
+            allowed_env: env.keys().cloned().collect(),
+            source_env: BTreeMap::new(),
+            extra_env: env,
         }
     }
-
-    pub fn fake_runtime() -> PathBuf {
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let joined = manifest.join("../../tests/support/fake-runtime.mjs");
-        strip_verbatim(
-            joined
-                .canonicalize()
-                .expect("tests/support/fake-runtime.mjs must exist"),
-        )
+    pub fn foreign(directory: &Path, marker: &Path) -> Command {
+        let config = config(directory, "idle", marker);
+        let mut command = Command::new(config.executable);
+        command
+            .args(config.argv)
+            .env_clear()
+            .envs(config.extra_env)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
     }
-
     pub fn process_alive(pid: u32) -> bool {
         supervisor::snapshot_pids().contains(&pid)
+    }
+    pub fn wait_file(path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "fixture did not publish {}",
+                path.display()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    pub fn marker(path: &Path) -> serde_json::Value {
+        wait_file(path);
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+    pub fn usable(info: &serde_json::Value) -> bool {
+        let Ok(mut stream) =
+            TcpStream::connect(("127.0.0.1", info["port"].as_u64().unwrap() as u16))
+        else {
+            return false;
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut body = String::new();
+        stream.read_to_string(&mut body).is_ok() && body == info["pid"].to_string()
+    }
+    #[test]
+    fn native_process_fixture() {
+        // Ordinary suite discovery is inert. Only a separately spawned native
+        // test executable with private fixture environment enters this branch.
+        let Ok(mode) = std::env::var("R09_NATIVE_MODE") else {
+            return;
+        };
+        if mode == "exit" {
+            return;
+        }
+        if mode == "argv" {
+            let args: Vec<_> = std::env::args().collect();
+            assert!(args
+                .windows(2)
+                .any(|pair| pair[0] == "--skip" && pair[1] == "参数 with space"));
+            println!("native-argv-ok");
+            eprintln!("native-fixture-log");
+            return;
+        }
+        let marker = PathBuf::from(std::env::var_os("R09_NATIVE_MARKER").unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let info = serde_json::json!({"pid":std::process::id(),"port":listener.local_addr().unwrap().port()});
+        let temporary = marker.with_extension("publishing");
+        std::fs::write(&temporary, info.to_string()).unwrap();
+        std::fs::rename(&temporary, &marker).unwrap();
+        if matches!(mode.as_str(), "tree" | "crash" | "orphan") {
+            let mut command = foreign(marker.parent().unwrap(), &marker.with_extension("leaf"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                unsafe extern "C" {
+                    fn setsid() -> i32;
+                }
+                unsafe {
+                    command.pre_exec(|| {
+                        if setsid() < 0 {
+                            Err(std::io::Error::last_os_error())
+                        } else {
+                            Ok(())
+                        }
+                    });
+                }
+            }
+            let _child = command.spawn().unwrap();
+            wait_file(&marker.with_extension("leaf"));
+            if mode == "orphan" {
+                return;
+            }
+        }
+        loop {
+            if mode == "crash" && marker.with_extension("go").exists() {
+                std::process::exit(7);
+            }
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = write!(stream, "{}", std::process::id());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
@@ -302,16 +332,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_methods_and_duplicate_request_ids() {
+    fn rejects_unknown_methods_and_invalid_request_identity() {
         let unknown = r#"{"protocol_version":1,"id":"x","kind":"request","method":"shell_exec","payload":{}}"#;
         let error = parse_envelope(unknown).expect_err("unknown method must be rejected");
         assert!(matches!(error, ProtocolError::UnknownMethod(_)));
-        let mut tracker = RequestTracker::default();
-        tracker.track("req-1").expect("first use is fine");
-        assert!(matches!(
-            tracker.track("req-1"),
-            Err(ProtocolError::DuplicateRequestId(_))
-        ));
+        for id in ["".to_owned(), "x".repeat(MAX_ID_LENGTH + 1)] {
+            let invalid = serde_json::json!({"protocol_version":1,"id":id,"kind":"request","method":"probe","payload":{}});
+            assert!(matches!(
+                parse_envelope(&invalid.to_string()),
+                Err(ProtocolError::InvalidId)
+            ));
+        }
     }
 
     #[test]

@@ -70,42 +70,47 @@ pub fn execution_configuration_hash(
     Ok(hash_bytes(&serde_json::to_vec(configuration)?))
 }
 
-/// Hash the selected Host config without losing Rust JSON number categories in JavaScript.
-pub fn host_execution_configuration_hash(
-    host_json: &str,
+/// Hash one native runtime profile without losing Rust JSON number categories in JavaScript.
+pub fn runtime_execution_configuration_hash(
+    runtime_json: &str,
     provider_id: &str,
     profile_id: &str,
 ) -> Result<String, crate::DomainError> {
     let invalid = || {
         crate::DomainError::new(
-            "INVALID_HOST_CONFIGURATION",
-            "Public Host configuration is invalid",
+            "INVALID_RUNTIME_CONFIGURATION",
+            "Public native runtime configuration is invalid",
         )
     };
-    let host: serde_json::Value = serde_json::from_str(host_json).map_err(|_| invalid())?;
-    let providers = host
+    let runtime: serde_json::Value = serde_json::from_str(runtime_json).map_err(|_| invalid())?;
+    if runtime
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err(invalid());
+    }
+    let providers = runtime
         .get("providers")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(invalid)?;
-    let api_profile = matches!(provider_id, "openai_api" | "anthropic_api" | "mimo_api");
-    let mut matches = providers.iter().filter(|entry| {
+    let mut selected = providers.iter().filter(|entry| {
         entry.get("provider").and_then(serde_json::Value::as_str) == Some(provider_id)
-            && (!api_profile
-                || entry
-                    .get("config")
-                    .and_then(|config| config.get("profile_id"))
-                    .and_then(serde_json::Value::as_str)
-                    == Some(profile_id))
+            && entry
+                .get("config")
+                .and_then(|config| config.get("profile_id"))
+                .and_then(serde_json::Value::as_str)
+                == Some(profile_id)
     });
-    let config = matches
+    let configuration = selected
         .next()
         .and_then(|entry| entry.get("config"))
         .filter(|config| config.is_object())
         .ok_or_else(invalid)?;
-    if matches.next().is_some() {
+    if selected.next().is_some() {
         return Err(invalid());
     }
-    execution_configuration_hash(config).map_err(|_| invalid())
+    execution_configuration_hash(configuration).map_err(|_| invalid())
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {

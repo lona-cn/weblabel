@@ -16,12 +16,10 @@ const harnessOut = path.join(repoRoot, 'target', 'weblabel-t24-harness.js');
 const origin = 'http://127.0.0.1:4174';
 
 const HARNESS_ENTRY = `
-import { createElement, useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { Panel } from './src/features/ai/Panel';
-import { EditorHost } from './src/lib/editor/EditorHost';
+import { mountAiWorkbenchView } from './src/features/ai/ai-workbench-view';
 import { createEditorFacadeFactory, loadWasmBridge } from './src/lib/editor/loader';
-import { SaveQueue } from './src/lib/persistence/save-queue';
+import { setCsrfToken } from './src/lib/t15/api';
+import { createNativeEditorFixture } from '../../tests/e2e/native-editor-fixture';
 import { InMemoryDraftStorage } from './src/lib/persistence/draft-store';
 
 const asset = 'asset_revision_golden';
@@ -61,53 +59,42 @@ const candidate = {
   issues: [], score: null, state: 'pending',
 };
 let requestContext;
-const api = {
-  preview: async (request, grants) => ({ preview_id: 'preview-t24', request: { ...request, context: { ...request.context, input_fingerprint: 'server-preview-fixture' } }, profile, grants, input_fingerprint: 'server-preview-fixture', expires_at: new Date(Date.now() + 600000).toISOString() }),
-  start: async (request) => { requestContext = request.context; return { run_id: 'run-t24' }; },
-  events: async () => [{ run_id: 'run-t24', seq: 1, type: 'succeeded', message: 'Fixture completed', data: null }],
-  suggestions: async () => [{ ...candidate, context: requestContext }],
-  cancel: async () => undefined,
-};
+// Deterministic HTTP responses only. The native controller freezes the actual
+// saved document, validates candidates and dispatches real WASM commands.
+function modelResponse(url, body) {
+  const pathname = new URL(url, location.href).pathname;
+  if (pathname === '/api/model-profiles') return { items: [profile] };
+  if (pathname === '/api/ai/previews') return { preview_id: 'preview-t24', request: { ...body.request, context: { ...body.request.context, input_fingerprint: 'server-preview-fixture' } }, profile, grants: body.grants, input_fingerprint: 'server-preview-fixture', expires_at: new Date(Date.now() + 600000).toISOString() };
+  if (pathname === '/api/ai/consents') return { consent_id: 'consent-t24' };
+  if (pathname === '/api/ai/runs') { requestContext = body.context; return { run_id: 'run-t24' }; }
+  if (pathname.endsWith('/events')) return { items: [{ run_id: 'run-t24', seq: 1, type: 'succeeded', message: 'Synthetic fixture completed', data: null }] };
+  if (pathname.endsWith('/suggestions')) return { items: [{ ...candidate, context: requestContext }], next_cursor: null };
+  if (pathname.endsWith('/rejections')) return { suggestion_set_id: candidate.suggestion_set_id, rejected_change_ids: [], operations: [], next_cursor: null };
+  return null;
+}
 const records = new InMemoryDraftStorage();
 const saves = [];
 const savedGenerations = [];
-const queue = new SaveQueue({
-  owner: { token: {}, actor_id: 'fixture', project_id: context.project_id, isCurrent: () => true, isWritable: () => true, canPrepareOperation: () => true, getLease: () => null },
-  storage: records,
-  transport: {
-    save: async (request) => {
-      saves.push(structuredClone(request));
-      savedGenerations.push(queue.getStatus(asset).local_generation);
-      return { operation_id: request.operation_id, idempotent_replay: false, revision: { annotation_revision_id: 'revision-saved-' + saves.length, parent_revision_id: request.base_revision_id, revision_no: saves.length, document: request.document, created_at: new Date().toISOString(), created_by: 'fixture', content_hash: 'fixture' } };
-    },
-    fetchHead: async () => null,
-    fetchRevision: async () => { throw new Error('No conflict revision in this fixture'); },
-  },
-});
-let host;
-let root;
-function EditorPanel() {
-  const [state, setState] = useState({ document: host.getSnapshot(), generation: host.getGeneration() });
-  const dispatch = (command) => {
-    const delta = host.dispatch(command);
-    setState({ document: host.getSnapshot(), generation: host.getGeneration() });
-    return delta;
-  };
-  return createElement(Panel, {
-    asset_revision_id: asset, profiles: [profile], context, ontology, getDocument: () => host.getSnapshot(), getGeneration: () => host.getGeneration(), generation: state.generation,
-    dispatch, saveQueue: queue, obtainConsent: async () => 'consent-t24', refreshContext: async (snapshot) => ({ ...context, annotation_revision_id: snapshot.annotation_revision_id, draft_generation: snapshot.generation }),
-    grants: { allow_image: true, allow_object_context: true, preview_crop: null }, api, intent: 'detect',
-  });
-}
+let queue, fixture, host, ai;
+let head = annotationRevision;
 window.__t24 = {
+  modelResponse,
   async boot() {
+    setCsrfToken('t24-synthetic-csrf');
     const bridge = await loadWasmBridge('/wasm/wasm_bridge.js');
-    host = new EditorHost({ facadeFactory: createEditorFacadeFactory(bridge), onDelta: (delta) => {
-      if (delta.document_changed || delta.suggestion_decisions.length) queue.enqueue({ asset_revision_id: asset, ontology_version_id: ontologyId, base_revision_id: queue.getStatus(asset).base_revision_id ?? annotationRevision, generation: delta.generation, document: host.getSnapshot(), suggestion_decisions: delta.suggestion_decisions });
-    } });
-    const canvas = document.getElementById('t24-canvas');
-    host.mount(canvas);
-    await host.loadAsset({
+    fixture = createNativeEditorFixture(context.project_id, { storage: records, transport: {
+      async save(request) {
+        if (request.base_revision_id !== head) throw new Error('Synthetic CAS base mismatch');
+        saves.push(structuredClone(request)); savedGenerations.push(queue.getStatus(asset).local_generation);
+        head = 'revision-saved-' + saves.length;
+        return { operation_id: request.operation_id, idempotent_replay: false, revision: { annotation_revision_id: head, parent_revision_id: request.base_revision_id, revision_no: saves.length + 1, document: request.document, created_at: new Date().toISOString(), created_by: 'fixture', content_hash: 'synthetic' } };
+      },
+      async fetchHead() { throw new Error('Unexpected conflict read in acceptance fixture'); },
+      async fetchRevision() { throw new Error('Unexpected revision read in acceptance fixture'); },
+    } }, { facadeFactory: createEditorFacadeFactory(bridge) });
+    queue = fixture.state.queue;
+    document.getElementById('t24-editor').append(fixture.element);
+    fixture.load({
       media: {
         asset_id: 'asset-golden', asset_revision_id: asset, project_id: 'project_golden', original_name: 'fixture.png',
         original_sha256: 'a'.repeat(64), canonical_sha256: 'b'.repeat(64), canonical_width: 640, canonical_height: 480,
@@ -115,28 +102,38 @@ window.__t24 = {
       },
       ontology, document: initialDocument, frame: { width: 640, height: 480, rgba: new Uint8Array(640 * 480 * 4).fill(255) },
       initial_generation: 0,
-    });
+    }, annotationRevision);
+    host = fixture.state.host;
+    if (host.status !== 'ready' && host.status !== 'error') {
+      const ready = Promise.withResolvers<void>();
+      const unsubscribe = host.subscribeStatus(() => { if (host.status === 'ready' || host.status === 'error') { unsubscribe(); ready.resolve(); } });
+      await ready.promise;
+    }
     if (host.status !== 'ready') throw new Error('real editor did not reach ready state: ' + host.status);
-    queue.initializeFromServerRevision({ asset_revision_id: asset, ontology_version_id: ontologyId, annotation_revision_id: annotationRevision, generation: host.getGeneration(), document: host.getSnapshot() });
-    root = createRoot(document.getElementById('t24-react'));
-    root.render(createElement(EditorPanel));
+    ai = mountAiWorkbenchView(document.getElementById('t24-ai'), fixture.state, fixture.port, fixture.signal, () => { throw new Error('Unexpected navigation in acceptance fixture'); });
     return { status: host.status, snapshot: host.getSnapshot(), generation: host.getGeneration() };
   },
   async undo() {
-    const delta = host.dispatch({ kind: 'undo' });
+    const delta = fixture.port.dispatch({ kind: 'undo' });
     await queue.flush(asset);
     return { delta, snapshot: host.getSnapshot(), generation: host.getGeneration() };
   },
   snapshot() { return host.getSnapshot(); },
   acceptedJournal() { return saves.flatMap((request) => request.suggestion_decisions); },
   async savedState() { const branch = queue.getDraftBranchSnapshot(asset); return { saves, savedGenerations, record: (await records.get(asset, branch.envelope.draft_id))?.record, status: queue.getStatus(asset) }; },
-  dispose() { root?.unmount(); host?.dispose(); },
+  dispose() { ai?.dispose(); fixture?.dispose(); },
 };
 `;
 
 interface EsbuildLike {
   build(options: Record<string, unknown>): Promise<unknown>;
 }
+
+interface T24BrowserHarness {
+  modelResponse(url: string, body: unknown): unknown;
+  dispose(): void;
+}
+declare global { interface Window { __t24: T24BrowserHarness } }
 
 async function buildHarnessBundle(): Promise<void> {
   const requireFromWeb = createRequire(path.join(repoRoot, 'apps', 'web', 'package.json'));
@@ -169,17 +166,26 @@ function buildWasmBundle(): void {
 }
 
 async function bootPage(page: Page): Promise<void> {
+  await page.route(origin + '/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body></body></html>' }));
   await page.route('**/t24-harness.js', (route) => route.fulfill({ path: harnessOut, contentType: 'text/javascript; charset=utf-8' }));
   await page.route('**/wasm/wasm_bridge.js', (route) => route.fulfill({ path: path.join(wasmOut, 'wasm_bridge.js'), contentType: 'text/javascript; charset=utf-8' }));
   await page.route('**/wasm/wasm_bridge_bg.wasm', (route) => route.fulfill({ path: path.join(wasmOut, 'wasm_bridge_bg.wasm'), contentType: 'application/wasm' }));
+  await page.route('**/api/**', async route => {
+    const request = route.request(), body: unknown = request.postData() ? request.postDataJSON() : null;
+    const value = await page.evaluate(({ url, body }) => window.__t24.modelResponse(url, body), { url: request.url(), body });
+    await route.fulfill({ status: value === null ? 404 : 200, contentType: 'application/json', body: JSON.stringify(value ?? { code: 'FIXTURE_ENDPOINT_UNAVAILABLE' }) });
+  });
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(String(error)));
   await page.goto(`${origin}/`);
-  await page.setContent('<canvas id="t24-canvas" style="width:640px;height:480px;display:block"></canvas><div id="t24-react"></div><script type="module" src="/t24-harness.js"></script>');
+  await page.setContent('<style>.r07-canvas-stage{position:relative;width:640px;height:480px}.r07-canvas-stage canvas{display:block;width:640px;height:480px}.r07-canvas-labels{position:absolute;inset:0;pointer-events:none}.r07-canvas-labels span{position:absolute}</style><div id="t24-editor"></div><div id="t24-ai"></div><script type="module" src="/t24-harness.js"></script>');
   await page.waitForFunction(() => Boolean((window as unknown as { __t24?: unknown }).__t24));
   try {
     const boot = await page.evaluate(() => (window as unknown as { __t24: { boot(): Promise<{ status: string }> } }).__t24.boot());
     expect(boot.status, errors.join('\n')).toBe('ready');
+    await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state', 'ready');
+    await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-actual-backend', 'webgpu');
+    await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-adapter-kind', 'hardware');
   } catch (error) {
     throw new Error(`T24 real-editor harness failed: ${errors.join('\n')}\n${String(error)}`);
   }
@@ -190,6 +196,10 @@ test.beforeAll(async () => {
   buildWasmBundle();
   await buildHarnessBundle();
 });
+
+test.afterEach(async ({ page }) => {
+  await page.evaluate(() => window.__t24?.dispose());
+});
 type SavedFixtureState = { saves: Array<{ document: { objects: Array<{ object_id: string }> }; suggestion_decisions: Array<{ suggestion_set_id: string; decision: string; change_ids: string[] }> }>; savedGenerations: number[]; record: { generation: number; intent_journal: Array<{ seq: number; generation: number; intent: { decision: string } }> }; status: { synced_generation: number; dirty: boolean } };
 function savedFixtureState(page: Page): Promise<SavedFixtureState> {
   return page.evaluate(() => (window as unknown as { __t24: { savedState(): Promise<SavedFixtureState> } }).__t24.savedState());
@@ -197,6 +207,8 @@ function savedFixtureState(page: Page): Promise<SavedFixtureState> {
 
 test('T24 selected-subset acceptance is one undo unit with reversible journal intents', async ({ page }) => {
   await bootPage(page);
+  await page.getByTestId('ai-provider').selectOption('profile-t24');
+  await page.getByRole('combobox', { name: '运行任务' }).selectOption('detect');
   await page.getByTestId('ai-prompt').fill('Detect two objects and leave the third for review.');
   await page.getByTestId('ai-run').click();
   await page.getByTestId('ai-consent').getByRole('checkbox').check();
@@ -212,9 +224,11 @@ test('T24 selected-subset acceptance is one undo unit with reversible journal in
 
   const acceptedSnapshot = await page.evaluate(() => (window as unknown as { __t24: { snapshot(): { objects: Array<{ object_id: string }> } } }).__t24.snapshot());
   expect(acceptedSnapshot.objects.map((object) => object.object_id)).toEqual(['object-1', 'object-2']);
+  await expect.poll(async () => (await savedFixtureState(page)).status).toMatchObject({ synced_generation: 1, dirty: false });
   const acceptedSave = await savedFixtureState(page);
   expect(acceptedSave.saves.map((save) => save.document)).toEqual([acceptedSnapshot]);
   expect(acceptedSave.savedGenerations).toEqual([1]);
+  expect(acceptedSave.saves[0]).toMatchObject({ base_revision_id: 'revision_golden', lease: null });
   expect(acceptedSave.status).toMatchObject({ synced_generation: 1, dirty: false });
   const undone = await page.evaluate(() => (window as unknown as { __t24: { undo(): { delta: { suggestion_decisions: Array<{ suggestion_set_id: string; decision: string; change_ids: string[] }> }; snapshot: { objects: Array<{ object_id: string }> } } } }).__t24.undo());
   expect(undone.snapshot.objects).toEqual([]);
@@ -228,6 +242,7 @@ test('T24 selected-subset acceptance is one undo unit with reversible journal in
     { suggestion_set_id: 'suggestion-t24', decision: 'revert', change_ids: ['change-1', 'change-2'] },
   ]);
   expect(revertedSave.savedGenerations).toEqual([1, 2]);
+  expect(revertedSave.saves[1]).toMatchObject({ base_revision_id: 'revision-saved-1', lease: null });
   expect(revertedSave.record.intent_journal.map(({ seq, generation, intent }) => [seq, generation, intent.decision])).toEqual([[1, 1, 'accept'], [2, 2, 'revert']]);
   expect(revertedSave.status).toMatchObject({ synced_generation: 2, dirty: false });
   await page.evaluate(() => (window as unknown as { __t24: { dispose(): void } }).__t24.dispose());

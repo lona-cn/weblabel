@@ -1,15 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import net from 'node:net';
 import { once } from 'node:events';
-import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { options, requireNode, mainGuard } from './build.mjs';
+import { root, options, requireNode, validateEntries, sha, mainGuard } from './build.mjs';
+import { validateRelease } from './release-manifest.mjs';
 
 function check(condition, code) { if (!condition) throw new Error(code); }
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -136,46 +135,61 @@ async function closedEndpoint(base) {
   throw new Error('owned_endpoint_still_open');
 }
 
-async function worker(bundle) {
-  const { requireNode, validateEntries, sha } = await import(pathToFileURL(path.join(bundle, 'scripts/build.mjs')).href);
-  requireNode();
-  const node = path.join(bundle, 'bin', process.platform === 'win32' ? 'node.exe' : 'node');
-  check(fs.realpathSync(process.execPath) === fs.realpathSync(node), 'not_bundled_node');
-  check(fs.readdirSync(process.env.PATH).length === 0, 'developer_tools_path_not_empty');
-  const cwd = fs.realpathSync(process.cwd());
-  const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  check(cwd !== sourceRoot && !cwd.startsWith(sourceRoot + path.sep) && cwd !== bundle && !cwd.startsWith(bundle + path.sep), 'smoke_cwd_not_isolated');
+async function worker(bundle, scratch, emptyPath) {
   const metadata = JSON.parse(fs.readFileSync(path.join(bundle, 'bundle.json'), 'utf8'));
-  check(metadata.format === 'weblabel-portable-bundle' && metadata.version === 1 && metadata.platform === process.platform && metadata.arch === process.arch && metadata.node_version === process.versions.node, 'bundle_incompatible');
+  check(metadata.format === 'weblabel-portable-bundle' && metadata.version === 2 && metadata.product_runtime === 'native-rust'
+    && metadata.platform === process.platform && metadata.arch === process.arch, 'bundle_incompatible');
   validateEntries(bundle, metadata.files);
-  check(sha(node) === metadata.node_sha256 && sha(path.join(bundle, 'bin/NodeLICENSE')) === metadata.node_license_sha256, 'bundled_runtime_hash_wrong');
-  const { startLocal, validateRelease } = await import(pathToFileURL(path.join(bundle, 'scripts/start-local.mjs')).href);
-  const build = path.join(bundle, 'release');
-  const { manifest } = validateRelease(build);
+  const build = path.join(bundle, 'release'), { manifest, executable } = validateRelease(build);
   check(manifest.source_commit === metadata.source_commit && sha(path.join(build, 'release.json')) === metadata.release_manifest_sha256, 'bundle_release_manifest_wrong');
-  const data = path.join(process.cwd(), '中文 space data');
+  const env = { PATH: emptyPath, TEMP: scratch, TMP: scratch, TMPDIR: scratch, HOME: scratch, NO_COLOR: '1',
+    ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows', WINDIR: process.env.WINDIR ?? 'C:\\Windows' } : {}) };
+  const data = path.join(scratch, '中文 space data');
+  const diagnostic = spawnSync(executable, ['doctor', '--build-dir', build, '--mode', 'runtime'], {
+    cwd: scratch, env, shell: false, windowsHide: true, encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024,
+  });
+  check(diagnostic.status === 0 && JSON.parse(diagnostic.stdout).status === 'passed', 'native_runtime_doctor_failed_without_developer_path');
   let running;
-  let launchCode;
-  process.on('message', message => { if (message.launchCode) launchCode = message.launchCode; });
   const launch = async () => {
-    const port = await freePort(); let apiPort = await freePort(); while (apiPort === port) apiPort = await freePort();
-    const runtime = await startLocal(['--build-dir', build, '--data-dir', data, '--port', String(port), '--api-port', String(apiPort)]);
-    running = runtime; await ready(runtime.base_url, runtime.child); return { ...runtime, apiBase: `http://127.0.0.1:${apiPort}` };
+    const port = await freePort(), base_url = `http://127.0.0.1:${port}`;
+    const child = spawn(executable, ['serve', '--build-dir', build, '--data-dir', data, '--port', String(port)], {
+      cwd: scratch, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const runtime = { child, base_url, launchCode: undefined, closed: null, failure: null };
+    running = runtime;
+    runtime.closed = new Promise(resolve => {
+      child.once('error', error => { runtime.failure = error; resolve({ code: null }); });
+      child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    let partial = '';
+    child.stdout.on('data', chunk => {
+      const lines = (partial + String(chunk)).split(/\r?\n/); partial = lines.pop().slice(-4096);
+      for (const line of lines) { const match = /^WEBLABEL_BOOTSTRAP_CODE=([0-9a-f]+)$/.exec(line); if (match) runtime.launchCode = match[1]; }
+    });
+    child.stderr.resume();
+    await ready(base_url, child);
+    if (runtime.failure) throw runtime.failure;
+    return runtime;
   };
   const stop = async runtime => {
-    await runtime.stop(); running = null;
-    check(!fs.existsSync(path.join(data, 'runtime.lock')), 'runtime_lock_not_removed');
-    await closedEndpoint(runtime.base_url); await closedEndpoint(runtime.apiBase);
+    if (runtime.child.exitCode === null && runtime.child.signalCode === null) runtime.child.kill('SIGTERM');
+    await Promise.race([runtime.closed, delay(30000, undefined, { ref: false }).then(() => { throw new Error('owned_native_stop_deadline'); })]);
+    await closedEndpoint(runtime.base_url); running = null;
+    // Native sidecars are persistent ownership files, not stale PID lock tokens.
+    const observed = spawnSync(executable, ['doctor', '--build-dir', build, '--mode', 'runtime', '--data-dir', data], {
+      cwd: scratch, env, shell: false, windowsHide: true, encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024,
+    });
+    check(observed.status === 0, 'stopped_native_diagnostics_failed');
+    const lock = JSON.parse(observed.stdout).storage.lock.status;
+    check(lock === 'available' && fs.statSync(path.join(data, 'api.sqlite.runtime.lock')).isFile(), 'native_lock_not_released_or_sidecar_missing');
   };
   try {
     const first = await launch();
-    for (let i = 0; !launchCode && i < 200; i++) await delay(25);
-    check(typeof launchCode === 'string', 'bootstrap_code_not_received');
-    const state = await exerciseRuntime(first.base_url, launchCode);
-    launchCode = undefined;
+    for (let i = 0; !first.launchCode && i < 200; i++) await delay(25);
+    check(typeof first.launchCode === 'string', 'bootstrap_code_not_received');
+    const state = await exerciseRuntime(first.base_url, first.launchCode);
     await stop(first);
-    const restarted = await launch();
-    const persisted = await verifyPersisted(restarted.base_url, state);
+    const restarted = await launch(), persisted = await verifyPersisted(restarted.base_url, state);
     await stop(restarted);
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(path.join(data, 'api.sqlite'), { readOnly: true });
@@ -183,8 +197,11 @@ async function worker(bundle) {
       check(db.prepare('PRAGMA integrity_check').get().integrity_check === 'ok', 'sqlite_integrity_failed');
       check(db.prepare('PRAGMA foreign_key_check').all().length === 0, 'sqlite_foreign_keys_failed');
     } finally { db.close(); }
-    return { format: 'weblabel-portable-smoke', source_commit: manifest.source_commit, platform: process.platform, arch: process.arch, node_version: process.versions.node, checks: ['bundle-manifest-hashes', 'immutable-release-manifest', 'bundled-exact-node', 'no-developer-tools-path', 'non-source-cwd', 'chinese-space-data', ...state.checks, 'stop-owned-endpoints', 'runtime-lock-cleanup', 'data-restart', ...persisted.checks, 'sqlite-integrity', 'sqlite-foreign-keys'] };
-  } finally { if (running) await running.stop(); }
+    return { format: 'weblabel-portable-smoke', source_commit: manifest.source_commit, platform: process.platform, arch: process.arch,
+      product_runtime: 'native-rust', model_calls: 0, shutdown: process.platform === 'win32' ? 'forced-owned-native-process; physical-graceful-proof-is-separate' : 'native-SIGTERM',
+      checks: ['bundle-manifest-hashes', 'immutable-release-v2-manifest', 'no-Node-Python-or-developer-tools-in-product-path', 'native-runtime-doctor', 'isolated-project-owned-cwd',
+        'chinese-space-data', ...state.checks, 'owned-endpoint-closed', 'OS-lock-released-persistent-sidecar-retained', 'data-restart', ...persisted.checks, 'sqlite-integrity', 'sqlite-foreign-keys'] };
+  } finally { if (running) await stop(running); }
 }
 
 export async function releaseSmoke(argv = process.argv.slice(2)) {
@@ -192,33 +209,12 @@ export async function releaseSmoke(argv = process.argv.slice(2)) {
   requireNode();
   check(args['--bundle-dir'] && path.isAbsolute(args['--bundle-dir']), 'required_absolute_bundle_dir');
   const bundle = fs.realpathSync(args['--bundle-dir']);
-  const script = fileURLToPath(import.meta.url);
-  if (process.env.WEBLABEL_PORTABLE_SMOKE_WORKER === '1') {
-    check(process.send, 'worker_ipc_required');
-    try { process.send({ summary: await worker(bundle) }); } catch (error) { process.send({ failure: error.message }); process.exitCode = 1; }
-    process.disconnect(); return;
-  }
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'weblabel-portable-'));
+  const parent = path.join(root, 'target', 'test-artifacts', 'portable-native'); fs.mkdirSync(parent, { recursive: true });
+  const scratch = fs.mkdtempSync(path.join(parent, 'run-'));
   const emptyPath = path.join(scratch, 'empty-path'); fs.mkdirSync(emptyPath);
-  let child;
-  try {
-    const env = { PATH: emptyPath, WEBLABEL_PORTABLE_SMOKE_WORKER: '1', TEMP: scratch, TMP: scratch, TMPDIR: scratch, HOME: scratch, ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows', WINDIR: process.env.WINDIR ?? 'C:\\Windows' } : {}) };
-    child = spawn(path.join(bundle, 'bin', process.platform === 'win32' ? 'node.exe' : 'node'), [script, '--bundle-dir', bundle], { cwd: scratch, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
-    let partial = '', summary, failure;
-    // Bootstrap and all native logs stay inside the parent; they never reach CLI output.
-    child.stdout.on('data', chunk => {
-      const lines = (partial + String(chunk)).split(/\r?\n/); partial = lines.pop().slice(-4096);
-      for (const line of lines) { const match = /^WEBLABEL_BOOTSTRAP_CODE=([0-9a-f]+)$/.exec(line); if (match && child.connected) child.send({ launchCode: match[1] }); }
-    });
-    child.stderr.resume();
-    child.on('message', message => { if (message.summary) summary = message.summary; if (message.failure) failure = message.failure; });
-    const [code] = await once(child, 'close');
-    check(code === 0 && summary, failure ?? 'portable_worker_failed');
-    console.log(JSON.stringify(summary));
-    return summary;
-  } finally {
-    // Worker owns real stop/lock cleanup before close, including its failure path.
-    fs.rmSync(scratch, { recursive: true, force: true });
-  }
+  const summary = await worker(bundle, scratch, emptyPath);
+  fs.rmSync(scratch, { recursive: true });
+  console.log(JSON.stringify(summary));
+  return summary;
 }
 mainGuard(import.meta.url, () => releaseSmoke());

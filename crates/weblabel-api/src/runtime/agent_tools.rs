@@ -166,7 +166,10 @@ fn tool_failure(status: StatusCode, code: &str, message: &str) -> AgentToolError
 }
 
 fn tool_error(status: StatusCode, code: &str, message: &str, details: Value) -> ToolResult {
-    Err(AgentToolError { details, ..tool_failure(status, code, message) })
+    Err(AgentToolError {
+        details,
+        ..tool_failure(status, code, message)
+    })
 }
 
 fn simple_error(status: StatusCode, code: &str, message: &str) -> ToolResult {
@@ -183,13 +186,18 @@ fn http_result(result: ToolResult) -> Response {
             "region": region.region,
             "transform_to_canonical": region.transform_to_canonical,
             "data_base64": base64_encode(&region.bytes),
-        })).into_response(),
-        Err(error) => (error.status, Json(json!({
-            "code": error.code,
-            "message": error.message,
-            "request_id": uuid::Uuid::new_v4().to_string(),
-            "details": error.details,
-        }))).into_response(),
+        }))
+        .into_response(),
+        Err(error) => (
+            error.status,
+            Json(json!({
+                "code": error.code,
+                "message": error.message,
+                "request_id": uuid::Uuid::new_v4().to_string(),
+                "details": error.details,
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -198,7 +206,9 @@ fn token_failure(error: TokenError) -> AgentToolError {
         TokenError::Required | TokenError::Invalid | TokenError::Expired | TokenError::Revoked => {
             StatusCode::UNAUTHORIZED
         }
-        TokenError::ProjectMismatch | TokenError::BudgetExhausted | TokenError::AlreadyDispatched => StatusCode::FORBIDDEN,
+        TokenError::ProjectMismatch
+        | TokenError::BudgetExhausted
+        | TokenError::AlreadyDispatched => StatusCode::FORBIDDEN,
     };
     tool_failure(status, error.code(), "run token rejected")
 }
@@ -300,7 +310,10 @@ struct ReportIssuesArgs {
 }
 
 fn json_fits_budget(value: &impl Serialize, limit: usize) -> bool {
-    struct Budget { bytes: usize, limit: usize }
+    struct Budget {
+        bytes: usize,
+        limit: usize,
+    }
     impl std::io::Write for Budget {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.bytes = self.bytes.saturating_add(bytes.len());
@@ -309,7 +322,9 @@ fn json_fits_budget(value: &impl Serialize, limit: usize) -> bool {
             }
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     serde_json::to_writer(Budget { bytes: 0, limit }, value).is_ok()
 }
@@ -317,15 +332,30 @@ fn json_fits_budget(value: &impl Serialize, limit: usize) -> bool {
 /// MCP tools and terminal echoes share one run-scoped semantic candidate identity.
 /// Normalize only through the existing strict tool schema, without cloning raw JSON.
 pub fn claude_candidate_event_id(raw: &Value) -> Result<String, AgentToolError> {
-    let too_large = || tool_failure(StatusCode::PAYLOAD_TOO_LARGE, "PREDICTION_TOO_LARGE",
-        "raw provider output exceeds the 262144 byte cap");
-    let invalid = || tool_failure(StatusCode::BAD_REQUEST, "INVALID_ARGUMENTS",
-        "Claude candidate does not match the frozen proposal schema");
-    if !json_fits_budget(raw, predictions::MAX_RAW_OUTPUT_BYTES) { return Err(too_large()); }
+    let too_large = || {
+        tool_failure(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "PREDICTION_TOO_LARGE",
+            "raw provider output exceeds the 262144 byte cap",
+        )
+    };
+    let invalid = || {
+        tool_failure(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENTS",
+            "Claude candidate does not match the frozen proposal schema",
+        )
+    };
+    if !json_fits_budget(raw, predictions::MAX_RAW_OUTPUT_BYTES) {
+        return Err(too_large());
+    }
     let args = ProposeChangesArgs::deserialize(raw).map_err(|_| invalid())?;
     let normalized = serde_json::to_value(args).map_err(|_| invalid())?;
-    if !json_fits_budget(&normalized, predictions::MAX_RAW_OUTPUT_BYTES) { return Err(too_large()); }
-    let hash = annotation_domain::hash::execution_configuration_hash(&normalized).map_err(|_| invalid())?;
+    if !json_fits_budget(&normalized, predictions::MAX_RAW_OUTPUT_BYTES) {
+        return Err(too_large());
+    }
+    let hash = annotation_domain::hash::execution_configuration_hash(&normalized)
+        .map_err(|_| invalid())?;
     Ok(format!("claude-candidate-{hash}"))
 }
 
@@ -535,12 +565,18 @@ async fn invoke_tool(
     };
     // Preserve the HTTP boundary's error ordering and original wire budget.
     if !TOOL_NAMES.contains(&tool.as_str()) {
-        return http_result(simple_error(StatusCode::NOT_FOUND, "UNKNOWN_TOOL",
-            "only the five frozen semantic tools are available"));
+        return http_result(simple_error(
+            StatusCode::NOT_FOUND,
+            "UNKNOWN_TOOL",
+            "only the five frozen semantic tools are available",
+        ));
     }
     if body.len() > MAX_TOOL_BODY_BYTES {
-        return http_result(simple_error(StatusCode::PAYLOAD_TOO_LARGE, "TOOL_PAYLOAD_TOO_LARGE",
-            "tool arguments exceed the 1 MiB request budget"));
+        return http_result(simple_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "TOOL_PAYLOAD_TOO_LARGE",
+            "tool arguments exceed the 1 MiB request budget",
+        ));
     }
     let arguments = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -554,15 +590,26 @@ impl AgentToolService {
         Self { repository, tokens }
     }
 
-    pub async fn invoke(&self, token: &str, name: &str, arguments: &Value) -> Result<AgentToolOutput, AgentToolError> {
+    pub async fn invoke(
+        &self,
+        token: &str,
+        name: &str,
+        arguments: &Value,
+    ) -> Result<AgentToolOutput, AgentToolError> {
         if !TOOL_NAMES.contains(&name) {
-            return simple_error(StatusCode::NOT_FOUND, "UNKNOWN_TOOL",
-                "only the five frozen semantic tools are available");
+            return simple_error(
+                StatusCode::NOT_FOUND,
+                "UNKNOWN_TOOL",
+                "only the five frozen semantic tools are available",
+            );
         }
         // Count serialized bytes without allocating another potentially large JSON buffer.
         if !json_fits_budget(arguments, MAX_TOOL_BODY_BYTES) {
-            return simple_error(StatusCode::PAYLOAD_TOO_LARGE, "TOOL_PAYLOAD_TOO_LARGE",
-                "tool arguments exceed the 1 MiB request budget");
+            return simple_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "TOOL_PAYLOAD_TOO_LARGE",
+                "tool arguments exceed the 1 MiB request budget",
+            );
         }
         self.invoke_checked(token, name, arguments).await
     }
@@ -574,14 +621,22 @@ impl AgentToolService {
             return result;
         }
         let grant = self.tokens.verify(token).map_err(token_failure)?;
-        let facts = load_facts(&self.repository, &grant,
-            matches!(name, TOOL_PROPOSE_CHANGES | TOOL_REPORT_ISSUES)).await?;
+        let facts = load_facts(
+            &self.repository,
+            &grant,
+            matches!(name, TOOL_PROPOSE_CHANGES | TOOL_REPORT_ISSUES),
+        )
+        .await?;
         match name {
             TOOL_GET_CONTEXT => get_context(&facts, arguments),
             TOOL_LIST_OBJECTS => list_objects(&facts, arguments),
             TOOL_READ_REGION => read_region(self, token, &facts, arguments).await,
-            TOOL_PROPOSE_CHANGES => submit_candidates(self, token, &facts, arguments, CandidateKind::Changes).await,
-            TOOL_REPORT_ISSUES => submit_candidates(self, token, &facts, arguments, CandidateKind::Issues).await,
+            TOOL_PROPOSE_CHANGES => {
+                submit_candidates(self, token, &facts, arguments, CandidateKind::Changes).await
+            }
+            TOOL_REPORT_ISSUES => {
+                submit_candidates(self, token, &facts, arguments, CandidateKind::Issues).await
+            }
             _ => unreachable!("tool names were checked above"),
         }
     }
@@ -734,7 +789,9 @@ fn list_objects(facts: &RunFacts, arguments: &Value) -> ToolResult {
     } else {
         None
     };
-    Ok(AgentToolOutput::Json(json!({ "items": items, "next_cursor": next_cursor })))
+    Ok(AgentToolOutput::Json(
+        json!({ "items": items, "next_cursor": next_cursor }),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -904,7 +961,17 @@ async fn read_region(
         height: crop_height,
         region: Some([x0, y0, x1, y1]),
         // Crop pixels to canonical pixels: translation by the crop origin.
-        transform_to_canonical: [1.0, 0.0, f64::from(x0), 0.0, 1.0, f64::from(y0), 0.0, 0.0, 1.0],
+        transform_to_canonical: [
+            1.0,
+            0.0,
+            f64::from(x0),
+            0.0,
+            1.0,
+            f64::from(y0),
+            0.0,
+            0.0,
+            1.0,
+        ],
     }))
 }
 
@@ -1015,7 +1082,13 @@ async fn submit_candidates(
         Ok(outcome) => outcome,
         Err(_) => return Err(storage_unavailable()),
     };
-    if state.tokens.admit_if_live(token, tx.commit()).await.map_err(token_failure)?.is_err() {
+    if state
+        .tokens
+        .admit_if_live(token, tx.commit())
+        .await
+        .map_err(token_failure)?
+        .is_err()
+    {
         return Err(storage_unavailable());
     }
 
@@ -1062,11 +1135,16 @@ mod service_boundary_tests {
             transform_to_canonical: [1.0, 0.0, 7.0, 0.0, 1.0, 11.0, 0.0, 0.0, 1.0],
         })));
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["data_base64"], "AAEC/w==");
         assert_eq!(value["region"], json!([7, 11, 10, 15]));
-        assert_eq!(value["transform_to_canonical"], json!([1.0,0.0,7.0,0.0,1.0,11.0,0.0,0.0,1.0]));
+        assert_eq!(
+            value["transform_to_canonical"],
+            json!([1.0, 0.0, 7.0, 0.0, 1.0, 11.0, 0.0, 0.0, 1.0])
+        );
         assert_eq!(value["width"], 3);
         assert_eq!(value["height"], 4);
     }
@@ -1083,7 +1161,10 @@ mod service_boundary_tests {
             assert_eq!(error.code, code);
             assert!(error.details.is_null());
         }
-        assert!(serde_json::from_value::<ReadRegionArgs>(json!({"region":null,"url":"file:///x"})).is_err());
+        assert!(
+            serde_json::from_value::<ReadRegionArgs>(json!({"region":null,"url":"file:///x"}))
+                .is_err()
+        );
         assert!(serde_json::from_value::<ListObjectsArgs>(json!({"limit":1.5})).is_err());
     }
 }

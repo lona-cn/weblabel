@@ -112,3 +112,40 @@ it.each(['existing', 'fresh'] as const)('keeps the %s import receipt fenced afte
   expect((await storage.get('asset', proof!.draft_id))?.record).toMatchObject({ base_revision_id: receipt.annotation_revision_id, document: receipt.document });
   expect(f.state.importing).toBeNull(); expect(f.state.reload).toHaveBeenCalledTimes(1); expect(f.transport.save).not.toHaveBeenCalled();
 });
+
+it('renders dirty, local durability, in-flight and remote ACK status from the real save producer without clearing a newer edit', async () => {
+  const f = setup(), root = document.createElement('section'); document.body.append(root);
+  cleanups.push(f.state.queue.subscribe('asset', () => f.state.notify()));
+  mountSaveView(root, f.state, f.port, f.recovery, f.owner.signal);
+  await f.state.queue.whenPersisted('asset');
+  const status = root.querySelector<HTMLElement>('[data-testid=save-status]')!;
+  expect(status.dataset.phase).toBe('synced'); expect(status.dataset.dirty).toBe('false');
+  const pending = Promise.withResolvers<{ operation_id: string; revision: typeof f.revision; idempotent_replay: boolean }>();
+  f.transport.save.mockReturnValueOnce(pending.promise).mockRejectedValue(new TransportError({ kind: 'network', message: 'synthetic newer save lost' }));
+  const first = { ...f.document, completion: 'complete' as const };
+  f.state.queue.enqueue({ asset_revision_id: 'asset', ontology_version_id: 'ontology', generation: 1, document: first });
+  await f.state.queue.whenPersisted('asset');
+  expect(status.dataset.phase).toBe('saved_local'); expect(status.dataset.dirty).toBe('true');
+  const saving = f.state.queue.flush('asset');
+  await vi.waitFor(() => expect(f.transport.save).toHaveBeenCalledTimes(1)); expect(status.dataset.phase).toBe('saving');
+  f.state.queue.enqueue({ asset_revision_id: 'asset', ontology_version_id: 'ontology', generation: 2, document: f.document });
+  await f.state.queue.whenPersisted('asset');
+  pending.resolve({ operation_id: f.transport.save.mock.calls[0][0].operation_id, revision: { ...f.revision, annotation_revision_id: 'revision-one', document: first }, idempotent_replay: false });
+  await saving;
+  expect(status.dataset.dirty).toBe('true'); expect(status.dataset.phase).not.toBe('synced'); expect(root.textContent).toContain('revision-one');
+  const certificate = root.querySelector('[data-testid=save-certificate]')!;
+  expect(certificate.textContent).toContain('local_commit.generation'); expect(certificate.textContent).toContain('last_ack.revision_id');
+});
+
+it('never claims local durability after an actual storage failure and leaves the draft rescue action available', async () => {
+  const f = setup(), root = document.createElement('section'); document.body.append(root);
+  cleanups.push(f.state.queue.subscribe('asset', () => f.state.notify())); await f.state.queue.whenPersisted('asset');
+  mountSaveView(root, f.state, f.port, f.recovery, f.owner.signal);
+  f.storage.failNextPut(new Error('synthetic quota failure'));
+  f.state.queue.enqueue({ asset_revision_id: 'asset', ontology_version_id: 'ontology', generation: 1, document: f.document });
+  await f.state.queue.whenPersisted('asset');
+  const status = root.querySelector<HTMLElement>('[data-testid=save-status]')!;
+  expect(status.dataset.phase).toBe('storage_error'); expect(status.dataset.dirty).toBe('true');
+  expect(status.textContent).toContain('尚未持久保存'); expect(root.querySelector<HTMLButtonElement>('[data-testid=export-local-draft]')!.disabled).toBe(false);
+  expect(f.state.queue.exportDraft('asset')?.document).toEqual(f.document); expect(f.transport.save).not.toHaveBeenCalled();
+});

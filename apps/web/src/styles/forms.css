@@ -1,0 +1,20 @@
+button, input, select, textarea { font: inherit; color: inherit; }
+button, input:not([type='checkbox']):not([type='radio']), select, textarea {
+  min-width: 0; max-width: 100%; min-height: 40px; padding: 8px 12px;
+  border: 1px solid var(--control-border); border-radius: var(--radius); background: var(--surface-2);
+}
+button { min-width: 40px; cursor: pointer; touch-action: manipulation; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled, input:disabled, select:disabled, textarea:disabled { color: var(--muted); cursor: not-allowed; }
+button[aria-pressed='true'], button[aria-selected='true'] { border-color: var(--accent); color: var(--accent); }
+input[type='checkbox'], input[type='radio'] { width: 20px; height: 20px; accent-color: var(--accent); }
+input[type='file']::file-selector-button { min-height: 40px; padding: 8px 12px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--control-border); border-radius: var(--radius); cursor: pointer; }
+textarea { resize: vertical; }
+[aria-invalid='true'] { border-color: var(--error); }
+fieldset { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); }
+legend { padding: 0 8px; }
+summary { min-height: 40px; padding: 8px 12px; cursor: pointer; }
+@media (forced-colors: active) {
+  button, input, select, textarea { border-color: ButtonText; }
+  button[aria-pressed='true'], button[aria-selected='true'] { border: 2px solid Highlight; }
+}

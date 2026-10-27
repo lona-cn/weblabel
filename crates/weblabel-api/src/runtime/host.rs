@@ -1,4 +1,4 @@
-//! Launching the Node Agent Host child with a hardened process policy.
+//! Launching native Claude and detector children with spawn-owned containment.
 //!
 //! `std::process::Command` never goes through a shell; the environment is built
 //! from an explicit allowlist after `env_clear`, so the parent `process::env`
@@ -7,12 +7,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 
-use crate::runtime::supervisor::{self, ReclaimReport, ReclaimRoot};
-use crate::runtime::{parse_envelope, ProtocolError, RuntimeEnvelope, MAX_LINE_BYTES};
+#[cfg(any(target_os = "linux", test))]
+use crate::runtime::supervisor::ReclaimRoot;
+use crate::runtime::supervisor::{self, ReclaimReport};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
@@ -93,16 +94,6 @@ impl HostConfig {
                 "argv must not contain line breaks; shell-style strings are rejected".to_owned(),
             ));
         }
-        if cfg!(windows)
-            && self
-                .argv
-                .iter()
-                .any(|argument| argument.starts_with(r"\\?\"))
-        {
-            return Err(SpawnError::ArgvInvalid(
-                r"verbatim \\?\ paths must be passed as regular paths; Node module resolution rejects them".to_owned(),
-            ));
-        }
         for name in self.allowed_env.iter().chain(self.extra_env.keys()) {
             if name.is_empty()
                 || !name
@@ -167,226 +158,197 @@ impl HostConfig {
     }
 }
 
-/// Native child transport without the legacy Node envelope reader or request pump.
-/// Path/environment policy is shared with the old active caller; ownership and
-/// tree reclamation remain explicit even when a caller future is cancelled.
+/// Native transport owns both pipes and the original OS process-tree capability.
 pub struct NativeProcess {
     pub child: tokio::process::Child,
     pub root: supervisor::NativeRoot,
+    #[cfg(not(target_os = "linux"))]
     ownership: supervisor::OwnedTree,
+    #[cfg(target_os = "linux")]
+    root_owner: std::sync::Arc<supervisor::linux_broker::ReclaimHandle>,
+    reclaim_finished: bool,
 }
 
 impl NativeProcess {
-    pub async fn reclaim(&mut self) -> Result<ReclaimReport, SpawnError> {
-        let members=self.ownership.terminate()?;
-        let deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(5);
-        while !self.ownership.empty()? {
-            if tokio::time::Instant::now()>=deadline {return Err(SpawnError::Io("owned job reclamation timed out".into()));}
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    #[cfg(test)]
+    pub(crate) fn reclaim_root(&self) -> ReclaimRoot {
+        #[cfg(target_os = "linux")]
+        {
+            ReclaimRoot {
+                root_pid: self.root.root_pid,
+                spawned_at_ms: self.root.spawned_at_ms,
+                exited_at_ms: None,
+                owner: std::sync::Arc::clone(&self.root_owner),
+            }
         }
-        tokio::time::timeout_at(deadline,self.child.wait()).await
-            .map_err(|_|SpawnError::Io("native child reap timed out".into()))?
-            .map_err(|_|SpawnError::Io("native child reap failed".into()))?;
-        self.ownership.report(members)
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.root
+        }
+    }
+    pub(crate) fn reclaim_lease(&self) -> Option<supervisor::OwnedReclaimLease> {
+        #[cfg(target_os = "linux")]
+        {
+            Some(supervisor::OwnedReclaimLease::Broker(ReclaimRoot {
+                root_pid: self.root.root_pid,
+                spawned_at_ms: self.root.spawned_at_ms,
+                exited_at_ms: None,
+                owner: std::sync::Arc::clone(&self.root_owner),
+            }))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.ownership.lease()
+        }
+    }
+
+    pub async fn reclaim(&mut self) -> Result<ReclaimReport, SpawnError> {
+        let outcome = async {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            #[cfg(target_os = "linux")]
+            let report = {
+                let lease = self
+                    .reclaim_lease()
+                    .ok_or_else(|| SpawnError::Io("native ownership unavailable".into()))?;
+                tokio::task::spawn_blocking(move || lease.reclaim())
+                    .await
+                    .map_err(|_| SpawnError::Io("native reclamation task failed".into()))??
+            };
+            #[cfg(not(target_os = "linux"))]
+            let report = {
+                let members = self.ownership.terminate()?;
+                while !self.ownership.empty()? {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(SpawnError::Io("owned job reclamation timed out".into()));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                self.ownership.report(members)?
+            };
+            tokio::time::timeout_at(deadline, self.child.wait())
+                .await
+                .map_err(|_| SpawnError::Io("native child reap timed out".into()))?
+                .map_err(|_| SpawnError::Io("native child reap failed".into()))?;
+            Ok(report)
+        }
+        .await;
+        // Cancellation before this point still retains a cleanup lease in Drop.
+        // A returned failure is terminal, not a new five-second retry.
+        self.reclaim_finished = true;
+        outcome
     }
 }
 
+impl Drop for NativeProcess {
+    fn drop(&mut self) {
+        if self.reclaim_finished {
+            return;
+        }
+        let Some(lease) = self.reclaim_lease() else {
+            return;
+        };
+        // Keep original ownership through cancellation/runtime shutdown; never
+        // turn a dead root PID or current descendant snapshot into kill authority.
+        let reclaim = move || {
+            if let Err(error) = lease.reclaim() {
+                tracing::error!(%error, "abandoned native process reclamation failed");
+            }
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn_blocking(reclaim);
+        } else {
+            reclaim();
+        }
+    }
+}
 
 /// Reject shell/script/npm wrappers by file identity, not just by extension.
 /// Native format is not proof of publisher identity; the trusted local operator
 /// still supplies the official CLI and protocol/auth evidence is a separate gate.
 pub fn validate_native_executable(path: &Path) -> Result<(), SpawnError> {
     if !path.is_absolute() {
-        return Err(SpawnError::ExecutableUntrusted("native executable must be absolute".into()));
+        return Err(SpawnError::ExecutableUntrusted(
+            "native executable must be absolute".into(),
+        ));
     }
-    let canonical = path.canonicalize().map_err(|_| SpawnError::ExecutableMissing("native executable".into()))?;
-    let basename = canonical.file_stem().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
-    if ["node", "nodejs", "npm", "npx", "cmd", "powershell", "pwsh", "sh", "bash", "python", "python3"].contains(&basename.as_str()) {
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| SpawnError::ExecutableMissing("native executable".into()))?;
+    let basename = canonical
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if [
+        "node",
+        "nodejs",
+        "npm",
+        "npx",
+        "cmd",
+        "powershell",
+        "pwsh",
+        "sh",
+        "bash",
+        "python",
+        "python3",
+    ]
+    .contains(&basename.as_str())
+    {
         return Err(SpawnError::ShellForbidden);
     }
     let mut magic = [0u8; 4];
-    std::fs::File::open(&canonical).and_then(|mut file| file.read_exact(&mut magic))
-        .map_err(|_| SpawnError::ExecutableUntrusted("native executable format unavailable".into()))?;
-    let native = if cfg!(windows) { magic[..2] == *b"MZ" }
-        else if cfg!(target_os = "macos") { matches!(magic, [0xcf,0xfa,0xed,0xfe] | [0xfe,0xed,0xfa,0xcf] | [0xca,0xfe,0xba,0xbe] | [0xbe,0xba,0xfe,0xca]) }
-        else { magic == *b"\x7fELF" };
-    if !native { return Err(SpawnError::ExecutableUntrusted("script/wrapper is not a native executable".into())); }
+    std::fs::File::open(&canonical)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .map_err(|_| {
+            SpawnError::ExecutableUntrusted("native executable format unavailable".into())
+        })?;
+    let native = if cfg!(windows) {
+        magic[..2] == *b"MZ"
+    } else if cfg!(target_os = "macos") {
+        matches!(
+            magic,
+            [0xcf, 0xfa, 0xed, 0xfe]
+                | [0xfe, 0xed, 0xfa, 0xcf]
+                | [0xca, 0xfe, 0xba, 0xbe]
+                | [0xbe, 0xba, 0xfe, 0xca]
+        )
+    } else {
+        magic == *b"\x7fELF"
+    };
+    if !native {
+        return Err(SpawnError::ExecutableUntrusted(
+            "script/wrapper is not a native executable".into(),
+        ));
+    }
     Ok(())
 }
 
 pub fn spawn_native(config: &HostConfig) -> Result<NativeProcess, SpawnError> {
     config.validate()?;
     validate_native_executable(&config.executable)?;
-    let mut ownership=supervisor::OwnedTree::new()?;
-    let stamp=supervisor::registration_stamp();
-    let executable = config.executable.canonicalize().map_err(|_| SpawnError::ExecutableMissing("native executable".into()))?;
-    let cwd = config.cwd.canonicalize().map_err(|_| SpawnError::CwdMissing("native cwd".into()))?;
-    let mut command = tokio::process::Command::new(executable);
-    command.args(&config.argv).current_dir(cwd).env_clear().envs(config.build_env())
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x00000200 | 0x00000004);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.as_std_mut().process_group(0);
-    }
-    let mut child = command.spawn().map_err(|_| SpawnError::SpawnFailed("native child spawn failed".into()))?;
-    let root = supervisor::NativeRoot { root_pid: child.id().ok_or_else(|| SpawnError::SpawnFailed("native child has no pid".into()))?,
-        spawned_at_ms: stamp, exited_at_ms: None };
-    #[cfg(windows)]
-    if let Err(error)=ownership.attach(child.raw_handle().ok_or_else(||SpawnError::Io("suspended process handle missing".into()))?.cast(),root) {
-        // Assignment failed before ResumeThread: no executable or descendant
-        // has run. A root-only abort here cannot leave an uncontained tree.
-        let _=child.start_kill();
-        return Err(error);
-    }
-    Ok(NativeProcess { child, root, ownership })
-}
-
-pub struct HostProcess {
-    pub child: Child,
-    pub started_at_ms: i64,
-    reader: BufReader<Box<dyn std::io::Read + Send>>,
-    tracker: crate::runtime::RequestTracker,
-    #[cfg(target_os = "linux")]
-    root_owner: std::sync::Arc<supervisor::linux_broker::ReclaimHandle>,
     #[cfg(not(target_os = "linux"))]
-    ownership: supervisor::OwnedTree,
-}
-
-impl HostProcess {
-    pub fn pid(&self) -> u32 {
-        self.child.id()
-    }
-
-    pub fn reclaim_root(&self) -> ReclaimRoot {
-        ReclaimRoot {
-            root_pid: self.pid(),
-            spawned_at_ms: self.started_at_ms,
-            exited_at_ms: None,
-            #[cfg(target_os = "linux")]
-            owner: std::sync::Arc::clone(&self.root_owner),
-        }
-    }
-
-    pub(crate) fn reclaim_lease(&self) -> Option<supervisor::OwnedReclaimLease> {
-        #[cfg(target_os = "linux")]
-        { Some(supervisor::OwnedReclaimLease::Broker(self.reclaim_root())) }
-        #[cfg(not(target_os = "linux"))]
-        { self.ownership.lease() }
-    }
-
-    /// One NDJSON message to the child, verbatim and line-delimited.
-    pub fn send(&mut self, envelope: &RuntimeEnvelope) -> Result<(), SpawnError> {
-        let line = envelope
-            .to_line()
-            .map_err(|error| SpawnError::Io(error.to_string()))?;
-        let stdin = self
-            .child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| SpawnError::Io("stdin closed".to_owned()))?;
-        writeln!(stdin, "{line}").map_err(|error| SpawnError::Io(error.to_string()))?;
-        stdin
-            .flush()
-            .map_err(|error| SpawnError::Io(error.to_string()))
-    }
-
-    /// One NDJSON message from the child with the same hard limits as the
-    /// parent protocol; `Ok(None)` means the child closed its stdout.
-    pub fn recv(&mut self) -> Result<Option<RuntimeEnvelope>, ProtocolError> {
-        let mut buffer: Vec<u8> = Vec::new();
-        // The read itself is bounded: a hostile child streaming a newline-free
-        // flood must never buffer more than one message plus a byte in memory.
-        let limit = u64::try_from(MAX_LINE_BYTES)
-            .unwrap_or(u64::MAX)
-            .saturating_add(1);
-        let read = (&mut self.reader)
-            .take(limit)
-            .read_until(b'\n', &mut buffer)
-            .map_err(|error| ProtocolError::InvalidJson(error.to_string()))?;
-        if read == 0 {
-            return Ok(None);
-        }
-        if buffer.last() == Some(&b'\n') {
-            buffer.pop();
-            if buffer.last() == Some(&b'\r') {
-                buffer.pop();
-            }
-        } else if buffer.len() as u64 >= limit {
-            return Err(ProtocolError::TooLarge(buffer.len()));
-        } else {
-            return Err(ProtocolError::Truncated);
-        }
-        if buffer.len() > MAX_LINE_BYTES {
-            return Err(ProtocolError::TooLarge(buffer.len()));
-        }
-        let line = String::from_utf8(buffer)
-            .map_err(|_| ProtocolError::InvalidJson("invalid UTF-8".to_owned()))?;
-        let envelope = parse_envelope(&line)?;
-        // Contract C5: duplicate ids are a protocol error that terminates the
-        // run; they are never silently accepted from an untrusted child.
-        self.tracker.track(&envelope.id)?;
-        Ok(Some(envelope))
-    }
-
-    pub fn kill_tree(&mut self) -> Result<ReclaimReport, SpawnError> {
-        #[cfg(target_os = "linux")]
-        {
-            let report = supervisor::reclaim_process_tree(self.reclaim_root())?;
-            self.child.wait().map_err(|_| SpawnError::Io("owned broker reap failed".into()))?;
-            Ok(report)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let members=self.ownership.terminate()?;
-            let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
-            while !self.ownership.empty()? {
-                if std::time::Instant::now()>=deadline {return Err(SpawnError::Io("owned job reclamation timed out".into()));}
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            self.child.wait().map_err(|_|SpawnError::Io("legacy owned child reap failed".into()))?;
-            self.ownership.report(members)
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl Drop for HostProcess {
-    fn drop(&mut self) {
-        if let Err(error) = self.kill_tree() {
-            tracing::error!(%error, "Linux host cleanup failed during drop");
-        }
-    }
-}
-
-pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
-    config.validate()?;
-    #[cfg(not(target_os = "linux"))]
-    let mut ownership=supervisor::OwnedTree::new()?;
-    #[cfg(not(target_os = "linux"))]
-    let stamp=supervisor::registration_stamp();
+    let mut ownership = supervisor::OwnedTree::new()?;
+    let stamp = supervisor::registration_stamp();
     let executable = config
         .executable
         .canonicalize()
-        .map_err(|_| SpawnError::ExecutableMissing(config.executable.display().to_string()))?;
+        .map_err(|_| SpawnError::ExecutableMissing("native executable".into()))?;
     let cwd = config
         .cwd
         .canonicalize()
-        .map_err(|_| SpawnError::CwdMissing(config.cwd.display().to_string()))?;
+        .map_err(|_| SpawnError::CwdMissing("native cwd".into()))?;
     #[cfg(not(target_os = "linux"))]
-    let mut command = Command::new(&executable);
+    let mut command = tokio::process::Command::new(&executable);
     #[cfg(target_os = "linux")]
-    let broker_executable = supervisor::linux_broker::executable()
-        .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?;
-    #[cfg(target_os = "linux")]
-    let mut command = Command::new(&broker_executable);
+    let mut command = tokio::process::Command::new(
+        supervisor::linux_broker::executable()
+            .map_err(|_| SpawnError::SpawnFailed("native broker executable unavailable".into()))?,
+    );
     #[cfg(target_os = "linux")]
     let (completion, inherited_completion, inherited_parent) = {
         use std::os::fd::AsRawFd;
-        let channels = supervisor::linux_broker::control(&mut command)
-            .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?;
+        let channels = supervisor::linux_broker::control(command.as_std_mut())
+            .map_err(|_| SpawnError::SpawnFailed("native broker control unavailable".into()))?;
         command
             .arg(supervisor::linux_broker::MODE)
             .arg(channels.1.as_raw_fd().to_string())
@@ -398,50 +360,41 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
     command
         .args(&config.argv)
         .current_dir(cwd)
+        .env_clear()
+        .envs(config.build_env())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // No shell is ever involved; env_clear plus the allowlist map keeps the
-        // parent environment out of the child entirely.
-        .env_clear()
-        .envs(config.build_env());
-    #[cfg(target_os = "linux")]
-    if config.allowed_env.iter().any(|key| key == "WEBLABEL_HOST_CONFIG")
-        && config.extra_env.contains_key("WEBLABEL_HOST_CONFIG")
-    {
-        // Internal operator locator, selected by this API, not provider extra_env.
-        // Only managed Node Hosts receive it; provider child allowlists remain intact.
-        command.env("WEBLABEL_API_BINARY", &broker_executable);
-    }
+        .stderr(Stdio::piped());
+    // On Linux the private broker peer/pidfd owns shutdown, not a root-only
+    // kill-on-drop that could terminate the broker before it reaps descendants.
+    command.kill_on_drop(!cfg!(target_os = "linux"));
     #[cfg(windows)]
+    command.creation_flags(0x00000200 | 0x00000004);
+    #[cfg(unix)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW | 0x00000004);
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
     }
     #[cfg(target_os = "linux")]
     let startup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut child = command
         .spawn()
-        .map_err(|error| SpawnError::SpawnFailed(error.to_string()))?;
-    #[cfg(target_os = "linux")]
-    let started_at_ms = chrono::Utc::now().timestamp_millis();
-    #[cfg(not(target_os = "linux"))]
-    let started_at_ms = stamp;
+        .map_err(|_| SpawnError::SpawnFailed("native child spawn failed".into()))?;
+    let root = supervisor::NativeRoot {
+        root_pid: child
+            .id()
+            .ok_or_else(|| SpawnError::SpawnFailed("native child has no pid".into()))?,
+        spawned_at_ms: stamp,
+        exited_at_ms: None,
+    };
     #[cfg(target_os = "linux")]
     let root_owner = {
         drop(inherited_completion);
         drop(inherited_parent);
-        match supervisor::linux_broker::capture(
-            child.id(),
-            started_at_ms,
-            completion,
-            startup_deadline,
-        ) {
+        match supervisor::linux_broker::capture(root.root_pid, stamp, completion, startup_deadline)
+        {
             Ok(owner) => owner,
             Err(error) => {
-                // Closing the control peer aborts before Go; never give this
-                // failure path a fresh startup deadline or launch a runtime.
                 while child.try_wait().ok().flatten().is_none()
                     && std::time::Instant::now() < startup_deadline
                 {
@@ -452,178 +405,112 @@ pub fn spawn_host(config: &HostConfig) -> Result<HostProcess, SpawnError> {
         }
     };
     #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        let root=ReclaimRoot{root_pid:child.id(),spawned_at_ms:stamp,exited_at_ms:None};
-        if let Err(error)=ownership.attach(child.as_raw_handle().cast(),root) {
-            let _=child.kill();
-            return Err(error);
-        }
+    if let Err(error) = ownership.attach(
+        child
+            .raw_handle()
+            .ok_or_else(|| SpawnError::Io("suspended process handle missing".into()))?
+            .cast(),
+        root,
+    ) {
+        // No child instruction ran before containment; root-only abort is safe here.
+        let _ = child.start_kill();
+        return Err(error);
     }
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| SpawnError::Io("stdout missing".to_owned()))?;
-    let reader: BufReader<Box<dyn std::io::Read + Send>> = BufReader::new(Box::new(stdout));
-    Ok(HostProcess {
+    Ok(NativeProcess {
         child,
-        started_at_ms,
-        reader,
-        tracker: crate::runtime::RequestTracker::default(),
-        #[cfg(target_os = "linux")]
-        root_owner,
+        root,
+        reclaim_finished: false,
         #[cfg(not(target_os = "linux"))]
         ownership,
+        #[cfg(target_os = "linux")]
+        root_owner,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
-    use crate::runtime::test_support::{fake_runtime, node_executable};
-    use crate::runtime::{EnvelopeMethod, RuntimeEnvelope};
-
-    fn system_env() -> BTreeMap<String, String> {
-        let names = ["SystemRoot", "SystemDrive", "WINDIR", "TEMP", "TMP", "PATH"];
-        names
-            .iter()
-            .filter_map(|name| {
-                std::env::var(name)
-                    .ok()
-                    .map(|value| ((*name).to_owned(), value))
-            })
-            .collect()
-    }
-
-    fn test_config(temp: &Path) -> HostConfig {
-        let node = node_executable();
-        let node_root = node.parent().expect("node parent").to_path_buf();
-        let mut extra = system_env();
-        extra.insert("TEST_SCENARIO".to_owned(), "normal".to_owned());
-        let allowed_env = extra.keys().cloned().collect();
-        HostConfig {
-            executable: node,
-            argv: vec![fake_runtime().to_string_lossy().into_owned()],
-            cwd: temp.to_path_buf(),
-            allowed_env,
-            source_env: BTreeMap::new(),
-            extra_env: extra,
-            trusted_executable_roots: vec![node_root],
-            trusted_cwd_roots: vec![temp.to_path_buf()],
-        }
-    }
+    use crate::runtime::test_support::{config, scratch};
 
     #[test]
-    fn build_env_passes_only_allowlisted_names() {
-        let mut config = test_config(std::path::Path::new("."));
-        config.allowed_env = vec!["TEST_SCENARIO".to_owned()];
-        config.extra_env.retain(|key, _| key == "TEST_SCENARIO");
-        let mut source = BTreeMap::new();
-        source.insert("SECRET_CANARY".to_owned(), "must-not-leak".to_owned());
-        source.insert("TEST_SCENARIO".to_owned(), "normal".to_owned());
-        config.source_env = source;
+    fn native_configuration_never_forwards_non_allowlisted_environment() {
+        let directory = scratch();
+        let mut config = config(directory.path(), "exit", &directory.path().join("pid"));
+        config.allowed_env = vec!["R09_NATIVE_MODE".into()];
+        config.extra_env.retain(|key, _| key == "R09_NATIVE_MODE");
+        config
+            .source_env
+            .insert("SECRET_CANARY".into(), "must-not-leak".into());
         let env = config.build_env();
-        assert_eq!(env.len(), 1, "only the allowlisted name reaches the child");
-        assert_eq!(
-            env.get(std::ffi::OsStr::new("TEST_SCENARIO"))
-                .map(|v| v.to_string_lossy().into_owned()),
-            Some("normal".to_owned())
-        );
-        assert!(
-            !env.contains_key(std::ffi::OsStr::new("SECRET_CANARY")),
-            "the whole process env is never forwarded"
-        );
+        assert_eq!(env.len(), 1);
+        assert!(!env.contains_key(std::ffi::OsStr::new("SECRET_CANARY")));
+        assert_eq!(env[std::ffi::OsStr::new("R09_NATIVE_MODE")], "exit");
     }
 
     #[test]
-    fn validate_rejects_untrusted_paths_shell_style_argv_and_unknown_env() {
-        let temp = std::env::temp_dir();
-        let mut config = test_config(&temp);
-
-        config.executable = PathBuf::from("node");
+    fn native_configuration_rejects_untrusted_paths_invalid_argv_and_extra_environment() {
+        let directory = scratch();
+        let mut config = config(directory.path(), "exit", &directory.path().join("pid"));
+        let executable = config.executable.clone();
+        config.executable = PathBuf::from("relative-native");
         assert!(matches!(
             config.validate(),
             Err(SpawnError::ExecutableUntrusted(_))
         ));
-
-        config.executable = fake_runtime();
-        assert!(matches!(
-            config.validate(),
-            Err(SpawnError::ExecutableUntrusted(_))
-        ));
-
-        config.executable = node_executable();
-        config.cwd = PathBuf::from(if cfg!(windows) { "C:\\Windows" } else { "/etc" });
+        config.executable = executable;
+        let other = scratch();
+        config.cwd = other.path().to_owned();
         assert!(matches!(
             config.validate(),
             Err(SpawnError::CwdUntrusted(_))
         ));
-
-        config.cwd = temp.clone();
-        config.argv = vec![
-            "cmd /c echo shell-string".to_owned(),
-            "second\nline".to_owned(),
-        ];
+        config.cwd = directory.path().to_owned();
+        config.argv.push("second\nline".into());
         assert!(matches!(config.validate(), Err(SpawnError::ArgvInvalid(_))));
-
-        if cfg!(windows) {
-            config.argv = vec![format!(r"\\?\C:\tools\{}", "script with space.mjs")];
-            assert!(matches!(config.validate(), Err(SpawnError::ArgvInvalid(_))));
-        }
-
-        config.argv = vec![fake_runtime().to_string_lossy().into_owned()];
+        config.argv.pop();
         config
             .extra_env
-            .insert("NOT_ALLOWLISTED".to_owned(), "x".to_owned());
+            .insert("NOT_ALLOWLISTED".into(), "x".into());
         assert!(matches!(
             config.validate(),
             Err(SpawnError::EnvNotAllowlisted(_))
         ));
+        let wrapper = directory.path().join("wrapper");
+        std::fs::write(&wrapper, b"#!/bin/sh\nexit 0\n").unwrap();
+        assert!(
+            validate_native_executable(&wrapper).is_err(),
+            "native execution must reject scripts independent of extension"
+        );
     }
 
-    #[test]
-    fn spawns_the_fake_runtime_and_round_trips_a_probe_with_cjk_argv() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let mut config = test_config(temp.path());
-        config.argv = vec![
-            fake_runtime().to_string_lossy().into_owned(),
-            "参数 with space".to_owned(),
-        ];
-        let mut host = spawn_host(&config).expect("spawn host");
-        let mut stderr_pipe = host.child.stderr.take().expect("piped stderr");
-        host.send(&RuntimeEnvelope::request(
-            "probe-1",
-            EnvelopeMethod::Probe,
-            serde_json::json!({}),
-        ))
-        .expect("send probe");
-        let response = host.recv().expect("recv probe");
-        // Ask for a clean shutdown so stderr reaches EOF, then prove the split:
-        // protocol on stdout (recv above), logs only on stderr.
-        let _ = host.send(&RuntimeEnvelope::request(
-            "shutdown-1",
-            EnvelopeMethod::Shutdown,
-            serde_json::json!({}),
-        ));
-        let _ = host.child.wait();
-        let mut logs = String::new();
-        std::io::Read::read_to_string(&mut stderr_pipe, &mut logs).expect("read stderr");
-        let response = match response {
-            Some(response) => response,
-            None => panic!("probe response missing; child stderr: {logs}"),
+    #[cfg(any(windows, target_os = "linux"))]
+    #[tokio::test]
+    async fn native_argv_preserves_unicode_and_spaces_with_separate_output_pipes() {
+        use tokio::io::AsyncReadExt;
+        let directory = scratch();
+        let mut config = config(directory.path(), "argv", &directory.path().join("pid"));
+        config
+            .argv
+            .extend(["--skip".into(), "参数 with space".into()]);
+        let mut process = spawn_native(&config).unwrap();
+        let mut stdout = process.child.stdout.take().unwrap();
+        let mut stderr = process.child.stderr.take().unwrap();
+        let output = async {
+            let (mut out, mut err) = (String::new(), String::new());
+            let (a, b) = tokio::join!(
+                stdout.read_to_string(&mut out),
+                stderr.read_to_string(&mut err)
+            );
+            a.unwrap();
+            b.unwrap();
+            (out, err)
         };
-        assert!(logs.contains("[fake-runtime]"), "logs go to stderr: {logs}");
-        assert_eq!(response.method, EnvelopeMethod::Probe);
-        assert_eq!(
-            response.payload["argv"],
-            serde_json::json!(["参数 with space"])
-        );
-        assert_eq!(response.payload["ok"], serde_json::json!(true));
-        assert_eq!(
-            response.payload["profiles"][0]["verification"],
-            serde_json::json!("mock_only")
-        );
+        let (out, err) = tokio::time::timeout(std::time::Duration::from_secs(5), output)
+            .await
+            .unwrap();
+        assert!(out.contains("native-argv-ok") && !out.contains("native-fixture-log"));
+        assert!(err.contains("native-fixture-log") && !err.contains("native-argv-ok"));
+        assert!(process.child.wait().await.unwrap().success());
+        process.reclaim().await.unwrap();
     }
 }

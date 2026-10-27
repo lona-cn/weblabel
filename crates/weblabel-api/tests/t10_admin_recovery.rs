@@ -212,7 +212,12 @@ async fn recovery_preserves_identity_and_revokes_only_target_sessions() {
             .await
             .unwrap();
     assert!(auth::verify_password(OLD, &hash));
-    let mut restarted = AuthState::new(state.pool.clone(), state.config.clone(), std::time::Duration::from_secs(2)).unwrap();
+    let mut restarted = AuthState::new(
+        state.pool.clone(),
+        state.config.clone(),
+        std::time::Duration::from_secs(2),
+    )
+    .unwrap();
     assert!(restarted
         .enable_password_recovery(ID, "local-admin", hash_launch_code(CODE), now() + 600)
         .await
@@ -250,7 +255,12 @@ async fn disabled_validation_expiry_and_rate_limit() {
         recovery(&state, "POST", CODE, NEW).await.0,
         StatusCode::UNAUTHORIZED
     );
-    let mut state = AuthState::new(state.pool.clone(), state.config.clone(), std::time::Duration::from_secs(2)).unwrap();
+    let mut state = AuthState::new(
+        state.pool.clone(),
+        state.config.clone(),
+        std::time::Duration::from_secs(2),
+    )
+    .unwrap();
     enable(&mut state, now() + 600).await;
     assert_eq!(
         recovery(&state, "POST", CODE, "short").await.0,
@@ -371,7 +381,12 @@ async fn target_role_is_rechecked_and_credentialless_restore_is_rejected() {
         .await
         .unwrap();
     assert_eq!(recovery(&state, "POST", CODE, NEW).await.0, StatusCode::OK);
-    let mut clean = AuthState::new(state.pool.clone(), state.config.clone(), std::time::Duration::from_secs(2)).unwrap();
+    let mut clean = AuthState::new(
+        state.pool.clone(),
+        state.config.clone(),
+        std::time::Duration::from_secs(2),
+    )
+    .unwrap();
     sqlx::query("UPDATE users SET password_hash=''")
         .execute(&state.pool)
         .await

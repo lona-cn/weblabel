@@ -6,21 +6,21 @@
 
 ## 启动与工具
 
-- **症状/真实 code**：node_version；doctor 工具 status=version_mismatch/missing，整体 blocked/2 或 failed/1。
-- **已确认与未知事实**：固定版本不匹配/工具缺失不等于账户失效；doctor 不检查账户、真实 GPU 或模型。passed/0 仅说明该次诊断范围通过。
-- **先保全什么**：现有数据、草稿、发行及诊断 JSON，记录 node --version 与 node -p process.execPath。
-- **允许的下一动作**：按[固定工具与构建](getting-started.md#构建与启动)仅切当前进程 PATH，使用固定 Node24.16.0；重跑只读 doctor 并分别读 tools/release/configuration。
+- **症状/真实 code**：构建 Node pin 不符、doctor 工具 missing/version_mismatch、发行缺失或无效；blocked/2 与 failed/1 分开。
+- **已确认与未知事实**：v2 runtime 模式不要求 Node/Python/编译器；build 模式要求固定工具。诊断通过不证明 GPU、账号或推理可用。
+- **先保全什么**：原数据、草稿、发行与诊断 JSON；构建问题另外记录实际工具路径和版本。
+- **允许的下一动作**：运行预编译产品用 `weblabel doctor --mode runtime`；源码构建才按[固定工具](getting-started.md#构建与启动)调整当前进程 PATH，不改全局配置。
 - **禁止动作**：降低 pin、改全局配置、把历史版本输出当本机现状、借 doctor 宣称 live 通过。
 - **成功判据**：实际可执行路径/版本与 pin 一致，工具 pinned；仍缺发行或其他前提时继续记录 blocked。
 
 ## 发行、端口与锁
 
 - **症状/真实 code**：build_missing、build_incompatible、hash_mismatch、invalid_loopback_ports、data_in_use、process_tree_tool_missing；端口占用/监听失败以实际终端错误记录，不发明统一 API code。
-- **已确认与未知事实**：发行无效不能靠网页能开证明；runtime.lock 存在不能单独证明活服务，也不能证明陈旧。
-- **先保全什么**：release.json、发行原字节、runtime.lock 与 PID/端口记录、SQLite/WAL/对象目录。
-- **允许的下一动作**：选本轮新发行目录重新构建；端口冲突换一组不同空闲 loopback 端口；在任务管理器核对锁 PID、路径和受管树。仅确定全部停止后移除该锁，再用原数据目录启动。
-- **禁止动作**：终止用户服务、伪造 manifest、移除活锁、删除 SQLite/-wal/-shm/对象以修复启动、绑定 LAN/公网。
-- **成功判据**：发行 hashes_valid，启动输出精确 WEBLABEL_LOCAL_URL，自己服务的 Web/API 端口工作；正常 Ctrl+C 后自己受管树退出、锁移除。
+- **已确认与未知事实**：发行能打开页面不证明 hash 正确；持久 OS sidecar 文件存在不说明活服务或陈旧。旧 PID 锁不授予终止进程权限。
+- **先保全什么**：发行原字节、release.json、锁诊断与原 canonical 数据目录、SQLite/WAL/对象。
+- **允许的下一动作**：新目录构建；冲突时核对所属进程和精确单一 loopback 端口，停止已确认属于自己的服务，再用原数据目录启动。不删除 sidecar 解锁。
+- **禁止动作**：杀用户其他服务、伪造 manifest、删 SQLite/WAL/SHM/对象或锁文件抢占数据库、绑定 LAN/公网。
+- **成功判据**：发行 hashes_valid，精确 WEBLABEL_LOCAL_URL 可用；正常 Ctrl+C 后自有树退出，OS 锁可再取得，sidecar 文件仍保留。
 
 ## 初始化与登录
 
@@ -143,7 +143,7 @@
 ## AI
 
 - **症状/真实 code**：profile 列表 items=[]、PROFILE_LIST_FAILED、PROVIDER_RETIRED；needs_configuration/needs_login/blocked/not_run 是能力状态，不是人工保存错误。
-- **已确认与未知事实**：持久 profile、公开只读投影、私有 Host JSON/凭证环境、项目外发策略和每次 preview/consent 是五个独立层。空库 [] 正常；当前只有公开读取，无操作者创建 API/网页入口。单设 WEBLABEL_HOST_CONFIG 不建 profile。doctor 不检查账号/模型，当前四必需渠道与历史五渠道记录见[限制](known-limitations.md)。
+- **已确认与未知事实**：持久 profile、公开投影、私有原生配置/凭证环境、项目策略与逐次 preview/consent 是独立层。空库 [] 正常；平台管理员已有固定预设 GUI/API，只能选择本机操作者准备的预设。单设 `WEBLABEL_RUNTIME_CONFIG` 不建持久 profile，更不证明本地 CLI/检测器已 ready。doctor 不检查账号或推理；渠道与历史记录见[限制](known-limitations.md)。
 - **先保全什么**：公开 profile/availability/verification、run/operation ID、预算/consent/preview 摘要与收费未知状态；不收集或打印私有 JSON、key/CLI home。
 - **允许的下一动作**：继续 core 人工流程；授权环境的已有 profile 才按[运维分层](operations.md#ai-可选配置)和 provider 文档核对。终态/费用未知先查既有 run 与本人官方记录，由本人明确决定下一调用。
 - **禁止动作**：SQL provisioning、假的配置 CLI、自动替换 retired Codex、绕过策略/逐次 consent、未授权登录/下载权重/调用模型、将 synthetic 候选算 live。

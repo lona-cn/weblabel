@@ -1152,4 +1152,3 @@ async fn drain_waits_for_live_owner_without_blocking_writes_or_changing_ownershi
         json!({"processed":1,"jobs":[{"job_id":queued.job_id,"kind":"unsupported","state":"failed"}]})
     );
 }
-

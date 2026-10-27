@@ -5,55 +5,41 @@ import net from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { options, requireNode } from './build.mjs';
+import { root, options, requireNode } from './build.mjs';
 
 const build = '/opt/weblabel/release';
 const base = 'http://127.0.0.1:48100';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function checkData() {
-  assert.equal(fs.existsSync('/data/runtime.lock'), false, 'runtime_lock_survived_stop');
-  assert.ok(fs.statSync('/data/api.sqlite').isFile(), 'database_missing');
+async function checkData(directory) {
+  assert.equal(fs.existsSync(path.join(directory, 'runtime.lock')), false, 'legacy_runtime_lock_present');
+  assert.ok(fs.statSync(path.join(directory, 'api.sqlite.runtime.lock')).isFile(), 'persistent_OS_lock_sidecar_missing');
   const { DatabaseSync } = await import('node:sqlite');
-  // Check only the stopped, exclusively-owned volume. If WAL remains, retain
-  // normal SQLite WAL reads; immutable mode must not hide committed WAL data.
-  // Clean shutdown may remove both sidecars, and this readonly mount cannot
-  // recreate them. Only that WAL-free snapshot uses an immutable URI.
-  const location = fs.existsSync('/data/api.sqlite-wal')
-    ? '/data/api.sqlite'
-    : 'file:/data/api.sqlite?mode=ro&immutable=1';
-  const db = new DatabaseSync(location, { readOnly: true });
+  // Copy only this stopped, exclusively-owned synthetic volume. Preserve WAL
+  // reads on the writable project-local copy; never hide committed WAL data.
+  const db = new DatabaseSync(path.join(directory, 'api.sqlite'), { readOnly: true });
   try {
     assert.deepEqual(db.prepare('PRAGMA integrity_check').all().map(row => row.integrity_check), ['ok'], 'sqlite_integrity');
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [], 'sqlite_foreign_keys');
   } finally { db.close(); }
-  return { runtime_lock_absent: true, sqlite_integrity: true, sqlite_foreign_keys: true };
 }
 
-function checkRunning(expectedCommit) {
-  requireNode();
-  assert.equal(process.getuid(), 1000, 'actual_nonroot_uid');
-  assert.equal(fs.readFileSync('/proc/1/comm', 'utf8').trim(), 'tini', 'actual_init_pid1');
-  const init = fs.readFileSync('/proc/1/cmdline', 'utf8').split('\0').filter(Boolean);
-  assert.deepEqual(init, ['/usr/bin/tini', '--', 'node', '/opt/weblabel/scripts/start-local.mjs', '--build-dir', build, '--data-dir', '/data'], 'actual_init_command');
-  const manifest = JSON.parse(fs.readFileSync(path.join(build, 'release.json'), 'utf8'));
+function checkRunning(name, expectedCommit) {
+  assert.equal(docker(['exec', name, 'id', '-u']), '1000', 'actual_nonroot_uid');
+  assert.equal(docker(['exec', name, 'cat', '/proc/1/comm']), 'tini', 'actual_init_pid1');
+  const init = docker(['exec', name, 'cat', '/proc/1/cmdline']).split('\0').filter(Boolean);
+  assert.deepEqual(init, ['/usr/bin/tini', '--', '/opt/weblabel/release/weblabel', 'serve', '--build-dir', build, '--data-dir', '/data'], 'actual_native_init_command');
+  const manifest = JSON.parse(docker(['exec', name, 'cat', path.posix.join(build, 'release.json')]));
+  assert.equal(manifest.version, 2, 'native_release_v2');
   assert.equal(manifest.source_commit, expectedCommit, 'release_commit');
-  for (const file of [path.join(build, 'api/weblabel-api'), '/opt/weblabel/scripts/start-local.mjs']) {
-    const stat = fs.statSync(file);
-    assert.equal(stat.uid, 0, 'program_root_owned');
-    assert.equal(stat.mode & 0o222, 0, 'program_readonly');
-  }
-  fs.accessSync('/data', fs.constants.W_OK);
-  assert.ok(fs.existsSync('/data/runtime.lock'), 'running_lock_missing');
-  assert.equal(spawnSync('ps', ['-e', '-o', 'pid=,ppid='], { stdio: 'ignore' }).status, 0, 'owned_host_ps_required');
-  assert.ok(fs.statSync('/bin/kill').mode & 0o111, 'owned_host_kill_required');
-  return { source_commit: manifest.source_commit, node: process.versions.node, actual_uid: process.getuid(), init_pid1: true, program_readonly: true, data_writable: true, owned_host_tools: true };
-}
-
-// These checks are sent over Docker exec to the real runtime, not shipped in it.
-// Only public commit IDs are serialized; authentication state stays on the runner.
-function nodeProgram(check, ...args) {
-  return `import assert from 'node:assert/strict'; import fs from 'node:fs'; import path from 'node:path'; import {spawnSync} from 'node:child_process'; import {requireNode} from '/opt/weblabel/scripts/build.mjs'; const build='/opt/weblabel/release'; console.log(JSON.stringify(await (${check.toString()})(...${JSON.stringify(args)})));`;
+  const [owner, permissions] = docker(['exec', name, 'stat', '-c', '%u %a', path.posix.join(build, 'weblabel')]).split(' ');
+  assert.equal(owner, '0', 'program_root_owned');
+  assert.equal(Number.parseInt(permissions, 8) & 0o222, 0, 'program_readonly');
+  docker(['exec', name, 'test', '-w', '/data']);
+  docker(['exec', name, '/bin/sh', '-c', 'for tool in node nodejs python python3 cargo rustc; do if command -v "$tool" >/dev/null 2>&1; then exit 1; fi; done']);
+  const doctor = JSON.parse(docker(['exec', name, path.posix.join(build, 'weblabel'), 'doctor', '--mode', 'runtime', '--build-dir', build, '--data-dir', '/data']));
+  assert.equal(doctor.status, 'passed', 'native_runtime_doctor');
+  assert.equal(doctor.storage.lock.status, 'occupied', 'running_native_OS_lock');
 }
 
 function docker(args) {
@@ -77,7 +63,7 @@ async function freePort(port) {
 function assertRunning(container, imageId, volume) {
   assert.equal(container.Image, imageId, 'running_image_id');
   assert.equal(container.State.Running, true, 'container_exited');
-  assert.equal(container.Config.User, 'node', 'configured_nonroot');
+  assert.equal(container.Config.User, '1000:1000', 'configured_nonroot');
   assert.equal(container.HostConfig.NetworkMode, 'host', 'native_host_network');
   assert.equal(container.HostConfig.ReadonlyRootfs, true, 'readonly_rootfs');
   assert.equal(container.HostConfig.Privileged, false, 'not_privileged');
@@ -107,7 +93,7 @@ export async function smokeContainer(argv = process.argv.slice(2)) {
   const metadata = JSON.parse(docker(['image', 'inspect', image]))[0];
   assert.equal(metadata.Os, 'linux', 'image_linux');
   assert.equal(metadata.Architecture, 'amd64', 'image_amd64');
-  assert.equal(metadata.Config.User, 'node', 'image_nonroot');
+  assert.equal(metadata.Config.User, '1000:1000', 'image_nonroot');
   assert.equal(metadata.Config.StopSignal, 'SIGTERM', 'image_stop_signal');
   assert.ok(metadata.Config.Healthcheck?.Test?.length, 'image_healthcheck_required');
   assert.match(metadata.Id, /^sha256:[0-9a-f]{64}$/);
@@ -125,6 +111,9 @@ export async function smokeContainer(argv = process.argv.slice(2)) {
   let result;
   let failure;
   const checks = [];
+  const scratchParent = path.join(root, 'target/test-artifacts/container-native');
+  fs.mkdirSync(scratchParent, { recursive: true });
+  const scratch = fs.mkdtempSync(path.join(scratchParent, 'owned-'));
   const stopExitCodes = [];
   const ownership = name => assert.equal(inspect(name).Config.Labels[labelKey], token, 'cleanup_ownership');
   async function start(name, bootstrap) {
@@ -146,12 +135,11 @@ export async function smokeContainer(argv = process.argv.slice(2)) {
       await delay(500);
     }
     assert.equal(inspect(name).State.Health.Status, 'healthy', 'inspected_healthy');
-    const running = JSON.parse(docker(['exec', name, 'node', '--input-type=module', '-e', nodeProgram(checkRunning, args['--expected-commit'])]));
-    assert.equal(running.source_commit, args['--expected-commit']);
+    checkRunning(name, args['--expected-commit']);
     checks.push(`${bootstrap ? 'first' : 'restart'}_inspected_nonroot_init_readonly_healthy_exact_image`);
     return launchCode;
   }
-  function stop(name) {
+  async function stop(name) {
     phase = 'graceful_stop';
     ownership(name);
     docker(['stop', '--time', '30', name]);
@@ -159,14 +147,17 @@ export async function smokeContainer(argv = process.argv.slice(2)) {
     assert.equal(stopped.State.Running, false, 'stop_still_running');
     assert.equal(stopped.State.OOMKilled, false, 'stop_oom');
     assert.equal(stopped.State.Error, '', 'stop_engine_error');
-    assert.equal(stopped.State.ExitCode, 130, 'real_launcher_signal_exit');
+    assert.equal(stopped.State.ExitCode, 0, 'native_graceful_signal_exit');
     stopExitCodes.push(stopped.State.ExitCode);
     phase = 'stopped_database';
-    const checker = `${name}-data`;
-    owned.push(checker);
-    const data = JSON.parse(docker(['run', '--name', checker, '--label', `${labelKey}=${token}`, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--mount', `type=volume,source=${volume},target=/data,readonly`, '--entrypoint', 'node', image, '--input-type=module', '-e', nodeProgram(checkData)]));
-    assert.deepEqual(data, { runtime_lock_absent: true, sqlite_integrity: true, sqlite_foreign_keys: true });
-    checks.push('docker_stop_exit_130', 'runtime_lock_removed', 'sqlite_integrity_and_foreign_keys');
+    const copy = path.join(scratch, name); fs.mkdirSync(copy);
+    docker(['cp', `${name}:/data/.`, copy]);
+    await checkData(copy);
+    const checker = `${name}-data`; owned.push(checker);
+    const doctor = JSON.parse(docker(['run', '--name', checker, '--label', `${labelKey}=${token}`, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--mount', `type=volume,source=${volume},target=/data,readonly`, '--entrypoint', path.posix.join(build, 'weblabel'), image, 'doctor', '--mode', 'runtime', '--build-dir', build, '--data-dir', '/data']));
+    assert.equal(doctor.status, 'passed', 'stopped_native_doctor');
+    assert.equal(doctor.storage.lock.status, 'available', 'stopped_OS_lock_released');
+    checks.push('docker_stop_native_exit_0', 'persistent_OS_lock_available', 'sqlite_integrity_and_foreign_keys');
   }
   try {
     docker(['volume', 'create', '--label', `${labelKey}=${token}`, volume]);
@@ -175,13 +166,13 @@ export async function smokeContainer(argv = process.argv.slice(2)) {
     phase = 'authenticated_runtime_exercise';
     const { exerciseRuntime, verifyPersisted } = await import('./release-smoke.mjs');
     state = await exerciseRuntime(base, launchCode);
-    stop(names[0]);
+    await stop(names[0]);
     await start(names[1], false);
     phase = 'persisted_revision_readback';
     const persisted = await verifyPersisted(base, state);
     checks.push(...persisted.checks);
     checks.push('same_volume_restart_authenticated_revision_document_media_readback');
-    stop(names[1]);
+    await stop(names[1]);
     result = {
       status: 'passed', source_commit: args['--expected-commit'],
       image_digest: digest, image_digest_kind: digestKind, image_id: metadata.Id,
@@ -218,6 +209,7 @@ export async function smokeContainer(argv = process.argv.slice(2)) {
       failure = error;
     }
   }
+  if (!failure) fs.rmSync(scratch, { recursive: true });
   if (failure) throw failure;
   result.checks.push('exclusive_container_and_volume_cleanup');
   return result;

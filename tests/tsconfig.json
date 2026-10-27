@@ -12,5 +12,5 @@
     "typeRoots": ["../apps/web/node_modules/@types"],
     "types": ["node"]
   },
-  "include": ["integration/t33_*.test.ts"]
+  "include": ["../apps/web/node_modules/vite/client.d.ts", "integration/**/*.ts", "e2e/**/*.ts", "live/**/*.ts", "perf/**/*.ts", "render/**/*.ts", "support/**/*.ts", "fixtures/**/*.ts"]
 }

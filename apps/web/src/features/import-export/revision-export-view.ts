@@ -27,7 +27,7 @@ export function mountRevisionExportView(root: HTMLElement, context: TransfersMou
     if (!life.alive) return; const now = context.getScope(); const fixed = operation?.record;
     section.setAttribute('aria-busy', String(busy)); target.textContent = fixed ? `固定版本 ${fixed.revisionId} · 格式 ${fixed.payload.format} · 原操作 ${fixed.payload.operation_id}` : `目标 ${now.asset?.original_name ?? '未选择媒体'}`;
     format.disabled = busy || !!operation?.uncertain || records().some(record => !record.artifact);
-    start.disabled = busy || !current() || !now.asset || !now.ontology || !!operation || records().some(record => !record.artifact);
+    start.disabled = busy || !current() || !now.canExport || !now.asset || !now.ontology || !!operation || records().some(record => !record.artifact);
     reportRoot.replaceChildren(); if (report && fixed?.scope === now.scopeKey) reportRoot.append(lossView(report));
     const canAck = failure?.status === 422 && failure.code === 'LOSS_ACK_REQUIRED' && !!report && !artifact && !operation?.uncertain && fixed?.scope === now.scopeKey;
     ackLabel.hidden = confirm.hidden = !canAck; ackInput.checked = ack; ackInput.disabled = busy; confirm.disabled = busy || !ack || !current();
@@ -53,6 +53,7 @@ export function mountRevisionExportView(root: HTMLElement, context: TransfersMou
       if (!result?.export_id || result.format !== fixed.payload.format || result.download_url !== `/api/exports/${result.export_id}/download` || !Number.isSafeInteger(result.byte_size) || result.byte_size < 0 || !/^[a-f0-9]{64}$/i.test(result.object_sha256) || !readLossReport(result.loss_report)) throw new Error('导出回执身份或损失报告无效。');
       const record = { ...fixed, artifact: result, sending: false }; putExportIntent(record);
       if (!current(fixed.scope as object)) return; operation = { record, uncertain: false }; artifact = result; report = readLossReport(result.loss_report); ack = false; failure = null;
+      error.hidden = true;
     } catch (cause) {
       const uncertain = isAmbiguous(cause); const record = { ...fixed, sending: false };
       if (uncertain) putExportIntent(record); else removeExportIntent(record);
@@ -63,7 +64,7 @@ export function mountRevisionExportView(root: HTMLElement, context: TransfersMou
     }
   }
   async function begin() {
-    const now = context.getScope(); if (!current() || busy || !now.asset || !now.ontology || operation || records().some(record => !record.artifact)) return;
+    const now = context.getScope(); if (!current() || busy || !now.canExport || !now.asset || !now.ontology || operation || records().some(record => !record.artifact)) return;
     const key = now.scopeKey; busy = true; error.hidden = true; render();
     try {
       const revision = await context.prepareExport(); if (!current(key)) return;

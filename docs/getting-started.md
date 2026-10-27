@@ -190,9 +190,9 @@ sh ./launch.sh --data-dir "/home/你的用户名/WebLabel数据"
 工时默认关闭，保存到项目服务器必须明确点击。可单独选择“本段关联当前任务”和当前图片/规范匹配的已知AI运行；不选择就不关联，切换会封存旧段，历史记录不补当前ID。运行结果页分开显示精确提交版本审核关系、本人明确记录的运行/任务工时与未知费用；这些记录不是完整工时、准确率或ROI。
 “数据集与导出”依次显示范围、固定快照和当前格式的导出状态。修改范围、标注版本、类别规范或划分后，需要重新固定快照；上一次导出成功不代表新范围已交付。快照要求指定版本已获审核批准。YOLO / COCO 的信息损失先展示说明，报告原文可展开；明确勾选确认后才能继续导出。
 
-恢复数据库保留历史用户/审核身份，但不继承旧登录。restore CLI 成功只输出 `restore_created` 并写入 `restore.json`，不打印启动码；之后用恢复目录运行 start-local，才由它管理的 API 在启动终端打印一次性 `WEBLABEL_BOOTSTRAP_CODE`。页面自动显示“设置恢复后的本地账户”；从该启动终端复制新码、设置并确认新密码，然后直接进入项目页。成功提示中的 `restore-admin-<新UUID>` 是实际用户名，完整保存后用于下一次普通登录，不假设固定 `restore-admin`，也不覆盖旧账号。
+恢复数据库保留历史用户与审核身份，但不继承旧登录。restore 完成后用原生 serve 显式启动新恢复目录，终端才打印一次性 `WEBLABEL_BOOTSTRAP_CODE`。在网页设置新密码，保存成功提示里的实际 `restore-admin-<新UUID>` 用户名；不重新初始化旧身份。
 
-按 **Ctrl+C** 停止。启动器仅监听 loopback，管理 API 及其 Host 子进程树。Windows 使用受管根 PID 的 `taskkill /T /F`，SQLite WAL 崩溃一致性保证不会因强制退出产生半个事务；它不是“每个 AI 调用都已优雅结束”的保证。
+当前 v2 按 Ctrl+C 正常关闭 Rust 服务、撤销能力并回收属于本次原始 OS 所有权的子树，再关闭数据库和释放 OS 锁；sidecar 文件保留。上游收费是否停止和费用仍可能未知。下载页旧 rc.3 包的 Node/PID 停机行为仅属于旧包，不作为当前原生产品证明。
 
 需要改端口、处理锁或检查配置时，读[本地运维](operations.md)；搬迁数据前读[备份恢复](backup-restore.md)。无法使用的能力和模型验收边界见[已知限制](known-limitations.md)。
 ## 开发者：从源码准备本地服务
@@ -237,30 +237,30 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "依赖安装失败，请先处理终端错误" }
   pnpm build
   if ($LASTEXITCODE -ne 0) { throw "构建失败，请先处理终端错误" }
-  pnpm run doctor
+  .\target\local-release\weblabel.exe doctor --mode runtime --build-dir target/local-release
   if ($LASTEXITCODE -ne 0) { throw "doctor 未通过，请先处理终端错误" }
-  pnpm start:local
+  .\target\local-release\weblabel.exe serve --build-dir target/local-release --data-dir data --port 48100
 } finally {
   $env:PATH = $originalPath
 }
 ```
 
-根 package.json 已注册构建和启动命令。如果需要直接调用脚本，使用同一个终端：
+构建使用 Node 工具；已构建产品由单个原生 Rust 程序运行。Linux 将下面的 Windows executable 改为 `./target/local-release/weblabel`：
 
 ```powershell
 node scripts/build.mjs
-node scripts/start-local.mjs
+.\target\local-release\weblabel.exe serve --build-dir target/local-release --data-dir data --port 48100
 ```
 
-默认发行目录是 `target/local-release`，默认数据目录是 `data`。重复构建**拒绝已有发行目录**，以免旧产物混入新发行。旧 Node 24.15.0 发行的工具 pin 不兼容当前启动器；保留旧目录与 `release.json`，不要手改清单，选择新的目录重新构建：
+默认发行目录是 `target/local-release`；上例显式使用仓库 data。原生命令省略 `--data-dir` 时默认在发行目录下创建 data，**升级不要依赖默认值**。保留原 canonical 数据目录与 `http://127.0.0.1:48100` origin，先验证备份，不清 SQLite 或 IndexedDB。重复构建拒绝已有发行目录；旧 v1 包不是当前 v2 布局，保留原包与清单，选择新目录构建：
 
 ```powershell
 node scripts/build.mjs --build-dir "target/本地 release 2026-10-06"
-node scripts/doctor.mjs --build-dir "target/本地 release 2026-10-06"
-node scripts/start-local.mjs --build-dir "target/本地 release 2026-10-06" --data-dir "data/项目 数据"
+& "target/本地 release 2026-10-06/weblabel.exe" doctor --mode runtime --build-dir "target/本地 release 2026-10-06"
+& "target/本地 release 2026-10-06/weblabel.exe" serve --build-dir "target/本地 release 2026-10-06" --data-dir "data/项目 数据" --port 48100
 ```
 
-参数是独立 argv、`shell:false`；中文、空格和 `&` 可用于目录名，但终端仍需把整个路径加引号。不要拼接未经信任的 shell 命令。输出 `release.json` 包含 API、Web、WASM、Host、migrations 的实际 SHA256/字节数、平台和工具版本；启动前重新验证全部列出的文件和必需产物，缺失/修改会非零退出。
+参数为独立 argv；中文、空格和 `&` 路径须完整引用，不拼不可信 shell。v2 `release.json` 记录单个 Rust executable、Web/WASM、migrations、可选 ONNX Runtime 的实际 hash/size、平台、架构与构建工具 pin。运行重新校验全部必需产物，不捆绑 Node/Python 或默认模型。
 
 构建使用 release Rust→WASM，再由固定 wasm-bindgen 生成浏览器模块，不调用失败的旧 wasm-opt 优化路径。人工编辑的几何与渲染来自同一次当前源码编译，不加载陈旧的开发 WASM。构建也运行生成契约一致性和 Web 类型检查。
 
@@ -274,4 +274,4 @@ node scripts/build.mjs --cargo-cwd "D:/cache/cargo/bin" --build-dir "target/新�
 
 这些 `D:` 路径只对应实测机器。请换成自己已安装的工具链和中性目录，不要照抄不存在的路径。构建内部使用绝对 manifest/target 路径。
 
-doctor 是只读 JSON 诊断：工具版本须为 `pinned`，选定发行须为 `hashes_valid`；缺失、版本不符或发行损坏均非零退出。新目录的 `--build-dir` 必须在构建、doctor 与启动时保持一致。它不证明浏览器 WebGPU、模型账户或 Node 24.16.0 的备份恢复实测通过；[兼容性记录](compatibility.md)区分当前 pin 与历史观察。
+doctor 是只读 JSON 诊断。`--mode runtime` 验证预编译发行与运行条件，不要求构建工具；`--mode build` 另外检查全部固定工具。缺失前提退出 2，无效发行/配置退出 1，通过退出 0。新目录在构建、doctor 与启动中保持一致；诊断通过不证明浏览器 WebGPU、模型账户或推理支持。

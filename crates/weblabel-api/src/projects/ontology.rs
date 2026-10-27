@@ -127,16 +127,19 @@ pub(super) async fn publish(
     }
     // The early role check rejects unauthorized requests without a writer lock.
     // Recheck after acquiring it: a waiting writer may have revoked that role.
-    let mut tx = match crate::storage::transactions::begin_immediate(&state.pool, state.write_timeout, None).await {
-        Ok(tx) => tx,
-        Err(_) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ONTOLOGY_PUBLISH_FAILED",
-                "Could not publish ontology",
-            )
-        }
-    };
+    let mut tx =
+        match crate::storage::transactions::begin_immediate(&state.pool, state.write_timeout, None)
+            .await
+        {
+            Ok(tx) => tx,
+            Err(_) => {
+                return error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ONTOLOGY_PUBLISH_FAILED",
+                    "Could not publish ontology",
+                )
+            }
+        };
     let actor_role = sqlx::query_scalar::<_, String>(
         "SELECT role FROM memberships WHERE user_id=? AND project_id=?",
     )

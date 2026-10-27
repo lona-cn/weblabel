@@ -126,7 +126,16 @@ export class DraftStore {
     return inLane(asset, async () => { assertReadCurrent(guard); const result = await this.storage.get(asset, draft, guard); assertReadCurrent(guard); return result; });
   }
   save(envelope: DraftBranchEnvelope, guard: () => boolean = () => true): Promise<DraftBranchEnvelope | null> {
-    const snapshot = structuredClone(envelope);
+    const record = envelope.record;
+    const document = isObject(record) ? Object.getOwnPropertyDescriptor(record, 'document')?.value : null;
+    let snapshot: DraftBranchEnvelope;
+    if (isObject(record) && (Object.getPrototypeOf(record) === Object.prototype || Object.getPrototypeOf(record) === null)
+      && isObject(document) && certifiedFrozen.has(document)) {
+      // Native commits already certify the full immutable document. Snapshot all
+      // mutable metadata now; IndexedDB still performs its real durable clone.
+      const metadata = structuredClone({ ...envelope, record: { ...record, document: null } });
+      snapshot = { ...metadata, record: { ...metadata.record, document } };
+    } else snapshot = structuredClone(envelope);
     snapshot.write_token = crypto.randomUUID();
     return inLane(envelope.asset_revision_id, async () => {
       if (!guard()) return null;

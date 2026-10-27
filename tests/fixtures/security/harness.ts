@@ -70,11 +70,10 @@ export interface SecurityApp extends TestApp {
   logs(): string;
 }
 // Test-only output seam; set before importing this harness. The router still compiles current source.
-const routerTarget = resolve(root, process.env.WEBLABEL_T29_ROUTER_TARGET_DIR ?? process.env.CARGO_TARGET_DIR ?? 'target');
+const routerTarget = resolve(root, process.env.WEBLABEL_T29_ROUTER_TARGET_DIR ?? 'target');
 let compiledRouter: string | undefined;
 async function routerBinary(): Promise<string> {
   if (compiledRouter) return compiledRouter;
-  const cargoCwd = process.env.CARGO_CWD ?? process.env.WEBLABEL_CARGO_CWD ?? process.env.CARGO_HOME ?? root;
   const compilerEnv = { ...process.env };
   delete compilerEnv.RUSTUP_TOOLCHAIN;
   const toolchain = execFileSync('rustup', ['show', 'active-toolchain'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim().split(/\s+/, 1)[0]!;
@@ -84,7 +83,7 @@ async function routerBinary(): Promise<string> {
   console.log(`T29 repository toolchain: ${toolchain}; compiler: ${compiler}`);
   const buildArgs = ['build', '--locked', '--manifest-path', join(root, 'Cargo.toml'), '--target-dir', routerTarget, '--config', `build.build-dir=${JSON.stringify(routerTarget)}`, '-p', 'weblabel-api', '--lib', '--message-format=json'];
   console.log('T29 source-library compile: cargo ' + buildArgs.join(' '));
-  const output = execFileSync('cargo', buildArgs, { cwd: cargoCwd, env: compilerEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+  const output = execFileSync('cargo', buildArgs, { cwd: process.env.CARGO_HOME ?? root, env: compilerEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
   const messages = output.split('\n').filter(line => line.startsWith('{')).map(line => object(JSON.parse(line)));
   const artifacts = messages.filter(item => item.reason === 'compiler-artifact');
   const nativePaths = messages.flatMap(item => Array.isArray(item.linked_paths) ? item.linked_paths.filter((path): path is string => typeof path === 'string') : []);

@@ -21,15 +21,19 @@ export function mountCanvasView(state: WorkspaceState, port: EditorPort, signal:
   const cache = new Map<string, HTMLSpanElement>();
   let namedObjects = state.objects, namedOntology = state.loaded?.ontology;
   let objectNames = new Map<string, string>();
+  let restoreCanvasFocus = false;
   function refreshLabels() {
     if (!host || signal.aborted) return;
     const present = new Set<string>();
+    let position = labels.firstElementChild;
     // Rust owns visibility/selected/hover prioritization and the first-100 viewport budget.
     for (const label of host.getCanvasLabels()) {
       present.add(label.object_id);
       let element = cache.get(label.object_id);
       if (!element) { element = document.createElement('span'); element.dataset.testid = 'canvas-label'; element.dataset.objectId = label.object_id; cache.set(label.object_id, element); labels.append(element); }
       const text = objectNames.get(label.object_id) ?? '对象';
+      if (element !== position) labels.insertBefore(element, position);
+      position = element.nextElementSibling;
       if (element.textContent !== text) element.textContent = text;
       element.style.transform = 'translate(' + label.x_css + 'px,' + label.y_css + 'px)'; element.dataset.selected = String(label.selected);
     }
@@ -39,11 +43,12 @@ export function mountCanvasView(state: WorkspaceState, port: EditorPort, signal:
     unsubscribeRendered?.(); unsubscribeStatus?.(); unsubscribeRendered = null; unsubscribeStatus = null;
     if (host && state.host === host) state.host = null;
     host?.dispose(); host = null;
+    restoreCanvasFocus = false;
     for (const element of cache.values()) element.remove(); cache.clear();
   }
   function updateStatus() {
     if (!host) return;
-    const phase = host.status, unsupported = !('gpu' in navigator);
+    const phase = host.status, unsupported = !('gpu' in navigator) || host.error?.code === 'WEBGPU_UNAVAILABLE';
     state.hostStatus = phase;
     const diagnostics = host.getAdapterDiagnostics();
     status.dataset.actualBackend = phase === 'ready' ? 'webgpu' : 'none';
@@ -51,11 +56,11 @@ export function mountCanvasView(state: WorkspaceState, port: EditorPort, signal:
     status.dataset.deviceState = phase === 'error' && unsupported ? 'unsupported' : phase;
     status.textContent = phase === 'ready' ? 'WebGPU · ' + (status.dataset.adapterKind === 'hardware' ? '硬件加速' : status.dataset.adapterKind === 'software' ? '软件适配器' : '适配器类型未知')
       : phase === 'recovering' ? '正在恢复画布；同一 CPU 文档和撤销历史保留，成功前禁止编辑。' : phase === 'lost' ? 'GPU 连接丢失；CPU 文档和撤销历史已保留。'
-      : phase === 'error' && unsupported ? '浏览器不支持 WebGPU；仍可查看对象，不启用 Canvas2D 回退。' : phase === 'error' ? '画布初始化失败；只能查看对象。' : '正在准备画布…';
+      : phase === 'error' && unsupported ? 'WebGPU 不可用：浏览器不支持 WebGPU 或没有可用适配器；仍可查看对象，不启用 Canvas2D 回退。' : phase === 'error' ? '画布初始化失败；只能查看对象。' : '正在准备画布…';
     diagnosticText.textContent = [host.error ? host.error.code + ': ' + host.error.message : '', diagnostics || '未提供适配器诊断'].filter(Boolean).join('\n');
     retry.hidden = phase !== 'lost';
     rendererState.hidden = phase === 'ready';
-    rendererHeading.textContent = phase === 'lost' ? 'GPU 连接丢失' : phase === 'recovering' ? '正在恢复画布' : phase === 'error' && unsupported ? '浏览器不支持 WebGPU' : phase === 'error' ? '画布不可用' : '正在准备画布';
+    rendererHeading.textContent = phase === 'lost' ? 'GPU 连接丢失' : phase === 'recovering' ? '正在恢复画布' : phase === 'error' && unsupported ? 'WebGPU 不可用' : phase === 'error' ? '画布不可用' : '正在准备画布';
     rendererDetail.textContent = status.textContent;
     if (phase === 'ready') state.tools?.reconcileSpaceRelease();
     state.notify();
@@ -85,10 +90,19 @@ export function mountCanvasView(state: WorkspaceState, port: EditorPort, signal:
         }).catch(reason => { if (!signal.aborted && host === mounted && state.loaded === captured) { state.error = reportError(reason); updateStatus(); } });
       }
     }
-    canvas.inert = !port.getHost() || state.modal;
+    const blocked = !port.getHost() || state.modal;
+    if (blocked && !canvas.inert && document.activeElement === canvas) restoreCanvasFocus = true;
+    canvas.inert = blocked;
+    if (!blocked && restoreCanvasFocus) {
+      restoreCanvasFocus = false;
+      if (document.activeElement === document.body) canvas.focus({ preventScroll: true });
+    }
     empty.hidden = !!request;
     empty.textContent = state.phase === 'loading' ? '正在读取固定图片与规范…' : state.phase === 'empty' ? '先导入图片。空文档不等于已确认无目标。' : state.error ?? '选择图片及其固定规范后开始标注。';
-    if (!request) { status.textContent = '画布未载入'; retry.hidden = true; rendererState.hidden = true; }
+    if (!request) {
+      status.dataset.actualBackend = 'none'; status.dataset.adapterKind = 'unknown'; status.dataset.deviceState = 'idle';
+      status.textContent = '画布未载入'; retry.hidden = true; rendererState.hidden = true;
+    }
   }
   const pointerGuard = (event: Event) => { if (port.getHost() !== host || state.modal) { event.stopImmediatePropagation(); host?.cancelGesture(); } };
   for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) stage.addEventListener(type, pointerGuard, { capture: true, signal });

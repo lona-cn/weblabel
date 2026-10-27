@@ -394,10 +394,7 @@ async fn fixture() -> Fixture {
 
 async fn setup_route_pool_and_acquisition(
     fixture: &Fixture,
-) -> (
-    Router,
-    tokio::sync::mpsc::UnboundedReceiver<usize>,
-) {
+) -> (Router, tokio::sync::mpsc::UnboundedReceiver<usize>) {
     let database = fixture._directory.path().join("api.sqlite");
     let acquisitions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = acquisitions.clone();
@@ -487,7 +484,7 @@ async fn ontology_publish_waits_for_writer_before_allocating_next_version() {
         blocked.is_err(),
         "ontology publish must wait for the held writer, not return: {blocked:?}"
     );
-    
+
     competitor.commit().await.unwrap();
     let (status, published) = tokio::time::timeout(Duration::from_secs(5), request)
         .await
@@ -499,7 +496,10 @@ async fn ontology_publish_waits_for_writer_before_allocating_next_version() {
     assert_eq!(status, StatusCode::OK, "{listed}");
     let items = listed["items"].as_array().unwrap();
     assert_eq!(
-        items.iter().map(|item| item["version_no"].as_i64().unwrap()).collect::<Vec<_>>(),
+        items
+            .iter()
+            .map(|item| item["version_no"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
         vec![3, 2, 1]
     );
     assert_eq!(items[0], published);
@@ -554,7 +554,7 @@ async fn ontology_publish_rechecks_admin_after_waiting_for_membership_revocation
             blocked.is_err(),
             "ontology publish must wait for the revoking writer, not return: {blocked:?}"
         );
-        
+
         competitor.commit().await.unwrap();
         let (status, rejected) = tokio::time::timeout(Duration::from_secs(5), request)
             .await

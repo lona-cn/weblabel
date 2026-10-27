@@ -25,19 +25,19 @@
 | AI 集成 | Claude 官方本地运行时；OpenAI、Anthropic、MiMo API 适配器；一个实际检测适配器。Codex 活动通道退役，历史身份仍可解码 |
 | 协作 | 基础项目角色、任务占用、版本冲突和审核；不做实时共同编辑 |
 | 大图与分割 | v0.1 不做金字塔、Polygon、Mask；以准入限制保护内存，后续另立任务 |
-| 本地推理 | 检测可用独立 Python CPU Worker；浏览器 wgpu 推理和自研 ONNX 引擎不进入关键路径 |
+| 本地推理 | 原生 CPU Worker + 可选 ONNX Runtime；Python 只作导出/独立对照，浏览器推理和自研 ONNX 引擎不进入产品 |
 
 首版先交付可验证的本地软件，云端部署须另行设计。普通图片编辑不依赖 Python、模型权重、官方 CLI 或订阅登录。
 
 ## 3. 技术栈与固定版本策略
 
-- UI：React + TypeScript + Vite；DOM 承担表单、列表、属性和 AI 面板。使用 TanStack Query 管理服务器缓存、TanStack Virtual 管理长列表；表单状态与编辑几何分开。
+- UI：原生 HTML + TypeScript + Vite；DOM 承担表单、虚拟列表、属性和 AI 面板。controller 持有状态，Rust 仍是唯一可编辑几何来源；无 React root、hooks 或兼容展示 adapter。
 - 内核：Rust 2021 edition；geometry、annotation-domain、editor-core 都能在无 GPU 的 native 单元测试中运行。
 - 渲染：wgpu 30.0.1、WGSL；wasm-bindgen/wasm-pack 构建浏览器模块。版本组合与历史验证见 compatibility.md，不用旧教程推断当前 API。
 - 服务：Rust、Tokio、Axum、SQLx SQLite、tracing；单个模块化服务，内部持久化作业队列。
-- Agent Host：Node.js 24 LTS + TypeScript；官方 CLI 子进程、API 请求和 MCP 适配集中在这一边界。它不是第二份业务数据库。
-- 检测：Python 3.12 + uv，Transformers/PyTorch CPU；首选 PekingU/rtdetr_v2_r18vd，T18 固定权重 revision 和文件哈希。
-- 测试：cargo test/proptest、Vitest、Playwright、pytest；无凭证测试与真实 provider/GPU 测试分开。
+- 原生 runtime：同一 Rust 产品负责 provider HTTP、官方 CLI 可信子进程、受限 MCP 与运行级权限，不建立第二份业务数据库。
+- 检测：Rust CPU Worker + 锁定的 ONNX Runtime/model/label mapping；Python 导出工具与产品分离，不默认打包或下载模型。
+- 测试：cargo test/proptest、Vitest、Playwright 与独立导出工具 unittest；工程 fixture 与真实 provider/GPU 验收分开。
 - JS 包管理：pnpm，packageManager 与 pnpm-lock.yaml 固定精确版本。工具安装情况须单独检查，不假设 Corepack 预装。
 
 T00 的版本选择算法：读取已安装版本 → 查官方稳定版/MSRV/兼容要求 → 先编译最小 Rust→WASM→wgpu 画布及 Node 子进程探针 → 把成功组合记录在 docs/compatibility.md、rust-toolchain.toml、package.json 和 lockfiles。Node 固定 24.x 的实际补丁号；Rust 固定实际通过的稳定补丁号且不低于 wgpu/MSRV；禁止写 latest、*、浮动 Git HEAD 或仅写 stable 作为交付工具链。
@@ -46,20 +46,23 @@ T00 的版本选择算法：读取已安装版本 → 查官方稳定版/MSRV/�
 
 ## 4. 运行拓扑
 
-```text
-Browser: React + WASM Editor + wgpu
-      | same-origin HTTP, credentials included
-Rust API: auth/project/media/revision/jobs/review/export
-      |-- SQLite + immutable local object store
-      |-- media/import/export workers (bounded concurrency)
-      |-- private stdio NDJSON --> Node Agent Host
-                                    |-- OpenAI / Anthropic / MiMo APIs
-                                    |-- unmodified Claude Code (official headless interface)
-                                    |-- project-scoped MCP tool bridge
-      |-- private stdio NDJSON --> optional Python detector
+```mermaid
+flowchart TD
+  B["Browser: native HTML/TypeScript + Rust WASM/wgpu"]
+  S["Single Rust product: Web + API + authorization + jobs"]
+  D["SQLite + immutable object store"]
+  H["HTTP model providers"]
+  C["Official Claude runtime + scoped MCP"]
+  W["Native CPU detector worker + optional ONNX Runtime"]
+  B <-->|same origin, session and CSRF| S
+  S --> D
+  S -->|explicit approved scope| H
+  S -->|original OS process ownership| C
+  C -->|run-scoped capability| S
+  S -->|bounded private protocol| W
 ```
 
-正式本地启动器默认浏览器入口为 `http://127.0.0.1:48100`，私有 Rust API 为 `127.0.0.1:48101`；通过 `--port`/`--api-port` 配置，并以 WEBLABEL_LOCAL_URL 输出精确入口。开发 Vite 为 `127.0.0.1:5173`，`/api` proxy 固定指向 API 默认 `127.0.0.1:48100`。修改 WEBLABEL_BIND 不会自动修改 Vite proxy；pnpm dev 的 Web predev 先构建 WASM，且不会自动设置 WEBLABEL_ENV=development。配置与数据目录差异见[开发指南](development.md)和[配置参考](configuration.md)。
+正式入口 `weblabel serve` 默认单一 `http://127.0.0.1:48100`，只有 `--port`，由 `WEBLABEL_LOCAL_URL` 输出精确 origin。开发仍为 Vite 5173 → API 48100 的 proxy；更改 bind 不自动更改 Vite。正式升级显式复用原 canonical 数据目录和 origin，不初始化新库或清 IDB，先验证备份。拓扑和参数见[开发指南](development.md)与[配置参考](configuration.md)。
 
 正式本地启动只绑定 loopback。Host 与 Origin 精确白名单，不允许 `*`。服务必须有本地启动认证，不可认为“localhost 就不需要认证”。初始管理员通过一次性启动码换取 session；启动码从本地终端交给用户，不放 URL query、日志或前端包。会话用 HttpOnly、SameSite=Strict cookie；HTTPS 时设置 Secure，loopback HTTP 单独明确配置。
 
@@ -75,11 +78,11 @@ v0.1 的订阅模式仅供本机最终用户本人运行。把服务改为非 lo
 
 ### 4.1 原生 Rust 迁移入口（R02）
 
-新增 `weblabel` binary 将 CLI、同源 server、只读 doctor 和私有 runtime 契约放入现有 `weblabel-api` library，不另建业务数据库或微服务。旧默认 binary/Host loader/Node 启动器仅在过渡期继续工作，R09 再统一切除。新 `serve` 默认单一 loopback origin `http://127.0.0.1:48100`，从已验证的 v2 manifest 白名单流式提供静态资源；API 404 不回退 HTML，CSP 不允许字符串求值或 inline-style 放宽。
+`weblabel` 是唯一产品 binary，CLI、同源 server、doctor、备份恢复、MCP 与 detector 都在现有 weblabel-api library。旧默认 binary、Node/Python 产品和旧配置加载器已切除。serve 只流式提供已验证 v2 manifest 中的静态资源；API 404 不回退 HTML，CSP 不要求字符串求值或 inline-style 放宽。
 
 维护模式只开放账户恢复依赖和恢复 API，不启动业务 worker/运行恢复。正常停机停止接单、撤销 run capabilities、结算 interrupted/unknown、等待 worker 与两个 SQLite pool 关闭，再释放 OS sidecar 锁；shutdown receipt 不宣称已取消上游计费。首次 bootstrap 在资格读取前、规范发布在版本号读取前取得 SQLite writer reservation；两者共用 storage 的专用 close-on-drop 连接，构造阶段取消不能池化仍活动的写事务。只读事务不因此升级为写事务。
 
-`runtime/config.rs` 解析显式的新私有配置，按 `(provider_id, profile_id)` 精确选择并保留数值类型的配置 hash。`AgentToolService` 是 HTTP 与后续原生 provider 的共同授权业务入口；内部 region 传原始字节，只有 HTTP/MCP 边界编码。R02 不提供配置后的假执行器，真实 HTTP/Claude/detector 组装仍分别属于 R03–R05/R09；CLI 接缝存在不代表这些能力已通过。
+唯一原生配置按 `(provider_id, profile_id)` 精确选择并保留数值类别的配置 hash。AgentToolService 由 HTTP/MCP 共同执行运行级授权，region 内部传原始字节，仅边界编码。factory 已组装 R03–R05；实现、synthetic 协议通过与真实模型可用性分开，未验收的官方账号/模型仍 blocked。
 
 ## 5. 状态的唯一来源
 
@@ -87,18 +90,18 @@ v0.1 的订阅模式仅供本机最终用户本人运行。把服务改为非 lo
 |---|---|
 | 当前可编辑几何、工具状态机、撤销栈 | Rust EditorCore |
 | 已持久化不可变版本、审核、任务、预测 | Rust API + SQLite |
-| UI 面板展开、搜索、请求加载状态 | React 展示层；认证与 AI 运行状态由下述无框架 controller 持有 |
+| UI 面板展开、搜索、请求加载状态 | 原生 DOM 展示与 controller；认证、AI、任务、保存均只有一个状态所有者 |
 | 图像纹理、实例缓冲、选中覆盖层 | Renderer，仅缓存 |
 | 本地待同步草稿 | IndexedDB，包含业务文档而非 GPU 数据 |
 | Provider 密钥、认证状态 | 最终用户的官方运行时或本地 secret store；不属于项目数据 |
 
-Rust EditorCore 拥有可编辑几何。React 只能读取投影，不得维护第二套可修改的 bbox。创建、修改、接受 AI 和撤销都走同一 EditorCommand 入口；每次保存仍由服务器重新验证，WASM 客户端不构成信任依据。
+Rust EditorCore 拥有可编辑几何。TypeScript 只读取投影，不维护第二套可修改 bbox。创建、修改、采纳与撤销都走 EditorCommand；服务器仍重验每次保存，WASM 客户端不是信任边界。
 
 实体引用、原图/canonical、分支作者与真实提交证据见[数据生命周期](data-model.md)；精确 wire 与当前恢复增量见[共享契约](contracts.md)。
 
 ### 5.1 原生 Web 迁移的共享接缝（R01）
 
-当前公开入口仍为 React；`AppProviders` 和 `useRun` 只持有、订阅、销毁唯一的无框架 controller，不复制认证或 AI 状态机。正式原生页面和入口在后续任务切换，不提供第二套公开路由。
+公开入口由原生 main/routes 统一装配并管理 controller 的订阅、取消和销毁。没有旧 root、useRun、providers 或第二套公开路由。测试 observer/dense harness 仅 test mode 懒加载，正式页面不暴露任意命令 facade。
 
 - `app/session.ts::createSessionController` 持有认证 union、generation fencing、bootstrap ACK/unknown 与单飞边界。构造不请求；owner 调用 `refresh()`。每次新 login 独立推进 generation，旧响应不能安装身份。
 - `features/ai/run-controller.ts::createRunController` 保留原 scope、固定文档/规范、严格 after cursor、候选缓存和接受/保存 journal。`getSnapshot()` 未变化时保持同一对象，读取不复制候选文档。
@@ -106,19 +109,19 @@ Rust EditorCore 拥有可编辑几何。React 只能读取投影，不得维护�
 - 页面遵循 `mountX(root, context): () => void`；共享 `PageContext` 显式传入 session、navigate、signal 和 route，不借 window 单例。销毁取消监听、观察器、定时器和只读请求，不把 abort 当作撤回已发送写入。
 - `ui/` 基元使用原生 button/input/select/dialog 和纯文本 DOM 更新。长列表由 `@tanstack/virtual-core = 3.13.12` 负责范围与测量；首次通知在观察器完成登记后发布，通知内 abort 必须完整解绑，不再通知已销毁 consumer。
 
-行为边界与实测记录保存在私有归档：`reports/T08/html-rust-rebuild/r01-controllers.md`、`reports/T35/html-rust-rebuild/r01-main-native-input-smoke.json`；公开集成范围见[结构化发布记录](../reports/publication/native-html-rust-rebuild.json)。R01 的这些记录不是原生产品页面、GPU 或真实模型通过证据。
+行为边界与验证见 R01 交接（私有归档：`reports/T08/html-rust-rebuild/r01-controllers.md`）及真实合成 consumer 运行记录（私有归档：`reports/T35/html-rust-rebuild/r01-main-native-input-smoke.json`）。这些不是原生产品页面、GPU 或真实模型通过证据。
 
 ### 5.2 原生页面组合契约（R07/R08）
 
 `features/workbench/workbench-context.ts` 是纯类型组合边界，不是展示模块。工作台通过必需的 `mountReview`、`mountManagement`、`mountTransfers` 注入真实页面；review 接收共享 `TaskSessionPort` 和可观察 scope/queue，transfers 只经显式 prepare/commit/release/export callbacks 触及编辑器生命周期，不访问几何或 SaveQueue 内部。
 
-`features/import-export/import-context.ts` 保留原 `AnnotationImportContext`：固定 asset/ontology、可空 `base_revision_id` 与生成的 `SaveLease`。旧 React 导入和工作台已直接消费该纯类型，不从展示组件 re-export。无历史 head 的导入仍可使用 null base；不能为满足类型预造 revision、要求额外保存或自动确认 negative。原生 transfer 的 `scopeKey` 是独立对象身份凭据，不进入 wire，也不能通过重新构造同值对象恢复权限。
+导入上下文固定 asset/ontology、可空 base_revision_id 与生成的 SaveLease；原生工作台和 transfer 直接消费纯类型，不从展示模块 re-export。无历史 head 可用 null base，不为类型检查预造 revision、要求额外保存或确认 negative。scopeKey 是独立对象身份凭据，不进入 wire，不通过同值新对象恢复权限。
 
 只读 API 显式接受 owner AbortSignal，身份/权限/authorization epoch 撤销会终止自有读取，不取消或重试已发送 POST。媒体上传另用 `canUploadMedia`：真实项目角色、catalog 与生命周期围栏决定，不要求已有 asset、可编辑 head 或 GPU；标注导入仍用独立 `canWrite` 及原 scopeKey，不能用上传权限绕过保存围栏。
 
 ### 5.3 账户与项目原生页面（R06）
 
-`login-page.ts/projects-page.ts/member-manager-page.ts/external-processing-policy.ts/model-profile-settings.ts` 已有可独立 mount/dispose 的原生表单。规范构造与发布由唯一 `ontology-draft.ts/project-controller.ts` 持有；旧 React Projects 在 R09 前仍消费同一 controller。语义差异区分 false/0/null/空串/未包含，比较不修复非法草稿或发写请求；原生 details 保留枚举与数值范围字段。未知创建/发布不认领同名结果，平台权限与项目成员管理分开。验证见 R06 报告；独立挂载与截图不是最终路由、实际200%缩放或 CSP 发行验收。
+账户、项目、成员、外发策略与模型预设页面均可独立 mount/dispose，公开路由消费同一 controller。语义差异区分 false/0/null/空串/未包含，比较不修复非法草稿或发写请求。未知创建/发布不认领同名结果，平台权限与项目成员分开。R06 独立挂载证据不能替代最终路由、200% zoom 或 CSP 发行验收。
 
 
 ### 5.4 原生工作台与交付的组合证据（R07/R08）
@@ -127,7 +130,7 @@ Rust EditorCore 拥有可编辑几何。React 只能读取投影，不得维护�
 
 同项目重挂页面会撤销旧 writer 的本地凭证。loader 在读取当前服务器 head 后，只为 asset/ontology/base/document/generation 全部精确匹配、没有 dirty/pending/冲突/ACK barrier 的干净保留分支重新执行本地持久化；保留 generation 和分支身份，等待后读取新凭证。凭证必须来自真实 guarded IndexedDB 事务完成，不合成成功、不新增编辑或保存 POST，也不把这描述为新增跨标签页 CAS。Task 准备仍独立检查当前凭证、Native generation、分支、身份和 lease。
 
-实际任务领取/续租/转交/提交与继续下一项、固定 revision 审核、新 head 不继承批准、三格式导入导出、不可变 DatasetVersion、未知写入跨挂载，以及 53 条真实任务的动态虚拟列表均有组合验收记录（私有归档：`reports/T12/html-rust-rebuild/r07-r08-composition/report.md`）。原始失败、C01 修复前失败和修复后独立 11/11 场景分别保留；不是全绿报告。该组合记录未执行 AI provider 请求；正式 router/popstate、严格 CSP、发行、200% zoom、真正 unsupported-WebGPU 与性能/1024 规模关卡仍须单独验收。R09 尚未就绪，默认入口仍保留 React。
+实际任务领取/续租/转交/提交与继续、固定 revision 审核、新 head 不继承批准、三格式导入导出、不可变 DatasetVersion、未知写入跨挂载和 53 条任务虚拟列表见组合验收（私有归档：`reports/T12/html-rust-rebuild/r07-r08-composition/report.md`）。原失败与修复后 11/11 分开保存。该次未调用 provider，也未验证最终 router/popstate、严格 CSP、发行、200% zoom、真正 unsupported-WebGPU 或性能/1024 规模；后续 R09/R10 证据独立记录。
 
 原生 AI 候选到达后清除旧空状态提示，但保留真实批次决定摘要。运行摘要刷新键同时绑定当前 run 对应图片的已确认 `base_revision_id`：撤销的本地提示或 run event 不变，也必须在后续保存 ACK 后重新读取真实决策数；不轮询模型、不重发决定或把 unknown 填零。主会话实际页面验证（私有归档：`reports/T35/html-rust-rebuild/r07-outcome-main/acceptance.json`）通过公开预设配置、真实服务与 Rust/WASM，显式采纳后一次 Undo 恢复原文档，服务端 accept/revert 与页面自动更新一致。上游仅两次本机 synthetic HTTP 请求，不是真实模型或检测器数值验收。
 
@@ -135,9 +138,8 @@ Rust EditorCore 拥有可编辑几何。React 只能读取投影，不得维护�
 
 | 实际 package/crate 或模块 | 职责与边界 |
 |---|---|
-| @weblabel/web（apps/web） | React 页面、项目/工作台/AI/审核/数据集；只读 Native 投影、IDB 与 HTTP 保存队列，不重写几何 |
-| weblabel-api（crates/weblabel-api） | Rust Axum 服务：认证、项目、媒体、标注、作业、AI、审核、数据集；SQLite migrations、对象存储、私有 Host 监管 |
-| @weblabel/agent-host（apps/agent-host） | Node provider、stdio/MCP、进程与外发边界；不是第二份数据库 |
+| @weblabel/web（apps/web） | 原生 HTML/TypeScript 页面、项目/工作台/AI/审核/数据集；只读 Rust 投影、IDB 与 HTTP 保存队列，不重写几何 |
+| weblabel-api（crates/weblabel-api） | 单个 weblabel Rust 产品：静态 Web/WASM、Axum API、认证、媒体、保存、AI、审核、数据集、原生运维；可信父进程监管本次授权子进程 |
 | annotation-domain | Rust 领域类型、验证、JSON schema/TS 生成来源及内容 hash |
 | geometry | bbox、命中与坐标变换；无 GPU native 能力 |
 | editor-core | 可编辑文档、命令/工具状态机、undo/redo 与候选接受 |
@@ -145,7 +147,7 @@ Rust EditorCore 拥有可编辑几何。React 只能读取投影，不得维护�
 | wasm-bridge | Rust 编辑/渲染浏览器 facade 与 Native 装配 |
 | dataset-formats | native/COCO/YOLO 解析、转换与信息损失报告 |
 | xtask / @weblabel/contracts | 从 Rust 生成及检查 wire TS/JSON Schema；生成物禁止手改 |
-| detector service | 独立 Python CPU Worker、锁定模型与显式类别映射；不在浏览器推理 |
+| runtime detector | 原生 CPU Worker、锁定模型和显式类别映射；ONNX Runtime 可选，模型不默认打包；Python 仅保留独立导出/对照工具 |
 | scripts / tests / reports | 跨平台入口、隔离测试与绑定运行条件的证据；历史报告不可倒写 |
 
 workspace 只保留实际需要的 package、crate 和脚本。一个 crate 可以很小；新增模块应有真实调用者，不预建未使用的抽象类。
@@ -168,10 +170,6 @@ workspace 只保留实际需要的 package、crate 和脚本。一个 crate 可�
 
 Renderer 用批量实例矩形、缓存 image texture、增量更新、按需重绘。预览与正式对象分层。画布标签只显示选中/悬停及视口前 100 个对象，其余通过 DOM 虚拟列表查看，不能生成万级 DOM 标签。CPU 空间索引 + 明确排序实现重叠循环选择，不做同步 GPU 回读命中。
 WASM Renderer 的 `update_viewport` 专供 pan/zoom/resize，仅更新 uniform；`update_objects` 只接收 objects/overlays projection，并将连续差异写入 instance buffer；`update_scene` 用于完整 scene/image 替换，不应被普通 pointermove 调用。
-
-CanvasView 每次原生 rendered 通知仍读取完整标签投影，在单资产 effect 内按 object_id 缓存只读 CSS 标量和实际 ReactElement；仅当文本（当前为 object_id）、selected、x_css、y_css 完全相同才复用 span，保留原生顺序并剪除消失 ID。
-
-整个有序元素列表不变时不发布 React state；切换资产清空标签，失活旧 host 不再发布。元素在订阅事件中创建而非 render 中修改缓存；该显示缓存不编辑或持久化几何，不减少原生 render/GPU 提交、历史或草稿保存，也不代表性能关卡通过。
 
 Rust Core 的 dispatch/Undo/Redo 共用对象差异 producer：只有对象数量与每个位置的 ID 顺序均相等时，才逐对象做完整领域值比较并按 canonical 顺序输出 replacements；成员/顺序变化保留通用按 ID 的比较与移除路径。全部文档 validation、前后 snapshot history 和预算不因快速路径减少。
 
@@ -225,7 +223,7 @@ Prediction 原始结果不可修改。SuggestionSet 存具体 patch 与原因；
 
 ## 11. 官方运行时的安全边界
 
-Node Host 与 Rust 父进程通过私有 stdio 消息交换，浏览器无法指定可执行文件、cwd、环境变量、文件路径或任意 URL。Host 按固定 argv 启动；禁止拼 shell 命令、执行模型返回的代码和 `shell:true`。
+同一 Rust 父进程持有本次原始 OS 进程树能力，按固定 argv、可信原生 executable、受限 cwd 与最小环境启动官方 CLI/检测器。浏览器不能指定 executable、cwd、环境、文件路径或任意 URL；禁止 shell 拼接、执行模型代码或 shell:true。原始根退出时先回收仍持有 pipe 的自有后代，再解释已缓冲 terminal/usage，不等到整个运行 deadline。
 
 媒体用不透明 grant_id → 私有暂存文件映射；路径必须在本次运行根目录内，拒绝 traversal、symlink escape、Windows drive/UNC 绕过。MCP 暴露有限的 get_context/list_objects/read_region/propose_changes/report_issues；每次重新检查 project/run/asset 和授权预算。
 

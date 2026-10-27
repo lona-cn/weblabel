@@ -1,16 +1,14 @@
 <a id="compatibility-current-runtime-pin-and-t00-evidence"></a>
 # 兼容性：当前工具版本与历史证据
 
-**历史证据边界：** 本页的私有归档路径仅记录原始验收来源，不随公开仓库分发，也不代表在当前公开提交重新验证。
-
 供操作者选择构建工具，也供维护者区分环境检查、产品运行和性能验收。先按当前 pin 操作，再看对应日期和源码版本的证据；不要把历史结果改记为新版本实测。
 
 <a id="current-local-runtime-pin"></a>
 ## Current local runtime pin
 
-当前精确版本是 Node.js **24.16.0**、pnpm **10.34.5**、Rust **1.96.0**、wasm-bindgen CLI **0.2.128**、wasm-pack **0.15.0**。构建、启动、doctor、备份和恢复前，按[当前终端选择 Node](getting-started.md#当前终端选择-node)设置当前进程。全局 Node 和配置保持不变。
+当前构建工具为 Node.js **24.16.0**、pnpm **10.34.5**、Rust **1.96.0**、wasm-bindgen CLI **0.2.128**、wasm-pack **0.15.0**。只在构建/开发/验证时按[当前终端选择 Node](getting-started.md#当前终端选择-node)设置进程 PATH，不改全局配置。已构建 v2 产品的 serve、runtime doctor、backup/restore 不要求 Node、Python 或编译器。
 
-旧 Node 24.15.0 发行的 manifest 不匹配当前 pin。保留旧目录和清单，用新目录构建，不能手改旧 manifest。
+旧 v1 发行与当前单 Rust v2 布局不兼容；保留旧目录和清单，用新目录构建，不手改 manifest。升级显式选择原 canonical 数据目录与 origin；备份格式仍为 v1，不能把发行布局版本与数据 schema 混为一谈。
 
 ### Node 24.16.0 的身份验证
 

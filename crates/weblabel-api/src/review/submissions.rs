@@ -281,10 +281,7 @@ mod tests {
         let bind = "127.0.0.1:48100".parse().unwrap();
         let config = ServerConfig {
             bind,
-            database_url: format!(
-                "sqlite:{}",
-                directory.join("readback.sqlite").display()
-            ),
+            database_url: format!("sqlite:{}", directory.join("readback.sqlite").display()),
             object_root: directory.join("objects"),
             write_timeout: Duration::from_secs(2),
             production: true,

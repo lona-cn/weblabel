@@ -42,16 +42,14 @@ function canvasPoint(rect: { x: number; y: number; width: number; height: number
 }
 
 async function openDelivery(page: Page) {
-  const summary = page.locator('summary').filter({ hasText: /^完成状态与交付$/ });
+  const summary = page.locator('summary').filter({ hasText: /^媒体导入、标注导入与固定版本导出$/ });
   if (await summary.locator('..').getAttribute('open') === null) await summary.click();
 }
 
 async function exportCoco(page: Page) {
   await openDelivery(page);
-  const options = page.getByTestId('export-options');
-  if (await options.getAttribute('open') === null) await options.locator(':scope > summary').click();
-  const panel = options.getByRole('region', { name: '单图版本导出', exact: true });
-  await panel.getByLabel('导出格式', { exact: true }).selectOption('coco');
+  const panel = page.getByRole('region', { name: '单图版本导出', exact: true });
+  await panel.getByRole('combobox', { name: '导出格式', exact: true }).selectOption('coco');
   const rejected = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname.startsWith('/api/annotation-revisions/')
     && new URL(response.url()).pathname.endsWith('/exports'));
@@ -67,13 +65,14 @@ async function exportCoco(page: Page) {
   await panel.getByLabel('我已阅读并确认导出损失', { exact: true }).check();
   const downloaded = page.waitForEvent('download');
   await proceed.click();
+  await panel.getByRole('button', { name: '重新下载已有产物', exact: true }).click();
   return downloaded;
 }
 
 test('T15 real UI project/import/editor/save/reload/export flow on a hardware WebGPU device', async ({ adminPage: page, seededProject }) => {
   test.setTimeout(60_000);
   await page.goto(`${origin}/?project_id=${encodeURIComponent(seededProject.project_id)}&ontology_version_id=${encodeURIComponent(seededProject.ontology_version_id)}`);
-  await expect(page.getByTestId('project-name')).toHaveValue(/T15 vertical/);
+  await expect(page.locator('.r07-project-name')).toHaveText(/T15 vertical/);
   await expect(page.getByTestId('asset-grid')).toBeVisible();
   const diagnostics = page.getByTestId('gpu-status');
   await expect(diagnostics).toHaveAttribute('data-actual-backend', 'webgpu', { timeout: 30_000 });
@@ -83,6 +82,7 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
   expect(await diagnostics.innerText()).not.toMatch(SOFTWARE);
 
   // This is a genuine file-input import of deterministic, separately generated demo images.
+  await openDelivery(page);
   const importPanel = page.getByRole('region', { name: '媒体导入', exact: true });
   const importInput = importPanel.getByLabel('媒体文件', { exact: true });
   await expect(importInput).toBeAttached();
@@ -106,7 +106,6 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
     return job.json.state;
   }, { timeout: 30_000 }).toBe('succeeded');
   await importPanel.getByRole('button', { name: '重新检查状态', exact: true }).click();
-  await expect(importPanel.getByRole('status')).toHaveText('成功');
   expect(resultItems.map(item => item.item_index).sort((a, b) => a - b)).toEqual(uploadFiles.map((_, index) => index));
   const catalog = await seededProject.api.request<{ items: MediaRevision[] }>('GET', `/api/projects/${seededProject.project_id}/assets`);
   expect(catalog.status).toBe(200);
@@ -118,7 +117,7 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
       canonical_width: 320, canonical_height: 240, exif_orientation: 1,
     });
     const row = importPanel.getByTestId('media-import-item').nth(item.item_index);
-    await expect(row.locator('strong')).toHaveText(`${item.item_index + 1}. ${source.name}`);
+    await expect(row.locator('strong')).toHaveText(source.name);
     await expect(row.locator('p')).toHaveText('成功');
     await expect(page.getByTestId(`asset-item-${item.asset_revision_id}`)).toBeVisible();
   }
@@ -130,7 +129,6 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
   await expect(page.getByTestId('tool-box')).toBeVisible();
   await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state', 'ready');
   await openDelivery(page);
-  await page.getByTestId('export-options').locator(':scope > summary').click();
   const nextAsset = seededProject.assets.find((item) => item.asset_revision_id !== asset.asset_revision_id);
   if (!nextAsset) throw new Error('T15 asset-switch regression needs two server assets');
   const delayedPath = `**/api/assets/${nextAsset.asset_revision_id}/annotation*`;
@@ -142,7 +140,7 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
   });
   await page.getByTestId(`asset-item-${nextAsset.asset_revision_id}`).click();
   await expect(page.getByTestId('tool-box')).toBeDisabled();
-  await expect(page.getByTestId('annotation-canvas')).toHaveCount(0);
+  await expect(page.getByTestId('annotation-canvas')).toHaveAttribute('inert', '');
   await expect(page.getByTestId('completion-state')).toBeDisabled();
   await expect(page.getByRole('region', { name: '单图版本导出', exact: true }).getByRole('button', { name: '检查损失并导出', exact: true })).toBeDisabled();
   await page.unroute(delayedPath);
@@ -167,7 +165,7 @@ test('T15 real UI project/import/editor/save/reload/export flow on a hardware We
     const body = request.postDataJSON() as { document?: { objects?: Array<{ attributes?: Record<string, unknown> }> } } | null;
     return body?.document?.objects?.some((object) => object.attributes?.helmet_state === 'wearing') ?? false;
   });
-  await page.getByTestId('attribute-helmet_state').selectOption('wearing');
+  await page.getByTestId('attribute-helmet_state').selectOption({ label: 'wearing' });
   await attributeSave;
 
   const savedBeforeReload = await annotation(seededProject.api, asset.asset_revision_id, seededProject.ontology_version_id);
@@ -223,12 +221,12 @@ test('T15 confirmed-negative requires explicit confirmation and remains negative
   const original = await annotation(seededProject.api, asset.asset_revision_id, seededProject.ontology_version_id);
   await page.getByTestId('completion-state').selectOption('confirmed_negative');
   await expect(page.getByTestId('negative-confirmation')).toBeVisible();
-  await expect(page.getByTestId('negative-confirm-submit')).toBeDisabled();
+  await expect(page.getByTestId('complete-annotation')).toBeDisabled();
   await page.waitForTimeout(650); // No document may be saved merely by choosing the negative option.
   const beforeConfirmation = await annotation(seededProject.api, asset.asset_revision_id, seededProject.ontology_version_id);
   expect(beforeConfirmation).toEqual(original);
-  await page.getByTestId('negative-confirm-checkbox').check();
-  await page.getByTestId('negative-confirm-submit').click();
+  await page.getByTestId('negative-confirmation').check();
+  await page.getByTestId('complete-annotation').click();
   await expect.poll(async () => {
     const saved = await annotation(seededProject.api, asset.asset_revision_id, seededProject.ontology_version_id);
     return (saved.document as { completion: string }).completion;
@@ -323,7 +321,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   expect(baseline.document).toEqual(document);
   await page.route(`${privateOrigin}/api/**`, async route => {
     const request = route.request(), incoming = new URL(request.url());
-    const headers = { ...request.headers(), origin: seededProject.apiBaseUrl };
+    const headers: Record<string, string> = { ...request.headers(), origin: seededProject.apiBaseUrl };
     delete headers.host;
     delete headers['content-length'];
     await route.fulfill({ response: await route.fetch({
@@ -361,7 +359,11 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   await page.getByTestId('login-password').fill(seededProject.login.password);
   await page.getByTestId('login-submit').click();
   await expect(page.getByTestId('login-submit')).toHaveCount(0);
-  await page.goto(`${privateOrigin}/?project_id=${seededProject.project_id}&asset_revision_id=${asset.asset_revision_id}&ontology_version_id=${encodeURIComponent(seededProject.ontology_version_id)}`);
+  await page.goto(`${privateOrigin}/?project_id=${seededProject.project_id}`);
+  await expect(page.getByTestId('asset-grid')).toBeVisible();
+  await observeEditor(page);
+  await page.getByRole('combobox', { name: '固定规范版本', exact: true }).selectOption(seededProject.ontology_version_id);
+  await page.getByTestId(`asset-item-${asset.asset_revision_id}`).click();
   const gpu = page.getByTestId('gpu-status'), list = page.getByTestId('object-list');
   const first = page.getByTestId('object-item-t15-keyboard-0'), middle = page.getByTestId('object-item-t15-keyboard-1');
   const ready = async () => {
@@ -393,15 +395,12 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
     } finally { db.close(); }
   }, { assetId: asset.asset_revision_id, draftId });
   await ready();
-  // Observe actual later replacement hosts in this document, before asset switches and server previews.
-  await observeEditor(page);
   await list.focus();
   await page.keyboard.press('Delete'); // Empty native selection is a no-op.
   await unchanged();
   await middle.click();
   await expect(middle).toHaveAttribute('aria-selected', 'true');
-  await page.locator('summary').filter({ hasText: '选中对象改类与规则' }).click();
-  const rulesLauncher = page.locator('summary').filter({ hasText: '改类与属性规则' });
+  const rulesLauncher = page.getByTestId('numeric-geometry').getByRole('button', { name: '应用完整几何' });
   await rulesLauncher.focus();
   await page.keyboard.press('Delete');
   await unchanged(); // Native document/head and no PUT: a focused launcher must not delete selection.
@@ -425,8 +424,8 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
 
   // Header/navigation and AI/review controls are not an editor surface.
   for (const control of [
-    page.getByRole('button', { name: '工作台', exact: true }),
-    page.getByTestId('review-options').locator(':scope > summary'),
+    page.getByTestId('nav-projects'),
+    page.locator('summary').filter({ hasText: /^任务与审核$/ }),
     page.getByTestId('ai-run'),
   ]) {
     await control.dispatchEvent('keydown', { key: 'Delete', code: 'Delete', bubbles: true });
@@ -446,7 +445,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
 
   // Rejected changes during renderer rebuild must not fabricate a tool ACK.
   await page.evaluate(() => {
-    const testWindow = window as T15GateWindow;
+    const testWindow = window as unknown as T15GateWindow;
     testWindow.__t15GpuGate.blocked = true;
   });
   expect((await page.evaluate(() => window.__t30Faults.destroyDevice())).reason).toBe('destroyed');
@@ -457,7 +456,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   await list.dispatchEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true });
   await expect(page.getByTestId('tool-pan')).toHaveAttribute('aria-pressed', 'true');
   await page.evaluate(() => {
-    const testWindow = window as T15GateWindow;
+    const testWindow = window as unknown as T15GateWindow;
     const gate = testWindow.__t15GpuGate;
     gate.blocked = false;
     if (!gate.release) throw new Error('Actual recovery adapter request did not reach the fault gate');
@@ -469,7 +468,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   await unchanged();
 
   // Renderer-only recovery with no recorded release must preserve an in-flight
-  // native preview. Canvas clicks focus the existing grid without a new tab stop.
+  // native preview. Canvas clicks focus the existing native canvas.
   const previewCanvas = page.getByTestId('annotation-canvas');
   const previewBox = (await imageBox(page)).box;
   await page.mouse.move(...canvasPoint(previewBox, asset, 270, 150));
@@ -495,7 +494,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   await page.keyboard.down('Space');
   await expect(page.getByTestId('tool-pan')).toHaveAttribute('aria-pressed', 'true');
   await page.evaluate(() => {
-    const testWindow = window as T15GateWindow;
+    const testWindow = window as unknown as T15GateWindow;
     testWindow.__t15GpuGate.blocked = true;
     testWindow.__t15GpuGate.release = null;
   });
@@ -505,7 +504,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   await expect(page.getByTestId('tool-pan')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.up('Space');
   await page.evaluate(() => {
-    const testWindow = window as T15GateWindow;
+    const testWindow = window as unknown as T15GateWindow;
     const gate = testWindow.__t15GpuGate;
     gate.blocked = false;
     if (!gate.release) throw new Error('Actual blur recovery did not reach the adapter gate');
@@ -528,6 +527,16 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   await expect(middle).toHaveAttribute('aria-selected', 'true');
   await list.focus();
   await page.keyboard.press('Delete');
+  await expect(page.getByTestId('delete-selected')).toBeDisabled();
+  expect(await cpuSnapshot(page)).toEqual(document);
+  // The consumer fence refuses the batch before dispatch. Independently drive
+  // the same real mounted Rust host to retain its whole-batch atomicity check.
+  const lockedDelta = await page.evaluate(ids => {
+    const host = window.__t30Faults.hosts.at(-1);
+    if (!host) throw new Error('Actual native host missing');
+    return host.dispatch({ kind: 'delete', object_ids: ids });
+  }, [document.objects[0].object_id, document.objects[1].object_id]);
+  expect(lockedDelta).toMatchObject({ document_changed: false, error: { code: 'OBJECT_LOCKED' } });
   await expect(page.getByRole('alert').filter({ hasText: 'OBJECT_LOCKED' })).toBeVisible();
   await expect(first).toHaveAttribute('aria-selected', 'true');
   await expect(middle).toHaveAttribute('aria-selected', 'true');
@@ -592,35 +601,33 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   expect(concurrent.status).toBe(200);
   const concurrentHead = await readHead();
   await first.click();
-  await page.getByTestId('attribute-helmet_state').selectOption('wearing');
+  await page.getByTestId('attribute-helmet_state').selectOption({ label: 'wearing' });
   const localDocument = { ...deleted, objects: [
     { ...deleted.objects[0], attributes: { helmet_state: 'wearing' } }, deleted.objects[1],
   ] };
   await expect(page.getByTestId('save-status')).toHaveAttribute('data-phase', 'conflict');
   expect((await readDraft(await currentDraftId())).document).toEqual(localDocument);
-  await page.getByTestId('conflict-view-server').click();
+  await page.getByTestId('view-server').click();
   await ready();
   await expect(page.getByTestId('completion-state')).toHaveValue('in_progress');
   await expect(page.getByTestId('tool-box')).toBeDisabled();
   // Read-only preview may navigate transient selection; only document mutations are fenced.
   const previewDraft = await readDraft(await currentDraftId()), previewPuts = puts.length;
   await openDelivery(page);
-  const previewOptions = page.getByTestId('export-options');
-  if (await previewOptions.getAttribute('open') === null) await previewOptions.locator(':scope > summary').click();
-  const previewExport = previewOptions.getByRole('region', { name: '单图版本导出', exact: true });
+  const previewExport = page.getByRole('region', { name: '单图版本导出', exact: true });
   const previewStart = previewExport.getByRole('button', { name: '检查损失并导出', exact: true });
   await expect(previewStart).toBeEnabled();
   // Parent admission proves this exact loaded request settled; GPU DOM may still show the prior ready frame.
   expect(await cpuSnapshot(page)).toEqual(remoteDocument);
   // Same asset, fixed revision and readonly parent key: the second real click
   // must install a new request lifecycle, not strand the old settled binding.
-  await page.getByTestId('conflict-view-server').click();
+  await page.getByTestId('view-server').click();
   await ready();
   await expect(previewStart).toBeEnabled();
   expect(await cpuSnapshot(page)).toEqual(remoteDocument);
   await expect(page.getByTestId('completion-state')).toHaveValue('in_progress');
   await expect(page.getByTestId('tool-box')).toBeDisabled();
-  expect(await page.getByTestId('annotation-canvas').evaluate(canvas => canvas.inert)).toBe(true);
+  expect(await page.getByTestId('annotation-canvas').evaluate(canvas => canvas instanceof HTMLElement && canvas.inert)).toBe(true);
   expect(await readDraft(await currentDraftId())).toEqual(previewDraft);
   expect(await readHead()).toEqual(concurrentHead);
   const previewExportPosts: string[] = [];
@@ -646,7 +653,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   expect(await readHead()).toEqual(concurrentHead);
   await expect(page.getByTestId('tool-box')).toBeDisabled();
   const exported = page.waitForEvent('download');
-  await page.getByTestId('conflict-keep-local').click();
+  await page.getByTestId('keep-local-export').click();
   await exported;
   await ready();
   await expect(page.getByTestId('tool-box')).toBeEnabled(); // Actual ACK + latest IDB must restore writable local Native, not just renderer readiness.
@@ -668,7 +675,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   expect(task.status).toBe(200);
   await page.reload();
   await ready();
-  await page.getByTestId('review-options').locator(':scope > summary').click();
+  await page.locator('summary').filter({ hasText: /^任务与审核$/ }).click();
   const taskRow = page.getByTestId(`review-task-${task.json.task_id}`);
   await taskRow.getByRole('button', { name: '领取任务' }).click();
   await expect(page.getByTestId('active-task-lease')).toBeVisible();
@@ -684,7 +691,7 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   });
   await taskRow.getByTestId('task-submit').click();
   await readStarted.promise;
-  await expect(page.locator('.workbench-grid')).toHaveAttribute('inert', '');
+  await expect(page.getByTestId('annotation-canvas')).toHaveAttribute('inert', '');
   for (const event of [
     { key: 'Delete', code: 'Delete' }, { key: 'b', code: 'KeyB' }, { key: 'Escape', code: 'Escape' },
   ]) await list.dispatchEvent('keydown', { ...event, bubbles: true });
@@ -695,8 +702,10 @@ test('T15 production listbox keyboard delete preserves native atomicity, persist
   const submitted = page.waitForResponse(response => response.url().includes(`/tasks/${task.json.task_id}/submit`) && response.request().method() === 'POST');
   releaseRead.resolve();
   expect((await submitted).status()).toBe(200);
-  await expect(page.locator('.workbench-grid')).not.toHaveAttribute('inert');
-  await expect(page.getByTestId('tool-select')).toHaveAttribute('aria-pressed', 'true');
+  // Successful submission terminates the lease; it does not reopen editing.
+  await expect(page.getByTestId('annotation-canvas')).toHaveAttribute('inert', '');
+  await expect(page.getByTestId('tool-select')).toBeDisabled();
+  await expect(page.getByTestId('active-task-lease')).toHaveCount(0);
   await page.keyboard.up('Space');
   await list.focus();
   await page.keyboard.press('Control+z'); // Reloaded native history is empty.

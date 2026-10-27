@@ -18,7 +18,7 @@ export function mountToolbarView(root: HTMLElement, state: WorkspaceState, port:
   const zoom = element('output'), minus = action('−', 'zoom-out', signal, () => changeZoom(1 / 1.2)), plus = action('+', 'zoom-in', signal, () => changeZoom(1.2)); minus.setAttribute('aria-label', '缩小'); plus.setAttribute('aria-label', '放大');
   const fit = action('适应图片', 'fit-image', signal, () => port.getReadHost()?.fitImage()), focus = action('聚焦选择', 'focus-selection', signal, () => port.getReadHost()?.focusSelection());
   root.append(undo, redo, duplicate, remove, labeled('绘制类别', drawing), minus, zoom, plus, fit, focus);
-  let ontology: OntologyVersion | null = null, renderedHost = state.host, unsubscribeRendered: (() => void) | null = null;
+  let ontology: OntologyVersion | null = null, renderedHost: WorkspaceState['host'] = null, unsubscribeRendered: (() => void) | null = null;
   function changeZoom(factor: number) {
     const host = port.getReadHost(), viewport = host?.getViewport();
     if (host?.status === 'ready' && viewport) host.zoomAt(viewport.css_width / 2, viewport.css_height / 2, factor);

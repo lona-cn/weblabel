@@ -670,6 +670,7 @@ export class EditorHost {
     const canvas = this.canvas;
     if (canvas === null || this.disposed || this.statusValue !== 'ready') return;
     if (phase === 'down' && event.button === 0) {
+      canvas.focus({ preventScroll: true });
       // Pointer capture pairs with every gesture: released on up/cancel and on
       // every external cancel path (T12).
       try {

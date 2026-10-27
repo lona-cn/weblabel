@@ -1,7 +1,5 @@
 # 核心功能与使用体验商业化迭代计划
 
-**历史证据边界：** 本页的私有归档路径仅记录原始验收来源，不随公开仓库分发，也不代表在当前公开提交重新验证。
-
 > **历史归档，非待执行计划。** 商业核心 A–E 已结束，状态与提交见 `STATUS.json.user_requests.commercial_core`，完成记录见[报告索引](../reports/index.md#商业核心与体验增量)。本文保留原需求、审查修订、暂停/恢复过程及当时证据，不作为当前实现或验收通过声明。
 
 读者：维护者与审查者。读后行动：对照已批准范围和历史验收依据；继续开发使用[现行契约](contracts.md)、[API 参考](api-reference.md)及[恢复入口](../START_HERE.md)，使用功能见[当前能力](current-capabilities.md)。T32、T35、模型、性能及许可边界不因归档改变。
@@ -87,7 +85,7 @@ COCO/YOLO新导入对象仅按明确映射的实际类别复制固定规范已�
 
 ### 环境
 
-固定项目根 `D:/workspace/src/weblabel`。工具已实际核对：Node24.16.0、pnpm10.34.5、Rust/cargo1.96.0、wasm-bindgen0.2.128、wasm-pack0.15.0。临时目录项目内；使用已存在项目内native缓存；不改全局配置。清除旧API/release override后从本次源码构建。Cargo祖先配置有问题时，仅在已安装工具cwd运行并显式指定项目manifest/target，不写共享工具目录。
+固定原项目根（本地路径不公开）。工具已实际核对：Node24.16.0、pnpm10.34.5、Rust/cargo1.96.0、wasm-bindgen0.2.128、wasm-pack0.15.0。临时目录项目内；使用已存在项目内native缓存；不改全局配置。清除旧API/release override后从本次源码构建。Cargo祖先配置有问题时，仅在已安装工具cwd运行并显式指定项目manifest/target，不写共享工具目录。
 
 ### 主会话执行
 
@@ -223,7 +221,7 @@ formal c7d 已实际完成 cold gen4 future续领/fence4/新请求真实200、ge
 
 7 个实际 viewport 无文档水平溢出，画布 ≥240px；已采样工具按钮 ≥44px。空、非空和无匹配对象三个实际 axe 页面均无已确认 WCAG-tagged 违规，各仍有 2 项需人工判断；这不是全设备/全控件 WCAG 认证。正文 metadata/surface 与 muted/surface 的实际计算对比度为 5.85 和 8.21。独立源码/结果审查关闭 C-RAW-01、C-RAW-02；收尾实际回归发现的冲突预览恢复与 scoped flush 问题由单独增量审查闭环，见本轮验证引用。
 
-证据入口见 本轮验证（私有归档：`reports/T08/commercial-core/iteration-c-verification.json`） 与 独立结果审查（私有归档：`reports/T08/commercial-core/review-c-final.json`）。C 后按用户要求停止；D/E 未执行，T32 blocked、T35 pending、UNLICENSED 不变。
+证据入口见本轮验证（私有归档：`reports/T08/commercial-core/iteration-c-verification.json`）与独立结果审查（私有归档：`reports/T08/commercial-core/review-c-final.json`）。C 后按用户要求停止；D/E 未执行，T32 blocked、T35 pending、UNLICENSED 不变。
 
 ## 10. 用户重新要求持续迭代：D/E 恢复
 

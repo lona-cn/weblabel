@@ -1,43 +1,35 @@
 # 本地运维
 
-**历史证据边界：** 本页的私有归档路径仅记录原始验收来源，不随公开仓库分发，也不代表在当前公开提交重新验证。
-
 供管理本机数据目录的操作者进行高级运维：诊断故障、停启服务、配置团队成员和保管数据。普通用户先读[网页首次登录与人工标注](getting-started.md#首次登录与人工标注)；首次设置和密码登录都在网页完成，不需要另开 PowerShell 或调用初始化 API。忘记已有管理员密码见[管理员密码恢复](#管理员密码恢复)，从备份恢复到新目录见[备份恢复](backup-restore.md)，两者不混用。工具准备见[开发者构建与启动](getting-started.md#构建与启动)；本文不提供公网部署方案，真实验证边界以对应报告为准。
 
 ## 进程与端口
 
-默认浏览器入口为 `127.0.0.1:48100`；私有 API 为 `127.0.0.1:48101`。启动器提供已构建静态 Web/WASM 和同源 `/api/` 转发，先精确检查浏览器 Host/Origin，再转发到受限本地 API。API 每个资源仍执行身份、membership、CSRF 与权限检查。
-
-内部 Agent 工具路由不由浏览器静态代理暴露。
+默认入口为 `127.0.0.1:48100`。同一个 Rust 进程提供发行 Web/WASM、HTTP API 和受运行级权限保护的内部工具路由；没有 Node 前门或第二个私有 API 端口。每个业务资源仍执行身份、membership、CSRF 与权限检查，内部工具不能用浏览器 session 代替私有能力。
 
 ```powershell
-node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data" --port 48200 --api-port 48201
+.\target\local-release\weblabel.exe serve --build-dir "target/local-release" --data-dir "data" --port 48200
 ```
 
 这个命令只允许改端口，不能绑定 `0.0.0.0`、LAN 或公网。浏览器使用输出的精确 `http://127.0.0.1:<port>`，而非任意 hostname。HTTP loopback 的 cookie Secure 显式为 false，HttpOnly/SameSite/CSRF 仍有效；不要把它当 HTTPS 远程部署配置。
 
-启动器先打印实际数据目录/容量诊断，再等待私有 API /ready：200/normal 才报告业务依赖就绪，503/password_recovery 只报告维护，端口能连接或 /health 204 不代替 ready。启动/锁失败不抢占未知PID。Ctrl+C 停止自有进程树后，仅在token/PID仍匹配时释放自己的runtime.lock，并输出 weblabel-shutdown-receipt；收费运行的成本/取消仍 unknown，不声称全部取消。
+服务输出实际 canonical 数据目录和精确 `WEBLABEL_LOCAL_URL`。`/ready` 的 200/normal 才表示业务依赖准备完成；503/password_recovery 表示维护，`/health` 204 或端口可连接不能替代。Ctrl+C 停止接单、撤销能力并等待所属 worker/数据库关闭，之后释放 OS 锁；收费取消/成本仍可能 unknown。
 
-Linux 的每 Host/provider-child 私有 broker 只设置自身 subreaper，不修改 API/global subreaper、cgroup 或机器配置；需要内核 pidfd/subreaper 支持，不支持即明确启动失败。API 或 Node parent 的 process identity/pidfd 与私有完成通道负责父进程退出、控制通道断开及 detached/double-fork 后代回收，创建线程退出不等于所属进程退出。READY/GO 门建立前不执行 CLI；Node 的 immediate cancel 使用 STOP-before-exec，不产生 provider 请求。成功确认要求全部受管后代已停止并回收，完整清理预算为一次 5 秒；缺失确认/清理失败不能写成正常完成、重试成成功或冒称具体 PID 已被 SIGKILL。这不是 CLI 权限 sandbox。私有 broker 模式只由受管启动逻辑调用，操作员不应直接运行它。
+数据库旁的 `api.sqlite.runtime.lock` 持有整个进程寿命的 OS 独占锁，直接 serve-api 也受保护。sidecar 文件永久保留，退出后由 OS 释放锁。**不要删除该文件来抢占数据库**，也不要删除 SQLite/WAL/SHM/对象以修复启动。路径别名先规范化，不用 hardlink 或外部工具绕过同库互斥。
 
-开发者运行真实 Host 单元测试前，先执行 `cargo build --locked -p weblabel-api --bin weblabel-api`，再执行 `cargo test --locked -p weblabel-api --lib`；测试调用同次构建的相邻 API 二进制，不把 lib harness 伪装成 broker。Linux 单独运行 Node Host 测试还须将 `WEBLABEL_API_BINARY` 指向该次构建的实际 API（有 `CARGO_TARGET_DIR` 时使用其 `debug/weblabel-api`）；受管生产 Host 由 API 注入此内部 locator，不接受 provider 配置替换。缺失、不可执行或初始化失败给出明确诊断，不能用普通脚本替代 broker；exec EACCES 不应使 Host 崩溃，后续有效运行仍可执行。CI 按同源构建顺序验证；shutdown consumer 在 Windows/Linux 都参与收集。
-
-如果机器断电留下锁：先在任务管理器按锁中的 PID、可执行路径和端口核对所有受管进程已停止，然后**仅移除该锁文件**再启动。不要删除 `api.sqlite`、`-wal`、`-shm` 或对象目录以“修复启动”。CLI 不自动清理未知锁，也不重置已有数据。
-
-API 还对数据库规范化路径旁的 `api.sqlite.runtime.lock` 持有整个进程寿命的 OS 独占锁，直接启动 API 也受保护；junction/symlink 路径会先解析。这个 sidecar 文件会保留，进程退出时由 OS 释放锁，**不要删除它来抢占运行中的数据库**。它与启动器的 `runtime.lock` 不同；先停掉所有旧版、直接启动和受管 API，不用 hardlink 别名或其他数据库工具并发写库。
+旧安装的 `runtime.lock` PID 元数据只作诊断；新程序不凭其中 PID 杀进程或自动移除未知锁。升级前停止所有旧服务，验证备份，显式传入旧 canonical 数据目录并保留原 48100 origin；不要初始化替代库或清 IndexedDB。回滚需使用保留的旧发行与切换前备份，不对新库重放旧迁移。
 
 ## 管理员密码恢复
 
 仅用于有本机启动权限的操作者忘记**已有平台管理员**密码；不提供公网/普通用户自助找回，不接受环境变量中的新密码或自定义恢复码。先确认原数据目录、实际管理员用户名和使用当前功能的发行；不要清库、创建替代账号或改 membership。未同步草稿先保全，恢复不会清 IndexedDB；账号 user_id 保持不变。
 
 1. 停止原服务和同库所有 API，确认已退出。使用原数据目录；空库应走首次设置，已 scrubbed 的备份库应走备份恢复后的账户设置，不能用本功能补密码。
-2. 在按[当前终端选择 Node](getting-started.md#当前终端选择-node)准备的终端执行，用户名替换为原管理员的实际值。UUID 是非秘密操作标识，不是密码或恢复码；不要使用 `1` 或固定复用已完成的 ID。
+2. 在包含当前原生发行的终端执行，用户名替换为原管理员实际值；不需要 Node。UUID 是非秘密操作标识，不是密码/恢复码；不要用 `1` 或复用已完成的 ID。
 
 ```powershell
 $env:WEBLABEL_ADMIN_RECOVERY_REQUEST_ID = [guid]::NewGuid().ToString("D")
 $env:WEBLABEL_ADMIN_RECOVERY_USERNAME = "local-admin"
 try {
-  node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data"
+  .\target\local-release\weblabel.exe serve --build-dir "target/local-release" --data-dir "data" --port 48100
 } finally {
   Remove-Item Env:\WEBLABEL_ADMIN_RECOVERY_REQUEST_ID -ErrorAction SilentlyContinue
   Remove-Item Env:\WEBLABEL_ADMIN_RECOVERY_USERNAME -ErrorAction SilentlyContinue
@@ -48,10 +40,10 @@ try {
 4. 页面确认 `completed` 后仍处于维护，**不会自动登录**。在启动终端 Ctrl+C 停止维护；finally 清除两个输入变量。再用相同发行、原数据目录普通启动，完整刷新网页并用新密码登录：
 
 ```powershell
-node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data"
+.\target\local-release\weblabel.exe serve --build-dir "target/local-release" --data-dir "data" --port 48100
 ```
 
-维护期间普通登录、bootstrap、业务和内部 Agent 路由不可用，workers/Host 不启动。密码哈希更新、仅撤销目标管理员全部 session、写入不可修改的完成 journal 在同一事务；user_id、用户名、角色和业务历史不变，其他用户密码/session 不变。后续正常启动仍走原权限与租约规则。
+维护期间普通登录、bootstrap、业务与内部工具路由不可用，业务和模型 workers 不启动。密码更新、撤销目标管理员全部 session、写入不可修改的完成 journal 在同一事务；user_id、角色、业务历史与其他用户 session 不变。正常重启仍遵守权限和租约。
 
 错误码/密码被明确拒绝可人工纠正；限流等待后再试。网络/解析/500/409 等不明结果只能点击“只读核对恢复状态”，不自动或反复重发 POST；GET 会等待正在结算的提交。仅同一 request ID/用户名的 `available` 核对才能解锁人工重提，`completed` 走退出维护步骤。`expired` 且未完成时，可先停服务、保留原两输入值重启以获取新码；已经完成的 ID 无论重启多少次都拒绝重新启用。启动提示 ID 已完成时，清除输入变量正常启动，用此次选择的新密码核实，不另造 ID 掩盖未知结果。
 
@@ -60,16 +52,16 @@ node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data
 ## 只读 doctor
 
 ```powershell
-node scripts/doctor.mjs --mode build --build-dir "target/local-release"
-node scripts/doctor.mjs --mode runtime --build-dir "target/local-release" --data-dir "data" --api-url "http://127.0.0.1:48101"
-node scripts/doctor.mjs --mode ai --build-dir "target/local-release" --data-dir "data"
-# 指定发行或中性 Cargo cwd：
-node scripts/doctor.mjs --mode runtime --build-dir "target/local-release" --data-dir "data" --target-release "target/next-release" --support-receipt "target/support-receipt.json"
+.\target\local-release\weblabel.exe doctor --mode runtime --build-dir "target/local-release" --data-dir "data" --api-url "http://127.0.0.1:48100"
+.\target\local-release\weblabel.exe doctor --mode build --build-dir "target/local-release"
+.\target\local-release\weblabel.exe doctor --mode ai --build-dir "target/local-release"
+# 升级预检必须先有已验证的备份并停止源服务：
+.\target\local-release\weblabel.exe doctor --mode runtime --build-dir "target/local-release" --data-dir "data" --target-release "target/next-release" --backup-dir "backups/verified-snapshot" --support-receipt "target/support-receipt.json"
 ```
 
-build 检查固定构建工具；runtime 只要求固定 Node、已构建产物及进程树能力，Rust/Python/官方模型CLI缺失不能否定已构建人工路径；ai 额外只查可选CLI版本，不登录或调用模型。status passed/blocked/failed 对应0/2/1；如指定 api-url，真实/ready失败或维护仍是运行阻塞。容量读取实际statfs、DB/sidecar、对象及引用导出用量，拒绝链接并有扫描上限；unknown不是0，显示低空间预警但不保证未来I/O成功，不自动GC。doctor本机输出含路径，support receipt用白名单去除路径/PID/私有输出/配置，不等于敏感救援包。
+runtime 只要求已构建 v2 发行与本机运行条件，不要求 Node、Python、编译器或官方模型 CLI；build 额外检查固定构建工具；ai 只探测可选 CLI 版本，不登录或调用模型。passed/blocked/failed 对应 0/2/1。指定 api-url 时实际 readiness 失败或维护保持阻塞。容量和锁读取有界、拒绝链接；unknown 不是 0，不保证未来写入成功、不自动 GC。
 
-凭证环境不转发到探测，account_state=not_inspected；模型/GPU验收仍独立。--target-release 的升级预检要求源停机，无runtime.lock；只在项目target副本模拟精确schema/migration-prefix，校对源hash未变，不执行真实升级或声称rollback可用。--support-receipt独占新文件，不覆盖既有收据；旧报告保留当时条件。/ready 证明SQLite和对象根可读，不保证磁盘可写/容量/WebGPU/真实模型均通过。
+凭证环境不转发到工具探针，账号不读取。升级预检要求停机与已验证备份，在同一数据库 OS 锁保护下拷贝、模拟精确 schema/migration prefix 并核对源 hash 不变；不执行源库升级，不声称所有回滚成立。支持收据白名单去除路径/PID/私有输出/配置，独占新文件；它不是业务救援包。
 
 ## 配置团队审核账号与成员
 
@@ -187,9 +179,9 @@ Read-ProjectMembers | Select-Object user_id, username, role
 
 ## AI 可选配置
 
-人工编辑不依赖 AI 组件。持久 model profile、公开只读投影、私有 Host JSON/凭证环境、项目外发策略和逐次 preview/consent 是不同层。当前只有 profile 公开读取，没有面向操作者的创建 API 或网页入口；空库 GET /api/model-profiles 返回 items=[]、next_cursor=null。单设 WEBLABEL_HOST_CONFIG 不会创建 profile，因此这不是完整模型配置教程，不提供 SQL provisioning 或假的配置 CLI。
+人工工作不依赖 AI。持久 profile、公开投影、私有原生运行配置、项目外发策略与逐次 preview/consent 分层。平台管理员可以在网页从服务器固定预设建立 profile；浏览器不提交原始配置、endpoint、路径、启动命令或秘密。空库没有配置也能人工编辑。
 
-已有 profile 的授权环境中，由操作者明确提供 WEBLABEL_HOST_CONFIG 的绝对私有配置路径，启动器才启用同次发行的 Node Host/runtime 和内部 MCP；公开投影不含私有 config_json/secret_ref。API 项目外发策略默认 false，真实服务端预览、逐次 consent/预算仍必需。CLI 登录由本人官方流程完成，不由编码 Agent 代填，不复制官方凭证目录，不打印私有 JSON 或 key。即使 profile 可见也不等于可运行或 live_passed；详情见[配置参考](configuration.md)与[已知限制](known-limitations.md)。
+本机操作者显式指定 `WEBLABEL_RUNTIME_CONFIG` 的绝对私有配置路径与 `WEBLABEL_RUNTIME_ALLOWED_ENV` 凭证名称白名单，由 Rust factory 选择精确 provider/profile。配置不自动创建持久 profile，不启动旧 Node/Python 产品。官方登录由用户本人完成；不复制认证目录或打印私有 JSON/key。配置可见不等于模型可用或 live_passed，见[配置参考](configuration.md)与[已知限制](known-limitations.md)。
 
 恢复会清空全部 provider 私有配置，状态回到 needs_configuration/not_run；旧外发 consent、运行授权和 preview 也会移除。重新配置不能继承旧 live 证明；参考 [provider compatibility](provider-compatibility.md) 并显式授权预算后另跑实际验收。
 

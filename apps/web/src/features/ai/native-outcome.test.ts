@@ -74,3 +74,30 @@ it('refreshes decision counts after a save ACK without a new run event or saved 
   await vi.waitFor(() => expect(count('当前有效采纳')).toBe('0'));
   expect(count('接受 journal / 撤销 journal')).toBe('1 / 1');
 });
+
+it('keeps ordered run states readable while retaining bulky provider observations in expandable diagnostics', () => {
+  const f = nativeFixture(), owner = new AbortController(), root = document.createElement('section');
+  owners.push(owner); document.body.append(root); owner.signal.addEventListener('abort', f.dispose, { once: true });
+  const events: runController.RunSnapshot['events'] = [
+    { run_id: 'run', seq: 1, type: 'queued', message: 'run queued', data: { receipt: 'x'.repeat(1000) } },
+    { run_id: 'run', seq: 2, type: 'started', message: 'model run started', data: null },
+    { run_id: 'run', seq: 3, type: 'tool_call', message: 'authorized provider tool call', data: null },
+    { run_id: 'run', seq: 4, type: 'failed', message: 'model run failed', data: { cost_display: 'unknown', usage: null } },
+  ];
+  const snapshot: runController.RunSnapshot = { runId: 'run', runScope: null, events, candidates: [], error: null, busy: false, modelWaiting: false, savedMessage: null };
+  vi.spyOn(runController, 'createRunController').mockReturnValue({
+    getSnapshot: () => snapshot, subscribe: vi.fn(() => vi.fn()), update: vi.fn(), dispose: vi.fn(),
+    run: vi.fn(), preparePreview: vi.fn(), getPreviewSnapshot: vi.fn(), cancel: vi.fn(), acceptSelected: vi.fn(),
+  });
+  vi.spyOn(api, 'request').mockResolvedValue({ items: [] });
+  mountAiWorkbenchView(root, f.state, f.port, owner.signal, vi.fn());
+  const progress = root.querySelector<HTMLElement>('[data-testid="ai-run-progress"]')!;
+  const rows = [...progress.querySelectorAll('ol > li')];
+  expect(rows).toHaveLength(4);
+  expect(rows.map(row => row.querySelector('span')?.textContent)).toEqual([
+    '1 · queued · run queued', '2 · started · model run started', '3 · tool_call · authorized provider tool call', '4 · failed · model run failed',
+  ]);
+  expect(rows[0].querySelector('details')?.open).toBe(false);
+  expect(rows[0].querySelector('details pre')?.textContent).toContain('x'.repeat(1000));
+  expect(progress.querySelector<HTMLButtonElement>('[data-testid="ai-cancel"]')!.disabled).toBe(true);
+});

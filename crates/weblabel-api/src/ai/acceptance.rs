@@ -757,16 +757,28 @@ pub(super) async fn decision_route(
             "Suggestion set was not found",
         );
     }
-    if let Err(response) = super::suggestions::rejection_scope(tx.connection(), &set_id, &principal.user_id, true).await {
+    if let Err(response) =
+        super::suggestions::rejection_scope(tx.connection(), &set_id, &principal.user_id, true)
+            .await
+    {
         return response;
     }
     // Read the latest decision for every change under the same immediate
     // write transaction as rejection; a cached aggregate is not authoritative.
     let journal = match load_journal(tx.connection(), &set_id).await {
         Ok(journal) => journal,
-        Err(_) => return failure_response(StatusCode::INTERNAL_SERVER_ERROR, "DECISION_FAILED", "Could not read suggestion decisions"),
+        Err(_) => {
+            return failure_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DECISION_FAILED",
+                "Could not read suggestion decisions",
+            )
+        }
     };
-    if journal.values().any(|state| *state == ChangeState::Accepted) {
+    if journal
+        .values()
+        .any(|state| *state == ChangeState::Accepted)
+    {
         return failure_response(
             StatusCode::CONFLICT,
             "ACCEPTED_SET_REQUIRES_REVERT",
@@ -775,7 +787,11 @@ pub(super) async fn decision_route(
     }
     if current == "rejected" {
         if tx.commit().await.is_err() {
-            return failure_response(StatusCode::INTERNAL_SERVER_ERROR, "DECISION_FAILED", "Could not confirm decision");
+            return failure_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DECISION_FAILED",
+                "Could not confirm decision",
+            );
         }
         return (StatusCode::OK, Json(json!({"suggestion_set_id": set_id, "state": "rejected", "idempotent_replay": true}))).into_response();
     }
@@ -801,9 +817,9 @@ pub(super) async fn decision_route(
 // Request-local test synchronization; absent from production builds.
 #[cfg(test)]
 pub(super) mod contention {
+    use crate::storage::{Repository, WriteTransaction};
     use std::{future::Future, sync::Arc};
     use tokio::sync::Notify;
-    use crate::storage::{Repository, WriteTransaction};
 
     #[derive(Default)]
     pub struct Hook {
@@ -821,14 +837,19 @@ pub(super) mod contention {
         let tx = std::future::poll_fn(|cx| {
             let result = begin.as_mut().poll(cx);
             if result.is_pending() && !signaled {
-                if let Some(hook) = &hook { hook.waiting.notify_one(); }
+                if let Some(hook) = &hook {
+                    hook.waiting.notify_one();
+                }
                 signaled = true;
             }
             result
-        }).await?;
+        })
+        .await?;
         if let Some(hook) = hook {
             hook.acquired.notify_one();
-            if hook.hold { hook.release.notified().await; }
+            if hook.hold {
+                hook.release.notified().await;
+            }
         }
         Ok(tx)
     }
@@ -948,7 +969,11 @@ mod tests {
     }
 
     async fn seeded_graph(seed: &Seed) -> Graph {
-        seeded_graph_in(seed, &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")).await
+        seeded_graph_in(
+            seed,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .await
     }
 
     async fn seeded_graph_in(seed: &Seed, target: &std::path::Path) -> Graph {
@@ -1644,6 +1669,7 @@ mod tests {
                 ),
             graph.repository.clone(),
             &db,
+            Ok(None),
         )
         .await;
         let path = "/api/ai/suggestions/suggestion-1/rejections";
@@ -1930,42 +1956,102 @@ mod tests {
     async fn ux_correction_rejection_payload_and_both_authorization_boundaries() {
         use crate::ai::profiles::ux_tests::{auth_router, call, seed_session};
         use crate::ai::suggestions;
-        use axum::{routing::{get, post}, Router};
+        use axum::{
+            routing::{get, post},
+            Router,
+        };
         let hash = object_hash(&base_document().objects[0]);
         for fault in ["none", "media", "ontology", "revision", "run", "permission"] {
-            let graph = seeded_graph(&Seed::audit(json!([attributes_change("change-1", &hash), attributes_change("change-2", &hash)]))).await;
+            let graph = seeded_graph(&Seed::audit(json!([
+                attributes_change("change-1", &hash),
+                attributes_change("change-2", &hash)
+            ])))
+            .await;
             seed_session(&graph.repository, USER, "actor-session").await;
             let mut tx = graph.repository.begin_write().await.unwrap();
             let permission_sql = "UPDATE memberships SET role='viewer'";
             // Foreign IDs remain real rows; relational mismatches, not absent IDs.
             if matches!(fault, "ontology" | "revision" | "run") {
-                sqlx::query("PRAGMA defer_foreign_keys=ON").execute(tx.connection()).await.unwrap();
+                sqlx::query("PRAGMA defer_foreign_keys=ON")
+                    .execute(tx.connection())
+                    .await
+                    .unwrap();
                 sqlx::query("INSERT INTO media_revisions SELECT 'missing',project_id,asset_id,original_sha256,canonical_sha256,original_name,created_at FROM media_revisions WHERE asset_revision_id='asset-1'").execute(tx.connection()).await.unwrap();
                 sqlx::query("INSERT INTO ontology_versions SELECT 'missing',project_id,2,body_json,created_at FROM ontology_versions WHERE ontology_version_id='onto-1'").execute(tx.connection()).await.unwrap();
                 sqlx::query("INSERT INTO annotation_revisions SELECT 'missing',project_id,'missing','missing',NULL,1,body_json,content_hash,created_by,created_at FROM annotation_revisions WHERE annotation_revision_id='rev-1'").execute(tx.connection()).await.unwrap();
             }
-            if fault == "permission" { sqlx::query(permission_sql).execute(tx.connection()).await.unwrap(); }
+            if fault == "permission" {
+                sqlx::query(permission_sql)
+                    .execute(tx.connection())
+                    .await
+                    .unwrap();
+            }
             sqlx::query("INSERT INTO model_runs(run_id,operation_id,project_id,asset_revision_id,annotation_revision_id,ontology_version_id,actor_id,job_id,profile_id,profile_snapshot_json,provider_id,source,intent,prompt,consent_id,context_json,input_fingerprint,request_hash,state,cancel_requested,cost_display,usage_json,created_at,started_at,finished_at) SELECT 'run-2','op-run-2',project_id,CASE WHEN ?='run' THEN 'missing' ELSE asset_revision_id END,CASE WHEN ?='revision' THEN 'missing' ELSE annotation_revision_id END,CASE WHEN ?='ontology' THEN 'missing' ELSE ontology_version_id END,actor_id,job_id,profile_id,profile_snapshot_json,provider_id,source,intent,prompt,consent_id,CASE WHEN ?='media' THEN json_set(context_json,'$.canonical_sha256','other') ELSE context_json END,input_fingerprint,request_hash,state,cancel_requested,cost_display,usage_json,created_at,started_at,finished_at FROM model_runs WHERE run_id='run-1'").bind(fault).bind(fault).bind(fault).bind(fault).execute(tx.connection()).await.unwrap();
             sqlx::query("INSERT INTO suggestion_sets SELECT 'suggestion-2','run-2',prediction_id,project_id,asset_revision_id,changes_json,issues_json,score,created_at FROM suggestion_sets WHERE suggestion_set_id='suggestion-1'").execute(tx.connection()).await.unwrap();
             tx.commit().await.unwrap();
-            let db = format!("sqlite:{}", graph._directory.path().join("acceptance.sqlite").display());
-            let app = auth_router(Router::new().route("/api/ai/suggestions/{id}/rejections", get(suggestions::rejection_list).post(suggestions::reject_changes)).route("/api/ai/suggestions/{id}/decision", post(decision_route)), graph.repository.clone(), &db).await;
+            let db = format!(
+                "sqlite:{}",
+                graph._directory.path().join("acceptance.sqlite").display()
+            );
+            let app = auth_router(
+                Router::new()
+                    .route(
+                        "/api/ai/suggestions/{id}/rejections",
+                        get(suggestions::rejection_list).post(suggestions::reject_changes),
+                    )
+                    .route("/api/ai/suggestions/{id}/decision", post(decision_route)),
+                graph.repository.clone(),
+                &db,
+                Ok(None),
+            )
+            .await;
             let path = "/api/ai/suggestions/suggestion-2/rejections";
             let payload = json!({"operation_id":"op-order", "change_ids":["change-1","change-2"]});
-            let status = call(&app,"POST",path,Some("actor-session"),true,payload).await.0;
+            let status = call(&app, "POST", path, Some("actor-session"), true, payload)
+                .await
+                .0;
             if fault == "none" {
                 assert_eq!(status, StatusCode::OK);
-                for ids in [json!(["change-2","change-1"]), json!(["Change-1","change-2"])] {
-                    assert_eq!(call(&app,"POST",path,Some("actor-session"),true,json!({"operation_id":"op-order","change_ids":ids})).await.0, StatusCode::CONFLICT);
+                for ids in [
+                    json!(["change-2", "change-1"]),
+                    json!(["Change-1", "change-2"]),
+                ] {
+                    assert_eq!(
+                        call(
+                            &app,
+                            "POST",
+                            path,
+                            Some("actor-session"),
+                            true,
+                            json!({"operation_id":"op-order","change_ids":ids})
+                        )
+                        .await
+                        .0,
+                        StatusCode::CONFLICT
+                    );
                 }
             } else {
-                assert!(matches!(status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN), "{fault}: {status}");
-                let status = call(&app,"POST","/api/ai/suggestions/suggestion-2/decision",Some("actor-session"),true,json!({"decision":"reject"})).await.0;
-                assert!(matches!(status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN), "whole {fault}: {status}");
+                assert!(
+                    matches!(status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN),
+                    "{fault}: {status}"
+                );
+                let status = call(
+                    &app,
+                    "POST",
+                    "/api/ai/suggestions/suggestion-2/decision",
+                    Some("actor-session"),
+                    true,
+                    json!({"decision":"reject"}),
+                )
+                .await
+                .0;
+                assert!(
+                    matches!(status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN),
+                    "whole {fault}: {status}"
+                );
             }
         }
     }
-
 
     #[tokio::test]
     async fn ux_correction_loopback_tcp_enforces_csrf_without_model_calls() {
@@ -1974,69 +2060,141 @@ mod tests {
         let hash = object_hash(&base_document().objects[0]);
         let graph = seeded_graph(&Seed::audit(json!([attributes_change("change-1", &hash)]))).await;
         seed_session(&graph.repository, USER, "actor-session").await;
-        let db = format!("sqlite:{}", graph._directory.path().join("acceptance.sqlite").display());
-        let app = auth_router(Router::new().route("/api/ai/suggestions/{id}/decision", post(decision_route)), graph.repository.clone(), &db).await;
+        let db = format!(
+            "sqlite:{}",
+            graph._directory.path().join("acceptance.sqlite").display()
+        );
+        let app = auth_router(
+            Router::new().route("/api/ai/suggestions/{id}/decision", post(decision_route)),
+            graph.repository.clone(),
+            &db,
+            Ok(None),
+        )
+        .await;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         for (csrf, status) in [("", "403"), ("x-csrf-token: ux-csrf\r\n", "200")] {
             let request = format!("POST /api/ai/suggestions/suggestion-1/decision HTTP/1.1\r\nHost: localhost\r\nOrigin: http://localhost\r\nCookie: weblabel_session=actor-session\r\n{csrf}Content-Type: application/json\r\nContent-Length: 21\r\nConnection: close\r\n\r\n{{\"decision\":\"reject\"}}");
             let reply = tokio::task::spawn_blocking(move || {
                 use std::io::{Read, Write};
                 let mut socket = std::net::TcpStream::connect(address).unwrap();
-                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
                 socket.write_all(request.as_bytes()).unwrap();
                 let mut reply = String::new();
                 socket.take(1024 * 1024).read_to_string(&mut reply).unwrap();
                 reply
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
             assert!(reply.starts_with(&format!("HTTP/1.1 {status}")), "{reply}");
         }
         server.abort();
         let _ = server.await;
     }
 
-
     #[tokio::test]
     async fn ux_correction_whole_reject_requires_revert_and_terminal_states_never_reopen() {
-        use crate::ai::profiles::ux_tests::{auth_router, call, seed_session, loopback_smoke};
+        use crate::ai::profiles::ux_tests::{auth_router, call, loopback_smoke, seed_session};
         use axum::{routing::post, Router};
         let hash = object_hash(&base_document().objects[0]);
         for terminal in [None, Some("rejected"), Some("stale")] {
-            let graph = seeded_graph(&Seed::audit(json!([attributes_change("change-1", &hash), attributes_change("change-2", &hash)]))).await;
+            let graph = seeded_graph(&Seed::audit(json!([
+                attributes_change("change-1", &hash),
+                attributes_change("change-2", &hash)
+            ])))
+            .await;
             seed_session(&graph.repository, USER, "actor-session").await;
-            let db = format!("sqlite:{}", graph._directory.path().join("acceptance.sqlite").display());
-            let app = auth_router(Router::new().route("/api/ai/suggestions/{id}/decision", post(decision_route)), graph.repository.clone(), &db).await;
+            let db = format!(
+                "sqlite:{}",
+                graph._directory.path().join("acceptance.sqlite").display()
+            );
+            let app = auth_router(
+                Router::new().route("/api/ai/suggestions/{id}/decision", post(decision_route)),
+                graph.repository.clone(),
+                &db,
+                Ok(None),
+            )
+            .await;
             let document = base_document();
             let ontology = fixture_ontology();
-            let pins = SavePins { project_id: PROJECT, asset_revision_id: ASSET, canonical_sha256: CANONICAL, base_document: &document, ontology: &ontology };
+            let pins = SavePins {
+                project_id: PROJECT,
+                asset_revision_id: ASSET,
+                canonical_sha256: CANONICAL,
+                base_document: &document,
+                ontology: &ontology,
+            };
             let mut tx = graph.repository.begin_write().await.unwrap();
-            let prepared = ok(prepare(tx.connection(), &pins, &save_request(vec![accept("change-1")])).await);
+            let prepared = ok(prepare(
+                tx.connection(),
+                &pins,
+                &save_request(vec![accept("change-1")]),
+            )
+            .await);
             ok(record(tx.connection(), &prepared, BASE_REVISION, USER, "0").await);
             if let Some(state) = terminal {
                 sqlx::query("UPDATE suggestion_set_states SET state=? WHERE suggestion_set_id='suggestion-1'").bind(state).execute(tx.connection()).await.unwrap();
             }
             tx.commit().await.unwrap();
             let path = "/api/ai/suggestions/suggestion-1/decision";
-            assert_eq!(call(&app, "POST", path, Some("actor-session"), true, json!({"decision":"reject"})).await.0, StatusCode::CONFLICT);
+            assert_eq!(
+                call(
+                    &app,
+                    "POST",
+                    path,
+                    Some("actor-session"),
+                    true,
+                    json!({"decision":"reject"})
+                )
+                .await
+                .0,
+                StatusCode::CONFLICT
+            );
             let mut tx = graph.repository.begin_write().await.unwrap();
-            let prepared = ok(prepare(tx.connection(), &pins, &save_request(vec![revert("change-1")])).await);
+            let prepared = ok(prepare(
+                tx.connection(),
+                &pins,
+                &save_request(vec![revert("change-1")]),
+            )
+            .await);
             ok(record(tx.connection(), &prepared, BASE_REVISION, USER, "1").await);
-            let state: String = sqlx::query_scalar("SELECT state FROM suggestion_set_states WHERE suggestion_set_id='suggestion-1'").fetch_one(tx.connection()).await.unwrap();
+            let state: String = sqlx::query_scalar(
+                "SELECT state FROM suggestion_set_states WHERE suggestion_set_id='suggestion-1'",
+            )
+            .fetch_one(tx.connection())
+            .await
+            .unwrap();
             assert_eq!(state, terminal.unwrap_or("pending"));
             tx.commit().await.unwrap();
             if terminal.is_none() {
-                let reply = loopback_smoke(app.clone(), "POST", path, "actor-session", json!({"decision":"reject"})).await;
+                let reply = loopback_smoke(
+                    app.clone(),
+                    "POST",
+                    path,
+                    "actor-session",
+                    json!({"decision":"reject"}),
+                )
+                .await;
                 assert!(reply.contains("rejected"));
             }
             let mut tx = graph.repository.begin_write().await.unwrap();
             for id in ["change-1", "change-2"] {
-                assert_eq!(prepare(tx.connection(), &pins, &save_request(vec![accept(id)])).await.unwrap_err().code, "SUGGESTION_SET_NOT_APPLICABLE");
+                assert_eq!(
+                    prepare(tx.connection(), &pins, &save_request(vec![accept(id)]))
+                        .await
+                        .unwrap_err()
+                        .code,
+                    "SUGGESTION_SET_NOT_APPLICABLE"
+                );
             }
             tx.commit().await.unwrap();
         }
     }
-
 
     #[tokio::test]
     async fn ux_outcome_observes_changes_and_actual_reviews_without_human_attribution_or_fabricated_cost(
@@ -2057,6 +2215,7 @@ mod tests {
             ),
             graph.repository.clone(),
             &db,
+            Ok(None),
         )
         .await;
         let document = base_document();
@@ -2149,8 +2308,15 @@ mod tests {
             .join("../../reports/T24/ux-improvement/ux23-binding-api");
         let temp_root = report.join("temp");
         let hash = object_hash(&base_document().objects[0]);
-        let graph = seeded_graph_in(&Seed::audit(json!([attributes_change("change-1", &hash)])), &temp_root).await;
-        let database = format!("sqlite:{}", graph._directory.path().join("acceptance.sqlite").display());
+        let graph = seeded_graph_in(
+            &Seed::audit(json!([attributes_change("change-1", &hash)])),
+            &temp_root,
+        )
+        .await;
+        let database = format!(
+            "sqlite:{}",
+            graph._directory.path().join("acceptance.sqlite").display()
+        );
         let mut tx = graph.repository.begin_write().await.unwrap();
         for sql in [
             "INSERT INTO users(user_id,username,password_hash,created_at) VALUES('viewer','viewer','synthetic','0'),('other','other','synthetic','0'),('outsider','outsider','synthetic','0')",
@@ -2168,104 +2334,443 @@ mod tests {
             "INSERT INTO suggestion_decisions(decision_id,suggestion_set_id,change_id,decision,bound_revision_id,actor_id,created_at) VALUES('decision-accept','suggestion-1','change-1','accept','rev-1','user-1','0'),('decision-revert','suggestion-1','change-1','revert','rev-descendant','user-1','1'),('decision-second-accept','suggestion-2','change-1','accept','rev-1','user-1','0'),('decision-second-revert','suggestion-2','change-1','revert','rev-1','user-1','1'),('decision-missing','suggestion-2','missing','revert','not-a-revision','user-1','1')",
         ] { sqlx::query(sql).execute(tx.connection()).await.unwrap(); }
         tx.commit().await.unwrap();
-        for (user, token) in [(USER,"actor-session"),("viewer","viewer-session"),("other","other-session"),("outsider","outsider-session")] {
+        for (user, token) in [
+            (USER, "actor-session"),
+            ("viewer", "viewer-session"),
+            ("other", "other-session"),
+            ("outsider", "outsider-session"),
+        ] {
             seed_session(&graph.repository, user, token).await;
         }
-        let auth = AuthState::new(sqlx::SqlitePool::connect(&database).await.unwrap(), AuthConfig {
-            bind: "127.0.0.1:48100".parse().unwrap(), cookie_secure: false,
-            allowed_origins: vec!["http://localhost".into()], allowed_hosts: vec!["localhost".into()],
-            launch_code: String::new(), launch_code_expires_at: 0,
-        }, std::time::Duration::from_secs(2)).unwrap();
-        let app = auth_router(Router::new().route("/api/ai/runs/{id}/outcome-summary", get(crate::ai::runs::outcome_summary)), graph.repository.clone(), &database).await
-            .merge(crate::review::router(graph.repository.clone(), auth));
+        let auth = AuthState::new(
+            sqlx::SqlitePool::connect(&database).await.unwrap(),
+            AuthConfig {
+                bind: "127.0.0.1:48100".parse().unwrap(),
+                cookie_secure: false,
+                allowed_origins: vec!["http://localhost".into()],
+                allowed_hosts: vec!["localhost".into()],
+                launch_code: String::new(),
+                launch_code_expires_at: 0,
+            },
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        let app = auth_router(
+            Router::new().route(
+                "/api/ai/runs/{id}/outcome-summary",
+                get(crate::ai::runs::outcome_summary),
+            ),
+            graph.repository.clone(),
+            &database,
+            Ok(None),
+        )
+        .await
+        .merge(crate::review::router(graph.repository.clone(), auth));
         let outcome_path = "/api/ai/runs/run-1/outcome-summary";
-        let (_, summary) = call(&app,"GET",outcome_path,Some("actor-session"),false,json!({})).await;
-        assert_eq!(summary["accepted_change_count"],0);
-        assert_eq!(summary["task_binding"]["basis"],"exact_decision_revision_submission");
-        assert_eq!(summary["task_binding"]["submissions"],json!([
-            {"task_id":"task-exact","review_id":"review-exact","annotation_revision_id":"rev-1","asset_revision_id":"asset-1","ontology_version_id":"onto-1","task_state":"submitted","review_state":"approved","decision_kinds":["accept","revert"],"suggestion_set_ids":["suggestion-1","suggestion-2"]},
-            {"task_id":"task-exact","review_id":"review-later","annotation_revision_id":"rev-descendant","asset_revision_id":"asset-1","ontology_version_id":"onto-1","task_state":"submitted","review_state":"rejected","decision_kinds":["revert"],"suggestion_set_ids":["suggestion-1"]}
-        ]));
-        assert_eq!(summary["task_binding"]["truncated"],false);
-        assert_eq!(summary["recorded_work_seconds"],Value::Null);
-        assert_eq!(summary["activity_task_bindings"],json!([]));
+        let (_, summary) = call(
+            &app,
+            "GET",
+            outcome_path,
+            Some("actor-session"),
+            false,
+            json!({}),
+        )
+        .await;
+        assert_eq!(summary["accepted_change_count"], 0);
+        assert_eq!(
+            summary["task_binding"]["basis"],
+            "exact_decision_revision_submission"
+        );
+        assert_eq!(
+            summary["task_binding"]["submissions"],
+            json!([
+                {"task_id":"task-exact","review_id":"review-exact","annotation_revision_id":"rev-1","asset_revision_id":"asset-1","ontology_version_id":"onto-1","task_state":"submitted","review_state":"approved","decision_kinds":["accept","revert"],"suggestion_set_ids":["suggestion-1","suggestion-2"]},
+                {"task_id":"task-exact","review_id":"review-later","annotation_revision_id":"rev-descendant","asset_revision_id":"asset-1","ontology_version_id":"onto-1","task_state":"submitted","review_state":"rejected","decision_kinds":["revert"],"suggestion_set_ids":["suggestion-1"]}
+            ])
+        );
+        assert_eq!(summary["task_binding"]["truncated"], false);
+        assert_eq!(summary["recorded_work_seconds"], Value::Null);
+        assert_eq!(summary["activity_task_bindings"], json!([]));
         assert!(summary.get("media_tasks").is_none());
-        assert_eq!(call(&app,"GET",outcome_path,None,false,json!({})).await.0,StatusCode::UNAUTHORIZED);
-        assert_eq!(call(&app,"GET",outcome_path,Some("outsider-session"),false,json!({})).await.0,StatusCode::NOT_FOUND);
+        assert_eq!(
+            call(&app, "GET", outcome_path, None, false, json!({}))
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(
+                &app,
+                "GET",
+                outcome_path,
+                Some("outsider-session"),
+                false,
+                json!({})
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
         let activity_path = "/api/projects/project-1/activity-sessions/work";
         let old = json!({"seq":0,"kind":"annotation","duration_ms":8000});
-        let checkpoint = |version, intervals: Value| json!({"expected_version":version,"intervals":intervals});
-        assert_eq!(call(&app,"PUT",activity_path,Some("actor-session"),true,checkpoint(0,json!([old]))).await.0,StatusCode::OK);
-        assert_eq!(call(&app,"GET",outcome_path,Some("actor-session"),false,json!({})).await.1["recorded_work_seconds"],Value::Null);
-        for binding in [json!({"run_id":"invalid/id"}),json!({"task_id":"invalid/id"}),json!({"run_id":"foreign-run"}),json!({"task_id":"task-foreign"}),json!({"run_id":"missing-run"}),json!({"task_id":"missing-task"}),json!({"run_id":"run-1","task_id":"task-media"}),json!({"run_id":"run-1","task_id":"task-ontology"})] {
+        let checkpoint =
+            |version, intervals: Value| json!({"expected_version":version,"intervals":intervals});
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("actor-session"),
+                true,
+                checkpoint(0, json!([old]))
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(
+                &app,
+                "GET",
+                outcome_path,
+                Some("actor-session"),
+                false,
+                json!({})
+            )
+            .await
+            .1["recorded_work_seconds"],
+            Value::Null
+        );
+        for binding in [
+            json!({"run_id":"invalid/id"}),
+            json!({"task_id":"invalid/id"}),
+            json!({"run_id":"foreign-run"}),
+            json!({"task_id":"task-foreign"}),
+            json!({"run_id":"missing-run"}),
+            json!({"task_id":"missing-task"}),
+            json!({"run_id":"run-1","task_id":"task-media"}),
+            json!({"run_id":"run-1","task_id":"task-ontology"}),
+        ] {
             let mut appended = json!({"seq":1,"kind":"annotation","duration_ms":1000});
-            appended.as_object_mut().unwrap().extend(binding.as_object().unwrap().clone());
-            let result = call(&app,"PUT",activity_path,Some("actor-session"),true,checkpoint(1,json!([old,appended]))).await;
-            assert_eq!(result.0,StatusCode::UNPROCESSABLE_ENTITY,"{binding}: {result:?}");
+            appended
+                .as_object_mut()
+                .unwrap()
+                .extend(binding.as_object().unwrap().clone());
+            let result = call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("actor-session"),
+                true,
+                checkpoint(1, json!([old, appended])),
+            )
+            .await;
+            assert_eq!(
+                result.0,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{binding}: {result:?}"
+            );
         }
         let wait = json!({"seq":1,"kind":"model_wait","duration_ms":7000,"run_id":"run-1","task_id":"task-exact"});
-        assert_eq!(call(&app,"PUT",activity_path,Some("actor-session"),true,checkpoint(1,json!([old,wait]))).await.0,StatusCode::OK);
-        let (_, measured_zero) = call(&app,"GET",outcome_path,Some("actor-session"),false,json!({})).await;
-        assert_eq!(measured_zero["recorded_work_seconds"],0.0);
-        assert_eq!(measured_zero["activity_task_bindings"][0]["recorded_work_seconds"],0.0);
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("actor-session"),
+                true,
+                checkpoint(1, json!([old, wait]))
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let (_, measured_zero) = call(
+            &app,
+            "GET",
+            outcome_path,
+            Some("actor-session"),
+            false,
+            json!({}),
+        )
+        .await;
+        assert_eq!(measured_zero["recorded_work_seconds"], 0.0);
+        assert_eq!(
+            measured_zero["activity_task_bindings"][0]["recorded_work_seconds"],
+            0.0
+        );
         let human = json!({"seq":2,"kind":"correction","duration_ms":1250,"run_id":"run-1","task_id":"task-exact"});
         let run_only = json!({"seq":3,"kind":"review","duration_ms":375,"run_id":"run-1"});
         let task_only = json!({"seq":4,"kind":"task","duration_ms":6000,"task_id":"task-exact"});
-        let full = json!([old,wait,human,run_only,task_only]);
-        assert_eq!(call(&app,"PUT",activity_path,Some("actor-session"),true,checkpoint(2,full.clone())).await.0,StatusCode::OK);
-        assert_eq!(call(&app,"PUT",activity_path,Some("actor-session"),true,checkpoint(0,full.clone())).await.1["version"],3);
-        let mut altered = full.clone(); altered[0]["run_id"] = json!("run-1");
-        assert_eq!(call(&app,"PUT",activity_path,Some("actor-session"),true,checkpoint(3,altered)).await.0,StatusCode::CONFLICT);
-        let mut appended = full.clone(); appended.as_array_mut().unwrap().push(json!({"seq":5,"kind":"task","duration_ms":1}));
-        assert_eq!(call(&app,"PUT",activity_path,Some("actor-session"),true,checkpoint(2,appended)).await.0,StatusCode::CONFLICT);
-        let other = checkpoint(0,json!([{"seq":0,"kind":"annotation","duration_ms":99000,"run_id":"run-1","task_id":"task-exact"}]));
-        assert_eq!(call(&app,"PUT",activity_path,Some("other-session"),true,other).await.0,StatusCode::OK);
-        let (_, measured) = call(&app,"GET",outcome_path,Some("actor-session"),false,json!({})).await;
-        assert_eq!(measured["recorded_work_seconds"],1.625);
-        assert_eq!(measured["activity_task_bindings"],json!([{"task_id":"task-exact","recorded_work_seconds":1.25,"basis":"explicit_voluntary_run_task_interval"}]));
-        assert_eq!(measured["work_time_scope"],"current_actor_explicit_run_intervals");
-        assert_eq!(call(&app,"GET",outcome_path,Some("viewer-session"),false,json!({})).await.1["recorded_work_seconds"],Value::Null);
+        let full = json!([old, wait, human, run_only, task_only]);
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("actor-session"),
+                true,
+                checkpoint(2, full.clone())
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("actor-session"),
+                true,
+                checkpoint(0, full.clone())
+            )
+            .await
+            .1["version"],
+            3
+        );
+        let mut altered = full.clone();
+        altered[0]["run_id"] = json!("run-1");
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("actor-session"),
+                true,
+                checkpoint(3, altered)
+            )
+            .await
+            .0,
+            StatusCode::CONFLICT
+        );
+        let mut appended = full.clone();
+        appended
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"seq":5,"kind":"task","duration_ms":1}));
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("actor-session"),
+                true,
+                checkpoint(2, appended)
+            )
+            .await
+            .0,
+            StatusCode::CONFLICT
+        );
+        let other = checkpoint(
+            0,
+            json!([{"seq":0,"kind":"annotation","duration_ms":99000,"run_id":"run-1","task_id":"task-exact"}]),
+        );
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("other-session"),
+                true,
+                other
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let (_, measured) = call(
+            &app,
+            "GET",
+            outcome_path,
+            Some("actor-session"),
+            false,
+            json!({}),
+        )
+        .await;
+        assert_eq!(measured["recorded_work_seconds"], 1.625);
+        assert_eq!(
+            measured["activity_task_bindings"],
+            json!([{"task_id":"task-exact","recorded_work_seconds":1.25,"basis":"explicit_voluntary_run_task_interval"}])
+        );
+        assert_eq!(
+            measured["work_time_scope"],
+            "current_actor_explicit_run_intervals"
+        );
+        assert_eq!(
+            call(
+                &app,
+                "GET",
+                outcome_path,
+                Some("viewer-session"),
+                false,
+                json!({})
+            )
+            .await
+            .1["recorded_work_seconds"],
+            Value::Null
+        );
         // Viewer membership permits voluntary metrics, never annotation-write rights.
-        let viewer = checkpoint(0,json!([{"seq":0,"kind":"review","duration_ms":20,"run_id":"run-1"}]));
-        assert_eq!(call(&app,"PUT",activity_path,Some("viewer-session"),true,viewer).await.0,StatusCode::OK);
-        assert_eq!(call(&app,"PUT",activity_path,Some("outsider-session"),true,checkpoint(0,json!([old]))).await.0,StatusCode::FORBIDDEN);
+        let viewer = checkpoint(
+            0,
+            json!([{"seq":0,"kind":"review","duration_ms":20,"run_id":"run-1"}]),
+        );
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("viewer-session"),
+                true,
+                viewer
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                activity_path,
+                Some("outsider-session"),
+                true,
+                checkpoint(0, json!([old]))
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
         let disposable_path = "/api/projects/project-1/activity-sessions/disposable";
         let disposable = json!({"seq":0,"kind":"task","duration_ms":1,"run_id":"run-1","task_id":"task-disposable"});
-        assert_eq!(call(&app,"PUT",disposable_path,Some("actor-session"),true,checkpoint(0,json!([disposable]))).await.0,StatusCode::OK);
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                disposable_path,
+                Some("actor-session"),
+                true,
+                checkpoint(0, json!([disposable]))
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
         let mut tx = graph.repository.begin_write().await.unwrap();
         sqlx::query("UPDATE review_tasks SET asset_revision_id='second-asset' WHERE task_id='task-disposable'").execute(tx.connection()).await.unwrap();
         tx.commit().await.unwrap();
         let historical = json!([disposable,{"seq":1,"kind":"task","duration_ms":1}]);
-        assert_eq!(call(&app,"PUT",disposable_path,Some("actor-session"),true,checkpoint(1,historical.clone())).await.0,StatusCode::OK);
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                disposable_path,
+                Some("actor-session"),
+                true,
+                checkpoint(1, historical.clone())
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
         let mut tx = graph.repository.begin_write().await.unwrap();
-        sqlx::query("DELETE FROM review_tasks WHERE task_id='task-disposable'").execute(tx.connection()).await.unwrap();
+        sqlx::query("DELETE FROM review_tasks WHERE task_id='task-disposable'")
+            .execute(tx.connection())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
-        assert_eq!(call(&app,"PUT",disposable_path,Some("actor-session"),true,checkpoint(0,historical.clone())).await.0,StatusCode::OK);
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                disposable_path,
+                Some("actor-session"),
+                true,
+                checkpoint(0, historical.clone())
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
         let mut after_deletion = historical;
-        after_deletion.as_array_mut().unwrap().push(json!({"seq":2,"kind":"task","duration_ms":1}));
-        assert_eq!(call(&app,"PUT",disposable_path,Some("actor-session"),true,checkpoint(2,after_deletion)).await.0,StatusCode::OK);
+        after_deletion
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"seq":2,"kind":"task","duration_ms":1}));
+        assert_eq!(
+            call(
+                &app,
+                "PUT",
+                disposable_path,
+                Some("actor-session"),
+                true,
+                checkpoint(2, after_deletion)
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
         // Real loopback service + session authentication, no inference/model invocation.
-        let wire = loopback_smoke(app.clone(),"GET",outcome_path,"actor-session",json!({})).await;
-        let wire_body: Value = serde_json::from_str(wire.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-        assert_eq!(wire_body["recorded_work_seconds"],1.626);
+        let wire =
+            loopback_smoke(app.clone(), "GET", outcome_path, "actor-session", json!({})).await;
+        let wire_body: Value =
+            serde_json::from_str(wire.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(wire_body["recorded_work_seconds"], 1.626);
         let put_wire = loopback_smoke(app.clone(),"PUT","/api/projects/project-1/activity-sessions/http-smoke","actor-session",checkpoint(0,json!([{"seq":0,"kind":"review","duration_ms":10,"run_id":"run-1","task_id":"task-exact"}]))).await;
-        let list_wire = loopback_smoke(app.clone(),"GET","/api/projects/project-1/activity-sessions","actor-session",json!({})).await;
+        let list_wire = loopback_smoke(
+            app.clone(),
+            "GET",
+            "/api/projects/project-1/activity-sessions",
+            "actor-session",
+            json!({}),
+        )
+        .await;
         std::fs::write(report.join("synthetic-http-smoke.log"),format!("Synthetic owned fixture; no model calls.\nGET outcome-summary\n{wire}\nPUT activity checkpoint\n{put_wire}\nGET activity sessions\n{list_wire}")).unwrap();
         // A review can submit multiple exact revisions; each (review, revision) is evidence.
         let mut tx = graph.repository.begin_write().await.unwrap();
         sqlx::query("INSERT INTO review_submissions(review_id,task_id,project_id,submitted_by,revision_ids_json,state,created_at) VALUES('review-mixed','task-exact','project-1','user-1','[\"rev-1\",\"rev-descendant\",\"rev-1\"]','approved','2')").execute(tx.connection()).await.unwrap();
         tx.commit().await.unwrap();
-        let mixed = call(&app,"GET",outcome_path,Some("actor-session"),false,json!({})).await.1;
-        assert_eq!(mixed["task_binding"]["submissions"].as_array().unwrap().len(),4);
+        let mixed = call(
+            &app,
+            "GET",
+            outcome_path,
+            Some("actor-session"),
+            false,
+            json!({}),
+        )
+        .await
+        .1;
+        assert_eq!(
+            mixed["task_binding"]["submissions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
         let mut tx = graph.repository.begin_write().await.unwrap();
         for index in 0..101 {
             sqlx::query("INSERT INTO review_submissions(review_id,task_id,project_id,submitted_by,revision_ids_json,state,created_at) VALUES(?,'task-exact','project-1','user-1','[\"rev-1\"]','approved','3')")
                 .bind(format!("review-cap-{index:03}")).execute(tx.connection()).await.unwrap();
         }
         tx.commit().await.unwrap();
-        let capped = call(&app,"GET",outcome_path,Some("actor-session"),false,json!({})).await.1;
-        assert_eq!(capped["task_binding"]["submissions"].as_array().unwrap().len(),100);
-        assert_eq!(capped["task_binding"]["truncated"],true);
+        let capped = call(
+            &app,
+            "GET",
+            outcome_path,
+            Some("actor-session"),
+            false,
+            json!({}),
+        )
+        .await
+        .1;
+        assert_eq!(
+            capped["task_binding"]["submissions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            100
+        );
+        assert_eq!(capped["task_binding"]["truncated"], true);
     }
 
     // Both contenders use separate Repository pools against one on-disk WAL DB.
@@ -2275,52 +2780,126 @@ mod tests {
         let document = base_document();
         let ontology = fixture_ontology();
         let pins = SavePins {
-            project_id: PROJECT, asset_revision_id: ASSET,
-            canonical_sha256: CANONICAL, base_document: &document, ontology: &ontology,
+            project_id: PROJECT,
+            asset_revision_id: ASSET,
+            canonical_sha256: CANONICAL,
+            base_document: &document,
+            ontology: &ontology,
         };
         let mut tx = contention::begin_write(&repository).await.unwrap();
-        let prepared = match prepare(tx.connection(), &pins, &save_request(vec![accept("change-1")])).await {
+        let prepared = match prepare(
+            tx.connection(),
+            &pins,
+            &save_request(vec![accept("change-1")]),
+        )
+        .await
+        {
             Ok(prepared) => prepared,
-            Err(error) => { tx.rollback().await.unwrap(); return Err(error.code.to_owned()); }
+            Err(error) => {
+                tx.rollback().await.unwrap();
+                return Err(error.code.to_owned());
+            }
         };
-        ok(record(tx.connection(), &prepared, BASE_REVISION, USER, "contention").await);
+        ok(record(
+            tx.connection(),
+            &prepared,
+            BASE_REVISION,
+            USER,
+            "contention",
+        )
+        .await);
         tx.commit().await.unwrap();
         Ok(())
     }
 
     async fn controlled_contention(whole: bool, accept_first: bool, iteration: usize) {
-        use std::sync::Arc;
-        use crate::ai::{profiles::ux_tests::{auth_router, call, seed_session}, suggestions};
+        use crate::ai::{
+            profiles::ux_tests::{auth_router, call, seed_session},
+            suggestions,
+        };
         use axum::{routing::post, Router};
         use contention::{Hook, HOOK};
+        use std::sync::Arc;
 
         let hash = object_hash(&base_document().objects[0]);
         let graph = seeded_graph(&Seed::audit(json!([attributes_change("change-1", &hash)]))).await;
         seed_session(&graph.repository, USER, "actor-session").await;
-        let database = format!("sqlite:{}", graph._directory.path().join("acceptance.sqlite").display());
-        let second = Repository::open(&database, graph._directory.path().join("objects"), Duration::from_secs(5)).await.unwrap();
-        let reject_repository = if accept_first { second.clone() } else { graph.repository.clone() };
-        let accept_repository = if accept_first { graph.repository.clone() } else { second };
+        let database = format!(
+            "sqlite:{}",
+            graph._directory.path().join("acceptance.sqlite").display()
+        );
+        let second = Repository::open(
+            &database,
+            graph._directory.path().join("objects"),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let reject_repository = if accept_first {
+            second.clone()
+        } else {
+            graph.repository.clone()
+        };
+        let accept_repository = if accept_first {
+            graph.repository.clone()
+        } else {
+            second
+        };
         let app = auth_router(
             Router::new()
                 .route("/api/ai/suggestions/{id}/decision", post(decision_route))
-                .route("/api/ai/suggestions/{id}/rejections", post(suggestions::reject_changes)),
-            reject_repository, &database,
-        ).await;
+                .route(
+                    "/api/ai/suggestions/{id}/rejections",
+                    post(suggestions::reject_changes),
+                ),
+            reject_repository,
+            &database,
+            Ok(None),
+        )
+        .await;
         let (path, payload) = if whole {
-            ("/api/ai/suggestions/suggestion-1/decision", json!({"decision":"reject"}))
+            (
+                "/api/ai/suggestions/suggestion-1/decision",
+                json!({"decision":"reject"}),
+            )
         } else {
-            ("/api/ai/suggestions/suggestion-1/rejections", json!({"operation_id":"op-contention", "change_ids":["change-1"]}))
+            (
+                "/api/ai/suggestions/suggestion-1/rejections",
+                json!({"operation_id":"op-contention", "change_ids":["change-1"]}),
+            )
         };
         // The very same middleware rejects missing session and CSRF before any seam.
-        assert_eq!(call(&app, "POST", path, None, true, payload.clone()).await.0, StatusCode::UNAUTHORIZED);
-        assert_eq!(call(&app, "POST", path, Some("actor-session"), false, payload.clone()).await.0, StatusCode::FORBIDDEN);
-        let holder = Arc::new(Hook { hold: true, ..Default::default() });
+        assert_eq!(
+            call(&app, "POST", path, None, true, payload.clone())
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                path,
+                Some("actor-session"),
+                false,
+                payload.clone()
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        let holder = Arc::new(Hook {
+            hold: true,
+            ..Default::default()
+        });
         let waiter = Arc::new(Hook::default());
         let timeout = Duration::from_secs(5);
         let (accept_task, reject_task) = if accept_first {
-            let accept_task = tokio::spawn(HOOK.scope(holder.clone(), contention_accept(accept_repository)));
-            tokio::time::timeout(timeout, holder.acquired.notified()).await.unwrap();
+            let accept_task =
+                tokio::spawn(HOOK.scope(holder.clone(), contention_accept(accept_repository)));
+            tokio::time::timeout(timeout, holder.acquired.notified())
+                .await
+                .unwrap();
             let reject_task = tokio::spawn(HOOK.scope(waiter.clone(), async move {
                 call(&app, "POST", path, Some("actor-session"), true, payload).await
             }));
@@ -2329,38 +2908,96 @@ mod tests {
             let reject_task = tokio::spawn(HOOK.scope(holder.clone(), async move {
                 call(&app, "POST", path, Some("actor-session"), true, payload).await
             }));
-            tokio::time::timeout(timeout, holder.acquired.notified()).await.unwrap();
-            let accept_task = tokio::spawn(HOOK.scope(waiter.clone(), contention_accept(accept_repository)));
+            tokio::time::timeout(timeout, holder.acquired.notified())
+                .await
+                .unwrap();
+            let accept_task =
+                tokio::spawn(HOOK.scope(waiter.clone(), contention_accept(accept_repository)));
             (accept_task, reject_task)
         };
         // Not a scheduling sleep: the second actual begin_write future has
         // already been polled Pending while the first BEGIN IMMEDIATE is held.
-        tokio::time::timeout(timeout, waiter.waiting.notified()).await.unwrap();
-        assert!(tokio::time::timeout(Duration::from_millis(100), waiter.acquired.notified()).await.is_err());
+        tokio::time::timeout(timeout, waiter.waiting.notified())
+            .await
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), waiter.acquired.notified())
+                .await
+                .is_err()
+        );
         assert!(!accept_task.is_finished() && !reject_task.is_finished());
         holder.release.notify_one();
-        let accepted = tokio::time::timeout(timeout, accept_task).await.unwrap().unwrap();
-        let (status, response) = tokio::time::timeout(timeout, reject_task).await.unwrap().unwrap();
+        let accepted = tokio::time::timeout(timeout, accept_task)
+            .await
+            .unwrap()
+            .unwrap();
+        let (status, response) = tokio::time::timeout(timeout, reject_task)
+            .await
+            .unwrap()
+            .unwrap();
         if accept_first {
             assert_eq!(accepted, Ok(()));
             assert_eq!(status, StatusCode::CONFLICT);
-            assert!(response.to_string().contains(if whole { "ACCEPTED_SET_REQUIRES_REVERT" } else { "ACCEPTED_CHANGE_REQUIRES_REVERT" }), "{response}");
+            assert!(
+                response.to_string().contains(if whole {
+                    "ACCEPTED_SET_REQUIRES_REVERT"
+                } else {
+                    "ACCEPTED_CHANGE_REQUIRES_REVERT"
+                }),
+                "{response}"
+            );
         } else {
             assert_eq!(status, StatusCode::OK, "{response}");
-            assert_eq!(accepted.unwrap_err(), if whole { "SUGGESTION_SET_NOT_APPLICABLE" } else { "CHANGE_REJECTED" });
+            assert_eq!(
+                accepted.unwrap_err(),
+                if whole {
+                    "SUGGESTION_SET_NOT_APPLICABLE"
+                } else {
+                    "CHANGE_REJECTED"
+                }
+            );
         }
         let mut tx = graph.repository.begin_write().await.unwrap();
         let decisions: Vec<String> = sqlx::query_scalar("SELECT decision FROM suggestion_decisions WHERE suggestion_set_id='suggestion-1' ORDER BY rowid").fetch_all(tx.connection()).await.unwrap();
-        assert_eq!(decisions, if accept_first { vec!["accept".to_owned()] } else { vec![] });
+        assert_eq!(
+            decisions,
+            if accept_first {
+                vec!["accept".to_owned()]
+            } else {
+                vec![]
+            }
+        );
         let fold = ok(load_journal(tx.connection(), "suggestion-1").await);
-        assert!(fold.get("change-1") == if accept_first { Some(&ChangeState::Accepted) } else { None });
+        assert!(
+            fold.get("change-1")
+                == if accept_first {
+                    Some(&ChangeState::Accepted)
+                } else {
+                    None
+                }
+        );
         let rejection_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM suggestion_change_rejections WHERE suggestion_set_id='suggestion-1'").fetch_one(tx.connection()).await.unwrap();
         let operations: i64 = sqlx::query_scalar("SELECT count(*) FROM suggestion_rejection_operations WHERE suggestion_set_id='suggestion-1'").fetch_one(tx.connection()).await.unwrap();
         let expected_rejections = i64::from(!accept_first && !whole);
-        assert_eq!((rejection_rows, operations), (expected_rejections, expected_rejections));
+        assert_eq!(
+            (rejection_rows, operations),
+            (expected_rejections, expected_rejections)
+        );
         let state: String = sqlx::query_scalar("SELECT COALESCE((SELECT state FROM suggestion_set_states WHERE suggestion_set_id='suggestion-1'),'pending')").fetch_one(tx.connection()).await.unwrap();
-        assert_eq!(state, if accept_first { "accepted" } else if whole { "rejected" } else { "pending" });
-        assert!(!(fold.get("change-1") == Some(&ChangeState::Accepted) && (rejection_rows != 0 || state == "rejected")));
+        assert_eq!(
+            state,
+            if accept_first {
+                "accepted"
+            } else if whole {
+                "rejected"
+            } else {
+                "pending"
+            }
+        );
+        assert!(
+            !(fold.get("change-1") == Some(&ChangeState::Accepted)
+                && (rejection_rows != 0 || state == "rejected"))
+        );
         tx.commit().await.unwrap();
         println!("controlled contention iteration={iteration} whole={whole} accept_first={accept_first}: two independent write repositories, holder BEGIN acquired, waiter begin Pending and not acquired for 100ms before release; accept={accept_first}, reject_status={status}, journal={}, rejection_rows={rejection_rows}, receipts={operations}, state={state}", decisions.len());
     }
@@ -2368,14 +3005,18 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ux_contention_two_connection_accept_holds_against_granular_and_whole_reject() {
         for iteration in 0..8 {
-            for whole in [false, true] { controlled_contention(whole, true, iteration).await; }
+            for whole in [false, true] {
+                controlled_contention(whole, true, iteration).await;
+            }
         }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ux_contention_two_connection_reject_holds_against_accept() {
         for iteration in 0..8 {
-            for whole in [false, true] { controlled_contention(whole, false, iteration).await; }
+            for whole in [false, true] {
+                controlled_contention(whole, false, iteration).await;
+            }
         }
     }
 }

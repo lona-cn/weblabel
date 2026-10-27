@@ -44,6 +44,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   const retry = action('重试读取原页', () => { if (failedPage) void loadPage(failedPage.cursor, failedPage.index); }, 'dataset-page-retry');
   pager.append(previous, pageNumber, next, include, exclude, retry);
   const table = element('table'); table.setAttribute('aria-label', '图片与数据划分'); const head = element('thead'); const header = element('tr'); for (const name of ['图片 / 来源组', '固定修订与审核资格', '范围决定', '明确排除理由', '数据划分', '操作']) header.append(element('th', name)); head.append(header); const body = element('tbody'); table.append(head, body);
+  const tableViewport = element('div', undefined, 'dataset-table-viewport'); tableViewport.setAttribute('role', 'region'); tableViewport.setAttribute('aria-label', '图片范围表格（可滚动）'); tableViewport.tabIndex = 0; tableViewport.append(table);
   const planning = element('section'); planning.setAttribute('aria-label', '分批交付计划'); const seed = element('input'); seed.value = state.seed;
   const previewPlan = action('预览整组划分与分批范围', () => void makePlan()); const confirmPlan = action('确认整组划分', () => {
     if (!canEdit() || busy || !state.plan || state.planConfirmed || state.snapshots.size) return;
@@ -60,7 +61,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   const exportConfirm = action('确认损失并生成导出', () => void startExport(true), 'export-confirm'); exports.append(element('h2', '固定DatasetVersion导出'), snapshotText, field('导出格式', format), exportStart, lossRoot, ackLabel, exportConfirm);
   const pendingRoot = element('div'), historyRoot = element('section'), jobsRoot = element('section'); jobsRoot.setAttribute('aria-label', '导出作业与下载');
   historyRoot.setAttribute('aria-label', '已确认不可变快照历史');
-  main.append(title, nav, steps, status, error, field('类别规范版本', ontology), read, summary, pager, table, planning, freezeSummary, exports, pendingRoot, historyRoot, jobsRoot); root.append(main); title.focus();
+  main.append(title, nav, steps, status, error, field('类别规范版本', ontology), read, summary, pager, tableViewport, planning, freezeSummary, exports, pendingRoot, historyRoot, jobsRoot); root.append(main); title.focus();
   function current() { return life.alive && validScope && reads.current(); }
   function unresolved() { return state.intents.find(intent => intent.uncertain); }
   function canEdit() { return current() && !unresolved(); }
@@ -168,7 +169,8 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     const exact = element('table'); exact.setAttribute('aria-label', '本批完整固定范围'); const tbody = element('tbody'); exact.append(tbody); let index = 0;
     const heading = element('p'), controls = element('div'); const prev = action('上一页固定范围', () => { if (index > 0) { index--; paint(); } }), next = action('下一页固定范围', () => { if ((index + 1) * 100 < active.length) { index++; paint(); } }); controls.append(prev, next);
     function paint() { tbody.replaceChildren(); for (const choice of active.slice(index * 100, (index + 1) * 100)) { const row = element('tr'); row.append(element('td', choice.row.media.original_name), element('td', choice.row.head?.annotation_revision_id ?? '无版本'), element('td', state.ontology), element('td', eligible(choice.row, state.ontology) ? '已批准' : '不符合纳入资格'), element('td', choice.disposition === 'include' ? '纳入' : `排除：${choice.reason}`), element('td', choice.split)); tbody.append(row); } heading.textContent = `${index * 100 + 1}–${Math.min(active.length, (index + 1) * 100)} / ${active.length}`; prev.disabled = index === 0; next.disabled = (index + 1) * 100 >= active.length; }
-    freezeDetails.append(heading, exact, controls); paint();
+    const viewport = element('div', undefined, 'dataset-table-viewport'); viewport.setAttribute('role', 'region'); viewport.setAttribute('aria-label', '本批固定范围表格（可滚动）'); viewport.tabIndex = 0; viewport.append(exact);
+    freezeDetails.append(heading, viewport, controls); paint();
   }
   async function freezeSnapshot() {
     if (!canEdit() || busy || !state.ontology || state.snapshots.has(state.batch) || (state.plan && !state.planConfirmed)) return;

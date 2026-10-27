@@ -99,8 +99,21 @@ function containsPath(parent, child) {
   const relative = path.relative(parent, child);
   return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep));
 }
+function copyOnnxRuntime(directory, output) {
+  const source = fs.realpathSync(path.resolve(directory));
+  const destination = path.join(output, 'runtime', 'onnxruntime');
+  const libraries = files(path.join(source, 'lib')).filter(name => /\.(?:dll|dylib|so(?:\.\d+)*)$/i.test(name));
+  if (!libraries.length) throw new Error('onnxruntime_libraries_missing');
+  const names = ['LICENSE', 'ThirdPartyNotices.txt', 'VERSION_NUMBER', ...libraries.map(name => `lib/${name}`)];
+  for (const name of names) {
+    const input = checkedPath(source, name), target = path.join(destination, name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(input, target, fs.constants.COPYFILE_EXCL);
+  }
+}
+
 export async function buildRelease(argv = process.argv.slice(2)) {
-  const args = options(argv, ['--build-dir', '--cargo-cwd', '--target-dir', '--intermediate-dir']);
+  const args = options(argv, ['--build-dir', '--cargo-cwd', '--target-dir', '--intermediate-dir', '--onnxruntime-dir']);
   try { requireNode(); } catch (error) { error.prerequisite = true; throw error; }
   const cwd = path.resolve(args['--cargo-cwd'] ?? root);
   const target = path.resolve(args['--target-dir'] ?? path.join(root, 'target'));
@@ -130,25 +143,23 @@ export async function buildRelease(argv = process.argv.slice(2)) {
   const manifest = path.join(root, 'Cargo.toml');
   command(['cargo', 'build', '--locked', '--manifest-path', manifest, '-p', 'xtask'], cwd, env);
   command([path.join(target, 'debug', process.platform === 'win32' ? 'xtask.exe' : 'xtask'), 'contracts-check'], root, env);
-  command(['cargo', 'build', '--locked', '--release', '--manifest-path', manifest, '-p', 'weblabel-api', '--bin', 'weblabel-api'], cwd, env);
+  command(['cargo', 'build', '--locked', '--release', '--manifest-path', manifest, '-p', 'weblabel-api', '--bin', 'weblabel'], cwd, env);
   command(['cargo', 'build', '--locked', '--release', '--manifest-path', manifest, '-p', 'wasm-bridge', '--target', 'wasm32-unknown-unknown'], cwd, env);
   const wasmOutput = path.join(intermediate, 'wasm');
-  const hostOutput = path.join(intermediate, 'host');
   fs.mkdirSync(wasmOutput);
   command(['wasm-bindgen', path.join(target, 'wasm32-unknown-unknown/release/wasm_bridge.wasm'), '--target', 'web', '--out-dir', wasmOutput, '--out-name', 'wasm_bridge'], cwd, env);
   command(['pnpm', '--filter', '@weblabel/web', 'exec', 'tsc', '--noEmit']);
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  fs.mkdirSync(output);
   command(['pnpm', '--filter', '@weblabel/web', 'exec', 'vite', 'build', '--outDir', path.join(output, 'web')], root, { ...process.env, WEBLABEL_WASM_BRIDGE_DIR: wasmOutput });
-  command([process.execPath, path.join(root, 'scripts/build-agent-host.mjs'), '--out-dir', hostOutput]);
-  fs.mkdirSync(path.join(output, 'api'), { recursive: true });
-  const apiName = process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api';
-  fs.copyFileSync(path.join(target, 'release', apiName), path.join(output, 'api', apiName));
-  fs.mkdirSync(path.join(output, 'host'));
-  for (const name of ['runtime.mjs', 'mcp.mjs']) fs.copyFileSync(path.join(hostOutput, name), path.join(output, 'host', name));
+  const executable = process.platform === 'win32' ? 'weblabel.exe' : 'weblabel';
+  fs.copyFileSync(path.join(target, 'release', executable), path.join(output, executable), fs.constants.COPYFILE_EXCL);
+  if (args['--onnxruntime-dir']) copyOnnxRuntime(args['--onnxruntime-dir'], output);
   fs.mkdirSync(path.join(output, 'migrations'));
   const migrationSource = path.join(root, 'crates/weblabel-api/migrations');
   for (const name of fs.readdirSync(migrationSource).filter(name => /^\d+_.+\.sql$/.test(name)).sort()) fs.copyFileSync(checkedPath(migrationSource, name), path.join(output, 'migrations', name));
-  const manifestData = { format: 'weblabel-local-release', version: 1, platform: process.platform, arch: process.arch, pins, source_commit: command(['git', 'rev-parse', 'HEAD']), files: entries(output) };
-  for (const required of [`api/${apiName}`, 'host/runtime.mjs', 'host/mcp.mjs', 'web/index.html', 'web/wasm/wasm_bridge.js', 'web/wasm/wasm_bridge_bg.wasm']) if (!manifestData.files.some(item => item.path === required && item.size > 0)) throw new Error(`build_missing: ${required}`);
+  const manifestData = { format: 'weblabel-local-release', version: 2, platform: process.platform, arch: process.arch, pins, source_commit: command(['git', 'rev-parse', 'HEAD']), files: entries(output) };
+  for (const required of [executable, 'web/index.html', 'web/wasm/wasm_bridge.js', 'web/wasm/wasm_bridge_bg.wasm']) if (!manifestData.files.some(item => item.path === required && item.size > 0)) throw new Error(`build_missing: ${required}`);
   fs.writeFileSync(path.join(output, 'release.json'), JSON.stringify(manifestData, null, 2));
   console.log(`release_built: ${output}`);
   return output;

@@ -1,5 +1,7 @@
 use std::sync::atomic::Ordering;
 
+#[cfg(test)]
+use crate::storage::acquire_metadata_write_connection;
 use annotation_domain::{BootstrapMode, BootstrapStatus};
 use axum::{
     extract::State,
@@ -11,8 +13,6 @@ use axum::{
 };
 use serde_json::{json, Value};
 use sqlx::Row;
-#[cfg(test)]
-use crate::storage::acquire_metadata_write_connection;
 
 use super::{
     cookie_value,
@@ -77,7 +77,6 @@ async fn bootstrap_status(State(state): State<AuthState>) -> axum::response::Res
     })
     .into_response()
 }
-
 
 async fn bootstrap(
     State(state): State<AuthState>,
@@ -459,13 +458,23 @@ mod tests {
             .join("../../target/test-artifacts/R02-bootstrap-cancellation");
         std::fs::create_dir_all(&root).unwrap();
         let directory = tempfile::tempdir_in(root).unwrap();
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let observed = runtime.block_on(async {
             let options = sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(directory.path().join("auth.sqlite")).create_if_missing(true);
-            let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1)
-                .connect_with(options).await.unwrap();
-            sqlx::query("CREATE TABLE markers(value TEXT NOT NULL)").execute(&pool).await.unwrap();
+                .filename(directory.path().join("auth.sqlite"))
+                .create_if_missing(true);
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(options)
+                .await
+                .unwrap();
+            sqlx::query("CREATE TABLE markers(value TEXT NOT NULL)")
+                .execute(&pool)
+                .await
+                .unwrap();
             let (confirmed, begun) = tokio::sync::oneshot::channel();
             let task_pool = pool.clone();
             let owner = tokio::spawn(async move {
@@ -473,7 +482,10 @@ mod tests {
                 // Exact ownership boundary: SQLite has confirmed BEGIN, but no
                 // rollback-on-drop Transaction has yet been constructed.
                 connection.execute("BEGIN IMMEDIATE").await.unwrap();
-                connection.execute("INSERT INTO markers VALUES ('uncommitted')").await.unwrap();
+                connection
+                    .execute("INSERT INTO markers VALUES ('uncommitted')")
+                    .await
+                    .unwrap();
                 confirmed.send(()).unwrap();
                 std::future::pending::<()>().await;
             });
@@ -482,23 +494,33 @@ mod tests {
             assert!(owner.await.unwrap_err().is_cancelled());
             let mut following = pool.acquire().await.unwrap();
             let leaked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM markers")
-                .fetch_one(&mut *following).await.unwrap();
+                .fetch_one(&mut *following)
+                .await
+                .unwrap();
             let began = following.execute("BEGIN IMMEDIATE").await.is_ok();
             if began {
-                following.execute("INSERT INTO markers VALUES ('following')").await.unwrap();
+                following
+                    .execute("INSERT INTO markers VALUES ('following')")
+                    .await
+                    .unwrap();
                 following.execute("COMMIT").await.unwrap();
             } else {
                 following.execute("ROLLBACK").await.unwrap();
             }
             let retained: Vec<String> = sqlx::query_scalar("SELECT value FROM markers")
-                .fetch_all(&mut *following).await.unwrap();
+                .fetch_all(&mut *following)
+                .await
+                .unwrap();
             following.close().await.unwrap();
             pool.close().await;
             (began, leaked, retained)
         });
         drop(runtime);
         directory.close().unwrap();
-        assert!(observed.0, "next auth mutation must receive a clean SQLite connection");
+        assert!(
+            observed.0,
+            "next auth mutation must receive a clean SQLite connection"
+        );
         assert_eq!(observed.1, 0, "cancelled bootstrap writes must roll back");
         assert_eq!(observed.2, ["following"]);
     }

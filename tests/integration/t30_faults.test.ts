@@ -13,10 +13,12 @@ import type { AnnotationObject } from '../../packages/contracts/generated/Annota
 import type { PersistentApi } from '../support/faults';
 import type { SaveRequest } from '../../packages/contracts/generated/SaveRequest';
 import type { SaveResponse } from '../../packages/contracts/generated/SaveResponse';
-import { isProcessAlive } from '../../apps/agent-host/src/security/spawn';
+import { nativeLifecycleFixture } from '../support/native-lifecycle-fixture.mjs';
 
-// Main validates fresh release/source Host hashes before importing this test file.
-const t30HostScript = path.resolve(process.env.WEBLABEL_T30_HOST_SCRIPT ?? 'target/agent-host/runtime.mjs');
+function isProcessAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false; throw error; }
+}
 
 const person:AnnotationObject={object_id:'t30-person',label_id:'label_person',geometry:{type:'bbox_xyxy',x_min:1,y_min:2,x_max:12,y_max:18},attributes:{helmet_state:'unknown'},origin:{type:'manual',prediction_id:null,model_run_id:null,import_batch_id:null}};
 
@@ -164,7 +166,7 @@ it('F10/F12/F13 export ACK disconnect then changed head keeps original approved 
   }finally{proxy.closeAllConnections();const closed=Promise.withResolvers<void>();proxy.close(()=>closed.resolve());await closed.promise;await app.stop();}
 },30000);
 
-it('F17/F23 actual supervised Node host times out once, preserves unknown cost across restart and allows manual revision',async()=>{
+it('F17/F23 actual native HTTP runner times out once, preserves unknown cost across restart and allows manual revision',async()=>{
   const app=await start_test_app(),provider=await silentProvider();
   let service:PersistentApi|undefined;
   try{
@@ -175,11 +177,11 @@ it('F17/F23 actual supervised Node host times out once, preserves unknown cost a
     try{db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES(?,'mimo_api',?,'api_key',?,'ready','not_run',NULL,NULL,?,'env:T30_SYNTHETIC_KEY','2026-10-06T00:00:00Z')").run(config.profile_id,config.model_id,JSON.stringify(capabilities),JSON.stringify(config));}finally{db.close();}
     expect((await admin.request('PUT',`/api/projects/${pins.projectId}/external-processing-policy`,{allow_external_processing:true})).status).toBe(200);
     service=await persistentCopy(app,path.join(t30RuntimeRoot,`model-${crypto.randomUUID()}`));
-    const setup=async(base:string)=>{
-      const file=path.join(t30RuntimeRoot,'t30-host.json');
-      // Keep default provider HTTP timeout 60000ms and production parent deadline 120s unchanged.
-      await writeFile(file,JSON.stringify({apiBase:base,timeoutMs:120000,providers:[{provider:'mimo_api',config}]}));
-      return {WEBLABEL_HOST_EXECUTABLE:process.execPath,WEBLABEL_HOST_CWD:t30RuntimeRoot,WEBLABEL_HOST_CONFIG:file,WEBLABEL_HOST_SCRIPT:t30HostScript,WEBLABEL_HOST_ALLOWED_ENV:'T30_SYNTHETIC_KEY',T30_SYNTHETIC_KEY:'t30-synthetic-not-a-credential'};
+    const setup=async()=>{
+      const file=path.join(t30RuntimeRoot,'t30-runtime.json');
+      // Keep default HTTP timeout 60000ms and parent deadline 120s unchanged.
+      await writeFile(file,JSON.stringify({schema_version:1,timeout_ms:120000,providers:[{provider:'mimo_api',config}]}));
+      return {WEBLABEL_RUNTIME_CONFIG:file,WEBLABEL_RUNTIME_ALLOWED_ENV:'T30_SYNTHETIC_KEY',T30_SYNTHETIC_KEY:'t30-synthetic-not-a-credential'};
     };
     await service.start(setup);
     let client=(await loginClient(service.base,owner.username,owner.password)).api;
@@ -203,30 +205,31 @@ it('F17/F23 actual supervised Node host times out once, preserves unknown cost a
 },100000);
 
 for(const scenario of ['crash','oversized','spawn_child'] as const){
-  it(`F17 real service supervises synthetic protocol ${scenario}, reclaims descendants, and manual saves stay atomic`,async()=>{
+  it(`F17 real native service handles synthetic ${scenario}, reclaims descendants, and manual saves stay atomic`,async()=>{
     const app=await start_test_app();let service:PersistentApi|undefined;
     try{
       const admin=await bootstrap_admin_for_test(app),pins=await seed(admin,app),owner=await addMember(admin,app.base_url,pins.projectId,'admin');
+      const directory=path.join(t30RuntimeRoot,`native-${scenario}-${crypto.randomUUID()}`);
+      const executable=nativeLifecycleFixture(directory);
+      const config={profile_id:'t30-native-fault',model_id:`claude-lifecycle-fixture-${scenario}`,executable,timeout_ms:120000,max_tool_turns:4,max_tool_result_bytes:65536};
+      const capabilities={image_input:true,tools:true,structured_output:true,bbox_output:false,attributes:true};
       const db=new DatabaseSync(database_path_for_test(app));
-      try {
-        // Reuse the seed fixture's bounded native SQLite writer admission.
-        db.exec('PRAGMA busy_timeout=1000; BEGIN IMMEDIATE');
-        db.prepare("INSERT INTO model_profiles SELECT 't30-fault-runtime','mimo_api','synthetic-fault-protocol','api_key',capabilities_json,'ready','not_run',NULL,NULL,'{}',NULL,created_at FROM model_profiles WHERE profile_id='profile_mock_local'").run();
-        db.exec('COMMIT');
-      } finally { db.close(); }
+      try{db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,config_json,created_at) VALUES(?,'claude_local',?,'official_user_login',?,'ready','not_run',?,'2026-10-26T00:00:00Z')").run(config.profile_id,config.model_id,JSON.stringify(capabilities),JSON.stringify(config));}finally{db.close();}
       expect((await admin.request('PUT',`/api/projects/${pins.projectId}/external-processing-policy`,{allow_external_processing:true})).status).toBe(200);
-      const directory=path.join(t30RuntimeRoot,`child-${scenario}-${crypto.randomUUID()}`),pidFile=path.join(directory,'pids.json');
       service=await persistentCopy(app,directory);
-      const hostConfig=path.join(directory,'host.json');await writeFile(hostConfig,JSON.stringify({providers:[],timeoutMs:120000,apiBase:'http://127.0.0.1:1'}));
-      await service.start({WEBLABEL_HOST_EXECUTABLE:process.execPath,WEBLABEL_HOST_SCRIPT:path.resolve('tests/support/fake-runtime.mjs'),WEBLABEL_HOST_CWD:directory,WEBLABEL_HOST_CONFIG:hostConfig,WEBLABEL_HOST_ALLOWED_ENV:'TEST_SCENARIO,FAKE_RUNTIME_PID_FILE,FAKE_RUNTIME_SPAWN_CHILD',TEST_SCENARIO:scenario,FAKE_RUNTIME_PID_FILE:pidFile,FAKE_RUNTIME_SPAWN_CHILD:'1'});
+      const configuration=path.join(directory,'runtime.json');
+      await writeFile(configuration,JSON.stringify({schema_version:1,timeout_ms:120000,providers:[{provider:'claude_local',config}]}));
+      await service.start({WEBLABEL_RUNTIME_CONFIG:configuration});
       const client=(await loginClient(service.base,owner.username,owner.password)).api;
       const before=await head(client,pins.assetRevisionId,pins.ontologyId);
-      const approved=await authorize(client,startRunBody(pins,crypto.randomUUID(),'Explicit synthetic protocol fault, not live provider',{profile_id:'t30-fault-runtime'}));
+      const approved=await authorize(client,startRunBody(pins,crypto.randomUUID(),'Explicit synthetic native lifecycle fault; not a model',{profile_id:config.profile_id}));
       const queued=await client.request('POST','/api/ai/runs',approved);expect(queued.status).toBe(202);const runId=id(queued.json,'run_id');
-      await expect.poll(async()=>{try{return JSON.parse(await readFile(pidFile,'utf8'));}catch{return null;}},{timeout:10000}).not.toBeNull();
-      const processIds=jsonObject(JSON.parse(await readFile(pidFile,'utf8')));
-      const rootPid=processIds.pid,descendant=processIds.grandchild_pid;
-      if(typeof rootPid!=='number'||typeof descendant!=='number')throw new Error('Fixture did not report exact owned process IDs');
+      const marker=path.join(directory,'native-started.json');
+      await expect.poll(async()=>{try{return jsonObject(JSON.parse(await readFile(marker,'utf8')));}catch{return null;}},{timeout:10000}).not.toBeNull();
+      const observed=jsonObject(JSON.parse(await readFile(marker,'utf8')));
+      const rootPid=observed.root_pid,descendant=observed.descendant_pid;
+      if(typeof rootPid!=='number'||typeof descendant!=='number')throw new Error('Native fixture must identify its exact owned root and descendant');
+      expect(observed.actual_run_token_context_status).toBe(200);
       if(scenario==='spawn_child'){expect(isProcessAlive(descendant)).toBe(true);expect((await client.request('POST',`/api/ai/runs/${runId}/cancel`,{})).status).toBe(200);}
       let events:Record<string,unknown>={};
       await expect.poll(async()=>{const result=await client.request('GET',`/api/ai/runs/${runId}/events`);expect(result.status).toBe(200);events=jsonObject(result.json);return jsonObject(events.run).state;},{timeout:20000}).toBe(scenario==='spawn_child'?'cancelled':'failed');
@@ -235,13 +238,13 @@ for(const scenario of ['crash','oversized','spawn_child'] as const){
       const terminal=Array.isArray(events.items)?events.items.map(jsonObject).filter(event=>event.type===(scenario==='spawn_child'?'cancelled':'failed')):[];
       expect(terminal).toHaveLength(1);
       if(scenario==='spawn_child')expect(terminal[0].data).toMatchObject({reason:'user requested',cost_display:'unknown'});
-      else expect(terminal[0].data).toMatchObject({code:scenario==='crash'?'HOST_CLOSED':'HOST_PROTOCOL'});
+      else expect(terminal[0].data).toMatchObject({code:scenario==='crash'?'claude_disconnected':'stream_budget_exceeded'});
       expect(await head(client,pins.assetRevisionId,pins.ontologyId)).toEqual(before);
       expect((await client.request<{items:unknown[]}>('GET',`/api/ai/runs/${runId}/suggestions`)).json.items).toEqual([]);
       const saved=await client.request<SaveResponse>('PUT',`/api/assets/${pins.assetRevisionId}/annotation`,{operation_id:crypto.randomUUID(),base_revision_id:before.annotation_revision_id,document:{...before.document,completion:'in_progress',objects:[person]},lease:null,suggestion_decisions:[]});
       expect(saved.status).toBe(200);expect(saved.json.revision.document.objects).toEqual([person]);expect(saved.json.revision.parent_revision_id).toBe(before.annotation_revision_id);
       const inspect=new DatabaseSync(service.database);try{expect(inspect.prepare('SELECT count(*) AS n FROM annotation_revisions WHERE asset_revision_id=?').get(pins.assetRevisionId)?.n).toBe(2);}finally{inspect.close();}
-      await writeEvidence(`child-${scenario}`,{verification:'synthetic protocol fixture through actual Rust production supervisor; not live provider',run_id:runId,operation_id:approved.operation_id,rootPid,descendant,events,before,saved:saved.json.revision,api_port:new URL(service.base).port});
+      await writeEvidence(`native-${scenario}`,{verification:'synthetic compiled native process through real Rust factory; not an official CLI or model',run_id:runId,operation_id:approved.operation_id,rootPid,descendant,events,before,saved:saved.json.revision,api_port:new URL(service.base).port});
     }finally{await service?.stop();await app.stop();}
   },40000);
 }

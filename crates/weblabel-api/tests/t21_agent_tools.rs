@@ -797,10 +797,17 @@ async fn revoked_and_cancelled_runs_kill_their_tokens() {
     }
 
     // (b) user cancellation revokes the run's tokens immediately.
-    let run_id = fixture.create_run(
-        "t21-op-cancelled-independent", &fixture.project_id, &fixture.ontology_id,
-        fixture.asset(), "detect", "detect persons", &[],
-    ).await;
+    let run_id = fixture
+        .create_run(
+            "t21-op-cancelled-independent",
+            &fixture.project_id,
+            &fixture.ontology_id,
+            fixture.asset(),
+            "detect",
+            "detect persons",
+            &[],
+        )
+        .await;
     let token = fixture.issue_token(&run_id, &fixture.project_id, Duration::from_secs(600));
     let (status, _) = fixture
         .call_tool(Some(&token), None, "get_context", json!({}))
@@ -2093,12 +2100,20 @@ async fn candidate_publication_rechecks_original_capability_after_facts_and_writ
     use weblabel_api::runtime::agent_tools::AgentToolService;
 
     let fixture = fixture().await;
-    let run_id = fixture.create_run(
-        "t21-queued-publication-revoked", &fixture.project_id, &fixture.ontology_id,
-        fixture.asset(), "find_issues", "Check the fixed image", &[],
-    ).await;
+    let run_id = fixture
+        .create_run(
+            "t21-queued-publication-revoked",
+            &fixture.project_id,
+            &fixture.ontology_id,
+            fixture.asset(),
+            "find_issues",
+            "Check the fixed image",
+            &[],
+        )
+        .await;
     let token = fixture.issue_token(&run_id, &fixture.project_id, Duration::from_secs(60));
-    let service = AgentToolService::new(fixture.repository.clone(), fixture.state.run_tokens.clone());
+    let service =
+        AgentToolService::new(fixture.repository.clone(), fixture.state.run_tokens.clone());
     let arguments = json!({"issues": [quality_issue("queued-revoked", None, "Synthetic issue")]});
 
     // Queue the facts transaction, then a second writer, in the real FIFO lane.
@@ -2108,13 +2123,15 @@ async fn candidate_publication_rechecks_original_capability_after_facts_and_writ
     std::future::poll_fn(|cx| {
         assert!(invocation.as_mut().poll(cx).is_pending());
         Poll::Ready(())
-    }).await;
+    })
+    .await;
     let barrier = fixture.repository.begin_write();
     tokio::pin!(barrier);
     std::future::poll_fn(|cx| {
         assert!(barrier.as_mut().poll(cx).is_pending());
         Poll::Ready(())
-    }).await;
+    })
+    .await;
     first_writer.commit().await.unwrap();
     let barrier = tokio::select! {
         writer = &mut barrier => writer.unwrap(),
@@ -2127,8 +2144,16 @@ async fn candidate_publication_rechecks_original_capability_after_facts_and_writ
         panic!("candidate committed after its original capability was revoked");
     };
     assert_eq!(error.code, "RUN_TOKEN_REVOKED");
-    assert!(!matches!(fixture.db_text("SELECT state FROM model_runs WHERE run_id=?", &[&run_id]).await.as_str(),
-        "succeeded" | "failed" | "cancelled" | "interrupted"), "memory revocation was not a database-terminal shortcut");
+    assert!(
+        !matches!(
+            fixture
+                .db_text("SELECT state FROM model_runs WHERE run_id=?", &[&run_id])
+                .await
+                .as_str(),
+            "succeeded" | "failed" | "cancelled" | "interrupted"
+        ),
+        "memory revocation was not a database-terminal shortcut"
+    );
     for query in [
         "SELECT COUNT(*) FROM predictions WHERE run_id=?",
         "SELECT COUNT(*) FROM suggestion_sets WHERE run_id=?",

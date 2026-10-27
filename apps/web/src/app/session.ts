@@ -1,4 +1,4 @@
-import { api, ApiFailure, loginInScope, setCsrfToken, type Session, type BootstrapResult, type AdminRecoveryStatus } from '../lib/t15/api';
+import { api, ApiFailure, csrfToken, loginInScope, setCsrfToken, type Session, type BootstrapResult, type AdminRecoveryStatus } from '../lib/t15/api';
 
 export type AuthEntry =
   | { kind: 'checking' }
@@ -88,6 +88,7 @@ export function createSessionController(): SessionController {
         setEntry(creation.received ? { kind: 'bootstrap_created', username: pending.username, error: cookieHelp } : { kind: 'error', message: `本地账户：${pending.username ?? '未知'}。${cookieHelp}` });
         return;
       }
+      if (!nonempty(csrfToken())) { setEntry({ kind: 'error', message: cookieHelp }); return; }
       setEntry({ kind: 'authenticated', session, createdUsername: creation?.username ?? null });
     } catch (reason) {
       if (!current(id)) return;

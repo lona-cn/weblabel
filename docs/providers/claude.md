@@ -1,6 +1,6 @@
 # Claude 官方订阅运行时（`claude_local`）— T23
 
-供维护者检查 claude_local 的订阅身份、启动参数和协议假设。实现与运行证据见 `reports/T23/*`；合成子进程只能证明工程行为，不能证明本人订阅、真实图像或官方隔离已经通过。
+供维护者区分当前原生 adapter、历史 T23 记录与真实订阅支持。**R09 当前产品由 Rust 原生 Claude/MCP adapter 执行，配置见[运行配置](../configuration.md)，窄入口为 `cargo test -p weblabel-api --test r04_claude_mcp --locked`。** 下文 T23 的安装/flags/Node fixture/测试数均是冻结历史，不是当前 Node 产品或安装教程。合成测试不证明本人订阅、真实图像或官方隔离已通过。
 
 ## 渠道定位
 
@@ -81,9 +81,8 @@ generate-ts/generate-json-schema` 不同），因此协议事实只能来自文�
 - MCP 配置文件形状 `mcpServers.<name>.{command,args,env}`；工具命名 `mcp__<server>__<tool>`
 
 **补真实证据的步骤**：在授权环境用安装的官方 CLI 抓取真实 `stream-json` 输出（init/工具/结果各一），
-固定版本与哈希，作为 `apps/agent-host/test/fixtures/` 的 `fixture_kind: synthetic_protocol`
-以外的**真实**协议 fixture，校验上述每个 pin；再跑真实订阅登录与真实图像运行。未完成该步
-之前，本适配器的解析**不是**真实 CLI 兼容证据。
+固定版本与实际 executable hash，在已授权的本轮私有证据目录保存真正的 init/工具/result 捕获，明确区别 synthetic_protocol fixture；再核对原生 parser、真实订阅身份、图像和工具边界。
+完成这些核验前，原生解析器通过工程 fixture **不是**真实 CLI 兼容证据。
 
 ## 行为保证（合成 transcript 覆盖，均标注 SYNTHETIC）
 

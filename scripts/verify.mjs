@@ -17,19 +17,16 @@ const clean = text => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 const identityKeys = ['source_snapshot_sha256', 'manifest_sha256', 'runner_sha256'];
 const securityNames = [
   'F10/F11',
-  'real Node host dispatch: denied', 'real Node host dispatch: changed_model', 'real Node host dispatch: changed_budget',
   'never exposes private approved execution configuration through provider MCP tools',
   'binds actual HTTP preview approval to media, profile and crop and never runs before consent',
   'root development port refused', 'root preview port refused', 'remote service refused', 'inline credentials refused',
   'expired authorization', 'overlong window', 'wrong provider scope', 'unapproved images',
   'fractional model run budget', 'unbounded call budget', 'unknown cost not acknowledged', 'egress unapproved',
-  'cannot reduce declared call authorization below the actual Host tool-turn bound',
-  'rejects injectable/private Host configuration rather than forwarding it',
   'T32 engineering authoritative service rejects unauthenticated profiles and unavailable real-profile preview without creating a run',
   'default locked-file diagnostic refuses a symlink escape and does not hash a size-matching public file',
   'actual preview binds the checked public provider budget to Rust-WASM canonical configuration before consent/START',
   "doctor stays read-only, reports pinned versions separately from live capability and never emits secrets",
-  "accepts Chinese/space paths, serves complete current products, enforces origin, prevents concurrent data use and cleans the owned API on SIGINT",
+  "accepts Chinese/space paths, enforces origin and exclusive data use, and releases the native OS lock on close",
   "refuses public project name and description credentials, preserving exact project/task history through a fresh portable restore once configuration no longer collides",
   "refuses a public user username credential without rewriting identity and restores its original historical identity after removing only the colliding configuration",
   "fails closed on immutable approval bindings and audit reasons before any snapshot exists, leaving source approval usable",
@@ -142,7 +139,7 @@ export async function executeVerificationCommand(descriptor, context) {
   const log = fs.createWriteStream(logPath, { flags: 'wx' });
   let logError;
   log.on('error', error => { logError = error; });
-  const row = { name: descriptor.name, argv: null, cwd: context.cwd ?? root, started_at: new Date().toISOString(), ended_at: null, exit_code: null, signal: null, signal_observation: 'not_spawned', runner_exit_code: null, expected_exit_code: descriptor.expectedExitCode ?? 0, log_path: relative(logPath), tests: null, parse_status: 'not_parsed', status: 'failed', blockers: [] };
+  const row = { name: descriptor.name, argv: null, cwd: context.cwd ?? root, started_at: new Date().toISOString(), ended_at: null, exit_code: null, signal: null, signal_observation: 'not_spawned', runner_exit_code: null, expected_exit_code: 0, log_path: relative(logPath), tests: null, parse_status: 'not_parsed', status: 'failed', blockers: [] };
   try {
     row.argv = resolveArgv(descriptor.argv);
     if (descriptor.reportPath && fs.existsSync(descriptor.reportPath)) throw new Error('PREEXISTING_TEST_REPORT_REFUSED');
@@ -243,18 +240,17 @@ export function readAcceptanceEvidence(reportDir, identity) {
 // Describe only evidence produced by this invocation; absent commands are never successes.
 export function describeReleaseGates(result) {
   const fastCore = [
-    'fast-format', 'fast-contracts', 'fast-web-types', 'fast-host-types',
+    'fast-format', 'fast-contracts', 'fast-web-types', 'fast-native-build',
     'fast-test-types', 'fast-bootstrap', 'fast-plan-structure', 'fast-docs',
   ];
-  const fast = [...fastCore, 'fast-web-bridge', 'fast-host-build', 'fast-vitest'];
-  const rust = ['geometry', 'annotation-domain', 'editor-core', 'renderer-wgpu', 'dataset-formats', 'weblabel-api'].map(crate => 'integration-rust-' + crate);
-  const integration = [...rust, 'integration-api-build', 'integration-host-build', 'integration-web-bridge', 'integration-release-build', 'integration-vitest'];
+  const fast = [...fastCore, 'fast-web-bridge', 'fast-vitest'];
+  const integration = ['integration-rust-workspace', 'integration-api-build', 'integration-web-bridge', 'integration-release-build', 'integration-vitest'];
   const doctors = ['release-first-doctor', 'release-repeat-doctor'];
   const definitions = [
     { id: 'G0', scope: 'Pinned Node/tooling, fixed source contract/types/docs and both actual release doctors', commands: [...fastCore, ...doctors], evidence: ['first-release-manifest', 'repeat-release-manifest'] },
     { id: 'G1', scope: 'Actual native browser plus complete current-source edit/save/reload and Native/COCO/YOLO ZIP smoke', commands: ['browser'], acceptance: ['smoke.json'] },
-    { id: 'G2', scope: 'Geometry/editor/API/format, web/Host/integration and native candidate diff/accept/undo engineering chain; not live or security certification', commands: [...fast, ...integration, 'browser'] },
-    { id: 'G3', scope: 'Actual API review/snapshot/recovery, fresh independent repeat manifests/doctors, physical startup and current-source smoke; excluded security remains unverified', commands: ['integration-rust-weblabel-api', 'integration-vitest', 'integration-release-build', 'release-repeat-build', ...doctors, 'release-startup-smoke'], evidence: ['first-release-manifest', 'repeat-release-manifest', 'repeat-build', 'physical-startup'], acceptance: ['smoke.json'], security: true },
+    { id: 'G2', scope: 'Complete Rust workspace, native web/integration and candidate diff/accept/undo engineering chain; not live or security certification', commands: [...fast, ...integration, 'browser'] },
+    { id: 'G3', scope: 'Actual API review/snapshot/recovery, fresh independent repeat manifests/doctors, physical startup and current-source smoke; excluded security remains unverified', commands: ['integration-rust-workspace', 'integration-vitest', 'integration-release-build', 'release-repeat-build', ...doctors, 'release-startup-smoke'], evidence: ['first-release-manifest', 'repeat-release-manifest', 'repeat-build', 'physical-startup'], acceptance: ['smoke.json'], security: true },
     { id: 'G4', scope: 'Actual hardware GPU and full current-source four required live channels, including the full manifest contract', commands: ['gpu', 'live'], security: true },
     { id: 'G5', scope: 'Actual engineering measurement/tooling execution, full current-source independent review and all 13 actual smoke scenarios; security exclusions remain unverified and no 30% commercial pilot claim', commands: [...fast, ...integration, 'browser', 'gpu', 'release-repeat-build', ...doctors, 'release-startup-smoke'], evidence: ['repeat-build', 'physical-startup'], acceptance: ['review.json', 'smoke.json'], security: true },
   ];
@@ -303,8 +299,10 @@ function childEnvironment(temporary, cache, reportDir, skipSecurity) {
   const env = Object.fromEntries(allowed.filter(key => process.env[key]).map(key => [key, process.env[key]]));
   env.PATH = [path.dirname(process.execPath), env.PATH ?? env.Path ?? ''].join(path.delimiter); delete env.Path;
   const runtime = path.join(temporary, 'runtime'); fs.mkdirSync(runtime, { recursive: true });
-  Object.assign(env, { TEMP: runtime, TMP: runtime, TMPDIR: runtime, CARGO_TARGET_DIR: cache, CARGO_NET_OFFLINE: 'true', RUSTUP_AUTO_INSTALL: '0', RUSTUP_TOOLCHAIN: '1.96.0', COREPACK_ENABLE_NETWORK: '0', CI: '1', NO_COLOR: '1', WEBLABEL_TEST_REPORT_DIR: path.join(reportDir, 'tasks'), WEBLABEL_T30_TEST_ROOT: path.join(reportDir, 'tasks/T30'), WEBLABEL_T33_RELEASE: path.join(temporary, 'release'), WEBLABEL_T30_HOST_SCRIPT: path.join(temporary, 'agent-host/runtime.mjs') });
+  Object.assign(env, { TEMP: runtime, TMP: runtime, TMPDIR: runtime, CARGO_TARGET_DIR: cache, CARGO_NET_OFFLINE: 'true', RUSTUP_AUTO_INSTALL: '0', RUSTUP_TOOLCHAIN: '1.96.0', COREPACK_ENABLE_NETWORK: '0', CI: '1', NO_COLOR: '1', WEBLABEL_TEST_REPORT_DIR: path.join(reportDir, 'tasks'), WEBLABEL_T30_TEST_ROOT: path.join(reportDir, 'tasks/T30'), WEBLABEL_T33_RELEASE: path.join(temporary, 'release') });
   if (skipSecurity) env.WEBLABEL_SKIP_SECURITY = '1';
+  // Empty is an explicit Cargo-config override, not an absent environment value.
+  if (Object.hasOwn(process.env, 'RUSTC_WRAPPER')) env.RUSTC_WRAPPER = process.env.RUSTC_WRAPPER;
   const neutral = process.env.WEBLABEL_CARGO_CWD;
   if (neutral) {
     env.WEBLABEL_CARGO_CWD = neutral;
@@ -345,37 +343,26 @@ export async function verify(argv = process.argv.slice(2)) {
       await step('fast-format', ['cargo', 'fmt', '--all', '--', '--check']);
       await step('fast-contracts', ['pnpm', 'contracts:check']);
       await step('fast-web-types', ['pnpm', '--filter', '@weblabel/web', 'exec', 'tsc', '--noEmit']);
-      await step('fast-host-types', ['pnpm', 'typecheck:host']);
+      const nativeReady = await step('fast-native-build', ['cargo', 'build', '--locked', '--manifest-path', 'Cargo.toml', '--target-dir', cache, '-p', 'weblabel-api', '--bin', 'weblabel']);
+      if (nativeReady) env.WEBLABEL_API_BINARY = path.join(cache, 'debug', process.platform === 'win32' ? 'weblabel.exe' : 'weblabel');
       await step('fast-test-types', ['pnpm', '--filter', '@weblabel/web', 'exec', 'tsc', '--noEmit', '-p', '../../tests/tsconfig.json']);
       await step('fast-bootstrap', [node, '--test', '--test-reporter=spec', 'tests/bootstrap/t00_cli.test.mjs', 'tests/bootstrap/verification.test.mjs', 'tests/bootstrap/owned-vite.test.mjs', 'tools/check-plan.test.mjs', 'tools/check-docs.test.mjs'], 'node');
       await step('fast-plan-structure', [node, 'scripts/verify-plan.mjs']);
       await step('fast-docs', [node, 'tools/check-docs.mjs']);
       const wasmReady = await step('fast-web-bridge', [node, 'scripts/build-web-bridge.mjs'], 'web-bridge');
-      const hostReady = await step('fast-host-build', [node, 'scripts/build-agent-host.mjs', '--out-dir', relative(path.join(temporary, 'agent-host'))]);
-      if (hostReady) { const runtime = path.join(temporary, 'agent-host/runtime.mjs'); result.evidence.push({ path: relative(runtime), sha256: sha(fs.readFileSync(runtime)) }); }
-      if (wasmReady && hostReady) {
+      if (wasmReady && nativeReady) {
         const output = path.join(reportDir, 'fast-vitest.json');
-        const excluded = options.skipSecurity ? ['apps/agent-host/test/t21_mcp.test.ts', 'apps/agent-host/test/t29_injection.test.ts'] : [];
-        result.excluded_tests.push(...excluded, ...(options.skipSecurity ? securityNames.slice(1, 5) : []));
-        await step('fast-vitest', ['pnpm', 'exec', 'vitest', 'run', '--project', 'web', '--project', 'agent-host', ...excluded.flatMap(file => ['--exclude', file]), ...(options.skipSecurity ? ['--testNamePattern', `^(?!.*(?:${securityNames.slice(1, 5).map(escapePattern).join('|')}))`] : []), '--maxWorkers=1', '--reporter=json', `--outputFile=${output}`], 'vitest', output);
+        await step('fast-vitest', ['pnpm', 'exec', 'vitest', 'run', '--project', 'web', '--maxWorkers=1', '--reporter=json', `--outputFile=${output}`], 'vitest', output);
       }
     };
     const integration = async () => {
-      const rust = [
-        ['geometry', ['t03_geometry']], ['annotation-domain', ['t01_contracts']],
-        ['editor-core', ['t04_editor', 't12_tools', 't19_suggestions', 'commercial_relabel_projection']],
-        ['renderer-wgpu', ['t05_renderer']], ['dataset-formats', ['t14_formats']],
-        ['weblabel-api', ['t06_storage', 't07_media', 't11_save', 't17_jobs', 't22_provider_retirement', 't24_ai_prerequisites', 't26_workflow', 't27_snapshot']],
-      ];
-      for (const [crate, targets] of rust) await step(`integration-rust-${crate}`, ['cargo', 'test', '-p', crate, ...targets.flatMap(target => ['--test', target]), '--locked'], 'cargo');
-      const apiReady = await step('integration-api-build', ['cargo', 'build', '--locked', '--manifest-path', 'Cargo.toml', '--target-dir', cache, '-p', 'weblabel-api', '--bin', 'weblabel-api']);
-      const hostReady = await step('integration-host-build', [node, 'scripts/build-agent-host.mjs', '--out-dir', relative(path.join(temporary, 'agent-host'))]);
+      await step('integration-rust-workspace', ['cargo', 'test', '--workspace', '--locked'], 'cargo');
+      const apiReady = await step('integration-api-build', ['cargo', 'build', '--locked', '--manifest-path', 'Cargo.toml', '--target-dir', cache, '-p', 'weblabel-api', '--bin', 'weblabel']);
       const wasmReady = await step('integration-web-bridge', [node, 'scripts/build-web-bridge.mjs'], 'web-bridge');
       const releaseReady = await buildRelease('integration-release-build', path.join(temporary, 'release'), path.join(cache, 'release-first'), path.join(temporary, 'release-intermediate'));
-      if (apiReady && hostReady && wasmReady && releaseReady) {
-        env.WEBLABEL_API_BINARY = path.join(cache, 'debug', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
-        const runtime = path.join(temporary, 'agent-host/runtime.mjs');
-        result.evidence.push({ path: relative(env.WEBLABEL_API_BINARY), sha256: sha(fs.readFileSync(env.WEBLABEL_API_BINARY)) }, { path: relative(runtime), sha256: sha(fs.readFileSync(runtime)) });
+      if (apiReady && wasmReady && releaseReady) {
+        env.WEBLABEL_API_BINARY = path.join(cache, 'debug', process.platform === 'win32' ? 'weblabel.exe' : 'weblabel');
+        result.evidence.push({ path: relative(env.WEBLABEL_API_BINARY), sha256: sha(fs.readFileSync(env.WEBLABEL_API_BINARY)) });
         const output = path.join(reportDir, 'integration-vitest.json');
         const excluded = options.skipSecurity ? ['tests/integration/t29_security.test.ts', 'tests/integration/t33_restore_state.test.ts', 'tests/integration/t10_auth.test.ts'] : [];
         result.excluded_tests.push(...excluded, ...(options.skipSecurity ? securityNames : []));
@@ -401,7 +388,7 @@ export async function verify(argv = process.argv.slice(2)) {
       const repeatReady = await buildRelease('release-repeat-build', repeat, path.join(cache, 'repeat'), path.join(temporary, 'repeat-intermediate'));
       for (const [name, directory] of [['first', first], ['repeat', repeat]]) {
         if (!fs.existsSync(path.join(directory, 'release.json'))) continue;
-        await step(`release-${name}-doctor`, [node, 'scripts/doctor.mjs', '--build-dir', relative(directory), ...(env.WEBLABEL_CARGO_CWD ? ['--cargo-cwd', env.WEBLABEL_CARGO_CWD] : [])], 'doctor');
+        await step(`release-${name}-doctor`, [path.join(directory, process.platform === 'win32' ? 'weblabel.exe' : 'weblabel'), 'doctor', '--mode', 'build', '--build-dir', directory, ...(env.WEBLABEL_CARGO_CWD ? ['--cargo-cwd', env.WEBLABEL_CARGO_CWD] : [])], 'doctor');
       }
       if (repeatReady && fs.existsSync(path.join(first, 'release.json'))) {
         const a = readJson(path.join(first, 'release.json')), b = readJson(path.join(repeat, 'release.json'));

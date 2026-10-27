@@ -6,9 +6,9 @@
 
 在浏览器中完成真实 wgpu 图片标注与审校。官方订阅运行时和多模态 API 只生成候选；人工采纳必须可审阅、可撤销、可追溯，并进入统一编辑与保存事务。
 
-React 负责业务界面，Rust/WASM 负责编辑内核，wgpu 负责画布。本地 Rust 服务管理 SQLite、不可变媒体和版本；Node Host 管理官方 Claude 及模型 API；Python 检测 worker 是可选组件。Codex 已退役，仅保留历史身份解码。
+原生 HTML/TypeScript 负责业务界面，Rust/WASM 负责编辑内核，wgpu 负责画布。单个 Rust 产品管理 SQLite、媒体/版本、HTTP provider、官方 Claude MCP 与 CPU 检测 worker。Node 仅构建/开发/验证，Python 仅独立导出/对照；Codex 已退役，仅保留历史身份解码。
 
-技术栈为 Rust / Axum / SQLx / SQLite、wgpu / WGSL / WASM、React / TypeScript / Vite、Node 24 LTS、pnpm、Playwright / Vitest、Python / uv。实际可用的固定组合由 T00 核验，不凭计划里的名称猜测支持。
+技术栈为 Rust / Axum / SQLx / SQLite、wgpu / WGSL / WASM、HTML / TypeScript / Vite、构建期 Node/pnpm、Playwright / Vitest，以及可选 ONNX Runtime。固定版本与实测边界分别记录，不凭工具名称推断支持。原 T00–T35 是历史实施任务；活动 checks 已迁移为原生入口，当前重构按 R00–R11 依赖推进，不重跑已完成任务来改写历史。
 
 开发仍使用用户指定的 omp。按协作规程完成隔离、测试、审查和集成；可使用已安装 skills，但不改用另一套编排工具。具体接口以架构、共享契约和测试约定为准；原始草案保留作历史对照。
 

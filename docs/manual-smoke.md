@@ -6,7 +6,7 @@
 
 按[构建与启动](getting-started.md#构建与启动)选择固定 Node 24.16.0，安装项目依赖并正常启动 core；用网页完成首次设置和密码登录。人工编辑不依赖 Python；最后的独立 COCO checker 才需要 Python。需要真实 WebGPU hardware adapter，没有该条件时只验证诊断/只读并记录未验证，不以软件 adapter 替代。
 
-为每次验收选唯一 run-id。以下例子为本轮专属目录，首次运行前目录必须不存在；再次验收改用新 run-id。输入、下载、截图、API JSON 均放同一轮 target/documentation-smoke/<run-id> 下，不使用历史报告目录；不要覆盖用户数据或原夹具。先从当前 PowerShell 子进程移除 WEBLABEL_HOST_CONFIG、WEBLABEL_HOST_ALLOWED_ENV，不读取或打印原值。
+为每次验收选唯一 run-id。以下示例目录首次必须不存在，再次验收换新 run-id；输入、下载、截图和 API JSON 都放同轮项目内目录，不覆盖历史报告、用户数据或原夹具。先从当前测试子进程移除 `WEBLABEL_RUNTIME_CONFIG`、`WEBLABEL_RUNTIME_ALLOWED_ENV`，不读取或打印原值；禁止隐式继承真实凭证或模型配置。
 
 ## 生成确定输入
 

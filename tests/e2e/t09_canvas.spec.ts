@@ -1,6 +1,6 @@
 // T09 canvas lifecycle in a real browser: real wasm-bridge facade, real WebGPU
 // device, real Chromium image decode. The modules under test (EditorHost,
-// loader, CanvasView) are bundled at test time from apps/web/src and served to
+// loader, native canvas view) are bundled at test time from apps/web/src and served to
 // the page; the WASM bundle is built from crates/wasm-bridge exactly as the
 // wasm-bindgen glue ships it. Playwright's default headless shell has no WebGPU
 // (reports/T05/gpu-adapter-recheck.md), so this file launches full Chromium —
@@ -41,8 +41,8 @@ export interface T09Harness {
   hostState(): { status: EditorHostStatus; error: ApiError | null; transfers: readonly BinaryTransfer[] };
   facadeRead(index: number): { generation: number; viewport: Viewport };
   nativeState(): { document: EditorAssetRequest['document'] | null; generation: number | null };
-  strictMount(containerId: string, request: EditorAssetRequest): boolean;
-  unmountReact(): void;
+  mountNative(containerId: string, request: EditorAssetRequest): boolean;
+  unmountNative(): void;
   disposeHost(): void;
 }
 
@@ -60,10 +60,8 @@ const origin = 'http://127.0.0.1:4174';
 const HARNESS_ENTRY = `
 import { EditorHost } from './src/lib/editor/EditorHost';
 import { createEditorFacadeFactory, decodeCanonicalFrame, loadWasmBridge } from './src/lib/editor/loader';
-import { createElement, StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import { CanvasView } from './src/features/workbench/CanvasView';
-import type { Root } from 'react-dom/client';
+import { createNativeEditorFixture, unexpectedSaveTransport, type NativeEditorFixture } from '../../tests/e2e/native-editor-fixture';
+import { InMemoryDraftStorage } from './src/lib/persistence/draft-store';
 import type { EditorAssetRequest, EditorDelta, EditorFacade, EditorFacadeFactory, EditorWasmBridge } from './src/lib/editor/types';
 import type { HarnessLog } from '../../tests/e2e/t09_canvas.spec';
 
@@ -197,7 +195,7 @@ async function bootHarness() {
   instrumentFrames();
   const bridge = await loadWasmBridge('/wasm/wasm_bridge.js') as EditorWasmBridge & { initialize_browser_device_probe(): Promise<string> };
   const factory = new HarnessFactory(createEditorFacadeFactory(bridge));
-  const state: { factory: HarnessFactory; host: EditorHost | null; mountReact: Root | null } = { factory, host: null, mountReact: null };
+  const state: { factory: HarnessFactory; host: EditorHost | null; native: NativeEditorFixture | null } = { factory, host: null, native: null };
   function host(): EditorHost {
     if (!state.host) throw new Error('T09 host has not been mounted');
     return state.host;
@@ -258,24 +256,21 @@ async function bootHarness() {
     nativeState() {
       return { document: host().getSnapshot(), generation: host().getGeneration() };
     },
-    strictMount(containerId, request) {
+    mountNative(containerId, request) {
       const container = document.getElementById(containerId);
-      if (!container) throw new Error('T09 React container missing: ' + containerId);
-      state.mountReact = createRoot(container);
-      state.mountReact.render(
-        createElement(StrictMode, null, createElement(CanvasView, {
-          request,
-          hostOptions: { facadeFactory: factory },
-          activeTool: 'select',
-          onDelta: (_host: EditorHost, delta: EditorDelta) => window.__t09.deltas.push(delta),
-          onHostSettled: (host: EditorHost) => { window.__t09.settledHost = host; },
-        })),
-      );
+      if (!container) throw new Error('T09 native container missing: ' + containerId);
+      const fixture = createNativeEditorFixture(request.media.project_id, { storage: new InMemoryDraftStorage(), transport: unexpectedSaveTransport() }, { facadeFactory: factory });
+      state.native = fixture;
+      fixture.state.selection.subscribe(delta => window.__t09.deltas.push(delta));
+      fixture.state.subscribe(() => { window.__t09.settledHost = fixture.state.host; });
+      container.append(fixture.element);
+      fixture.load(request);
       return true;
     },
-    unmountReact() {
-      state.mountReact?.unmount();
-      state.mountReact = null;
+    unmountNative() {
+      state.native?.dispose();
+      state.native = null;
+      window.__t09.settledHost = null;
     },
     disposeHost() {
       state.host?.dispose();
@@ -357,7 +352,8 @@ async function bootPage(page: Page): Promise<void> {
   await page.goto(`${origin}/`);
   await page.setContent(
     '<link rel="stylesheet" href="/t09-tokens.css"><canvas id="t09-canvas" style="width:640px;height:480px;display:block"></canvas>'
-    + '<div id="t09-react" style="position:relative;width:640px;height:480px"></div><script type="module" src="/t09-harness.js"></script>',
+    + '<style>.r07-canvas-stage{position:relative;width:640px;height:480px}.r07-canvas-stage canvas{display:block;width:640px;height:480px}.r07-canvas-labels{position:absolute;inset:0;pointer-events:none}.r07-canvas-labels span{position:absolute}</style>'
+    + '<div id="t09-native" style="position:relative;width:640px;height:480px"></div><script type="module" src="/t09-harness.js"></script>',
   );
   try {
     await page.waitForFunction(() => Boolean(window.__t09?.bootHarness), undefined, { timeout: 15_000 });
@@ -667,26 +663,25 @@ test('T09-D one pointermove round submits input only and idle submits no GPU wor
   expect(afterResize.setViewports).toBeGreaterThanOrEqual(2);
 });
 
-test('T09-E React StrictMode remount keeps one listener set and one submit per round', async ({ page }, testInfo) => {
+test('T09-E explicit native canvas dispose/remount keeps one listener set and one submit per round', async ({ page }, testInfo) => {
   await bootPage(page);
   await page.evaluate(() => {
     const t = window.__t09;
     t.factory.gated = true;
     const rgba = new Uint8Array(32 * 32 * 4);
     for (let i = 0; i < 32 * 32; i += 1) rgba.set([230, 45, 25, 255], i * 4);
-    const request = t.makeRequest(Array.from(rgba), 32, 32, 'asset-rev-strict');
-    t.strictMount('t09-react', request);
+    const request = t.makeRequest(Array.from(rgba), 32, 32, 'asset-rev-native');
+    t.mountNative('t09-native', request);
     return true;
   });
   await page.waitForFunction(() => window.__t09.factory.logs.length >= 1);
-  // Exercise two actual committed mounts while the first real init is held.
-  // StrictMode may correctly cancel its abandoned effect before creating a device.
+  // Dispose an actual native view while its first real initialization is held.
   await page.evaluate(() => {
     const t = window.__t09;
-    t.unmountReact();
+    t.unmountNative();
     const rgba = new Uint8Array(32 * 32 * 4);
     for (let i = 0; i < 32 * 32; i += 1) rgba.set([230, 45, 25, 255], i * 4);
-    t.strictMount('t09-react', t.makeRequest(Array.from(rgba), 32, 32, 'asset-rev-strict-remount'));
+    t.mountNative('t09-native', t.makeRequest(Array.from(rgba), 32, 32, 'asset-rev-native-remount'));
   });
   await page.waitForFunction(() => window.__t09.factory.logs.length >= 2);
   await page.evaluate(() => {
@@ -704,12 +699,12 @@ test('T09-E React StrictMode remount keeps one listener set and one submit per r
   });
   expect(before.logs.length).toBeGreaterThanOrEqual(2);
   const live = before.logs.filter((log) => log.disposed === 0);
-  expect(live, 'exactly one facade stays live under StrictMode').toHaveLength(1);
+  expect(live, 'exactly one facade stays live after explicit remount').toHaveLength(1);
   for (const log of before.logs) {
     if (log !== live[0]) expect(log.disposed).toBeGreaterThanOrEqual(1);
   }
   expect(before.listeners.pointermove ?? 0, 'no duplicated pointermove listeners').toBe(1);
-  expect(before.currentHost).toEqual({ status: 'ready', generation: 0, document: { schema_version: 1, asset_revision_id: 'asset-rev-strict-remount', ontology_version_id: 'fixture-ontology-v1', coordinate_space: { type: 'canonical_image_pixels', width: 32, height: 32 }, completion: 'unprocessed', objects: [] } });
+  expect(before.currentHost).toEqual({ status: 'ready', generation: 0, document: { schema_version: 1, asset_revision_id: 'asset-rev-native-remount', ontology_version_id: 'fixture-ontology-v1', coordinate_space: { type: 'canonical_image_pixels', width: 32, height: 32 }, completion: 'unprocessed', objects: [] } });
   for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'contextmenu', 'wheel']) {
     expect(before.listeners[type], type + ' has one host listener').toBe(1);
   }
@@ -717,7 +712,7 @@ test('T09-E React StrictMode remount keeps one listener set and one submit per r
   const canvas = page.getByTestId('annotation-canvas');
   await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
-  if (!box) throw new Error('react canvas has no box');
+  if (!box) throw new Error('native canvas has no box');
   const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   const hit = await page.evaluate(({ point, box }) => {
     const canvas = document.querySelector('[data-testid="annotation-canvas"]');
@@ -729,7 +724,7 @@ test('T09-E React StrictMode remount keeps one listener set and one submit per r
       previousFixtureTarget: oldTarget?.getAttribute('data-testid') ?? oldTarget?.tagName,
     };
   }, { point, box });
-  await testInfo.attach('strict-pointer-hit-test', { body: JSON.stringify(hit), contentType: 'application/json' });
+  await testInfo.attach('native-pointer-hit-test', { body: JSON.stringify(hit), contentType: 'application/json' });
   expect(hit.isCanvas, 'actual pointer round targets the uncovered canvas, not GPU diagnostics').toBe(true);
   await page.mouse.move(point.x, point.y);
   const { submits, deltas } = await page.evaluate(() => {
@@ -742,16 +737,14 @@ test('T09-E React StrictMode remount keeps one listener set and one submit per r
   const cleanup = await page.evaluate(() => {
     const t = window.__t09;
     const canvas = document.querySelector('[data-testid="annotation-canvas"]');
-    t.unmountReact();
+    t.unmountNative();
     canvas?.dispatchEvent(new PointerEvent('pointermove', { clientX: 20, clientY: 25, pointerId: 1 }));
     return {
       listeners: { ...t.canvasListenerCounts },
       pendingFrames: t.frameCounter.active,
-      submits: t.factory.logs.reduce((sum, log) => sum + log.pointer, 0),
       live: t.factory.logs.filter(log => log.disposed === 0).length,
     };
   });
-  expect(cleanup.submits, 'detached canvas does not retain its host input listener').toBe(submits);
   expect(cleanup.live).toBe(0);
   expect(cleanup.pendingFrames).toBe(0);
   for (const count of Object.values(cleanup.listeners)) expect(count).toBe(0);

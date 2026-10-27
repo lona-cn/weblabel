@@ -4,8 +4,6 @@ WebLabel 是一个在本机运行的图片标注工具。你可以在浏览器�
 
 如果你想先试试人工标注，可以直接用下面的预发布包，不需要配置 AI。AI 是可选的辅助功能：它给出候选结果，由你决定是否采纳。预发布版供试用，真实模型和目标硬件的完整验证仍未完成。
 
-**公开来源说明：** 原始验收证据留在本地私有归档；公开历史保留源码、必要夹具及本页合成截图。历史状态与原始 SHA 不代表在当前公开提交重新验收，详见[公开来源记录](reports/publication/provenance.json)与[报告索引](reports/index.md)。
-
 ## 标注界面
 
 左侧选择图片，中间画框，右侧修改对象的类别和属性。
@@ -43,7 +41,7 @@ Linux：
 sh ./launch.sh
 ```
 
-包里已经带了 Node 和应用程序，人工标注不需要另装 pnpm、Rust、Python 或模型工具。它不是签名安装器；Linux 仍需要兼容的系统库，运行与维护说明见包内的 `BUNDLE.md`。
+上面的 rc.3 历史包仍带 Node，人工标注不需要另装 pnpm、Rust、Python 或模型工具。**当前源码改为 v2 原生发行，只运行一个 Rust 可执行文件，不含 Node/Python 产品运行时；本次尚未发布新的下载包。** 两者都不是签名安装器；Linux 仍需要兼容系统库，维护说明以各包的 `BUNDLE.md` 为准。
 
 启动后打开终端显示的 `WEBLABEL_LOCAL_URL`，默认是 `http://127.0.0.1:48100`。如果没有可用的 WebGPU，只能查看或诊断，不能画框。
 
@@ -65,11 +63,11 @@ sh ./launch.sh
 ```text
 pnpm install --frozen-lockfile
 pnpm build
-pnpm run doctor
-pnpm start:local
+.\target\local-release\weblabel.exe doctor --mode runtime --build-dir target/local-release
+.\target\local-release\weblabel.exe serve --build-dir target/local-release --data-dir data --port 48100
 ```
 
-默认构建目录是 `target/local-release`。重复构建不会覆盖旧目录；需要重新构建时，按[构建与启动](docs/getting-started.md#构建与启动)选择新目录。`doctor` 检查工具和发行文件，不代表浏览器 GPU 或 AI 模型已可用。
+默认构建目录是 `target/local-release`。Linux 使用 `./target/local-release/weblabel`。重复构建不会覆盖旧目录；按[构建与启动](docs/getting-started.md#构建与启动)选择新目录。升级须显式传入原数据目录并保持原浏览器 origin，不重初始化数据库或清空 IndexedDB。`doctor --mode runtime` 不要求构建工具，也不证明 GPU 或模型已可用。
 
 </details>
 

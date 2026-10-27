@@ -40,7 +40,13 @@ export interface WorkspaceState {
   continuation: TaskContinuationProof | null;
 }
 export function reportError(reason: unknown): string {
-  return reason instanceof ApiFailure ? [reason.code, reason.message, reason.request_id].filter(Boolean).join(' · ') : reason instanceof Error ? reason.message : String(reason);
+  if (reason instanceof ApiFailure) return [reason.code, reason.message, reason.request_id].filter(Boolean).join(' · ');
+  if (reason instanceof Error) return reason.message;
+  if (reason && typeof reason === 'object' && 'code' in reason && typeof reason.code === 'string' && 'message' in reason && typeof reason.message === 'string') {
+    const requestId = 'request_id' in reason && typeof reason.request_id === 'string' ? reason.request_id : '';
+    return [reason.code, reason.message, requestId].filter(Boolean).join(' · ');
+  }
+  return String(reason);
 }
 export function sessionCurrent(state: WorkspaceState): boolean {
   const entry = state.sessionController.getSnapshot();

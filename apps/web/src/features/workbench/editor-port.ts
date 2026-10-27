@@ -13,7 +13,7 @@ export interface EditorPort {
   getHost(): EditorHost | null;
   getSnapshot(): AnnotationDocument | null;
   dispatch(command: EditorCommand): EditorDelta | null;
-  canSave(): boolean; canReconcile(): boolean; selectionWritable(): boolean; canImport(): boolean;
+  canSave(): boolean; canReconcile(): boolean; canExport(): boolean; selectionWritable(): boolean; canImport(): boolean;
   scopeGuard(): () => boolean;
   cancelGesture(): void; setTool(tool: EditorTool): boolean;
   select(id: string, additive?: boolean): void;
@@ -39,6 +39,10 @@ export function createEditorPort(state: WorkspaceState): EditorPort {
     return host && loaded && reconcile() && !loaded.readOnlyPreview && !state.paused && !state.branchBusy
       && matchesTask(state, state.assetId, loaded.ontology.ontology_version_id)
       && state.queue.canAcceptEdits(state.assetId, loaded.ontology.ontology_version_id) ? host : null;
+  };
+  const canExport = () => {
+    const host = read();
+    return !!host && (host.status === 'ready' || host.status === 'error') && !state.preparation && !state.importing && !state.submission;
   };
   const selectionWritable = () => {
     const ids = selectedIds(state), known = new Set(state.objects.map(object => object.object_id));
@@ -75,7 +79,7 @@ export function createEditorPort(state: WorkspaceState): EditorPort {
   };
   const scopeGuard = () => { const scope = state.scope; return () => state.scope === scope && sessionCurrent(state); };
   return {
-    getReadHost: read, getHost, dispatch, canSave, canReconcile: reconcile, selectionWritable, scopeGuard, canImport,
+    getReadHost: read, getHost, dispatch, canSave, canReconcile: reconcile, canExport, selectionWritable, scopeGuard, canImport,
     getSnapshot: () => read() ? state.nativeDocuments.get(read()!) ?? state.loaded?.document ?? null : sessionCurrent(state) ? state.loaded?.document ?? null : null,
     cancelGesture: () => { read()?.cancelGesture(); },
     setTool: (tool: EditorTool) => getHost()?.setTool(tool) ?? false,
@@ -146,7 +150,7 @@ export function createEditorPort(state: WorkspaceState): EditorPort {
     },
     async prepareExport(): Promise<AnnotationRevision> {
       const loaded = state.loaded, current = scopeGuard();
-      if (!loaded || !read() || state.preparation || state.importing || state.submission) throw new Error('当前范围不能导出。');
+      if (!loaded || !canExport()) throw new Error('当前范围不能导出。');
       if (canSave()) {
         await state.queue.flush(state.assetId, current);
         const status = state.queue.getStatus(state.assetId);

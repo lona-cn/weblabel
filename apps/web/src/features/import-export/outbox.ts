@@ -7,7 +7,7 @@ const imports = new Map<string, ImportIntent>();
 const exports = new Map<string, ExportIntent>();
 const listeners = new Set<() => void>();
 let snapshot: Readonly<{ imports: readonly ImportIntent[]; exports: readonly ExportIntent[] }> = { imports: [], exports: [] };
-// This feature memory survives React unmount, not browser reload. Never retain source files or preview documents.
+// Feature memory survives page disposal, not browser reload. Never retain source files or preview documents.
 function publish() { snapshot = { imports: [...imports.values()], exports: [...exports.values()] }; for (const listener of listeners) listener(); }
 export function subscribeOutbox(listener: () => void): () => void { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function getOutboxSnapshot() { return snapshot; }

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { DraftStore, InMemoryDraftStorage } from './draft-store';
+import { DraftStore, InMemoryDraftStorage, immutableDocument } from './draft-store';
 import { classifyDraftBranches } from './recovery';
 import { SaveQueue } from './save-queue';
 import type { DraftRecord, DraftBranchEnvelope, DraftBranchSnapshot, SourceRef } from './types';
@@ -30,6 +30,24 @@ const ref = (id: string, action: SourceRef['action'] = 'recover'): SourceRef => 
 function queue(storage: InMemoryDraftStorage) {
   return new SaveQueue({ storage, debounceMs: 60_000, clock: { now: () => Date.parse('2026-10-11T00:00:00Z'), setTimeout: () => 0, clearTimeout: () => undefined }, owner: { token: {}, actor_id: 'actor', project_id: 'project', isCurrent: () => true, isWritable: () => true, canPrepareOperation: () => true, getLease: () => null }, transport: { save: async () => { throw new Error('Unexpected HTTP replay'); }, fetchHead: async () => null, fetchRevision: async () => { throw new Error('Unexpected immutable read'); } } });
 }
+it('persists the requested generation and opaque metadata when a later save waits behind another branch', async () => {
+  const storage = new InMemoryDraftStorage(), store = new DraftStore(storage);
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), put = storage.put.bind(storage);
+  storage.put = async (row, guard) => {
+    if (row.draft_id === 'held') { entered.resolve(); await release.promise; }
+    return put(row, guard);
+  };
+  const first = store.save(envelope('held'));
+  await entered.promise;
+  const raw = { ...record(), document: immutableDocument(record().document), future: new Map([['opaque', { value: 4 }]]) };
+  const source = ref('source'), next = store.save({ asset_revision_id: 'asset', draft_id: 'next', write_token: '', record: raw, sources: [source] });
+  raw.generation = 9; raw.future.get('opaque')!.value = 99; source.write_token = 'changed-after-save';
+  release.resolve(); await first; const receipt = await next;
+  const durable = await store.load('asset', 'next');
+  expect(durable).toMatchObject({ write_token: receipt!.write_token, record: { generation: 2, future: new Map([['opaque', { value: 4 }]]) }, sources: [ref('source')] });
+  expect((durable!.record as DraftRecord).document).toEqual(record().document);
+});
+
 it('distinguishes true transitive synchronization from archive decisions and stale or circular refs', () => {
   const a = envelope('A'), b = envelope('B', false, [ref('A')]), c = envelope('C', true, [ref('B')]);
   expect([...classifyDraftBranches([a, b, c], null)]).toEqual([['A', 'recovered'], ['B', 'recovered'], ['C', 'synced']]);

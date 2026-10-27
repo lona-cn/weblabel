@@ -107,7 +107,7 @@ for (const count of [2000, 10000] as const) test(`${count} real dense workload: 
   await expect(firstRow).toHaveAttribute('data-hidden', 'false');
   await expect(firstRow).toHaveAttribute('data-locked', 'true');
   expect(await page.evaluate(() => window.__wl_test!.stats().visible_instances)).toBe(flagGuards.visible);
-  // A valid geometry command is rejected by the native lock, not just styled in React.
+  // A valid geometry command is rejected by the native lock, not just a disabled control.
   await page.evaluate(() => window.__wl_test!.editObject(0));
   await expect(page.getByRole('alert')).toBeVisible();
   expect(await page.evaluate(() => window.__wl_test!.generation())).toBe(flagGuards.generation);

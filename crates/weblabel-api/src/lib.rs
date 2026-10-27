@@ -13,9 +13,9 @@ pub mod projects;
 pub mod readiness;
 pub mod review;
 pub mod runtime;
-pub mod storage;
 pub mod server;
 pub mod startup;
+pub mod storage;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -112,7 +112,7 @@ impl AppState {
             auth,
             allow_mock_runs: cfg!(debug_assertions) && !config.production,
             run_tokens,
-            profile_configuration: crate::runtime::config::ProfileConfiguration::LegacyHost,
+            profile_configuration: Ok(None),
         })
     }
 }

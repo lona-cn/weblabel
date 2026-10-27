@@ -1,15 +1,12 @@
 // T12 rectangle editing, shortcuts and dense selection in a real browser:
 // real Chromium pointer/keyboard/wheel input on the canvas, the real wasm
-// bridge facade on a real WebGPU device, the real Keyboard / SelectionLink /
-// NumericGeometry / ToolSettings components, and real HTTP save requests
-// observed by a loopback server. Nothing here calls internal dispatch to
-// pretend to be a drag; every gesture is produced by browser input.
+// bridge facade on a real WebGPU device, the native EditorPort, toolbar,
+// keyboard and attribute views, and real HTTP save requests observed by a
+// loopback server. Nothing here calls dispatch to pretend to be a drag.
 //
-// Save-trigger semantics under test: server requests start ONLY from
-// committed EditorDeltas (`document_changed === true`) through the shipped
-// SelectionStore.save trigger. The request transport is a plain fetch stand-in
-// for the T13 save queue (the queue is not this task's code); what is proven
-// here is exactly which user actions can and cannot reach the network.
+// The production committed-delta producer and SaveQueue decide which actions
+// save. Only transport/storage are synthetic; each committed operation reaches
+// the loopback recorder, while pointer previews and local flags never do.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -25,14 +22,11 @@ const wasmOut = path.join(repoRoot, 'target', 'weblabel-wasm-bridge');
 const harnessOut = path.join(repoRoot, 'target', 'weblabel-t12-harness.js');
 
 const HARNESS_ENTRY = `
-import { EditorHost } from './src/lib/editor/EditorHost';
 import { createEditorFacadeFactory, loadWasmBridge } from './src/lib/editor/loader';
-import { createElement } from 'react';
-import { createRoot } from 'react-dom/client';
-import { Keyboard } from './src/features/workbench/Keyboard';
-import { SelectionLink, SelectionStore } from './src/features/workbench/SelectionLink';
-import { NumericGeometry } from './src/features/workbench/NumericGeometry';
-import { ToolSettings, ToolState } from './src/features/workbench/ToolSettings';
+import { createNativeEditorFixture } from '../../tests/e2e/native-editor-fixture';
+import { InMemoryDraftStorage } from './src/lib/persistence/draft-store';
+import { mountToolbarView, mountEditorKeyboard } from './src/features/workbench/toolbar-view';
+import { mountAttributesView } from './src/features/workbench/attributes-view';
 
 function goldenRgba() {
   const rgba = new Uint8Array(640 * 480 * 4);
@@ -93,6 +87,8 @@ const state = {
   store: null,
   tools: null,
   bridge: null,
+  fixture: null,
+  cleanups: [],
   pendingSaves: 0,
   selectionTrace: [],
   lastSelectionKey: '',
@@ -110,53 +106,56 @@ window.__t12 = {
     const bridge = await loadWasmBridge('/wasm/wasm_bridge.js');
     state.bridge = bridge;
     const factory = createEditorFacadeFactory(bridge);
-    const canvas = document.getElementById('t12-canvas');
-    const store = new SelectionStore();
-    const host = new EditorHost({ facadeFactory: factory, onDelta: (delta) => store.publish(delta) });
-    const tools = new ToolState(host);
-    state.host = host;
-    state.store = store;
-    state.tools = tools;
-    store.subscribeSelection((ids) => {
+    const fixture = createNativeEditorFixture('sample-project', {
+      storage: new InMemoryDraftStorage(), debounceMs: 0,
+      transport: {
+        async save(request) {
+          state.pendingSaves += 1;
+          try {
+            const response = await fetch('/api/annotation-saves', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request) });
+            if (!response.ok) throw new Error('Loopback save recorder rejected the operation');
+            return { operation_id: request.operation_id, idempotent_replay: false, revision: { annotation_revision_id: 'saved-' + request.operation_id, parent_revision_id: request.base_revision_id, revision_no: fixture.state.host.getGeneration(), document: request.document, created_at: new Date().toISOString(), created_by: 'fixture', content_hash: 'synthetic' } };
+          } finally { state.pendingSaves -= 1; }
+        },
+        async fetchHead() { throw new Error('Unexpected conflict in T12 gesture fixture'); },
+        async fetchRevision() { throw new Error('Unexpected revision read in T12 gesture fixture'); },
+      },
+    }, { facadeFactory: factory });
+    state.fixture = fixture;
+    const { state: workspace, port, signal } = fixture;
+    state.store = workspace.selection; state.tools = workspace.tools;
+    const root = document.getElementById('t12-ui');
+    const toolbar = document.createElement('div'), attributes = document.createElement('section'), count = document.createElement('output');
+    count.dataset.testid = 'selection-count';
+    root.append(fixture.element, toolbar, attributes, count);
+    const canvas = fixture.element.querySelector('canvas'); canvas.id = 't12-canvas';
+    state.cleanups.push(workspace.subscribe(() => { state.host = workspace.host; count.textContent = String(workspace.selection.getSelection().length); }));
+    state.cleanups.push(workspace.selection.subscribeSelection((ids) => {
       const key = ids.join(' ');
-      if (state.lastSelectionKey !== key) {
-        state.lastSelectionKey = key;
-        state.selectionTrace.push(key);
-      }
-    });
-    // The save trigger: only committed document changes reach this callback.
-    // The fetch body is a transport stand-in for the T13 save queue.
-    store.subscribeSaveNeeded((delta) => {
-      state.pendingSaves += 1;
-      fetch('/api/annotation-saves', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ generation: delta.generation, document: host.getSnapshot() }),
-      }).finally(() => {
-        state.pendingSaves -= 1;
-      });
-    });
-    host.mount(canvas);
-    canvas.addEventListener('gotpointercapture', (event) => state.captureTrace.push('got:' + event.pointerId));
-    canvas.addEventListener('lostpointercapture', (event) => state.captureTrace.push('lost:' + event.pointerId));
-    canvas.addEventListener('pointerdown', (event) => { state.lastPointerId = event.pointerId; }, true);
-    canvas.addEventListener('contextmenu', (event) => { state.contextmenuPrevented = event.defaultPrevented; });
-    createRoot(document.getElementById('t12-ui')).render(
-      createElement('div', null,
-        createElement(Keyboard, { host, tools, store, acceptsTarget: (target) => target === document.body || target === canvas || document.getElementById('t12-ui').contains(target) }),
-        createElement(ToolSettings, { tools, host, store }),
-        createElement(NumericGeometry, { store, host }),
-        createElement(SelectionLink, { store }),
-      ),
-    );
+      if (state.lastSelectionKey !== key) { state.lastSelectionKey = key; state.selectionTrace.push(key); }
+    }));
+    state.cleanups.push(mountToolbarView(toolbar, workspace, port, signal), mountAttributesView(attributes, workspace, port, signal));
+    mountEditorKeyboard(root, workspace, port, signal);
+    canvas.addEventListener('gotpointercapture', (event) => state.captureTrace.push('got:' + event.pointerId), { signal });
+    canvas.addEventListener('lostpointercapture', (event) => state.captureTrace.push('lost:' + event.pointerId), { signal });
+    canvas.addEventListener('pointerdown', (event) => { state.lastPointerId = event.pointerId; }, { capture: true, signal });
+    root.addEventListener('contextmenu', (event) => { if (event.target === canvas) state.contextmenuPrevented = event.defaultPrevented; }, { signal });
     return true;
   },
   async load(objects, assetRevisionId) {
-    await state.host.loadAsset(makeRequest(objects, assetRevisionId));
-    return { status: state.host.status };
+    state.fixture.load(makeRequest(objects, assetRevisionId));
+    const host = state.fixture.state.host;
+    if (host.status !== 'ready' && host.status !== 'error') {
+      const ready = Promise.withResolvers<void>();
+      const unsubscribe = host.subscribeStatus(() => { if (host.status === 'ready' || host.status === 'error') { unsubscribe(); ready.resolve(); } });
+      await ready.promise;
+    }
+    if (host.status !== 'ready') throw new Error('Native canvas failed: ' + host.error?.message);
+    host.select([]);
+    return { status: host.status };
   },
   loadDetached(objects, assetRevisionId) {
-    return state.host.loadAsset(makeRequest(objects, assetRevisionId));
+    return window.__t12.load(objects, assetRevisionId);
   },
   state() {
     const snapshot = state.host.getSnapshot();
@@ -171,7 +170,7 @@ window.__t12 = {
         x_max: object.geometry.x_max,
         y_max: object.geometry.y_max,
       })),
-      pendingSaves: state.pendingSaves,
+      pendingSaves: state.pendingSaves + Number(state.fixture.state.queue.getStatus(state.fixture.state.assetId).dirty),
     };
   },
   trace() {
@@ -218,6 +217,10 @@ window.__t12 = {
     state.lastSelectionKey = state.store.getSelection().join(' ');
     return true;
   },
+  dispose() {
+    for (const cleanup of state.cleanups.splice(0)) cleanup();
+    state.fixture?.dispose();
+  },
 };
 `;
 
@@ -252,6 +255,7 @@ interface Harness {
   setFlags(ids: string[], flags: { hidden?: boolean; locked?: boolean }): unknown;
   setActiveLabel(labelId: string): unknown;
   resetTrace(): boolean;
+  dispose(): void;
 }
 
 type T12Window = { __t12: Harness };
@@ -264,7 +268,7 @@ async function bootPage(page: Page): Promise<void> {
   });
   await page.goto(`${server.origin}/`);
   try {
-    await page.waitForFunction(() => Boolean((window as unknown as { __t12?: unknown }).__t12?.boot), undefined, { timeout: 15_000 });
+    await page.waitForFunction(() => '__t12' in window && typeof window.__t12 === 'object' && window.__t12 !== null && 'boot' in window.__t12 && typeof window.__t12.boot === 'function', undefined, { timeout: 15_000 });
     await page.evaluate(() => (window as unknown as T12Window).__t12.boot());
   } catch (error) {
     throw new Error(`harness module failed to boot:\n${pageErrors.join('\n')}\n${String(error)}`);
@@ -321,6 +325,7 @@ const server: { origin: string; requests: { url: string; body: string }[]; close
 };
 
 test.beforeAll(async () => {
+  test.setTimeout(1_200_000);
   buildWasmBundle();
   await buildHarnessBundle();
   const httpServer: Server = createServer((request, response) => {
@@ -341,8 +346,8 @@ test.beforeAll(async () => {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(
         '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}</style></head><body>'
-        + '<canvas id="t12-canvas" data-testid="annotation-canvas" style="width:640px;height:480px;display:block"></canvas>'
         + '<div id="t12-ui"></div><input data-testid="text-input" />'
+        + '<style>.r07-canvas-stage{position:relative;width:640px;height:480px}.r07-canvas-stage canvas{display:block;width:640px;height:480px}.r07-canvas-labels{position:absolute;inset:0;pointer-events:none}.r07-canvas-labels span{position:absolute}</style>'
         + '<script type="module" src="/harness.js"></script></body></html>',
       );
       return;
@@ -370,10 +375,14 @@ test.beforeAll(async () => {
     new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });
-}, 1_200_000);
+});
 
 test.afterAll(async () => {
   await server.close();
+});
+
+test.afterEach(async ({ page }) => {
+  await page.evaluate(() => (window as unknown as T12Window).__t12?.dispose());
 });
 
 function buildWasmBundle(): void {
@@ -587,7 +596,7 @@ test('T12-C text input and IME composition suppress Delete and letter shortcuts'
   await expect(page.getByTestId('tool-select'), 'letter shortcut stayed inert').toHaveAttribute('aria-pressed', 'true');
 
   // IME composition state suppresses editor keys even outside a text field.
-  await page.getByTestId('text-input').evaluate((element) => (element as HTMLInputElement).blur());
+  await page.getByTestId('annotation-canvas').focus();
   await page.evaluate(() => (window as unknown as T12Window).__t12.dispatchComposition('compositionstart'));
   await page.keyboard.press('Delete');
   await settled(page);
@@ -778,19 +787,20 @@ test('T12-G numeric geometry edits canonical px and keeps invalid values out of 
 
   // An invalid value keeps its error visible and never modifies the document.
   await page.getByTestId('geometry-w').fill('abc');
-  await expect(page.getByTestId('geometry-error')).toBeVisible();
+  await expect(page.getByTestId('geometry-error')).toHaveText('');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Tab');
   await settled(page);
-  await expect(page.getByTestId('geometry-error'), 'the error survives blur').toBeVisible();
+  await expect(page.getByTestId('geometry-error'), 'the error survives blur').not.toHaveText('');
   expect(server.requests.length, 'invalid values never save').toBe(saves);
   geometry = (await page.evaluate(() => (window as unknown as T12Window).__t12.state())).objects[0];
   expect([geometry.x_min, geometry.y_min, geometry.x_max, geometry.y_max]).toEqual([50, 20, 150, 220]);
 
   // Escape reverts the fields to the committed canonical values.
+  await page.getByTestId('geometry-w').focus();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('geometry-w')).toHaveValue('100px');
-  await expect(page.getByTestId('geometry-error')).toHaveCount(0);
+  await expect(page.getByTestId('geometry-error')).toHaveText('');
   expect(server.requests.length).toBe(saves);
 });
 

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { bootstrap_admin_for_test, login_at_origin_for_test, start_test_app } from '../support/app';
+import type { ApiResponse } from '../support/app';
 type Page = { items: { user_id: string; username: string; role?: string }[]; next_cursor: string | null };
 it('creates independent identities and traverses actual account/member pages without granting platform privileges', async () => {
   const app = await start_test_app();
@@ -19,7 +20,7 @@ it('creates independent identities and traverses actual account/member pages wit
     for (const endpoint of ['/api/users', `/api/projects/${project.json.project_id}/members`]) {
       const client = endpoint === '/api/users' ? platform : owner;
       let cursor: string | null = null; const ids: string[] = [];
-      do { const page = await client.request<Page>('GET', `${endpoint}?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`); expect(page.status).toBe(200); expect(page.json.items).toHaveLength(1); ids.push(page.json.items[0].user_id); cursor = page.json.next_cursor; } while (cursor);
+      do { const response: ApiResponse<Page> = await client.request<Page>('GET', `${endpoint}?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`); expect(response.status).toBe(200); expect(response.json.items).toHaveLength(1); ids.push(response.json.items[0].user_id); cursor = response.json.next_cursor; } while (cursor);
       expect(new Set(ids).size).toBe(ids.length); expect(ids).toEqual(expect.arrayContaining(created));
     }
     const reviewer = await login_at_origin_for_test(app.base_url, { username: 'ux18_reviewer', password: 'synthetic-ux18-password' });

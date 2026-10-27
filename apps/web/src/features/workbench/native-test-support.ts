@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import type { AuthEntry, SessionController } from '../../app/session';
-import type { AnnotationDocument, EditorDelta } from '../../lib/editor/types';
+import type { AnnotationDocument, EditorDelta, HitStackState } from '../../lib/editor/types';
 import type { AnnotationRevision } from '../../../../../packages/contracts/generated/AnnotationRevision';
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
 import type { EditorHost } from '../../lib/editor/EditorHost';
@@ -27,7 +27,7 @@ export function nativeFixture() {
   state.project = { project_id: project, name: 'unit', description: '', allow_self_review: false, role: 'admin' }; state.catalogReady = true; state.assets = [media]; state.ontologies = [ontology];
   state.loaded = { media, ontology, document, revision, frame: { width: 100, height: 100, rgba: new Uint8Array(40_000) }, initial_generation: 0, readOnlyPreview: false };
   state.document = document; state.objects = document.objects; state.phase = 'ready'; state.assignedAssets = new Set();
-  const host = { status: 'ready', getGeneration: vi.fn(() => 0), dispatch: vi.fn(), setTool: vi.fn(() => true), setActiveLabel: vi.fn(), cancelGesture: vi.fn(), select: vi.fn(), setLocalFlags: vi.fn(), getLocalFlags: vi.fn(() => state.flags), getCommittedSnapshot: vi.fn(() => document), getObjectHashes: vi.fn(() => ({ object: 'object-hash' })), getViewport: vi.fn(() => ({ scale: 1, tx: 0, ty: 0, css_width: 100, css_height: 100, dpr: 1 })), getHitStackState: vi.fn(() => ({ index: null, count: 0 })), subscribeRendered: vi.fn(() => vi.fn()), focusRegion: vi.fn(() => true), fitImage: vi.fn(), focusSelection: vi.fn(), zoomAt: vi.fn(), dispose: vi.fn() };
+  const host = { status: 'ready', getGeneration: vi.fn(() => 0), dispatch: vi.fn(), setTool: vi.fn(() => true), setActiveLabel: vi.fn(), cancelGesture: vi.fn(), select: vi.fn(), setLocalFlags: vi.fn(), getLocalFlags: vi.fn(() => state.flags), getCommittedSnapshot: vi.fn(() => document), getObjectHashes: vi.fn(() => ({ object: 'object-hash' })), getViewport: vi.fn(() => ({ scale: 1, tx: 0, ty: 0, css_width: 100, css_height: 100, dpr: 1 })), getHitStackState: vi.fn<() => HitStackState>(() => ({ index: null, count: 0 })), subscribeRendered: vi.fn<(listener: () => void) => () => void>(() => vi.fn()), focusRegion: vi.fn(() => true), fitImage: vi.fn(), focusSelection: vi.fn(), zoomAt: vi.fn(), dispose: vi.fn() };
   state.host = host as unknown as EditorHost; state.hostStatus = 'ready'; state.nativeDocuments.set(state.host, document);
   state.queue.initializeFromServerRevision({ asset_revision_id: 'asset', ontology_version_id: 'ontology', annotation_revision_id: 'revision', generation: 0, document });
   const delta: EditorDelta = { generation: 0, changed_objects: [], removed_object_ids: [], selected_object_ids: ['object'], can_undo: false, can_redo: false, document_changed: false, repaint: false, suggestion_decisions: [], error: null };

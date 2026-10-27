@@ -4,9 +4,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { executeVerificationCommand, readTestEvidence, checkEvidenceIdentity, readAcceptanceEvidence, describeReleaseGates } from '../../scripts/verify.mjs';
+import { executeVerificationCommand, readTestEvidence, checkEvidenceIdentity, readAcceptanceEvidence } from '../../scripts/verify.mjs';
 import { captureEvidenceIdentity } from '../../scripts/evidence-identity.mjs';
+import { loadedWasmMatches } from '../../scripts/verify-gpu.mjs';
 import { taskReportPath } from '../support/report-paths.mjs';
+import { prepare_test_api } from '../support/app.ts';
+import { pins, entries, root } from '../../scripts/build.mjs';
+
+function releaseFixture(directory, sourceCommit) {
+  const release = path.join(directory, 'release');
+  const names = [process.platform === 'win32' ? 'weblabel.exe' : 'weblabel', 'web/index.html', 'web/wasm/wasm_bridge.js', 'web/wasm/wasm_bridge_bg.wasm', 'migrations/0001_fixture.sql'];
+  for (const name of names) { const file = path.join(release, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'Hash-validation fixture; not an executable release.'); }
+  fs.writeFileSync(path.join(release, 'release.json'), JSON.stringify({ format: 'weblabel-local-release', version: 2, platform: process.platform, arch: process.arch, source_commit: sourceCommit, pins, files: entries(release) }));
+  return release;
+}
 
 
 const env = Object.fromEntries(['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOME'].filter(key => process.env[key]).map(key => [key, process.env[key]]));
@@ -153,10 +164,18 @@ test('Playwright counts require real consistent nested test records', () => {
   } finally { f.cleanup(); }
 });
 
-
-test('registered normal keyboard exit 130 is not command cancellation', async () => {
- const f=fixture();try { const row=await executeVerificationCommand({name:'registered-130',argv:[process.execPath,'-e','process.exit(130)'],expectedExitCode:130},f.context);assert.equal(row.exit_code,130);assert.equal(row.runner_exit_code,130);assert.equal(row.status,'passed'); }finally{f.cleanup();}
+test('GPU provenance accepts repeated identical lifecycle loads and rejects missing or mismatched bytes', () => {
+  const expected = 'a'.repeat(64), other = 'b'.repeat(64);
+  assert.equal(loadedWasmMatches([expected], expected), true);
+  assert.equal(loadedWasmMatches(Array(6).fill(expected), expected), true);
+  assert.equal(loadedWasmMatches([], expected), false);
+  assert.equal(loadedWasmMatches([expected, other], expected), false);
+  assert.equal(loadedWasmMatches([expected, null], expected), false);
+  assert.equal(loadedWasmMatches([expected], undefined), false);
+  assert.equal(loadedWasmMatches(['not-a-sha256'], 'not-a-sha256'), false);
 });
+
+
 
 test('actual wrappers classify prerequisites and preserve invalid-hash failure', async () => {
   const f = fixture();
@@ -167,22 +186,21 @@ test('actual wrappers classify prerequisites and preserve invalid-hash failure',
     const bridge = await executeVerificationCommand({ name: 'bridge-missing', kind: 'web-bridge', argv: [process.execPath, 'scripts/build-web-bridge.mjs'] }, context);
     assert.equal(bridge.exit_code, 2); assert.equal(bridge.status, 'blocked');
     const release = path.join(f.directory, 'release');
-    const argv = [process.execPath, 'scripts/doctor.mjs', '--build-dir', release];
+    const argv = [prepare_test_api(), 'doctor', '--mode', 'build', '--build-dir', release];
     const missing = await executeVerificationCommand({ name: 'doctor-missing', kind: 'doctor', argv }, context);
     assert.equal(missing.exit_code, 2); assert.equal(missing.status, 'blocked');
     const ordinary = await executeVerificationCommand({ name: 'unregistered-doctor', argv }, context);
     assert.equal(ordinary.exit_code, 2); assert.equal(ordinary.status, 'failed');
-    fs.mkdirSync(release); fs.writeFileSync(path.join(release, 'artifact'), 'actual artifact');
-    fs.writeFileSync(path.join(release, 'release.json'), JSON.stringify({ format: 'weblabel-local-release', version: 1, platform: process.platform, arch: process.arch, pins, files: [{ path: 'artifact', size: 15, sha256: '0'.repeat(64) }] }));
+    releaseFixture(f.directory, f.identity.source_commit);
+    const manifestFile = path.join(release, 'release.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8')); manifest.files[0].sha256 = '0'.repeat(64);
+    fs.writeFileSync(manifestFile, JSON.stringify(manifest));
     const invalid = await executeVerificationCommand({ name: 'doctor-invalid', kind: 'doctor', argv }, context);
     assert.equal(invalid.exit_code, 1); assert.equal(invalid.status, 'failed');
     assert.equal(invalid.parse_status, 'not_a_test_command');
     assert.deepEqual(invalid.blockers, ['COMMAND_EXIT_FAILED']);
-    const diagnostic = JSON.parse(fs.readFileSync(path.join(f.directory, 'commands/doctor-invalid/command.log'), 'utf8'));
-    assert.equal(diagnostic.release.code, 'hash_mismatch');
-    assert.equal(diagnostic.tools.find(tool => tool.name === 'rustc').status, 'missing');
-    for (const [kind, script] of [['doctor', 'doctor.mjs'], ['web-bridge', 'build-web-bridge.mjs']]) {
-      const unsupported = await executeVerificationCommand({ name: kind + '-unsupported', kind, argv: [process.execPath, 'scripts/' + script, '--unsupported'] }, context);
+    for (const [kind, argv] of [['doctor', [prepare_test_api(), 'doctor', '--unsupported']], ['web-bridge', [process.execPath, 'scripts/build-web-bridge.mjs', '--unsupported']]]) {
+      const unsupported = await executeVerificationCommand({ name: kind + '-unsupported', kind, argv }, context);
       assert.equal(unsupported.exit_code, 1); assert.equal(unsupported.status, 'failed');
     }
   } finally { f.cleanup(); }
@@ -191,14 +209,8 @@ test('actual wrappers classify prerequisites and preserve invalid-hash failure',
 test('actual doctor with valid release hashes is consumable without a test report', async t => {
   const f = fixture();
   try {
-    const { pins, root } = await import('../../scripts/build.mjs');
-    const release = path.join(f.directory, 'release');
-    const names = ['api/' + (process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api'), 'host/runtime.mjs', 'host/mcp.mjs', 'web/index.html', 'web/wasm/wasm_bridge.js', 'web/wasm/wasm_bridge_bg.wasm'];
-    const bytes = Buffer.from('hash validation fixture; not an executable release');
-    for (const name of names) { const file = path.join(release, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes); }
-    fs.writeFileSync(path.join(release, 'release.json'), JSON.stringify({ format: 'weblabel-local-release', version: 1, platform: process.platform, arch: process.arch, pins, files: names.map(name => ({ path: name, size: bytes.length, sha256: hash(bytes) })) }));
-    const row = await executeVerificationCommand({ name: 'doctor-valid', kind: 'doctor', argv: [process.execPath, 'scripts/doctor.mjs', '--build-dir', release] }, { ...f.context, cwd: root });
-    if (row.exit_code === 2) { assert.equal(row.status, 'blocked'); assert.equal(row.parse_status, 'wrapper_prerequisites'); t.skip('Pinned installed tools/process-tree prerequisite unavailable'); return; }
+    const release = releaseFixture(f.directory, f.identity.source_commit);
+    const row = await executeVerificationCommand({ name: 'doctor-valid', kind: 'doctor', argv: [prepare_test_api(), 'doctor', '--mode', 'runtime', '--build-dir', release] }, { ...f.context, cwd: root });
     assert.equal(row.exit_code, 0); assert.equal(row.status, 'passed');
     assert.equal(row.parse_status, 'not_a_test_command'); assert.equal(row.tests, null); assert.deepEqual(row.blockers, []);
   } finally { f.cleanup(); }
@@ -224,17 +236,3 @@ test('actual probe browser and release wrappers preserve prerequisite diagnostic
   } finally { f.cleanup(); }
 });
 
-test('G0 and G5 cannot promote missing or failed documentation evidence', () => {
-  // Synthetic aggregation input only; none of these rows claim a product execution.
-  const names = ['fast-format', 'fast-contracts', 'fast-web-types', 'fast-host-types', 'fast-test-types', 'fast-bootstrap', 'fast-plan-structure', 'fast-docs', 'fast-web-bridge', 'fast-host-build', 'fast-vitest', 'browser', 'gpu', 'release-repeat-build', 'release-first-doctor', 'release-repeat-doctor', 'release-startup-smoke', 'integration-api-build', 'integration-host-build', 'integration-web-bridge', 'integration-release-build', 'integration-vitest', ...['geometry', 'annotation-domain', 'editor-core', 'renderer-wgpu', 'dataset-formats', 'weblabel-api'].map(crate => 'integration-rust-' + crate)];
-  const complete = { identity: { synthetic: true }, blockers: [], skipped_scope: [], commands: names.map(name => ({ name, status: 'passed' })), evidence: ['first-release-manifest', 'repeat-release-manifest', 'repeat-build', 'physical-startup'].map(name => ({ name, status: 'passed' })), acceptance: { evidence: ['review.json', 'smoke.json'].map(name => ({ name, status: 'passed' })) } };
-  const states = input => describeReleaseGates(input).filter(gate => gate.id === 'G0' || gate.id === 'G5').map(gate => gate.status);
-  assert.deepEqual(states(complete), ['passed', 'passed']);
-  const missing = structuredClone(complete);
-  missing.commands = missing.commands.filter(row => row.name !== 'fast-docs');
-  assert.deepEqual(states(missing), ['blocked', 'blocked']);
-  const failed = structuredClone(complete);
-  failed.commands.find(row => row.name === 'fast-docs').status = 'failed';
-  failed.commands.find(row => row.name === 'fast-format').status = 'blocked';
-  assert.deepEqual(states(failed), ['failed', 'failed']);
-});

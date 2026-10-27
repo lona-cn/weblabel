@@ -7,10 +7,23 @@ import { test as fixtureTest, expect, waitForCanonicalAssets } from '../e2e/fixt
 import type { Page } from '@playwright/test';
 
 import type { T28Stats } from '../../apps/web/src/features/workbench/perf';
-import { gate, hardwareKind } from '../../scripts/verify-gpu.mjs';
+import { gate, hardwareKind, loadedWasmMatches } from '../../scripts/verify-gpu.mjs';
 
+// Structural boundary for Chromium's WebGPU extension, absent from lib.dom.
+interface NativeResource { destroy(): void }
+interface NativeDevice {
+  destroy(): void;
+  features: ReadonlySet<string>;
+  lost: Promise<{ reason: string; message: string }>;
+  createBuffer(...args: unknown[]): NativeResource;
+  createTexture(...args: unknown[]): NativeResource;
+  queue: { submit(...args: unknown[]): void };
+  addEventListener(type: 'uncapturederror', callback: (event: { error?: { message: string } }) => void): void;
+}
+interface NativeAdapter { info: { vendor: string; architecture: string; device: string; description: string; isFallbackAdapter: boolean }; features: ReadonlySet<string>; requestDevice(...args: unknown[]): Promise<NativeDevice> }
+interface NativeGpu { requestAdapter(...args: unknown[]): Promise<NativeAdapter | null> }
 interface NativeResourceCounts { buffers: { live: number; created: number; released: number }; textures: { live: number; created: number; released: number } }
-interface Observation { devices: GPUDevice[]; device_creations: number; resources: NativeResourceCounts; adapters: Record<string, unknown>[]; raf_cpu_ms: number; losses: { reason: string; message: string }[]; submissions: number; zero_size_submissions: number; errors: string[] }
+interface Observation { devices: NativeDevice[]; device_creations: number; resources: NativeResourceCounts; adapters: Record<string, unknown>[]; raf_cpu_ms: number; losses: { reason: string; message: string }[]; submissions: number; zero_size_submissions: number; errors: string[] }
 declare global { interface Window { __t31: Observation; __t31TaskDuration(): Promise<number> } }
 const run = process.env.WEBLABEL_T31_RUN_DIR!;
 const origin = process.env.WEBLABEL_T31_ORIGIN!;
@@ -21,7 +34,9 @@ async function instrument(page: Page) {
     window.__t31 = observation;
     const raf = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = callback => raf(timestamp => { const start = performance.now(); try { callback(timestamp); } finally { observation.raf_cpu_ms += performance.now() - start; } });
-    const gpu = navigator.gpu;
+    // Chromium platform extension; not network/config input.
+    const gpuNavigator = navigator as unknown as { gpu?: NativeGpu };
+    const gpu = gpuNavigator.gpu;
     if (!gpu) return;
     const adapterRequest = gpu.requestAdapter.bind(gpu);
     gpu.requestAdapter = async (...args) => {
@@ -278,6 +293,7 @@ for (const count of [2000, 10000] as const) test(`${count} fixed release WASM ha
       await expect(page.getByTestId('gpu-status')).toHaveAttribute('data-device-state', 'ready');
       entries.push(await page.evaluate(() => ({ live_devices: window.__t31.devices.length, resources: structuredClone(window.__t31.resources), stats: window.__wl_test!.stats() })));
     }
+    expect(loadedWasmMatches(loadedWasm, environment.wasm.sha256), 'Every actual lifecycle WASM load must match the built artifact').toBe(true);
     evidence.repeated_workbench_entries = entries; await save();
     expect(entries.every(row => row.live_devices === 1 && row.resources.buffers.live === entries[0].resources.buffers.live && row.resources.textures.live === entries[0].resources.textures.live && row.stats.live_decoded_bitmaps === 0)).toBe(true);
   } finally { await save(); }

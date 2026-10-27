@@ -1,92 +1,91 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { execFileSync, spawnSync, spawn } from 'node:child_process';
-import { readdir, readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { createRequire } from 'node:module';
-import { dirname, join, relative, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { spawnSync, spawn } from 'node:child_process';
+import { readdir, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { dirname, join, resolve, relative, sep } from 'node:path';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { resolveArgv } from '../../../scripts/task.mjs';
+import { captureEvidenceIdentity } from '../../../scripts/evidence-identity.mjs';
+import { projectOutputPath, taskReportPath } from '../../support/report-paths.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const targetDirectory = resolve(root, process.env.CARGO_TARGET_DIR ?? 'target');
-const cargoCwd = process.env.CARGO_CWD ?? process.env.WEBLABEL_CARGO_CWD ?? process.env.CARGO_HOME ?? root;
-const report = join(root, 'reports/T29');
-const sentinel = `T29-synthetic-build-secret-${randomUUID()}`;
-const compilerEnv = { ...process.env };
-delete compilerEnv.RUSTUP_TOOLCHAIN;
-const toolchain = execFileSync('rustup', ['show', 'active-toolchain'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim().split(/\s+/, 1)[0];
-compilerEnv.RUSTUP_TOOLCHAIN = toolchain;
-compilerEnv.RUSTC = execFileSync('rustup', ['which', 'rustc'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim();
-console.log(`T29 repository toolchain: ${toolchain}; compiler: ${compilerEnv.RUSTC}`);
+const nonce = randomUUID(), report = taskReportPath('T29', 'html-rust-rebuild', 'native-production-' + nonce);
+const temporary = projectOutputPath(join(root, 'target/test-artifacts/T29-native-production', nonce)); await mkdir(temporary, { recursive: true });
+const target = projectOutputPath(resolve(root, process.env.CARGO_TARGET_DIR ?? 'target/build-cache/html-rust-rebuild/cargo'));
+const sentinel = 'T29-synthetic-build-secret-' + randomUUID();
+const allowed = ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'WINDIR', 'USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'CARGO_HOME', 'RUSTUP_HOME', 'RUSTC', 'RUSTDOC', 'VCINSTALLDIR', 'WindowsSdkDir', 'INCLUDE', 'LIB', 'LIBPATH'];
+const compilerEnv = Object.fromEntries(allowed.filter(key => process.env[key]).map(key => [key, process.env[key]]));
+Object.assign(compilerEnv, { RUSTC_WRAPPER: '', RUSTUP_TOOLCHAIN: '1.96.0', RUSTUP_AUTO_INSTALL: '0', TEMP: temporary, TMP: temporary, TMPDIR: temporary, CARGO_TARGET_DIR: target });
+const identity = captureEvidenceIdentity({ env: compilerEnv });
 const env = { ...compilerEnv, OPENAI_API_KEY: sentinel, ANTHROPIC_API_KEY: sentinel, MIMO_API_KEY: sentinel, WEBLABEL_RUN_TOKEN: sentinel, T29_SYNTHETIC_KEY: sentinel };
 const commands = [];
-const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
-if (revision.status !== 0) throw new Error('Cannot record production source commit');
-const sourceCommit = revision.stdout.trim();
-function run(argv, cwd = root) {
-  if (argv[0] === 'cargo') argv.push('--config', `build.build-dir=${JSON.stringify(targetDirectory)}`);
-  const resolved = process.platform === 'win32' && argv[0] === 'pnpm' ? [process.execPath, resolve(dirname(process.execPath), 'node_modules/corepack/dist/pnpm.js'), ...argv.slice(1)] : argv;
-  console.log('> ' + argv.join(' '));
-  const result = spawnSync(resolved[0], resolved.slice(1), { cwd, env, stdio: 'pipe', encoding: 'utf8', shell: false });
+function run(input, cwd = root) {
+  const argv = resolveArgv(input);
+  const result = spawnSync(argv[0], argv.slice(1), { cwd, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   const output = (result.stdout ?? '') + (result.stderr ?? '');
-  if (output.includes(sentinel)) throw new Error('Synthetic credential leaked in production build log');
+  if (output.includes(sentinel)) throw new Error('Synthetic credential leaked in native production build output');
   process.stdout.write(output);
-  commands.push({ argv, cwd, exit_code: result.status ?? 1 });
-  if (result.status !== 0) throw new Error(`Production command failed (${result.status}): ${argv.join(' ')}`);
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`Native production build command failed (${result.status})`);
+  commands.push({ argv: input, cwd, exit_code: result.status });
 }
-async function files(path) {
-  const paths = [];
-  for (const entry of await readdir(path, { withFileTypes: true })) {
-    const next = join(path, entry.name);
-    if (entry.isDirectory()) paths.push(...await files(next)); else paths.push(next);
+async function files(directory) {
+  const result = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const file = join(directory, entry.name);
+    if (entry.isDirectory()) result.push(...await files(file)); else result.push(file);
   }
-  return paths;
+  return result;
 }
-const outputs = [join(report, 'production-web'), join(report, 'production-host')];
+const web = join(temporary, 'production-web'), wasm = join(temporary, 'release-wasm');
 await mkdir(report, { recursive: true });
+let child, closed;
 try {
-  const cargoPaths = ['--manifest-path', join(root, 'Cargo.toml'), '--target-dir', targetDirectory];
-  run(['cargo', 'build', '--release', '--locked', ...cargoPaths, '-p', 'weblabel-api', '--bin', 'weblabel-api'], cargoCwd);
-  run(['cargo', 'build', '--release', '--locked', ...cargoPaths, '--target', 'wasm32-unknown-unknown', '-p', 'wasm-bridge'], cargoCwd);
-  run(['wasm-bindgen', join(targetDirectory, 'wasm32-unknown-unknown/release/wasm_bridge.wasm'), '--target', 'web', '--out-dir', join(root, 'crates/wasm-bridge/target/weblabel-web-public/wasm'), '--out-name', 'wasm_bridge']);
-  run(['pnpm', 'exec', 'vite', 'build', '--sourcemap', '--outDir', outputs[0]], join(root, 'apps/web'));
-  run([process.execPath, 'scripts/build-agent-host.mjs']);
-  const require = createRequire(join(root, 'apps/agent-host/package.json'));
-  const { build } = require('esbuild');
-  await build({ absWorkingDir: root, entryPoints: { runtime: 'apps/agent-host/src/runtime/main.ts', mcp: 'apps/agent-host/src/mcp/main.ts' }, bundle: true, platform: 'node', target: 'node24', format: 'esm', minify: true, sourcemap: 'external', outdir: outputs[1], outExtension: { '.js': '.mjs' }, logLevel: 'info' });
-  const executable = join(targetDirectory, 'release', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
-  const productFiles = [executable, ...await files(outputs[0]), ...await files(outputs[1]), ...await files(join(root, 'target/agent-host'))];
+  const cargoPaths = ['--manifest-path', join(root, 'Cargo.toml'), '--target-dir', target];
+  run(['cargo', 'build', '--release', '--offline', '--locked', ...cargoPaths, '-p', 'weblabel-api', '--bin', 'weblabel']);
+  run(['cargo', 'build', '--release', '--offline', '--locked', ...cargoPaths, '--target', 'wasm32-unknown-unknown', '-p', 'wasm-bridge']);
+  run(['wasm-bindgen', join(target, 'wasm32-unknown-unknown/release/wasm_bridge.wasm'), '--target', 'web', '--out-dir', wasm, '--out-name', 'wasm_bridge']);
+  env.WEBLABEL_WASM_BRIDGE_DIR = wasm;
+  run(['pnpm', 'exec', 'vite', 'build', '--sourcemap', '--outDir', web], join(root, 'apps/web'));
+  const executable = join(target, 'release', process.platform === 'win32' ? 'weblabel.exe' : 'weblabel');
+  const productFiles = [executable, ...await files(wasm), ...await files(web)];
   const evidence = [];
-  for (const path of productFiles) {
-    const bytes = await readFile(path);
-    if (bytes.includes(Buffer.from(sentinel))) throw new Error(`Synthetic credential leaked in ${path}`);
-    evidence.push({ path: relative(root, path).replaceAll('\\', '/'), bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+  for (const file of productFiles) {
+    const bytes = await readFile(file);
+    if (bytes.includes(Buffer.from(sentinel))) throw new Error('Synthetic credential leaked in native product artifact');
+    evidence.push({ path: relative(root, file).replaceAll('\\', '/'), bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
   }
-  const maps = productFiles.filter(path => path.endsWith('.map'));
-  if (maps.length < 3) throw new Error('Production sourcemap outputs were not actually generated');
-  const server = createServer(); const listening = Promise.withResolvers(); server.listen(0, '127.0.0.1', listening.resolve); await listening.promise;
-  const port = server.address().port; const closePort = Promise.withResolvers(); server.close(closePort.resolve); await closePort.promise;
-  const temporary = await mkdtemp(join(tmpdir(), 't29-release-')); const base = `http://127.0.0.1:${port}`;
-  const child = spawn(executable, [], { cwd: root, env: { ...env, WEBLABEL_ENV: 'production', WEBLABEL_BIND: `127.0.0.1:${port}`, WEBLABEL_DATABASE_URL: `sqlite:${join(temporary, 'api.sqlite')}`, WEBLABEL_OBJECT_ROOT: join(temporary, 'objects'), WEBLABEL_COOKIE_SECURE: 'false', WEBLABEL_TEST_MANUAL_MODEL_WORKER: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let logs = ''; child.stdout.on('data', chunk => { logs += String(chunk); }); child.stderr.on('data', chunk => { logs += String(chunk); });
-  const closed = Promise.withResolvers(); child.once('close', closed.resolve);
-  try {
-    const deadline = Date.now() + 15_000; let ready = false;
-    while (Date.now() < deadline) {
-      if (child.exitCode !== null) throw new Error(`Release API exited (${child.exitCode})`);
-      try { ready = (await fetch(base + '/health', { signal: AbortSignal.timeout(500) })).status === 204; if (ready) break; } catch { /* Only readiness retry; no model or billed request. */ }
-      const delay = Promise.withResolvers(); setTimeout(delay.resolve, 50); await delay.promise;
-    }
-    if (!ready) throw new Error('Release API failed readiness');
-    const privateTestRoute = await fetch(base + '/internal/test/jobs/drain', { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{}' });
-    if (privateTestRoute.status !== 404) throw new Error('Release binary exposed development test drain route');
-    const unauthenticated = await fetch(base + '/api/projects');
-    if (unauthenticated.status !== 401) throw new Error('Release project route failed session gate');
-    if (logs.includes(sentinel)) throw new Error('Release API leaked credential in actual logs');
-    await writeFile(join(report, 'release-smoke.log'), logs.replace(/^WEBLABEL_BOOTSTRAP_CODE=.*$/gm, 'WEBLABEL_BOOTSTRAP_CODE=[REDACTED_SYNTHETIC_LAUNCH_CODE]'));
-    await writeFile(join(report, 'production-scan.json'), JSON.stringify({ status: 'passed', source_commit: sourceCommit, toolchain, compiler: compilerEnv.RUSTC, scope: 'Actual release Rust API, release WASM, Vite production assets with sourcemaps, default Host build and additionally minified Host sourcemaps. Synthetic credentials only; no live providers.', sentinel_sha256: createHash('sha256').update(sentinel).digest('hex'), commands, files: evidence, sourcemaps: maps.length, smoke: { health: 204, test_route: privateTestRoute.status, unauthenticated_projects: unauthenticated.status, secret_in_logs: false } }, null, 2) + '\n');
-    console.log(`Production scan passed: ${evidence.length} actual product files, ${maps.length} sourcemaps; release HTTP smoke 204/404/401.`);
-  } finally { if (child.exitCode === null && child.signalCode === null) { child.kill(); await closed.promise; } await rm(temporary, { recursive: true, force: true }); }
+  const maps = productFiles.filter(file => file.endsWith('.map'));
+  // Generated wasm-bindgen glue is scanned above but has no Vite sourcemap.
+  // Require each actual compiled Vite chunk's declared map, not an old Host count.
+  for (const file of productFiles.filter(file => file.startsWith(join(web, 'assets') + sep) && file.endsWith('.js'))) {
+    const source = await readFile(file, 'utf8'); const map = /sourceMappingURL=([^\s]+)/.exec(source)?.[1];
+    if (!map || !productFiles.includes(resolve(dirname(file), map))) throw new Error('Production JavaScript sourcemap missing');
+  }
+  const listener = createServer(); await new Promise(resolveListen => listener.listen(0, '127.0.0.1', resolveListen));
+  const port = listener.address().port; await new Promise(resolveClose => listener.close(resolveClose));
+  const data = join(temporary, 'data'); await mkdir(data);
+  const base = `http://127.0.0.1:${port}`;
+  const runtimeEnv = Object.fromEntries(['SystemRoot', 'SystemDrive', 'WINDIR'].filter(key => process.env[key]).map(key => [key, process.env[key]]));
+  Object.assign(runtimeEnv, { PATH: '', TEMP: temporary, TMP: temporary, TMPDIR: temporary, WEBLABEL_ENV: 'production', WEBLABEL_BIND: `127.0.0.1:${port}`, WEBLABEL_DATABASE_URL: `sqlite:${join(data, 'api.sqlite')}`, WEBLABEL_OBJECT_ROOT: join(data, 'objects'), WEBLABEL_COOKIE_SECURE: 'false', WEBLABEL_TEST_MANUAL_MODEL_WORKER: '1', OPENAI_API_KEY: sentinel, ANTHROPIC_API_KEY: sentinel, MIMO_API_KEY: sentinel });
+  child = spawn(executable, ['serve-api'], { cwd: root, env: runtimeEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  let logs = ''; child.stdout.on('data', chunk => { logs += chunk; }); child.stderr.on('data', chunk => { logs += chunk; });
+  closed = new Promise(resolveClose => child.once('close', resolveClose));
+  const deadline = Date.now() + 15000; let ready = false;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error('Native release API exited before readiness');
+    try { ready = (await fetch(base + '/health', { signal: AbortSignal.timeout(500) })).status === 204; if (ready) break; } catch {}
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 50));
+  }
+  if (!ready) throw new Error('Native release API readiness failed');
+  const privateRoute = await fetch(base + '/internal/test/jobs/drain', { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: '{}' });
+  if (privateRoute.status !== 404) throw new Error('Native release exposed development drain route');
+  const denied = await fetch(base + '/api/projects'); if (denied.status !== 401) throw new Error('Native release bypassed session gate');
+  if (logs.includes(sentinel)) throw new Error('Synthetic credential leaked in native release logs');
+  await writeFile(join(report, 'release-smoke.log'), logs.replace(/^WEBLABEL_BOOTSTRAP_CODE=.*$/gm, 'WEBLABEL_BOOTSTRAP_CODE=[REDACTED_SYNTHETIC_LAUNCH_CODE]'));
+  await writeFile(join(report, 'production-scan.json'), JSON.stringify({ status: 'passed', identity, source_commit: identity.source_commit, scope: 'Actual optimized native Rust service, release WASM and Vite production JavaScript with its sourcemaps; no Node/Python product or live provider.', sentinel_sha256: createHash('sha256').update(sentinel).digest('hex'), commands, files: evidence, sourcemaps: maps.length, smoke: { health: 204, test_route: 404, unauthenticated_projects: 401, secret_in_logs: false, product_PATH: 'empty', model_calls: 0 } }, null, 2) + '\n');
+  console.log(JSON.stringify({ status: 'passed', product_files: evidence.length, model_calls: 0, report: relative(root, report) }));
 } finally {
-  for (const output of outputs) await rm(output, { recursive: true, force: true });
+  if (child && child.exitCode === null && child.signalCode === null) { child.kill(); await closed; }
+  await rm(temporary, { recursive: true, force: true });
 }

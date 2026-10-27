@@ -18,12 +18,15 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   const controller = createWorkbenchController(context, { projectId: context.projectId, assetId: context.route.assetId, ontologyId: context.route.ontologyId, taskId: context.initialTaskId ?? null });
   const { state, editorPort: port, taskSession, recovery, signal } = controller;
   if (signal.aborted) return controller.dispose;
+  if (import.meta.env.MODE === 'test') void import('./test-observer').then(module => { if (!signal.aborted) module.observeRoutedWorkbench(controller); });
   const shell = element('main', undefined, 'r07-workbench'); shell.dataset.testid = 'workbench'; shell.lang = 'zh-CN';
   const header = element('header', undefined, 'r07-topbar'), brand = element('strong', 'WL  WebLabel', 'r07-brand'), navigation = element('nav'); navigation.setAttribute('aria-label', '工作区导航');
   function navigate(destination: 'projects' | 'datasets') {
     if (!sessionCurrent(state)) return;
-    const url = new URL(location.href); url.search = '';
-    if (destination === 'datasets') { url.searchParams.set('project_id', context.projectId); url.searchParams.set('dataset_view', '1'); }
+    const url = new URL(location.href);
+    url.searchParams.delete('annotation_revision_id'); url.searchParams.delete('review_queue');
+    if (destination === 'projects') for (const key of ['project_id', 'asset_revision_id', 'ontology_version_id', 'task_id', 'dataset_view']) url.searchParams.delete(key);
+    else { url.searchParams.set('project_id', context.projectId); url.searchParams.set('dataset_view', '1'); }
     context.navigate(url);
   }
   const projects = action('项目', 'nav-projects', signal, () => navigate('projects')), datasets = action('交付', 'nav-datasets', signal, () => navigate('datasets'));
@@ -112,14 +115,15 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   }
   function layout() {
     const active = document.activeElement;
-    assetsDialog.close(); inspectorDialog.close(); state.modal = false;
+    assetsDialog.close(); inspectorDialog.close();
     assetsHome.append(assets); inspectorHome.append(inspector); assetsHome.hidden = compact.matches; inspectorHome.hidden = compact.matches;
     shell.dataset.assetsCollapsed = String(compact.matches); shell.dataset.inspectorCollapsed = String(compact.matches);
+    state.modal = !!shell.querySelector('dialog[open]');
     if (active instanceof Node && assets.contains(active)) assetsLauncher.focus(); else if (active instanceof Node && inspector.contains(active)) (inspectorView === 'ai' ? aiLauncher : attributesLauncher).focus();
     state.notify();
   }
   for (const dialog of [assetsDialog, inspectorDialog]) dialog.element.addEventListener('close', () => {
-    state.modal = assetsDialog.element.open || inspectorDialog.element.open; state.notify();
+    state.modal = !!shell.querySelector('dialog[open]'); state.notify();
   }, { signal });
   compact.addEventListener('change', layout, { signal });
   shell.append(header, contextBar, workspace, saveRoot, transferDetails, reviewDetails, managementDetails, activityDetails, helpRoot, assetsDialog.element, inspectorDialog.element); root.append(shell);
@@ -143,7 +147,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   cleanup.push(context.mountTransfers(transfersRoot, { ...childContext, projectId: state.projectId, getScope: () => ({
     asset: state.loaded?.media ?? state.assets.find(asset => asset.asset_revision_id === state.assetId) ?? null,
     ontology: state.loaded?.ontology ?? state.ontologies.find(item => item.ontology_version_id === state.ontologyId) ?? null,
-    scopeKey: state.scope, canWrite: port.canImport(),
+    scopeKey: state.scope, canWrite: port.canImport(), canExport: port.canExport(),
     canUploadMedia: writableRole(state) && state.catalogReady && !state.modal && !state.preparation && !state.importing && !state.submission && !state.branchBusy,
   }), subscribe: state.subscribe,
     prepareImport: port.prepareImport, releaseImport: scopeKey => { if (state.scope === scopeKey) port.releaseImport(); }, commitImport: async (revision, scopeKey) => { if (state.scope !== scopeKey) throw new Error('导入回执作用域已变化；保留原请求。'); await port.commitImport(revision); }, prepareExport: port.prepareExport, refreshAssets: controller.refreshAssets }));

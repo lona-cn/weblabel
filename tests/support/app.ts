@@ -129,10 +129,10 @@ export async function login_at_origin_for_test(baseUrl: string, credentials: { u
 export function prepare_test_api(): string {
   const configuredBinary = process.env.WEBLABEL_API_BINARY;
   const targetDirectory = resolve(repoRoot, process.env.CARGO_TARGET_DIR ?? 'target');
-  const binary = configuredBinary ?? resolve(targetDirectory, 'debug', process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
+  const binary = configuredBinary ?? resolve(targetDirectory, 'debug', process.platform === 'win32' ? 'weblabel.exe' : 'weblabel');
   if (!configuredBinary && builtDefaultApiBinary !== binary) {
     // Build once per worker; an existing executable may predate the tested sources.
-    execFileSync('cargo', ['build', '--locked', '--manifest-path', resolve(repoRoot, 'Cargo.toml'), '--target-dir', targetDirectory, '-p', 'weblabel-api', '--bin', 'weblabel-api'], {
+    execFileSync('cargo', ['build', '--locked', '--manifest-path', resolve(repoRoot, 'Cargo.toml'), '--target-dir', targetDirectory, '-p', 'weblabel-api', '--bin', 'weblabel'], {
       cwd: repoRoot,
       stdio: 'inherit',
     });
@@ -148,10 +148,10 @@ export async function start_test_app(cookieSecure: 'true' | 'false' = 'false', m
   const root = await mkdtemp(resolve(fixtureParent, 'weblabel-t10-'));
   const port = await freeLoopbackPort();
   const base_url = `http://127.0.0.1:${port}`;
-  const child: ChildProcess = spawn(binary, [], {
+  const child: ChildProcess = spawn(binary, ['serve-api'], {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...Object.fromEntries(['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR'].filter(key => process.env[key]).map(key => [key, process.env[key]])),
       WEBLABEL_BIND: `127.0.0.1:${port}`,
       WEBLABEL_DATABASE_URL: `sqlite:${resolve(root, 'api.sqlite')}`,
       WEBLABEL_OBJECT_ROOT: resolve(root, 'objects'),

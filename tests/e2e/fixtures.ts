@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { expect, test as base, type Page } from '@playwright/test';
@@ -243,11 +242,21 @@ export const test = base.extend<Fixtures>({
   },
   seededProject: async ({ app }, use) => {
     const api = await bootstrap_admin_for_test(app);
-    const demoDir = await mkdtemp(path.join(tmpdir(), 'weblabel-t15-demo-'));
+    const fixtureRoot = path.resolve(import.meta.dirname, '..', '..', 'target', 'e2e-fixtures');
+    await mkdir(fixtureRoot, { recursive: true });
+    const demoDir = await mkdtemp(path.join(fixtureRoot, 'weblabel-t15-demo-'));
     try {
       await use(await seed(app, api, demoDir));
     } finally {
       await rm(demoDir, { recursive: true, force: true });
     }
   },
+});
+
+// Complete owned forwards before Playwright disposes their APIResponse context.
+test.afterEach(async ({ page }) => {
+  if (!page.isClosed()) {
+    await page.goto('about:blank');
+    await page.unrouteAll({ behavior: 'wait' });
+  }
 });

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { options, sha, files, validateEntries, command, requireNode, mainGuard } from './build.mjs';
+import { validateRelease } from './release-manifest.mjs';
 export async function unpackRelease(argv = process.argv.slice(2)) {
   requireNode();
   const args = options(argv, ['--artifact-dir', '--output-dir', '--expected-commit']);
@@ -18,13 +18,12 @@ export async function unpackRelease(argv = process.argv.slice(2)) {
   if (!listing.length || listing.some(item => !/^bundle(?:\/|$)/.test(item) || item.includes(String.fromCharCode(92)) || item.split('/').includes('..'))) throw new Error('archive_path_refused');
   fs.mkdirSync(output, { recursive: true });
   command(['tar', '-xzf', path.join(artifacts, name), '--strip-components=1', '-C', output]);
-  files(output); // Refuse symlinks/nonregular payloads before any JavaScript execution.
+  files(output); // Refuse symlinks/nonregular payloads before any product execution.
   const bundle = JSON.parse(fs.readFileSync(path.join(output, 'bundle.json'), 'utf8'));
-  if (bundle.format !== 'weblabel-portable-bundle' || bundle.version !== 1 || bundle.source_commit !== args['--expected-commit'] || bundle.platform !== process.platform || bundle.arch !== process.arch) throw new Error('bundle_identity_mismatch');
+  if (bundle.format !== 'weblabel-portable-bundle' || bundle.version !== 2 || bundle.product_runtime !== 'native-rust' || bundle.source_commit !== args['--expected-commit'] || bundle.platform !== process.platform || bundle.arch !== process.arch) throw new Error('bundle_identity_mismatch');
   validateEntries(output, bundle.files);
   const expected = new Set(['bundle.json', ...bundle.files.map(item => item.path)]);
   if (files(output).some(name => !expected.has(name))) throw new Error('unmanifested_bundle_file');
-  const { validateRelease } = await import(pathToFileURL(path.join(output, 'scripts/start-local.mjs')).href);
   const { manifest } = validateRelease(path.join(output, 'release'));
   if (manifest.source_commit !== args['--expected-commit']) throw new Error('release_commit_mismatch');
   console.log(JSON.stringify({ archive: name, source_commit: manifest.source_commit, platform: manifest.platform, checks: ['archive-sha256', 'bundle-hashes', 'release-hashes', 'source-commit'] }));

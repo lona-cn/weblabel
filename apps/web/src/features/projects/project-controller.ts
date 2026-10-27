@@ -1,5 +1,5 @@
 import type { OntologyVersion } from '../../../../../packages/contracts/generated/OntologyVersion';
-import { api, type Project } from '../../lib/t15/api';
+import { api, ApiFailure, type Project } from '../../lib/t15/api';
 import { bounded, build, fromVersion, newLabel, type LabelDraft, type OntologyBody } from './ontology-draft';
 import { rejected, message } from './account-dom';
 
@@ -22,7 +22,7 @@ export interface ProjectController {
   newProject(): void;
   dispose(): void;
 }
-/** Shared by the transitional React consumer and the native view; never owns geometry. */
+/** Owns project/ontology form state for native views; never owns geometry. */
 export function createProjectController(onOpen: (project: Project) => void, authorized: () => boolean = () => true, signal?: AbortSignal): ProjectController {
   let state: ProjectSnapshot = { projects: [], listingReady: false, name: '', labels: [{ ...newLabel(), name: '物体' }], guidelines: '', baseline: null, selected: null, versions: [], busy: false, error: null, notice: null, confirmed: null, unknown: null, invalidLabels: {}, creationDraft: null };
   let alive = true, flight = false, publicationAck: string | null = null;
@@ -46,14 +46,25 @@ export function createProjectController(onOpen: (project: Project) => void, auth
     try { await action(); } catch (reason) { patch({ error: message(reason) }); }
     finally { flight = false; patch({ busy: false }); }
   }
+  async function readProjects() {
+    try {
+      const result = await api.projects(reads.signal); if (!current()) return null;
+      patch({ projects: result.items, listingReady: result.next_cursor === null }); return result;
+    } catch (reason) {
+      patch({ projects: [], listingReady: false });
+      if (reason instanceof ApiFailure && reason.status === 403) throw new ApiFailure(reason.status, reason.code, '无权读取项目列表。缓存项目已隐藏；请联系有权管理员核对，当前不能创建或进入项目。', reason.details, reason.request_id);
+      throw reason;
+    }
+  }
   async function listing() {
     await run(async () => {
-      const result = await api.projects(reads.signal); if (!current()) return;
-      patch({ projects: result.items, listingReady: result.next_cursor === null, error: result.next_cursor === null ? null : '项目列表不完整，不能确定创建前的基线。' });
+      patch({ projects: [], listingReady: false, error: null });
+      const result = await readProjects(); if (!result) return;
+      patch({ error: result.next_cursor === null ? null : '项目列表不完整，不能确定创建前的基线。' });
     });
   }
   async function configure(project: Project) {
-    if (state.unknown === 'ontology' || state.confirmed) return;
+    if (!state.projects.some(item => item.project_id === project.project_id) || state.unknown === 'ontology' || state.confirmed) return;
     await run(async () => {
       const result = await api.ontologies(project.project_id, reads.signal); if (!current()) return;
       patch({ selected: project, baseline: result.items[0] ?? null, versions: result.items, name: project.name, labels: result.items[0] ? fromVersion(result.items[0]) : [newLabel()], guidelines: result.items[0]?.guidelines_markdown ?? '', unknown: null, invalidLabels: {}, error: null, notice: null });
@@ -90,8 +101,8 @@ export function createProjectController(onOpen: (project: Project) => void, auth
         const versions = await api.ontologies(project.project_id, reads.signal); if (!current()) return;
         if (!versions.items.some(v => v.ontology_version_id === publicationAck)) throw new Error('尚未读取到已确认的固定版本');
         patch({ versions: versions.items });
-        const projects = await api.projects(reads.signal); if (!current()) return;
-        patch({ projects: projects.items, unknown: null });
+        if (!await readProjects()) return;
+        patch({ unknown: null });
         if (!state.selected) { patch({ confirmed: null }); onOpen(project); }
       } catch (reason) {
         patch({ error: publicationAck ? '规范发布已确认，但后续列表刷新失败。请只读核对；不会再次发布。输入已保留。' : !rejected(reason) ? '写入结果未知，请只读核对；不会自动重发。输入已保留。' : '服务端拒绝操作，输入已保留。已创建的项目只补规范，不会重复创建。' });
@@ -102,7 +113,7 @@ export function createProjectController(onOpen: (project: Project) => void, auth
     if ((!state.unknown && !state.creationDraft) || !attempt) return;
     await run(async () => {
       if (state.unknown === 'project' || (state.creationDraft && state.unknown !== 'ontology')) {
-        const result = await api.projects(reads.signal); if (!current()) return; patch({ projects: result.items });
+        const result = await readProjects(); if (!result) return;
         if (result.next_cursor !== null) throw new Error('项目列表不完整，创建结果仍未知。');
         const source = state.creationDraft ?? attempt!;
         const candidates = result.items.filter(p => !source.before.includes(p.project_id) && p.name === source.name.trim() && p.description === '' && !p.allow_self_review && p.role === 'admin');
@@ -124,8 +135,9 @@ export function createProjectController(onOpen: (project: Project) => void, auth
     edit(next: Partial<Pick<ProjectSnapshot, 'name' | 'labels' | 'guidelines'>>) { if (!frozen()) patch(next); },
     copyVersion(version: OntologyVersion) { if (!flight && !state.unknown) patch({ baseline: version, labels: fromVersion(version), guidelines: version.guidelines_markdown, invalidLabels: {} }); },
     newProject() {
-      if (flight || state.unknown === 'ontology' || state.confirmed) return;
+      if (flight || !state.listingReady || state.unknown === 'ontology' || state.confirmed) return;
       const draft = state.creationDraft;
+      if (!state.selected && !draft) return;
       patch({ selected: null, baseline: null, name: draft?.name ?? '', labels: draft?.labels ?? [{ ...newLabel(), name: '物体' }], guidelines: draft?.guidelines ?? '', versions: [], unknown: draft ? 'project' : null, invalidLabels: {} });
     },
     dispose,

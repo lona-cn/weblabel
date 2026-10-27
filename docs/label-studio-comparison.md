@@ -1,7 +1,5 @@
 # WebLabel 与 Label Studio：功能及使用体验对比
 
-**历史证据边界：** 本页的私有归档路径仅记录原始验收来源，不随公开仓库分发，也不代表在当前公开提交重新验证。
-
 本文面向产品负责人、技术选型者和维护者，归档下表明确版本基线的分析，不随主分支自动更新、不改变发布关卡。2026-10-13 起的五批体验增量已结束，当前实现与边界见[能力说明](current-capabilities.md)，当时的范围和验收依据见[体验计划归档](ux-improvement-plan.md)；本页历史问题与观察保留原时态。
 
 ## 1. 结论
@@ -265,13 +263,13 @@ SDK、Webhooks、存储连接、安装器和升级体验值得考虑。Mask、�
 
 ### 本轮本地证据
 
-以下链接指向项目内本轮证据；构建缓存可能未纳入版本控制，其他 checkout 或发布站点不保证包含它们。此文已保留关键观察与边界，即使缓存缺失，也不应将其当作新的实时验收。
+以下是当时项目内未版本化缓存的原始路径，不是本副本可访问的下载链接；当前checkout不包含这些临时文件。本文保留的关键观察与边界仍属固定旧版历史比较，不作为当前原生发行重验。不会为修复链接重造历史证据。
 
-- 版本、能力与优先级核对（私有归档：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/comparison-basis.json`）
-- HTTP 关键步骤（私有归档：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/http-milestones.json`）
-- 浏览器观察与抽查（私有归档：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/observations.json`）
-- WebLabel 工作台截图（私有归档：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/weblabel-workbench.webp`）
-- Label Studio Playground 截图（私有归档：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/label-studio-playground.webp`）
-- 运行资源清理记录（私有归档：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/cleanup.json`）
+- 版本、能力与优先级核对：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/comparison-basis.json`
+- HTTP关键步骤：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/http-milestones.json`
+- 浏览器观察与抽查：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/observations.json`
+- WebLabel工作台截图：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/weblabel-workbench.webp`
+- Label Studio Playground截图：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/label-studio-playground.webp`
+- 运行资源清理记录：`target/build-cache/label-studio-comparison/3d5df9e6-c387-4b8a-b6cd-bd78e8202627/cleanup.json`
 
 本轮使用合成图片及公开示例，未登录外部账号、调用付费模型、下载大权重或上传业务图片。临时服务、浏览器配置、解包目录及合成数据已清理。分析未修改业务代码；本文归档也不宣称修复了任何上述问题。

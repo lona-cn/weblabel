@@ -1,0 +1,11 @@
+#root { min-height: 100dvh; }
+.route-notice { padding: 32px; max-width: 960px; margin-inline: auto; }
+.r07-topbar, .accounts-heading { background: var(--surface-0); }
+.r07-topbar nav, .native-delivery nav { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.r07-topbar [aria-current='page'] { color: var(--accent); }
+.dense-harness { padding: 20px; }
+.dense-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; }
+.dense-workspace .r07-canvas-region { height: 640px; }
+@media (max-width: 800px) {
+  .dense-workspace { grid-template-columns: minmax(0, 1fr); }
+}

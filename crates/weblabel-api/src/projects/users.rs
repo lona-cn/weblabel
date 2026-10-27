@@ -1,10 +1,17 @@
-use axum::{extract::{State, Query}, http::StatusCode, Extension, Json};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    Extension, Json,
+};
 use serde_json::{json, Value};
 use sqlx::Row;
 
 use crate::auth::{error, password, AuthState, Principal};
 #[derive(serde::Deserialize)]
-pub(super) struct UserQuery { limit: Option<usize>, cursor: Option<String> }
+pub(super) struct UserQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
 
 pub(super) async fn list_users(
     State(state): State<AuthState>,
@@ -19,7 +26,13 @@ pub(super) async fn list_users(
         );
     }
     let limit = query.limit.unwrap_or(100);
-    if !(1..=100).contains(&limit) { return error(StatusCode::BAD_REQUEST, "INVALID_LIMIT", "limit must be 1–100"); }
+    if !(1..=100).contains(&limit) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_LIMIT",
+            "limit must be 1–100",
+        );
+    }
     match sqlx::query("SELECT user_id,username,created_at FROM users WHERE (? IS NULL OR user_id>?) ORDER BY user_id LIMIT ?").bind(&query.cursor).bind(&query.cursor).bind((limit + 1) as i64).fetch_all(&state.pool).await {
         Ok(rows) => {
             let next_cursor = if rows.len() > limit { rows[limit - 1].get::<String,_>("user_id").into() } else { None };

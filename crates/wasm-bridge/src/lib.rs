@@ -17,11 +17,15 @@ pub use facade::wasm::{create_editor, project_relabel, EditorFacade};
 /// Read-only authorization hashing; no editor, canvas, DOM, or GPU is created.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub fn host_execution_configuration_hash(
-    host_json: &str,
+pub fn runtime_execution_configuration_hash(
+    runtime_json: &str,
     provider_id: &str,
     profile_id: &str,
 ) -> Result<String, wasm_bindgen::JsValue> {
-    annotation_domain::hash::host_execution_configuration_hash(host_json, provider_id, profile_id)
-        .map_err(|error| wasm_bindgen::JsValue::from_str(error.code))
+    annotation_domain::hash::runtime_execution_configuration_hash(
+        runtime_json,
+        provider_id,
+        profile_id,
+    )
+    .map_err(|error| wasm_bindgen::JsValue::from_str(error.code))
 }

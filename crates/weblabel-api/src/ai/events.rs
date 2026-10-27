@@ -121,7 +121,10 @@ pub(crate) async fn terminal_data(
     code: Option<&str>,
     extra: Option<Value>,
 ) -> Result<Option<Value>, sqlx::Error> {
-    if !matches!(record.provider_id.as_str(), "openai_api" | "anthropic_api" | "mimo_api") {
+    if !matches!(
+        record.provider_id.as_str(),
+        "openai_api" | "anthropic_api" | "mimo_api"
+    ) {
         return Ok(extra);
     }
     let mut data = match extra {
@@ -135,9 +138,16 @@ pub(crate) async fn terminal_data(
     if code == Some("event_checkpoint_failed")
         || data.get("dropped").and_then(Value::as_str) == Some("observation_checkpoint_unconfirmed")
     {
-        for key in ["receipts", "receipt", "usage", "cost_display"] { data.remove(key); }
-        data.insert("dropped".to_owned(), Value::String("observation_checkpoint_unconfirmed".to_owned()));
-        if let Some(code) = code { data.insert("error_code".to_owned(), Value::String(code.to_owned())); }
+        for key in ["receipts", "receipt", "usage", "cost_display"] {
+            data.remove(key);
+        }
+        data.insert(
+            "dropped".to_owned(),
+            Value::String("observation_checkpoint_unconfirmed".to_owned()),
+        );
+        if let Some(code) = code {
+            data.insert("error_code".to_owned(), Value::String(code.to_owned()));
+        }
         return Ok(Some(Value::Object(data)));
     }
     let observed: Option<String> = sqlx::query_scalar(
@@ -148,16 +158,25 @@ pub(crate) async fn terminal_data(
     // the controlled empty envelope, without overwriting terminal evidence or
     // turning an explicitly dropped checkpoint into a false zero-attempt claim.
     if observed.is_none() {
-        data.entry("receipts").or_insert_with(|| Value::Array(Vec::new()));
+        data.entry("receipts")
+            .or_insert_with(|| Value::Array(Vec::new()));
         data.entry("receipt").or_insert(Value::Null);
-        data.entry("usage").or_insert_with(|| serde_json::json!({
-            "input_tokens": null, "output_tokens": null, "cost_usd": null,
-        }));
-        data.entry("cost_display").or_insert_with(|| Value::String("unknown".to_owned()));
+        data.entry("usage").or_insert_with(|| {
+            serde_json::json!({
+                "input_tokens": null, "output_tokens": null, "cost_usd": null,
+            })
+        });
+        data.entry("cost_display")
+            .or_insert_with(|| Value::String("unknown".to_owned()));
     }
     if let Some(raw) = observed.filter(|raw| raw.len() <= MAX_EVENT_DATA_BYTES) {
         if let Ok(Value::Object(mut observation)) = serde_json::from_str(&raw) {
-            observation.retain(|key, _| matches!(key.as_str(), "receipts" | "receipt" | "usage" | "cost_display" | "dropped"));
+            observation.retain(|key, _| {
+                matches!(
+                    key.as_str(),
+                    "receipts" | "receipt" | "usage" | "cost_display" | "dropped"
+                )
+            });
             // An observed cost classification must not be replaced by the
             // generic cancellation row's unknown classification.
             data.extend(observation);
@@ -166,9 +185,12 @@ pub(crate) async fn terminal_data(
     if let Some(code) = code {
         data.insert("error_code".to_owned(), Value::String(code.to_owned()));
     }
-    Ok(if data.is_empty() { None } else { Some(Value::Object(data)) })
+    Ok(if data.is_empty() {
+        None
+    } else {
+        Some(Value::Object(data))
+    })
 }
-
 
 pub(crate) const fn event_type_str(event_type: RunEventType) -> &'static str {
     match event_type {

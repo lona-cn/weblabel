@@ -1,4 +1,4 @@
-**/target/
+/target/
 node_modules/
 .pnpm-store/
 .env
@@ -13,38 +13,28 @@ __pycache__/
 .pytest_cache/
 /services/detector/.venv/
 *.egg-info/
-# Owned disposable Chromium profiles and private runtime data.
+# Owned disposable Chromium profiles; raw measurements/screenshots remain tracked.
 /reports/T31/runs/*/runtime/
 /reports/T31/pixels/*/runtime/
 
-# Public history: generated auth-bearing evidence must stay local.
-/reports/**
-!/reports/**/
-!/reports/**/*.mjs
-!/reports/**/*.js
-!/reports/**/*.ts
-!/reports/**/*.mts
-!/reports/**/*.py
-!/reports/**/*.ps1
-!/reports/**/*.rs
-!/reports/index.md
-!/reports/publication/**
-
-# Disposable build output, model weights and workstation-local configuration.
+# Local build output, model weights and disposable browser run markers.
 /apps/web/dist/
+/crates/*/target/
 /services/detector/weights/
-/.omp/config.yml
-# Never include raw browser network traces, even under source-code exceptions.
-/reports/**/trace/
-/reports/**/trace.zip
 /reports/**/.last-run.json
-# Historical copied worktrees and their generated caches are not release source.
-/reports/**/cleanup-preservation/
-# Committed historical helper sources remain eligible; outputs stay private.
-!/reports/**/*.cjs
-# Generated runtime/build caches never qualify as committed historical tools.
-/reports/**/runtime/
-/reports/**/vite-cache/
-/reports/**/playwright-transform-cache/
-/reports/**/node-compile-cache/
-/reports/**/target/
+# Workstation-local agent configuration; keep it out of source history.
+/.omp/config.yml
+
+# Raw browser network traces may contain session cookies; preserve locally only.
+/reports/T15/defect-repair/2026-10-11T13-21-39-234Z/t15-export-investigation/trace/
+# Disposable export downloads and model-run working directories.
+/reports/T08/commercial-core/c-final-downloads/*
+!/reports/T08/commercial-core/c-final-downloads/weblabel-native-draft.json
+/reports/T08/commercial-core/downloads/weblabel-*.zip
+# Native draft JSON remains tracked as historical rescue evidence.
+/reports/T30/runtime/export-*.zip
+/reports/T30/runtime/model-*/
+/reports/T32/interactive-closure/engineering-0lkUJ2/
+/reports/T35/release-audit-20261011-18172d5/gpu/browser/*/trace.zip
+/reports/T35/release-audit-20261011-18172d5/gpu-debug/browser/*/trace.zip
+/reports/T35/release-audit-20261011-18172d5/downloads/

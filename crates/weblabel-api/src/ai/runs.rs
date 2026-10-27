@@ -1102,9 +1102,18 @@ pub async fn cancel(
         cancellation_data["dropped"] = json!("observation_checkpoint_unconfirmed");
     }
     let terminal_data = events::terminal_data(
-        tx.connection(), &record, Some("RUN_CANCELLED"),
+        tx.connection(),
+        &record,
+        Some("RUN_CANCELLED"),
         Some(cancellation_data),
-    ).await.map_err(|_| storage_failure("RUN_CANCEL_FAILED", "Could not retain the provider observation"))?;
+    )
+    .await
+    .map_err(|_| {
+        storage_failure(
+            "RUN_CANCEL_FAILED",
+            "Could not retain the provider observation",
+        )
+    })?;
     events::record(
         tx.connection(),
         run_id,

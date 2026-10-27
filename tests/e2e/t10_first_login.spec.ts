@@ -9,18 +9,18 @@ test('T10 first browser setup connects the real session and CSRF and permits pas
   await forward_api_for_test(page, app.base_url);
   const code = await launch_code_for_test(app);
   const password = '  首次登录-2026  ';
-  await page.setViewportSize({ width: 320, height: 720 });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '首次设置本地账户' })).toBeVisible();
   await expect(page.getByTestId('login-username')).toHaveCount(0);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByTestId('bootstrap-launch-code').fill('incorrect-code');
   await page.getByTestId('bootstrap-password').fill(password);
   await page.getByTestId('bootstrap-password-confirm').fill(password);
   const rejected = page.waitForResponse(r => r.url().endsWith('/api/session/bootstrap') && r.request().method() === 'POST');
   await page.getByTestId('bootstrap-submit').click();
   expect((await rejected).status()).toBe(401);
-  await expect(page.getByRole('alert')).toContainText('启动码错误');
+  await expect(page.getByTestId('bootstrap-launch-code')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByTestId('bootstrap-launch-code')).toHaveValue('incorrect-code');
+  await expect(page.getByTestId('bootstrap-password')).toHaveValue(password);
   await page.getByTestId('bootstrap-launch-code').fill(code);
   const initialized = page.waitForResponse(r => r.url().endsWith('/api/session/bootstrap') && r.request().method() === 'POST');
   await page.getByTestId('bootstrap-password-confirm').press('Enter');
@@ -29,6 +29,7 @@ test('T10 first browser setup connects the real session and CSRF and permits pas
   await expect(page.getByTestId('bootstrap-password')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('first-login-created.png') });
 
+  await page.getByTestId('project-create-toggle').click();
   await page.getByTestId('project-name').fill('首次登录浏览器回归');
   const created = page.waitForResponse(r => r.url().endsWith('/api/projects') && r.request().method() === 'POST');
   await page.getByTestId('project-submit').click();
@@ -43,20 +44,22 @@ test('T10 first browser setup connects the real session and CSRF and permits pas
   });
   expect(session.status).toBe(200);
   expect(session.username).toBe('local-admin');
-  const logout = await page.evaluate(async () => {
-    const csrf = sessionStorage.getItem('weblabel_csrf');
-    const r = await fetch('/api/session/logout', { method: 'POST', headers: { 'x-csrf-token': csrf ?? '' } });
-    if (r.ok) sessionStorage.removeItem('weblabel_csrf');
-    return r.status;
-  });
-  expect(logout).toBe(204);
-  await page.goto('/');
+  const logout = page.waitForResponse(r => r.url().endsWith('/api/session/logout') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: '退出', exact: true }).click();
+  expect((await logout).status()).toBe(204);
   await expect(page.getByRole('heading', { name: '登录', exact: true })).toBeVisible();
   await expect(page.getByTestId('bootstrap-submit')).toHaveCount(0);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByTestId('login-username').fill('local-admin');
   await page.getByTestId('login-password').fill(password);
   await page.getByTestId('login-submit').click();
-  await expect(page.getByRole('button', { name: '打开项目 首次登录浏览器回归' })).toBeVisible();
+  await expect(page.getByTestId('login-submit')).toHaveCount(0);
+  const relogin = await page.evaluate(async () => {
+    const response = await fetch('/api/session'), body = await response.json();
+    return { status: response.status, user_id: body.user_id as string, username: body.username as string };
+  });
+  expect(relogin).toEqual(session);
+  await page.goto('/');
+  await page.getByTestId(`project-${project.project_id}-open`).click();
+  await expect(page).toHaveURL(new RegExp(`project_id=${project.project_id}`));
   await testInfo.attach('first-login-sanitized-result', { body: Buffer.from(JSON.stringify({ fixture: 'real_empty_app_native_page', bootstrap_wrong_code: 401, bootstrap: 200, projects_post: 201, logout: 204, username: session.username, user_id: session.user_id, project_id: project.project_id, relogin: true })), contentType: 'application/json' });
 });

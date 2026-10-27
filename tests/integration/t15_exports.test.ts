@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, beforeEach, expect, it } from 'vitest';
-import { bootstrap_admin_for_test, start_test_app, type ApiClient, type TestApp } from '../support/app';
+import { expect, it } from 'vitest';
+import { bootstrap_admin_for_test, start_test_app, type ApiClient } from '../support/app';
 
 type JsonObject = Record<string, unknown>;
 function object(value: unknown, label: string): JsonObject {
@@ -29,7 +29,8 @@ const ontology = {
 
 async function uploadAsImage(appUrl: string, credentials: { cookie: string; csrf: string }, projectId: string, bytes: Uint8Array): Promise<void> {
   const form = new FormData();
-  form.append('images', new Blob([bytes], { type: 'image/jpeg' }), 't15-export-fixture.jpg');
+  if (!(bytes.buffer instanceof ArrayBuffer)) throw new TypeError('Image upload requires an ArrayBuffer-backed view');
+  form.append('images', new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'image/jpeg' }), 't15-export-fixture.jpg');
   const response = await fetch(new URL(`/api/projects/${projectId}/assets`, appUrl), {
     method: 'POST',
     headers: { cookie: credentials.cookie, 'x-csrf-token': credentials.csrf, origin: appUrl, 'idempotency-key': crypto.randomUUID() },
@@ -55,29 +56,10 @@ async function loginUploader(admin: ApiClient, appUrl: string, projectId: string
   return { cookie, csrf: stringField(await response.json(), 'csrf_token', 'login') };
 }
 
-let app: TestApp | undefined;
-let scratch: string | undefined;
-let fixture: { app: TestApp; scratch: string; admin: ApiClient; credentials: { cookie: string; csrf: string }; ontologyId: string; assetId: string };
-
-async function cleanupFixture(): Promise<void> {
-  const finishedApp = app;
-  const finishedScratch = scratch;
-  app = undefined;
-  scratch = undefined;
+it('saves canonical xyxy and attributes, then reads real COCO download bytes independently', async () => {
+  const app = await start_test_app();
+  const scratch = await mkdtemp(resolve(tmpdir(), 'weblabel-t15-export-'));
   try {
-    if (finishedScratch) await rm(finishedScratch, { recursive: true, force: true });
-  } finally {
-    await finishedApp?.stop();
-  }
-}
-
-beforeEach(async () => {
-  try {
-    app = await start_test_app();
-    scratch = await mkdtemp(resolve(tmpdir(), 'weblabel-t15-export-'));
-    // Fresh authentication, project/ontology and imported media are preconditions.
-    // Annotation reads, geometry/attribute saves and real export consumption
-    // remain within the original five-second behavior case.
     const admin = await bootstrap_admin_for_test(app);
     const project = await admin.request<JsonObject>('POST', '/api/projects', {
       name: `T15 export ${crypto.randomUUID()}`, description: 'Real API export parser integration', allow_self_review: true,
@@ -100,17 +82,6 @@ beforeEach(async () => {
     const assetItems = object(assets.json, 'assets').items;
     if (!Array.isArray(assetItems) || assetItems.length !== 1) throw new Error('Expected exactly one imported API media asset');
     const assetId = stringField(assetItems[0], 'asset_revision_id', 'asset');
-    fixture = { app, scratch, admin, credentials, ontologyId, assetId };
-  } catch (error) {
-    await cleanupFixture();
-    throw error;
-  }
-});
-afterEach(cleanupFixture);
-
-it('saves canonical xyxy and attributes, then reads real COCO download bytes independently', async () => {
-  const { app, scratch, admin, credentials, ontologyId, assetId } = fixture;
-  try {
     const head = await admin.request<JsonObject>('GET', `/api/assets/${assetId}/annotation?ontology_version_id=${ontologyId}`);
     expect(head.status).toBe(200);
     const headRevision = stringField(head.json, 'annotation_revision_id', 'annotation');
@@ -157,6 +128,7 @@ it('saves canonical xyxy and attributes, then reads real COCO download bytes ind
     expect(independentlyRead.height).toBe(height);
     expect(independentlyRead.objects).toEqual([{ label_id: 'label_person', ...box }]);
   } finally {
-    await cleanupFixture();
+    await rm(scratch, { recursive: true, force: true });
+    await app.stop();
   }
 });

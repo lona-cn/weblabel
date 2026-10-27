@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { root, requireNode } from '../../scripts/build.mjs';
-import { validateRelease } from '../../scripts/start-local.mjs';
+import { validateRelease } from '../../scripts/release-manifest.mjs';
 import { ownedReportRoot, projectOutputPath } from './report-paths.mjs';
 const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const json = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -21,7 +21,7 @@ async function pollUntil(check, message, timeout = 30000, signal) {
   throw new Error(message);
 }
 async function reservePorts() {
-  const servers = [createServer(), createServer()];
+  const servers = [createServer()];
   try {
     for (const server of servers) await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     return { ports: servers.map(server => server.address().port), reserved_at: now(), release: async () => {
@@ -93,7 +93,7 @@ async function browserSmoke(base, code, report, env, evidence, signal) {
     await page.getByTestId('login-username').fill('local-admin'); await page.getByTestId('login-password').fill(password); await page.getByTestId('login-submit').click();
     await playwright.expect(page.getByTestId('login-submit')).toHaveCount(0);
     await page.goto(url);
-    await playwright.expect(page.getByTestId('project-name')).toHaveValue(project.name);
+    await playwright.expect(page.locator('.r07-project-name')).toHaveText(project.name);
     await page.getByTestId('asset-item-' + asset.asset_revision_id).click();
     const gpu = page.getByTestId('gpu-status');
     try { await playwright.expect(gpu).toHaveAttribute('data-device-state', 'ready', { timeout: 20000 }); }
@@ -116,6 +116,11 @@ async function browserSmoke(base, code, report, env, evidence, signal) {
     await page.reload(); await playwright.expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(1);
     const after = await request('GET', route); assert.equal(after.annotation_revision_id, before.annotation_revision_id); assert.deepEqual(after.document, before.document);
     evidence.browser.saved_revision = before; evidence.browser.reloaded_revision = after;
+    await playwright.expect(gpu).toHaveAttribute('data-device-state', 'ready', { timeout: 20000 });
+    await playwright.expect(gpu).toHaveAttribute('data-actual-backend', 'webgpu');
+    await playwright.expect(gpu).toHaveAttribute('data-adapter-kind', 'hardware');
+    evidence.browser.reloaded_hardware = await gpu.evaluate(el => ({ text: el.textContent, attributes: Object.fromEntries([...el.attributes].map(a => [a.name, a.value])) }));
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.screenshot({ path: path.join(report, 'editor.png'), fullPage: true }); evidence.browser.completed_at = now();
   } catch (error) {
     if (page && !page.isClosed()) { try { await page.screenshot({ path: path.join(report, 'editor-failure.png'), fullPage: true }); } catch (captureError) { evidence.failure_screenshot_error = captureError.message; } }
@@ -130,111 +135,81 @@ async function browserSmoke(base, code, report, env, evidence, signal) {
 }
 export async function startupSmoke(release, { reportDir, temporary, env, identity, signal }) {
   const until = (check, message, timeout) => pollUntil(check, message, timeout, signal);
-  let cleaning = false;
   if (!reportDir || !temporary || !env || !identity) throw new Error('STARTUP_OPTIONS_REQUIRED');
   const report = ownedReportRoot(reportDir), temporaryRoot = projectOutputPath(temporary);
   fs.mkdirSync(temporaryRoot, { recursive: true });
-  const runtime = fs.mkdtempSync(path.join(temporaryRoot, 'startup-')); const data = path.join(runtime, 'runtime-data'); fs.mkdirSync(data);
+  const runtime = fs.mkdtempSync(path.join(temporaryRoot, 'startup-')), data = path.join(runtime, 'runtime-data'); fs.mkdirSync(data);
   const logPath = path.join(report, 'startup.log'), evidencePath = path.join(report, 'startup-evidence.json');
-  const evidence = { schema_version: 1, evidence_kind: 'actual_release_startup_physical_ctrl_c', identity, helper_sha256: hash(fileURLToPath(import.meta.url)), started_at: now(), model_calls: 0, requests: [], cleanup: {}, artifacts: [] };
-  const row = { name: 'release-startup-smoke', argv: [], cwd: root, exit_code: null, signal: null, runner_exit_code: 2, expected_exit_code: 130, log_path: path.relative(root, logPath).replaceAll('\\', '/'), tests: null, parse_status: 'not_run', status: 'blocked', blockers: [], evidence: path.relative(root, evidencePath).replaceAll('\\', '/') };
-  let terminal, terminated, wrapperResult, output = '', launcher, api, ps, readyFile, physicalFile, ports;
-    const cim = async pid => {
-    const result = await command([ps, '-NoProfile', '-Command', '$p=Get-CimInstance Win32_Process -Filter "ProcessId=' + pid + '"; if($p){$p|Select-Object ProcessId,ParentProcessId,ExecutablePath,@{n=\'CreationDate\';e={$_.CreationDate.ToUniversalTime().ToString(\'o\')}}|ConvertTo-Json -Compress}'], env, cleaning ? undefined : signal);
-    if (result.code !== 0) throw new Error('CIM process observation failed: ' + result.stderr);
+  const readyFile = path.join(runtime, 'ready.txt'), physicalFile = path.join(report, 'startup-physical.json');
+  const evidence = { schema_version: 1, evidence_kind: 'actual_native_release_startup_physical_ctrl_c', identity, helper_sha256: hash(fileURLToPath(import.meta.url)), started_at: now(), model_calls: 0, requests: [], cleanup: {}, artifacts: [] };
+  const row = { name: 'release-startup-smoke', argv: [], cwd: root, exit_code: null, signal: null, runner_exit_code: 2, expected_exit_code: 0, log_path: path.relative(root, logPath).replaceAll('\\', '/'), tests: null, parse_status: 'not_run', status: 'blocked', blockers: [], evidence: path.relative(root, evidencePath).replaceAll('\\', '/') };
+  let terminal, terminated, wrapperResult, output = '', native, ps, port;
+  const cim = async pid => {
+    const result = await command([ps, '-NoProfile', '-Command', '$p=Get-CimInstance Win32_Process -Filter "ProcessId=' + pid + '"; if($p){$p|Select-Object ProcessId,ParentProcessId,ExecutablePath,@{n=\'CreationDate\';e={$_.CreationDate.ToUniversalTime().ToString(\'o\')}}|ConvertTo-Json -Compress}'], env);
+    if (result.code !== 0) throw new Error('Owned process observation failed: ' + result.stderr);
     return result.stdout.trim() ? JSON.parse(result.stdout) : null;
   };
   try {
     signal?.throwIfAborted();
-    if (process.platform !== 'win32') throw blocked('Windows physical ConPTY startup fixture required; no non-Windows Ctrl+C substitute');
+    if (process.platform !== 'win32') throw blocked('Windows physical ConPTY startup fixture required; no synthetic Ctrl+C substitute');
     requireNode(); const validated = validateRelease(release);
-    evidence.release = { path: release, source_commit: validated.manifest.source_commit, manifest_sha256: hash(path.join(release, 'release.json')), api_sha256: hash(validated.api), api_path: validated.api };
-    if (Object.keys(env).some(key => /^(WEBLABEL_HOST_|OPENAI_|ANTHROPIC_|MIMO_)/i.test(key))) throw new Error('Startup requires model-free complete whitelist environment');
+    evidence.release = { path: release, source_commit: validated.manifest.source_commit, manifest_sha256: hash(path.join(release, 'release.json')), executable_sha256: hash(validated.executable), executable_path: validated.executable };
+    if (Object.keys(env).some(key => /^(WEBLABEL_RUNTIME_|OPENAI_|ANTHROPIC_|MIMO_)/i.test(key))) throw new Error('Startup requires an explicitly model-free environment');
     ps = path.join(env.SystemRoot ?? env.SYSTEMROOT ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
     const fixture = path.join(root, 'tests/fixtures/active-host-shutdown/conpty.ps1');
     if (!fs.existsSync(ps) || !fs.existsSync(fixture)) throw blocked('Installed PowerShell/physical ConPTY fixture missing');
     evidence.fixture_sha256 = hash(fixture);
-    const { prepareTerminalAssembly } = await import('./active-host-shutdown.mjs');
-    const preparedTerminal = await prepareTerminalAssembly({ reportDir: report });
-    evidence.terminal_preparation = preparedTerminal;
-    assert.equal(hash(preparedTerminal.assembly_path), preparedTerminal.sha256, 'Prepared terminal assembly changed');
-    const reservation = await reservePorts(); ports = reservation.ports; assert.notEqual(ports[0], ports[1]);
-    evidence.ports = { web: ports[0], api: ports[1], reserved_at: reservation.reserved_at };
-    row.argv = [process.execPath, path.join(root, 'scripts/start-local.mjs'), '--build-dir', release, '--data-dir', data, '--port', String(ports[0]), '--api-port', String(ports[1])];
-    readyFile = path.join(runtime, 'ready.txt'); physicalFile = path.join(report, 'startup-physical.json');
-    const argv = [ps, '-NoProfile', '-File', fixture, '-AssemblyPath', preparedTerminal.assembly_path, '-CommandLine', row.argv.map(quote).join(' '), '-ReadyFile', readyFile, '-ResultFile', physicalFile, '-Keyboard', '-Startup']; evidence.pty_argv = argv;
-    await reservation.release(); evidence.ports.handed_off_at = now();
-    signal?.throwIfAborted();
+    const reservation = await reservePorts(); [port] = reservation.ports;
+    evidence.ports = { web: port, reserved_at: reservation.reserved_at };
+    row.argv = [validated.executable, 'serve', '--build-dir', release, '--data-dir', data, '--port', String(port)];
+    const argv = [ps, '-NoProfile', '-File', fixture, '-CommandLine', row.argv.map(quote).join(' '), '-ReadyFile', readyFile, '-ResultFile', physicalFile, '-Keyboard', '-Startup']; evidence.pty_argv = argv;
+    await reservation.release(); evidence.ports.handed_off_at = now(); signal?.throwIfAborted();
     terminal = spawn(argv[0], argv.slice(1), { cwd: root, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     terminated = new Promise(resolve => { terminal.once('error', error => resolve({ code: null, signal: null, error: error.message })); terminal.once('close', (code, signal) => resolve({ code, signal })); });
-    terminated.then(result => { wrapperResult = result; });
+    void terminated.then(result => { wrapperResult = result; });
     terminal.stdout.on('data', chunk => { output += chunk; }); terminal.stderr.on('data', chunk => { output += chunk; });
     const plain = () => output.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
     const live = () => { if (wrapperResult) throw new Error('ConPTY exited before readiness: ' + JSON.stringify(wrapperResult)); };
-    const pid = await until(() => { live(); return Number(/T33_PTY_PID=(\d+)/.exec(plain())?.[1]) || null; }, 'Owned PTY launcher PID deadline');
-    launcher = await cim(pid); assert.ok(launcher); assert.equal(path.resolve(launcher.ExecutablePath).toLowerCase(), path.resolve(process.execPath).toLowerCase());
-    await until(() => { live(); return fs.existsSync(path.join(data, 'runtime.lock')); }, 'Runtime lock deadline');
-    const lock = JSON.parse(fs.readFileSync(path.join(data, 'runtime.lock'))); assert.equal(lock.pid, pid); assert.equal(lock.port, ports[0]); assert.equal(lock.apiPort, ports[1]);
-    api = await until(async () => {
-      live(); const result = await command([ps, '-NoProfile', '-Command', 'Get-CimInstance Win32_Process -Filter "ParentProcessId=' + pid + '" | Select-Object ProcessId,ParentProcessId,ExecutablePath,@{n=\'CreationDate\';e={$_.CreationDate.ToUniversalTime().ToString(\'o\')}} | ConvertTo-Json -Compress'], env, signal);
-      signal?.throwIfAborted();
-      if (result.code !== 0) throw new Error(result.stderr);
-      const values = result.stdout.trim() ? [].concat(JSON.parse(result.stdout)) : [];
-      const matches = values.filter(item => item.ExecutablePath && path.resolve(item.ExecutablePath).toLowerCase() === path.resolve(validated.api).toLowerCase());
-      assert.ok(matches.length <= 1, 'Multiple owned API children'); return matches[0];
-    }, 'Exact release API child deadline'); evidence.processes = { launcher, api, lock };
-    const base = 'http://127.0.0.1:' + ports[0]; evidence.actual_service_url = base;
-    const code = await until(() => { live(); assert.ok(!plain().includes('WEBLABEL_LOCAL_URL=') || plain().includes('WEBLABEL_LOCAL_URL=' + base)); return /WEBLABEL_BOOTSTRAP_CODE=([a-f0-9]+)/.exec(plain())?.[1]; }, 'Owned bootstrap stdout deadline');
-    await until(async () => { live(); try { const response = await fetch(base + '/', { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1000)]) : AbortSignal.timeout(1000) }); if (response.status !== 200) return false; evidence.requests.push({ method: 'GET', url: base + '/', status: response.status, observed_at: now() }); return true; } catch { return false; } }, 'Web GET readiness deadline');
-    await until(async () => { live(); try { const response = await fetch(base + '/api/session/bootstrap', { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1000)]) : AbortSignal.timeout(1000) }); if (response.status !== 200) return false; const body = await response.json(); if (body.mode !== 'initial' || body.bootstrap_available !== true) return false; evidence.requests.push({ method: 'GET', url: base + '/api/session/bootstrap', status: 200, body, observed_at: now() }); return true; } catch { return false; } }, 'Bootstrap API readiness deadline');
+    const pid = await until(() => { live(); return Number(/T33_PTY_PID=(\d+)/.exec(plain())?.[1]) || null; }, 'Owned native PID deadline');
+    native = await cim(pid); assert.ok(native);
+    assert.equal(path.resolve(native.ExecutablePath).toLowerCase(), path.resolve(validated.executable).toLowerCase());
+    evidence.process = native;
+    const base = 'http://127.0.0.1:' + port; evidence.actual_service_url = base;
+    const code = await until(() => { live(); return /WEBLABEL_BOOTSTRAP_CODE=([a-f0-9]+)/.exec(plain())?.[1]; }, 'Owned bootstrap stdout deadline');
+    await until(async () => { live(); try { const response = await fetch(base + '/', { signal: AbortSignal.timeout(1000) }); if (response.status !== 200) return false; evidence.requests.push({ method: 'GET', url: base + '/', status: 200, observed_at: now() }); return true; } catch { return false; } }, 'Native web readiness deadline');
+    await until(async () => { live(); try { const response = await fetch(base + '/api/session/bootstrap', { signal: AbortSignal.timeout(1000) }); const body = await response.json(); if (response.status !== 200 || body.mode !== 'initial' || !body.bootstrap_available) return false; evidence.requests.push({ method: 'GET', url: base + '/api/session/bootstrap', status: 200, body, observed_at: now() }); return true; } catch { return false; } }, 'Native bootstrap readiness deadline');
     assert.ok(plain().includes('WEBLABEL_LOCAL_URL=' + base)); evidence.ready_at = now();
-    await browserSmoke(base, code, report, env, evidence, signal);
-    signal?.throwIfAborted();
-    assert.deepEqual(await cim(api.ProcessId), api); assert.deepEqual(await cim(pid), launcher);
-    const staging = readyFile + '.tmp'; fs.writeFileSync(staging, String(api.ProcessId) + '\n', { flag: 'wx' }); fs.renameSync(staging, readyFile); evidence.ready_file_published_at = now();
+    await browserSmoke(base, code, report, env, evidence, signal); signal?.throwIfAborted();
+    assert.deepEqual(await cim(pid), native);
+    fs.writeFileSync(readyFile + '.tmp', String(pid) + '\n', { flag: 'wx' }); fs.renameSync(readyFile + '.tmp', readyFile); evidence.ready_file_published_at = now();
     await until(() => wrapperResult, 'Physical ConPTY closure deadline', 65000);
     evidence.wrapper = wrapperResult; evidence.physical = JSON.parse(fs.readFileSync(physicalFile, 'utf8'));
     const physical = evidence.physical; row.exit_code = physical.terminal_exit_code; row.signal = wrapperResult.signal;
     assert.equal(physical.signal_count, 1); assert.equal(physical.signal_method, 'physical owned ConPTY keyboard input byte 0x03'); assert.equal(physical.terminal_pid, pid);
-    assert.ok(Number.isInteger(physical.api_exit_code) && physical.api_exit_code !== 259);
-    assert.equal(physical.terminal_exit_code, 130); assert.equal(wrapperResult.code, 130); assert.equal(wrapperResult.signal, null);
-    assert.equal(await cim(pid), null); assert.equal(await cim(api.ProcessId), null);
-    await until(async () => (await Promise.all(ports.map(portClosed))).every(Boolean), 'Owned ports remain open');
-    assert.equal(fs.existsSync(path.join(data, 'runtime.lock')), false);
-    const db = new DatabaseSync(path.join(data, 'api.sqlite'), { readOnly: true }); try { evidence.sqlite_integrity = db.prepare('PRAGMA integrity_check').all(); assert.equal(evidence.sqlite_integrity.length, 1); assert.equal(evidence.sqlite_integrity[0].integrity_check, 'ok'); } finally { db.close(); }
+    assert.equal(physical.api_exit_code, 0); assert.equal(physical.terminal_exit_code, 0); assert.equal(wrapperResult.code, 0); assert.equal(wrapperResult.signal, null);
+    assert.equal(await cim(pid), null); assert.equal(await portClosed(port), true);
+    const doctor = await command([validated.executable, 'doctor', '--mode', 'runtime', '--build-dir', release, '--data-dir', data], env);
+    assert.equal(doctor.code, 0); assert.equal(JSON.parse(doctor.stdout).storage.lock.status, 'available');
+    const db = new DatabaseSync(path.join(data, 'api.sqlite'), { readOnly: true });
+    try { evidence.sqlite_integrity = db.prepare('PRAGMA integrity_check').all(); evidence.foreign_key_errors = db.prepare('PRAGMA foreign_key_check').all(); assert.deepEqual(evidence.sqlite_integrity.map(row => row.integrity_check), ['ok']); assert.deepEqual(evidence.foreign_key_errors, []); } finally { db.close(); }
     row.status = 'passed'; row.runner_exit_code = 0; row.parse_status = 'parsed';
   } catch (error) {
-    row.status = signal?.aborted ? 'cancelled' : error.blocked ? 'blocked' : 'failed'; row.runner_exit_code = signal?.aborted ? (signal.reason === 'SIGTERM' ? 143 : 130) : error.blocked ? 2 : 1; row.blockers.push(signal?.aborted ? signal.reason : error.message); evidence.error = error.stack;
+    row.status = signal?.aborted ? 'cancelled' : error.blocked ? 'blocked' : 'failed'; row.runner_exit_code = signal?.aborted ? (signal.reason === 'SIGTERM' ? 143 : 130) : error.blocked ? 2 : 1;
+    row.blockers.push(signal?.aborted ? signal.reason : error.message); evidence.error = error.stack;
   } finally {
-    cleaning = true;
-    if (!launcher && terminal) { const pid = Number(/T33_PTY_PID=(\d+)/.exec(output)?.[1]); if (pid) launcher = await cim(pid); }
-    if (!api && launcher && evidence.release?.api_path) {
-      const result = await command([ps, '-NoProfile', '-Command', 'Get-CimInstance Win32_Process -Filter "ParentProcessId=' + launcher.ProcessId + '" | Select-Object ProcessId,ParentProcessId,ExecutablePath,@{n=\'CreationDate\';e={$_.CreationDate.ToUniversalTime().ToString(\'o\')}} | ConvertTo-Json -Compress'], env);
-      const children = result.stdout.trim() ? [].concat(JSON.parse(result.stdout)) : [];
-      api = children.find(item => item.ExecutablePath && path.resolve(item.ExecutablePath).toLowerCase() === path.resolve(evidence.release.api_path).toLowerCase());
-    }
-    // Observations precede every backstop; forced cleanup never upgrades lifecycle status.
     evidence.cleanup.observed_before_backstop_at = now(); evidence.cleanup.backstops = [];
-    if (ps && terminal) {
-      evidence.cleanup.before = { launcher: launcher ? await cim(launcher.ProcessId) : null, api: api ? await cim(api.ProcessId) : null, ports_closed: ports ? await Promise.all(ports.map(portClosed)) : null, lock_absent: !fs.existsSync(path.join(data, 'runtime.lock')), wrapper: wrapperResult ?? null };
-      for (const owned of [api, launcher].filter(Boolean)) {
-        const current = await cim(owned.ProcessId);
-        if (!current) continue;
-        if (JSON.stringify(current) !== JSON.stringify(owned)) { row.status = 'failed'; row.runner_exit_code = 1; row.blockers.push('Owned PID identity changed; cleanup refused'); continue; }
-        const script = '$p=Get-CimInstance Win32_Process -Filter "ProcessId=' + owned.ProcessId + '"; if($p -and $p.ExecutablePath -eq ' + "'" + owned.ExecutablePath.replaceAll("'", "''") + "'" + ' -and $p.CreationDate.ToUniversalTime().ToString("o") -eq ' + "'" + owned.CreationDate + "'" + '){Stop-Process -Id $p.ProcessId -Force}';
-        // A second native identity comparison is performed in the same PowerShell process as Stop-Process.
-        const result = await command([ps, '-NoProfile', '-Command', script], env); evidence.cleanup.backstops.push({ pid: owned.ProcessId, observed_at: now(), ...result });
-      }
-      if (!wrapperResult) { await command(['taskkill.exe', '/PID', String(terminal.pid), '/T', '/F'], env); await Promise.race([terminated, delay(5000)]); evidence.cleanup.backstops.push({ wrapper_pid: terminal.pid, observed_at: now(), result: wrapperResult ?? null }); }
-      evidence.wrapper = wrapperResult ?? null; row.signal = wrapperResult?.signal ?? null;
-      evidence.cleanup.after = { launcher: launcher ? await cim(launcher.ProcessId) : null, api: api ? await cim(api.ProcessId) : null, ports_closed: ports ? await Promise.all(ports.map(portClosed)) : null, lock_absent: !fs.existsSync(path.join(data, 'runtime.lock')), wrapper: wrapperResult ?? null };
-      if (evidence.cleanup.after.launcher || evidence.cleanup.after.api || evidence.cleanup.after.ports_closed?.some(value => !value) || !wrapperResult) { row.status = 'failed'; row.runner_exit_code = 1; row.blockers.push('Owned cleanup incomplete'); }
+    if (terminal && !wrapperResult) {
+      // The ConPTY owner, not a PID lookup, retains original kill authority.
+      fs.writeFileSync(readyFile + '.abort', 'abort-owned-native-startup');
+      try { await pollUntil(() => wrapperResult, 'Owned native ConPTY abort deadline', 65000); }
+      catch { terminal.kill(); await terminated; evidence.cleanup.backstops.push({ target: 'original-owned-wrapper-handle', observed_at: now() }); }
     }
-    if (fs.existsSync(physicalFile ?? '')) { evidence.physical = JSON.parse(fs.readFileSync(physicalFile, 'utf8')); row.exit_code = evidence.physical.terminal_exit_code ?? null; }
-    if (!evidence.sqlite_integrity && fs.existsSync(path.join(data, 'api.sqlite')) && !evidence.cleanup.after?.api) {
-      try { const db = new DatabaseSync(path.join(data, 'api.sqlite'), { readOnly: true }); try { evidence.sqlite_integrity = db.prepare('PRAGMA integrity_check').all(); } finally { db.close(); } } catch (error) { evidence.sqlite_integrity_error = error.message; }
-    }
-    fs.writeFileSync(logPath, output, { flag: 'wx' }); evidence.finished_at = now(); evidence.row = row; evidence.runtime_directory = runtime;
+    evidence.wrapper = wrapperResult ?? null; row.signal = wrapperResult?.signal ?? null;
+    evidence.cleanup.after = { process: native ? await cim(native.ProcessId) : null, port_closed: port ? await portClosed(port) : null, wrapper: wrapperResult ?? null };
+    if (evidence.cleanup.after.process || evidence.cleanup.after.port_closed === false || terminal && !wrapperResult) { row.status = 'failed'; row.runner_exit_code = 1; row.blockers.push('Owned native cleanup incomplete'); }
+    if (fs.existsSync(physicalFile)) { evidence.physical = JSON.parse(fs.readFileSync(physicalFile, 'utf8')); row.exit_code = evidence.physical.terminal_exit_code ?? null; }
+    const sanitized = output.replace(/WEBLABEL_BOOTSTRAP_CODE=[a-f0-9]+/g, 'WEBLABEL_BOOTSTRAP_CODE=[REDACTED_SYNTHETIC_LAUNCH_CODE]');
+    fs.writeFileSync(logPath, sanitized, { flag: 'wx' }); evidence.finished_at = now(); evidence.row = row; evidence.runtime_directory = runtime;
     for (const file of fs.readdirSync(report)) { const absolute = path.join(report, file); if (fs.statSync(absolute).isFile() && file !== path.basename(evidencePath)) evidence.artifacts.push({ path: file, sha256: hash(absolute) }); }
     json(evidencePath, evidence);
   }

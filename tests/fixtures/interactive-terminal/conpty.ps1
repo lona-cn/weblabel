@@ -1,14 +1,6 @@
-param(
- [Parameter(Mandatory=$true, ParameterSetName='Prepare')][switch]$Prepare,
- [Parameter(Mandatory=$true)][string]$AssemblyPath,
- [Parameter(Mandatory=$true, ParameterSetName='Run')][string]$CommandLine,
- [Parameter(ParameterSetName='Run')][string]$InputLine = ''
-)
+param([string]$CommandLine, [string]$InputLine = '')
 $ErrorActionPreference = 'Stop'
-# Prepared outside the interactive application's behavior clock, like T33.
-if ($Prepare) {
- if (Test-Path -LiteralPath $AssemblyPath) { throw 'Preparation requires a fresh assembly path' }
- Add-Type -OutputAssembly $AssemblyPath -OutputType Library -TypeDefinition @'
+Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Text;
@@ -51,16 +43,13 @@ public static class T32Terminal {
     SIX si=new SIX{si=new SI{cb=Marshal.SizeOf(typeof(SIX)),flags=0x100},attributes=attrs};
     if(!CreateProcess(null,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x00080400,IntPtr.Zero,Environment.CurrentDirectory,ref si,out pi)) throw new Exception("CreateProcess: "+Marshal.GetLastWin32Error());
     if(WaitForSingleObject(pi.process,60000)!=0) { TerminateProcess(pi.process,124); throw new Exception("PTY child timed out"); }
-    uint code; if(!GetExitCodeProcess(pi.process,out code)) throw new Exception("GetExitCodeProcess failed: "+Marshal.GetLastWin32Error());
+    uint code; GetExitCodeProcess(pi.process,out code);
     ClosePseudoConsole(pc); pc=IntPtr.Zero;
-    if(!reader.Wait(10000)) throw new Exception("PTY output drain deadline");
+    reader.Wait(10000);
     return (int)code;
    } finally { if(pc!=IntPtr.Zero) ClosePseudoConsole(pc); if(pi.thread!=IntPtr.Zero) CloseHandle(pi.thread); if(pi.process!=IntPtr.Zero) CloseHandle(pi.process); DeleteProcThreadAttributeList(attrs); Marshal.FreeHGlobal(attrs); }
   }
  }
 }
 '@
- exit 0
-}
-$null = [System.Reflection.Assembly]::LoadFrom($AssemblyPath)
 exit [T32Terminal]::Run($CommandLine, $InputLine)

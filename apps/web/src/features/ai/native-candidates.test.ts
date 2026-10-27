@@ -80,3 +80,38 @@ it('reports independent cross-set rejection success and unknown outcomes without
   f.view.update([f.entry, second]);
   expect(announcement.textContent).toBe(outcome);
 });
+
+it('requires explicit selection and sends only the chosen change ids from the native candidate list', async () => {
+  vi.spyOn(rejectionApi, 'read').mockResolvedValue(readState());
+  const f = fixture(), first = f.entry.candidate.changes[0];
+  const entry: CandidateEntry = { ...f.entry, candidate: { ...f.entry.candidate, changes: [first, { ...first, change_id: 'second-change' }] } };
+  f.view.update([entry]);
+  const accept = f.root.querySelector<HTMLButtonElement>('[data-testid=accept-selected]')!;
+  await vi.waitFor(() => expect([...f.root.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].every(input => !input.disabled)).toBe(true));
+  expect(accept.disabled).toBe(true); accept.click(); expect(f.accept).not.toHaveBeenCalled();
+  f.root.querySelector<HTMLInputElement>('[data-testid=candidate-second-change] input[type=checkbox]')!.click();
+  expect(accept.disabled).toBe(false); accept.click();
+  expect(f.accept).toHaveBeenCalledExactlyOnceWith(entry.candidate, 'asset', ['second-change'], null, []);
+  expect(f.root.querySelector<HTMLInputElement>('[data-testid=candidate-change] input[type=checkbox]')!.checked).toBe(false);
+});
+
+it('shows an attribute-only diff while preserving the complete fixed objects for inspection', () => {
+  vi.spyOn(rejectionApi, 'read').mockResolvedValue(readState());
+  const f = fixture();
+  const before = { ...f.document.objects[0], attributes: { empty: '', flag: false, nullable: null, unchanged: 'retained only in full object' } };
+  const entry: CandidateEntry = { ...f.entry, objects: new Map([['object', before]]), fixedDocument: { ...f.document, objects: [before] },
+    candidate: { ...f.entry.candidate, changes: [{ kind: 'set_attributes', change_id: 'attribute-change', object_id: 'object', before_hash: 'hash', values: { empty: null, flag: true, nullable: '', added: false }, reason: 'inspect attributes' }] } };
+  f.view.update([entry]);
+  const row = f.root.querySelector<HTMLElement>('[data-testid=candidate-attribute-change]')!;
+  const diff = row.querySelector<HTMLDListElement>('[data-testid=candidate-attribute-diff]')!;
+  expect([...diff.querySelectorAll('dt')].map(node => [node.textContent, node.nextElementSibling?.textContent])).toEqual([
+    ['empty · 原值', '""'], ['empty · 建议值', 'null'],
+    ['flag · 原值', 'false'], ['flag · 建议值', 'true'],
+    ['nullable · 原值', 'null'], ['nullable · 建议值', '""'],
+    ['added · 原值', '缺少键'], ['added · 建议值', 'false'],
+  ]);
+  expect(diff.textContent).not.toContain('retained only in full object');
+  const details = row.querySelector<HTMLDetailsElement>('details')!;
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain('retained only in full object');
+});

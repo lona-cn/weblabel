@@ -1,0 +1,17 @@
+[data-testid='datasets-page'] { min-height: 100dvh; }
+[data-testid='datasets-page'] > ol { display: flex; flex-wrap: wrap; gap: 16px 40px; padding-block: 16px; color: var(--muted); border-block: 1px solid var(--border); }
+[data-testid='datasets-page'] table { table-layout: fixed; }
+[data-testid='datasets-page'] :is(th, td) { vertical-align: top; }
+[data-testid='datasets-page'] tr[data-selected='true'] { background: var(--surface-2); }
+[data-testid='datasets-page'] :is(select, input) { width: 100%; }
+[data-testid='datasets-page'] .dataset-table-viewport { max-height: min(48dvh, 520px); overflow: auto; }
+[data-testid='datasets-page'] .dataset-table-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[data-testid='datasets-page'] .dataset-table-viewport table { display: table; min-width: 900px; }
+[data-testid='datasets-page'] .dataset-table-viewport thead th { position: sticky; top: 0; z-index: 1; }
+[data-testid='datasets-page'] [aria-label='图片与数据划分'] th:first-child { width: 22%; }
+[data-testid='datasets-page'] [aria-label='图片与数据划分'] th:last-child { width: 18%; }
+[data-testid='datasets-page'] [aria-label='冻结确认摘要'] { border-color: var(--accent); }
+@media (max-width: 1099px) {
+  [data-testid='datasets-page'] table { table-layout: auto; }
+  [data-testid='datasets-page'] [aria-label='图片与数据划分'] :is(th, td) { min-width: 120px; }
+}

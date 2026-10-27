@@ -4,7 +4,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { root, sha } from '../../scripts/build.mjs';
-import { schemaHash, migrations } from '../../scripts/backup.mjs';
+import { schemaHash, migrations } from '../support/backup-fixture.mjs';
+import { prepare_test_api } from '../support/app';
 
 it('refuses a manifest-covered main database shadowed by unmanifested WAL credentials, and restores its checkpointed state exactly', () => {
   const scratch = fs.mkdtempSync(path.join(root, 'target', 't33-restore-state-'));
@@ -17,11 +18,13 @@ it('refuses a manifest-covered main database shadowed by unmanifested WAL creden
   const sqlFiles = fs.readdirSync(migrationDirectory).filter(name => /^\d+_.+\.sql$/.test(name)).sort();
   const manifest = () => fs.writeFileSync(path.join(backup, 'backup.json'), JSON.stringify({
     format: 'weblabel-backup', version: 1,
+    created_at: '2026-10-26T00:00:00Z',
+    boundary: { scope: 'sensitive-whole-server-database', encryption: 'none', integrity: 'sha256-not-a-signature', browser_drafts: 'not-included' },
     authentication: 'scrubbed-fresh-local-bootstrap-required',
     schema_hash: schemaHash(db), migrations: migrations(db),
     files: [{ path: 'api.sqlite', sha256: sha(dbFile), size: fs.statSync(dbFile).size }],
   }));
-  const restore = (destination: string) => spawnSync(process.execPath, [path.join(root, 'scripts/restore.mjs'), '--backup-dir', backup, '--data-dir', destination], { cwd: root, encoding: 'utf8', shell: false, timeout: 10000 });
+  const restore = (destination: string) => spawnSync(prepare_test_api(), ['restore', '--backup-dir', backup, '--data-dir', destination, '--migrations-dir', migrationDirectory], { cwd: root, encoding: 'utf8', shell: false, timeout: 10000 });
   try {
     db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY NOT NULL,applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
     for (const name of sqlFiles) {

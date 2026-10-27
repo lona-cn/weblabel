@@ -22,7 +22,7 @@ export interface ManagementMountContext extends PageContext {
 }
 export interface TransfersMountContext extends PageContext {
   projectId: string;
-  getScope(): Readonly<{ asset: ApiMedia | null; ontology: OntologyVersion | null; scopeKey: object; canWrite: boolean; canUploadMedia: boolean }>;
+  getScope(): Readonly<{ asset: ApiMedia | null; ontology: OntologyVersion | null; scopeKey: object; canWrite: boolean; canExport: boolean; canUploadMedia: boolean }>;
   subscribe(listener: () => void): () => void;
   prepareImport(): Promise<AnnotationImportContext>;
   releaseImport(scopeKey: object): void;

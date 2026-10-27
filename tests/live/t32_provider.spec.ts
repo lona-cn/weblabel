@@ -10,7 +10,7 @@ import { createServer } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { bootstrap_admin_for_test, database_path_for_test, start_test_app } from '../support/app';
 import { authorize, seed, startRunBody, type JsonObject, type Seeded } from '../support/t25-ai';
-import { aggregateLiveEvidence, askLiveQuestion, hostExecutionConfigurationHash, lockedFilesDiagnostic, observeRun, readHostBudget, requireObservedIdentity, requirePreviewExecutionConfiguration } from '../../scripts/verify-live.mjs';
+import { aggregateLiveEvidence, askLiveQuestion, runtimeExecutionConfigurationHash, lockedFilesDiagnostic, observeRun, readRuntimeBudget, requireObservedIdentity, requirePreviewExecutionConfiguration } from '../../scripts/verify-live.mjs';
 import type { ApiClient, TestApp } from '../support/app';
 import { taskReportPath } from '../support/report-paths.mjs';
 
@@ -18,19 +18,7 @@ import { taskReportPath } from '../support/report-paths.mjs';
 // prediction evidence is generated here. These tests cannot satisfy G4.
 const root = resolve(import.meta.dirname, '../..');
 let directory: string;
-let terminalAssembly: string;
-beforeAll(async () => {
-  directory = await mkdtemp(taskReportPath('T32', 'engineering-'));
-  if (process.platform === 'win32') {
-    terminalAssembly = resolve(directory, 'T32Terminal.dll');
-    await new Promise<void>((resolvePrepared, reject) => {
-      execFile(resolve(process.env.SystemRoot ?? 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-File', 'tests/fixtures/interactive-terminal/conpty.ps1', '-Prepare', '-AssemblyPath', terminalAssembly], { cwd: root }, (error, stdout, stderr) => {
-        if (error) reject(new Error('ConPTY fixture preparation failed: ' + stdout + stderr, { cause: error }));
-        else resolvePrepared();
-      });
-    });
-  }
-});
+beforeAll(async () => { directory = await mkdtemp(taskReportPath('T32', 'engineering-')); });
 afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
 interface DiagnosticChannel {
   provider_id: string;
@@ -63,16 +51,16 @@ function authorization() {
   return { provider_id: 'openai_api', sample_set: 't32-programmatic-v1', allow_generated_images: true, allow_external_processing: true, expires_at: new Date(Date.now() + 300_000).toISOString(), max_model_runs: 2, max_provider_calls_per_run: 2, acknowledge_unknown_cost: true };
 }
 function configuration() {
-  return { base_url: 'http://127.0.0.1:49332/', provider_id: 'openai_api', profile_id: 't32-openai', model_id: 'gpt-6-luna', host_config_path: '', authorization: authorization() };
+  return { base_url: 'http://127.0.0.1:49332/', provider_id: 'openai_api', profile_id: 't32-openai', model_id: 'gpt-6-luna', runtime_config_path: '', authorization: authorization() };
 }
 async function runConfig(body: unknown) {
   const file = resolve(directory, `${randomUUID()}.json`);
   await writeFile(file, JSON.stringify(body));
   return cli(['--run', '--config', relative(root, file)]);
 }
-async function hostFile(overrides: JsonObject = {}) {
+async function runtimeFile(overrides: JsonObject = {}) {
   const file = resolve(directory, `${randomUUID()}.json`);
-  await writeFile(file, JSON.stringify({ apiBase: 'http://127.0.0.1:49332', providers: [{ provider: 'openai_api', config: { profile_id: 't32-openai', model_id: 'gpt-6-luna', credential: { secret_ref: 'env:OPENAI_API_KEY' }, budgets: { max_tool_turns: 2, max_total_bytes: 65536, max_run_ms: 10000, max_output_tokens: 512, max_image_bytes: 1048576, max_pixels: 1000000, max_crops: 1 }, ...overrides } }], timeoutMs: 10000 }));
+  await writeFile(file, JSON.stringify({ schema_version: 1, timeout_ms: 10000, providers: [{ provider: 'openai_api', config: { profile_id: 't32-openai', model_id: 'gpt-6-luna', credential: { secret_ref: 'env:OPENAI_API_KEY' }, budgets: { max_tool_turns: 2, max_total_bytes: 65536, max_run_ms: 10000, max_output_tokens: 512, max_image_bytes: 1048576, max_pixels: 1000000, max_crops: 1 }, ...overrides } }] }));
   return relative(root, file);
 }
 
@@ -131,17 +119,17 @@ describe('T32 engineering CLI consumer gates (NOT live)', () => {
     expect(result.report.run_error).toBe(code);
   });
   it('cannot reduce declared call authorization below the actual Host tool-turn bound', async () => {
-    const result = await runConfig({ ...configuration(), host_config_path: await hostFile({ budgets: { max_tool_turns: 3, max_total_bytes: 65536, max_run_ms: 10000, max_output_tokens: 512, max_image_bytes: 1048576, max_pixels: 1000000, max_crops: 1 } }) });
-    expect(result.report.run_error).toBe('AUTHORIZED_CALL_BUDGET_SMALLER_THAN_HOST_LIMIT');
+    const result = await runConfig({ ...configuration(), runtime_config_path: await runtimeFile({ budgets: { max_tool_turns: 3, max_total_bytes: 65536, max_run_ms: 10000, max_output_tokens: 512, max_image_bytes: 1048576, max_pixels: 1000000, max_crops: 1 } }) });
+    expect(result.report.run_error).toBe('AUTHORIZED_CALL_BUDGET_SMALLER_THAN_RUNTIME_LIMIT');
     expect(result.exit).toBe(2);
   });
   it('rejects injectable/private Host configuration rather than forwarding it', async () => {
-    const result = await runConfig({ ...configuration(), host_config_path: await hostFile({ secret_env: { OPENAI_API_KEY: 'engineering-never-read-secret' } }) });
+    const result = await runConfig({ ...configuration(), runtime_config_path: await runtimeFile({ secret_env: { OPENAI_API_KEY: 'engineering-never-read-secret' } }) });
     expect(result.report.run_error).toBe('PUBLIC_CONFIGURATION_ONLY_NO_PRIVATE_VALUES_OR_INJECTION');
     expect(result.stdout).not.toContain('engineering-never-read-secret');
   });
   it('valid public scope and budgets still require an interactive human review, not a JSON claimed response', async () => {
-    const result = await runConfig({ ...configuration(), host_config_path: await hostFile() });
+    const result = await runConfig({ ...configuration(), runtime_config_path: await runtimeFile() });
     expect(result.report.run_error).toBe('HUMAN_VISUAL_REVIEW_TERMINAL_REQUIRED');
     expect(result.exit).toBe(2);
   });
@@ -163,25 +151,24 @@ it.each([
   const config = configuration();
   config.base_url = `http://127.0.0.1:${address.port}/`;
   const hostPath = resolve(directory, `${randomUUID()}.json`);
-  const host = JSON.parse(await readFile(resolve(root, await hostFile()), 'utf8'));
-  host.apiBase = config.base_url.slice(0, -1);
+  const host = JSON.parse(await readFile(resolve(root, await runtimeFile()), 'utf8'));
   await writeFile(hostPath, JSON.stringify(host));
-  config.host_config_path = relative(root, hostPath);
+  config.runtime_config_path = relative(root, hostPath);
   const configPath = resolve(directory, `${randomUUID()}.json`);
   await writeFile(configPath, JSON.stringify(config));
   try {
-    const result = await new Promise<{ exit: number | null; stdout: string; stderr: string }>((resolveResult, reject) => {
+    const result = await new Promise<{ exit: number | null; stdout: string }>((resolveResult, reject) => {
       const command = `"${process.execPath}" scripts/verify-live.mjs --run --config "${relative(root, configPath)}" --report-dir "${relative(root, directory)}"`;
       const windows = process.platform === 'win32';
       const args = windows
-        ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tests/fixtures/interactive-terminal/conpty.ps1', '-AssemblyPath', terminalAssembly, '-CommandLine', command, '-InputLine', 'DECLINE']
+        ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tests/fixtures/interactive-terminal/conpty.ps1', '-CommandLine', command]
         : ['-q', '-e', '-c', command, '/dev/null'];
       const child = execFile(windows ? 'powershell.exe' : 'script', args, {
         cwd: root, timeout: 90000, maxBuffer: 1024 * 1024,
         env: { ...process.env, WEBLABEL_LIVE_SESSION_COOKIE: 't32_engineering=noncredential', WEBLABEL_LIVE_CSRF: 't32-noncredential' },
-      }, (error, stdout, stderr) => {
+      }, (error, stdout) => {
         const exit = error ? typeof error.code === 'number' ? error.code : null : 0;
-        if (exit === null) reject(error); else resolveResult({ exit, stdout, stderr });
+        if (exit === null) reject(error); else resolveResult({ exit, stdout });
       });
       let answered = false;
       child.stdout?.on('data', chunk => {
@@ -198,7 +185,7 @@ it.each([
       evidence_path: plain.match(/"evidence_path": "([^"]+)"/)?.[1] ?? '',
       outbound_model_calls: Number(plain.match(/"outbound_model_calls": (\d+)/)?.[1]),
     };
-    expect(result.exit, result.stdout + result.stderr).toBe(2);
+    expect(result.exit).toBe(2);
     expect(requests).toEqual(['/api/model-profiles']);
     expect(report.run_error).toBe(reason);
     const evidence = JSON.parse(await readFile(resolve(root, report.evidence_path), 'utf8'));
@@ -393,15 +380,15 @@ it('actual preview binds the checked public provider budget to Rust-WASM canonic
     expect((await admin.request('PUT', `/api/projects/${pins.projectId}/external-processing-policy`, { allow_external_processing: true })).status).toBe(200);
     const config = configuration();
     config.base_url = `${app.base_url}/`;
-    const existing = JSON.parse(await readFile(resolve(root, await hostFile()), 'utf8'));
+    const existing = JSON.parse(await readFile(resolve(root, await runtimeFile()), 'utf8'));
     const providerConfig = JSON.stringify(existing.providers[0].config);
     // Raw serde Value scalar categories and UTF-8 keys must survive the JS
     // budget inspection unchanged, including integer keys and supplementary Unicode.
     const rawConfig = providerConfig.slice(0, -1) + ',"canonical_numbers":[1.0,-0.0,1e-7,1e+21,1e-300,18446744073709551615],"canonical_keys":{"10":"ten","2":"two","\\uE000":"bmp","\\uD800\\uDC00":"supplementary"}}';
-    const host = (selected: string) => `{"apiBase":${JSON.stringify(app.base_url)},"timeoutMs":999,"providers":[{"provider":"mimo_api","config":{"profile_id":"other","budgets":{"max_tool_turns":8}}},{"provider":"openai_api","config":${selected}}]}`;
+    const host = (selected: string) => `{"schema_version":1,"timeout_ms":10000,"providers":[{"provider":"mimo_api","config":{"profile_id":"other","budgets":{"max_tool_turns":8}}},{"provider":"openai_api","config":${selected}}]}`;
     const hostPath = resolve(directory, `${randomUUID()}.json`);
     await writeFile(hostPath, host(rawConfig));
-    config.host_config_path = relative(root, hostPath);
+    config.runtime_config_path = relative(root, hostPath);
     const db = new DatabaseSync(database_path_for_test(app));
     try {
       db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES('t32-openai','openai_api','gpt-6-luna','api_key',?,'ready','not_run',NULL,NULL,?,'env:OPENAI_API_KEY','2026-10-06T00:00:00Z')").run(JSON.stringify({ image_input: true, tools: true, structured_output: true, bbox_output: false, attributes: true }), rawConfig);
@@ -409,16 +396,16 @@ it('actual preview binds the checked public provider budget to Rust-WASM canonic
     const body = startRunBody(pins, randomUUID(), 'Engineering configuration fingerprint, no model request', { profile_id: config.profile_id, intent: 'audit_attributes' });
     const preview = await admin.request<JsonObject>('POST', '/api/ai/previews', { request: body, grants: { allow_image: true, allow_object_context: true, preview_crop: null } });
     expect(preview.status).toBe(201);
-    const inspected = readHostBudget(config);
-    const matching = await hostExecutionConfigurationHash(inspected.rawHostConfiguration, config);
+    const inspected = readRuntimeBudget(config);
+    const matching = await runtimeExecutionConfigurationHash(inspected.rawRuntimeConfiguration, config);
     expect(preview.json.execution_configuration_hash).toBe(matching);
     requirePreviewExecutionConfiguration(preview.json, matching);
     // A lower, otherwise valid local public budget must not authorize a
     // service whose persisted execution configuration permits more calls.
     await writeFile(hostPath, host(rawConfig.replace('"max_tool_turns":2', '"max_tool_turns":1')));
     config.authorization.max_provider_calls_per_run = 1;
-    const smaller = readHostBudget(config);
-    const mismatched = await hostExecutionConfigurationHash(smaller.rawHostConfiguration, config);
+    const smaller = readRuntimeBudget(config);
+    const mismatched = await runtimeExecutionConfigurationHash(smaller.rawRuntimeConfiguration, config);
     expect(mismatched).not.toBe(matching);
     await expect((async () => {
       requirePreviewExecutionConfiguration(preview.json, mismatched);
@@ -433,9 +420,9 @@ it('actual preview binds the checked public provider budget to Rust-WASM canonic
     } finally { checked.close(); }
     expect(() => requirePreviewExecutionConfiguration({ profile_configuration_hash: matching }, matching)).toThrow('SERVICE_EXECUTION_CONFIGURATION_HASH_MISMATCH');
     expect(() => requirePreviewExecutionConfiguration({ execution_configuration_hash: null }, matching)).toThrow('SERVICE_EXECUTION_CONFIGURATION_HASH_MISMATCH');
-    const integerForm = await hostExecutionConfigurationHash(host(rawConfig.replace('[1.0,-0.0,', '[1,0,')), config);
+    const integerForm = await runtimeExecutionConfigurationHash(host(rawConfig.replace('[1.0,-0.0,', '[1,0,')), config);
     expect(integerForm).not.toBe(matching);
-    await expect(hostExecutionConfigurationHash(host(rawConfig.replace('1e-300', '1e400')), config)).rejects.toThrow('INVALID_PUBLIC_EXECUTION_CONFIGURATION');
+    await expect(runtimeExecutionConfigurationHash(host(rawConfig.replace('1e-300', '1e400')), config)).rejects.toThrow('INVALID_PUBLIC_EXECUTION_CONFIGURATION');
     await writeFile(resolve(directory, 'configuration-hash-observation.json'), JSON.stringify({
       evidence_kind: 'real_api_and_rust_wasm_canonical_hash_not_live_provider',
       execution_configuration_hash: matching, mismatched_public_budget_hash: mismatched,
@@ -444,7 +431,13 @@ it('actual preview binds the checked public provider budget to Rust-WASM canonic
   } finally { await app.stop(); }
 }, 120000);
 // Synthetic filesystem consumer fixtures only. Never provider/GPU/live/G4 evidence.
-const consumerIdentity = {source_commit:'fixture-commit',source_snapshot_sha256:'a'.repeat(64),manifest_sha256:'b'.repeat(64),runner_sha256:'c'.repeat(64),source_hashes:{'fixture':'d'.repeat(64),'apps/agent-host/src/runtime/dispatch.ts':'e'.repeat(64)}};
+const consumerIdentity = {source_commit:'fixture-commit',source_snapshot_sha256:'a'.repeat(64),manifest_sha256:'b'.repeat(64),runner_sha256:'c'.repeat(64),source_hashes:{'fixture':'d'.repeat(64),'crates/weblabel-api/src/runtime/runner.rs':'e'.repeat(64)}};
+type SyntheticArtifact = { path: string; sha256: string };
+type SyntheticSample = Record<string, unknown> & {
+  sample: string; run_id: string; terminal: string; canonical_sha256: string;
+  input_fingerprint: string; accept_save: string; undo_save: string;
+  start_artifact?: SyntheticArtifact;
+};
 async function consumerFixture() {
   const directory = await mkdtemp(taskReportPath('T32','offline-consumer-'));
   const manifest = JSON.parse(await readFile(resolve(root,'tests/live/manifest.json'),'utf8'));
@@ -458,12 +451,12 @@ async function consumerFixture() {
     const detector=provider==='detector_local';
     const model=detector?JSON.parse(await readFile(resolve(root,manifest.detector.lock_path),'utf8')).model_id:provider==='claude_local'?'claude-sonnet-4-20250514':provider==='openai_api'?'gpt-6-luna-20261001':'mimo-v2-flash-20261001';
     // Representative native schemas, NOT assertions that these fixture model IDs exist.
-    const config={base_url:'http://127.0.0.1:49332/',provider_id:provider,profile_id:provider+'-profile',model_id:model,host_config_path:'public-host.json',authorization:{...authorization(),provider_id:provider,expires_at:stamp}};
+    const config={base_url:'http://127.0.0.1:49332/',provider_id:provider,profile_id:provider+'-profile',model_id:model,runtime_config_path:'public-runtime.json',authorization:{...authorization(),provider_id:provider,expires_at:stamp}};
     const budgets={max_tool_turns:2,max_total_bytes:65536,max_run_ms:10000,max_output_tokens:512,max_image_bytes:1048576,max_pixels:1000000,max_crops:1};
-    const selected=detector?{runTimeoutMs:10000,workerCommand:{executable:'python.exe',argv:['-m','weblabel_detector']},lockPath:resolve(root,manifest.detector.lock_path)}:provider==='claude_local'?{runTimeoutMs:10000,budgets:{max_tool_turns:2}}:{profile_id:config.profile_id,model_id:model,credential:{secret_ref:'env:ENGINEERING_NONCREDENTIAL'},budgets};
-    const host={apiBase:config.base_url.slice(0,-1),providers:[{provider,config:selected}]};
-    const executionHash=await hostExecutionConfigurationHash(JSON.stringify(host),config);
-    const capture: any={schema_version:1,evidence_kind:'actual_channel_live_capture',identity:consumerIdentity,provider_id:provider,requested_model_id:model,capture_status:'completed',run_error:null,resources:{terminal:'closed',browser:'closed'},local_runtime:{runner_node:process.version,runner_sha256:consumerIdentity.runner_sha256,checkout_host_dispatch_sha256:consumerIdentity.source_hashes['apps/agent-host/src/runtime/dispatch.ts']},run_configuration_sha256:hash(JSON.stringify(config)),public_config_artifact:await put(provider+'-config.json',config),host_config_artifact:await put(provider+'-host.json',host),samples:[],error_paths:{}};
+    const selected=detector?{profile_id:config.profile_id,timeout_ms:10000,lock_path:resolve(root,manifest.detector.lock_path),model_dir:resolve(root,'services/detector/weights'),label_map_path:resolve(directory,'synthetic-label-map.json'),onnxruntime_library:resolve(directory,'synthetic-ORT-library-never-loaded')} : provider==='claude_local'?{profile_id:config.profile_id,model_id:model,executable:resolve(directory,'synthetic-native-Claude-never-executed'),timeout_ms:10000,max_tool_turns:2,max_tool_result_bytes:65536}:{profile_id:config.profile_id,model_id:model,credential:{secret_ref:'env:ENGINEERING_NONCREDENTIAL'},budgets};
+    const host={schema_version:1,timeout_ms:10000,providers:[{provider,config:selected}]};
+    const executionHash=await runtimeExecutionConfigurationHash(JSON.stringify(host),config);
+    const capture = {schema_version:1,evidence_kind:'actual_channel_live_capture',identity:consumerIdentity,provider_id:provider,requested_model_id:model,capture_status:'completed',run_error:null,resources:{terminal:'closed',browser:'closed'},local_runtime:{runner_node:process.version,runner_sha256:consumerIdentity.runner_sha256,checkout_native_runner_sha256:consumerIdentity.source_hashes['crates/weblabel-api/src/runtime/runner.rs']},run_configuration_sha256:hash(JSON.stringify(config)),public_config_artifact:await put(provider+'-config.json',config),runtime_config_artifact:await put(provider+'-runtime.json',host),samples:[] as SyntheticSample[],error_paths:{} as Record<string,{run_id:string;code:string}>};
     for (const sample of manifest.samples) {
       const prefix=provider+'-'+sample, run_id=prefix+'-run', prediction_id=prefix+'-prediction';
       const receipt={provider_id:provider,actual_model_id:model,requested_model_id:model,auth_kind:required.auth_kind,response_id:prefix+'-response',runtime_version:'fixture-runtime',weights_loaded:detector};
@@ -475,7 +468,7 @@ async function consumerFixture() {
       const object={...manual,attributes:{helmet_state:'wearing'},origin:detector?{type:'prediction',prediction_id,model_run_id:run_id,import_batch_id:null}:origin};
       const changes=detector?[{kind:'create',change_id:'change',object,before_hash:null,reason:'synthetic'}]:[{kind:'set_attributes',change_id:'change',object_id:'object',values:{helmet_state:'wearing'},before_hash:'1'.repeat(64),reason:'synthetic'}];
       const set=prefix+'-set';
-      const row: any={sample,run_id,terminal:'succeeded',receipt,receipts:[receipt],canonical_sha256:'e'.repeat(64),input_fingerprint:'f'.repeat(64),execution_configuration_hash:executionHash,host_configuration_sha256:capture.host_config_artifact.sha256,human_visual_review:'Synthetic consumer oracle, not real visual review',accept_save:prefix+'-accept',undo_save:prefix+'-undo'};
+      const row: SyntheticSample={sample,run_id,terminal:'succeeded',receipt,receipts:[receipt],canonical_sha256:'e'.repeat(64),input_fingerprint:'f'.repeat(64),execution_configuration_hash:executionHash,runtime_configuration_sha256:capture.runtime_config_artifact.sha256,human_visual_review:'Synthetic consumer oracle, not real visual review',accept_save:prefix+'-accept',undo_save:prefix+'-undo'};
       const context={project_id:'project',asset_revision_id:doc.asset_revision_id,annotation_revision_id:before.annotation_revision_id,ontology_version_id:doc.ontology_version_id,draft_generation:0,canonical_sha256:row.canonical_sha256,selected_object_ids:detector?[]:['object'],object_hashes:detector?{}:{object:'1'.repeat(64)},input_fingerprint:row.input_fingerprint};
       const request={operation_id:prefix+'-operation',profile_id:config.profile_id,context,intent:detector?'detect':'audit_attributes',prompt:'Synthetic consumer fixture',consent_id:null};
       const bytes=Buffer.from('fixture-input'); row.source_sha256=hash(bytes); row.input_artifact=await put(prefix+'-input.png',bytes,true);
@@ -500,6 +493,7 @@ async function consumerFixture() {
       const events=[{run_id,seq:1,type:terminal,message:'synthetic provider error',data:{error_code:code,receipt,receipts:[receipt]}},{run_id,seq:2,type:terminal,message:'service terminal',data:terminal==='failed'?{code:'MODEL_RUN_FAILED'}:null}];
       capture.error_paths[kind]={run_id,code};
       const first=capture.samples[0];
+      assert(first?.start_artifact, 'Synthetic error case must retain the original START artifact');
       const start=JSON.parse(await readFile(resolve(directory,first.start_artifact.path),'utf8')); start.response.run_id=run_id;
       capture.samples.push({...first,sample:'error-'+kind,run_id,terminal,start_artifact:await put(run_id+'-start.json',start),observation_artifact:await put(run_id+'-events.json',{run_id,terminal,receipts:[receipt],events})});
     }
@@ -512,7 +506,7 @@ async function consumerFixture() {
   return {directory,manifest,index,summaries,save,changeArtifact,aggregate:()=>aggregateLiveEvidence(directory,{repository:root,manifest,identity:consumerIdentity,skipSecurity:true})};
 }
 it('four synthetic consumer channels can be non-security complete but never full-ready when scope skipped',async()=>{
-  const f=await consumerFixture();try {const result=await f.aggregate();assert.equal(result.non_security_channels_complete,true);assert.equal(result.exit_code,2);assert.equal(result.status,'blocked');assert.equal(result.aggregation_model_calls,0);assert.ok(result.channels.every(c=>c.full_channel_evidence.missing.includes('tool_restriction:skipped_by_user')));}finally{await rm(f.directory,{recursive:true,force:true});}
+  const f=await consumerFixture();try {const result=await f.aggregate();assert.equal(result.non_security_channels_complete,true);assert.equal(result.exit_code,2);assert.equal(result.status,'blocked');assert.equal(result.aggregation_model_calls,0);assert.ok(result.channels.every((c:{full_channel_evidence:{missing:string[]}})=>c.full_channel_evidence.missing.includes('tool_restriction:skipped_by_user')));}finally{await rm(f.directory,{recursive:true,force:true});}
 });
 it.each(['identity','field','provider','stale','diagnostic','fixture','prepared','mock'])('offline consumer rejects %s without live operations',async(kind)=>{
   const f=await consumerFixture();try {

@@ -26,10 +26,11 @@ test('T25 unavailable real-profile gate remains on the actual hardware WebGPU wo
   await expect(gpu).toHaveAttribute('data-actual-backend', 'webgpu', { timeout: 30_000 });
   await expect(gpu).toHaveAttribute('data-device-state', 'ready', { timeout: 30_000 });
   await expect(gpu).toHaveAttribute('data-adapter-kind', 'hardware');
-  await page.getByRole('button', { name: 'AI 审校', exact: true }).click();
+  await page.getByTestId('inspector-ai').click();
+  await page.getByTestId('ai-provider').selectOption('profile-unavailable-real');
   await page.getByTestId('ai-prompt').fill('Real unavailable provider cannot use a mock fallback');
-  await page.getByTestId('ai-run').click();
-  await expect(page.getByTestId('ai-panel').getByRole('alert')).toBeVisible();
+  await expect(page.getByTestId('ai-panel')).toContainText('needs_configuration');
+  await expect(page.getByTestId('ai-run')).toBeDisabled();
   expect(runPosts).toEqual([]);
 });
 
@@ -69,8 +70,9 @@ test('T25 Engineering Mock G2: actual flush/freeze, consent, background predicti
   await page.mouse.move(...point(90, 110), { steps: 5 });
   await page.mouse.up();
   await expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(1);
-  await page.getByRole('button', { name: 'AI 审校', exact: true }).click();
-  await page.locator('#ai-intent').selectOption('detect');
+  await page.getByTestId('inspector-ai').click();
+  await page.getByTestId('ai-provider').selectOption('profile_mock_local');
+  await page.getByRole('combobox', { name: '运行任务' }).selectOption('detect');
   await page.getByTestId('ai-prompt').fill('Engineering Mock only: add synthetic candidate for G2, not real inference');
   const runPosts: unknown[] = [];
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/ai/runs') runPosts.push(request.postDataJSON()); });

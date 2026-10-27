@@ -53,15 +53,24 @@ pub fn router(
     let app = Router::new()
         .route("/api/model-profiles", get(profiles::list))
         .route("/api/model-profile-presets", get(profiles::presets))
-        .route("/api/model-profiles/{profile_id}", get(profiles::get).put(profiles::provision))
+        .route(
+            "/api/model-profiles/{profile_id}",
+            get(profiles::get).put(profiles::provision),
+        )
         .route("/api/ai/previews", post(consent::preview))
         .route("/api/ai/consents", post(consent::create))
         .route("/api/ai/runs", post(runs::create))
         .route("/api/ai/runs/{run_id}/cancel", post(runs::cancel_route))
         .route("/api/ai/runs/{run_id}/events", get(events::list))
         .route("/api/ai/runs/{run_id}/suggestions", get(suggestions::list))
-        .route("/api/ai/runs/{run_id}/outcome-summary", get(runs::outcome_summary))
-        .route("/api/ai/suggestions/{suggestion_set_id}/rejections", get(suggestions::rejection_list).post(suggestions::reject_changes))
+        .route(
+            "/api/ai/runs/{run_id}/outcome-summary",
+            get(runs::outcome_summary),
+        )
+        .route(
+            "/api/ai/suggestions/{suggestion_set_id}/rejections",
+            get(suggestions::rejection_list).post(suggestions::reject_changes),
+        )
         .route(
             "/api/ai/suggestions/{suggestion_set_id}/decision",
             post(acceptance::decision_route),

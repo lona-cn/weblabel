@@ -783,12 +783,15 @@ async fn cancel_is_idempotent_and_quarantines_late_candidates() {
         {
             Box::pin(async move {
                 driver
-                    .submit_candidates(issue_candidate(
-                        "cand-before-cancel",
-                        1,
-                        "issue-before",
-                        "candidate delivered before cancel",
-                    ), None)
+                    .submit_candidates(
+                        issue_candidate(
+                            "cand-before-cancel",
+                            1,
+                            "issue-before",
+                            "candidate delivered before cancel",
+                        ),
+                        None,
+                    )
                     .await
                     .map_err(model_jobs::RunnerError::from)?;
                 // The user cancels while the provider is still streaming.
@@ -805,12 +808,15 @@ async fn cancel_is_idempotent_and_quarantines_late_candidates() {
                 })?;
                 // Late output arrives after the run is already terminal.
                 driver
-                    .submit_candidates(issue_candidate(
-                        "cand-after-cancel",
-                        2,
-                        "issue-after",
-                        "candidate delivered after cancel",
-                    ), None)
+                    .submit_candidates(
+                        issue_candidate(
+                            "cand-after-cancel",
+                            2,
+                            "issue-after",
+                            "candidate delivered after cancel",
+                        ),
+                        None,
+                    )
                     .await
                     .map_err(model_jobs::RunnerError::from)?;
                 Ok(RunOutcome::Completed)
@@ -1175,12 +1181,15 @@ async fn single_asset_failure_keeps_successful_batch_items() {
                     });
                 }
                 driver
-                    .submit_candidates(issue_candidate(
-                        &format!("cand-{}", driver.run_id()),
-                        1,
-                        &format!("issue-{}", driver.run_id()),
-                        "synthetic mock observation",
-                    ), None)
+                    .submit_candidates(
+                        issue_candidate(
+                            &format!("cand-{}", driver.run_id()),
+                            1,
+                            &format!("issue-{}", driver.run_id()),
+                            "synthetic mock observation",
+                        ),
+                        None,
+                    )
                     .await
                     .map_err(model_jobs::RunnerError::from)?;
                 Ok(RunOutcome::Completed)
@@ -1556,9 +1565,15 @@ async fn worker_callbacks_after_authority_loss(fenced: bool) {
                     .await
                     .unwrap();
                 driver
-                    .submit_candidates(issue_candidate(
-                        "callback-owned-candidate", 2, "owned-issue", "owned candidate",
-                    ), None)
+                    .submit_candidates(
+                        issue_candidate(
+                            "callback-owned-candidate",
+                            2,
+                            "owned-issue",
+                            "owned candidate",
+                        ),
+                        None,
+                    )
                     .await
                     .unwrap();
                 let mut tx = self.repository.begin_write().await.unwrap();
@@ -1567,22 +1582,45 @@ async fn worker_callbacks_after_authority_loss(fenced: bool) {
                      (SELECT COUNT(*) FROM predictions WHERE run_id=?), \
                      (SELECT COUNT(*) FROM suggestion_sets WHERE run_id=?)",
                 )
-                .bind(driver.run_id()).bind(driver.run_id()).bind(driver.run_id())
-                .fetch_one(tx.connection()).await.unwrap();
-                assert_eq!(before, (4, 1, 1), "valid callbacks must persist their output");
+                .bind(driver.run_id())
+                .bind(driver.run_id())
+                .bind(driver.run_id())
+                .fetch_one(tx.connection())
+                .await
+                .unwrap();
+                assert_eq!(
+                    before,
+                    (4, 1, 1),
+                    "valid callbacks must persist their output"
+                );
                 let update = if self.fenced {
                     "UPDATE jobs SET worker_id='callback-replacement',fencing_token=fencing_token+1 \
                      WHERE job_id=?"
                 } else {
                     "UPDATE jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE job_id=?"
                 };
-                sqlx::query(update).bind(&self.job_id).execute(tx.connection()).await.unwrap();
-                let authority_before: (String, String, i64, String, i64, i64, Option<String>, String) =
-                    sqlx::query_as(
-                        "SELECT state,worker_id,fencing_token,lease_until,progress_completed, \
+                sqlx::query(update)
+                    .bind(&self.job_id)
+                    .execute(tx.connection())
+                    .await
+                    .unwrap();
+                let authority_before: (
+                    String,
+                    String,
+                    i64,
+                    String,
+                    i64,
+                    i64,
+                    Option<String>,
+                    String,
+                ) = sqlx::query_as(
+                    "SELECT state,worker_id,fencing_token,lease_until,progress_completed, \
                          progress_total,result_json,updated_at FROM jobs WHERE job_id=?",
-                    )
-                    .bind(&self.job_id).fetch_one(tx.connection()).await.unwrap();
+                )
+                .bind(&self.job_id)
+                .fetch_one(tx.connection())
+                .await
+                .unwrap();
                 tx.commit().await.unwrap();
 
                 // Fresh provider identities and a domain-valid candidate arrive
@@ -1591,9 +1629,15 @@ async fn worker_callbacks_after_authority_loss(fenced: bool) {
                     .emit(progress_event("callback-stale-event", 3, "stale event"))
                     .await;
                 let candidate = driver
-                    .submit_candidates(issue_candidate(
-                        "callback-stale-candidate", 4, "stale-issue", "stale candidate",
-                    ), None)
+                    .submit_candidates(
+                        issue_candidate(
+                            "callback-stale-candidate",
+                            4,
+                            "stale-issue",
+                            "stale candidate",
+                        ),
+                        None,
+                    )
                     .await;
                 let mut tx = self.repository.begin_write().await.unwrap();
                 let after: (i64, i64, i64) = sqlx::query_as(
@@ -1601,40 +1645,67 @@ async fn worker_callbacks_after_authority_loss(fenced: bool) {
                      (SELECT COUNT(*) FROM predictions WHERE run_id=?), \
                      (SELECT COUNT(*) FROM suggestion_sets WHERE run_id=?)",
                 )
-                .bind(driver.run_id()).bind(driver.run_id()).bind(driver.run_id())
-                .fetch_one(tx.connection()).await.unwrap();
-                let authority_after: (String, String, i64, String, i64, i64, Option<String>, String) =
-                    sqlx::query_as(
-                        "SELECT state,worker_id,fencing_token,lease_until,progress_completed, \
+                .bind(driver.run_id())
+                .bind(driver.run_id())
+                .bind(driver.run_id())
+                .fetch_one(tx.connection())
+                .await
+                .unwrap();
+                let authority_after: (
+                    String,
+                    String,
+                    i64,
+                    String,
+                    i64,
+                    i64,
+                    Option<String>,
+                    String,
+                ) = sqlx::query_as(
+                    "SELECT state,worker_id,fencing_token,lease_until,progress_completed, \
                          progress_total,result_json,updated_at FROM jobs WHERE job_id=?",
-                    )
-                    .bind(&self.job_id).fetch_one(tx.connection()).await.unwrap();
+                )
+                .bind(&self.job_id)
+                .fetch_one(tx.connection())
+                .await
+                .unwrap();
                 tx.commit().await.unwrap();
                 eprintln!(
                     "callback authority fenced={}: before={before:?} after={after:?} event={event:?} candidate={candidate:?}",
                     self.fenced
                 );
                 assert!(
-                    matches!(event, Err(model_jobs::ModelJobError::Queue(
-                        weblabel_api::jobs::queue::QueueError::InvalidRequest
-                    ))),
+                    matches!(
+                        event,
+                        Err(model_jobs::ModelJobError::Queue(
+                            weblabel_api::jobs::queue::QueueError::InvalidRequest
+                        ))
+                    ),
                     "stale event must fail closed: {event:?}"
                 );
                 assert!(
-                    matches!(candidate, Err(model_jobs::ModelJobError::Queue(
-                        weblabel_api::jobs::queue::QueueError::InvalidRequest
-                    ))),
+                    matches!(
+                        candidate,
+                        Err(model_jobs::ModelJobError::Queue(
+                            weblabel_api::jobs::queue::QueueError::InvalidRequest
+                        ))
+                    ),
                     "stale candidate must fail closed: {candidate:?}"
                 );
                 assert_eq!(after, before, "stale callbacks must not persist any output");
-                assert_eq!(authority_after, authority_before, "foreign authority must be untouched");
-                self.callbacks_exercised.store(true, std::sync::atomic::Ordering::SeqCst);
+                assert_eq!(
+                    authority_after, authority_before,
+                    "foreign authority must be untouched"
+                );
+                self.callbacks_exercised
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(RunOutcome::Completed)
             })
         }
     }
     let fixture = fixture().await;
-    let (status, created) = fixture.create_run("t17-op-callback-loss", "callback fencing").await;
+    let (status, created) = fixture
+        .create_run("t17-op-callback-loss", "callback fencing")
+        .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{created}");
     let queue = JobQueue::new(fixture.repository.clone());
     let runner = LoseAuthority {
@@ -1644,18 +1715,32 @@ async fn worker_callbacks_after_authority_loss(fenced: bool) {
         callbacks_exercised: std::sync::atomic::AtomicBool::new(false),
     };
     let result = model_jobs::process_model_next(
-        &fixture.repository, &queue, "t17-callback-worker", Duration::from_secs(30), &runner,
-    ).await;
-    assert!(runner.callbacks_exercised.load(std::sync::atomic::Ordering::SeqCst));
-    assert!(matches!(
-        result,
-        Err(model_jobs::ModelJobError::Queue(
-            weblabel_api::jobs::queue::QueueError::InvalidRequest
-        ))
-    ), "lost worker must not conclude the run: {result:?}");
+        &fixture.repository,
+        &queue,
+        "t17-callback-worker",
+        Duration::from_secs(30),
+        &runner,
+    )
+    .await;
+    assert!(runner
+        .callbacks_exercised
+        .load(std::sync::atomic::Ordering::SeqCst));
+    assert!(
+        matches!(
+            result,
+            Err(model_jobs::ModelJobError::Queue(
+                weblabel_api::jobs::queue::QueueError::InvalidRequest
+            ))
+        ),
+        "lost worker must not conclude the run: {result:?}"
+    );
     let run_id = created["run_id"].as_str().unwrap();
     let (status, events) = fixture
-        .request("GET", &format!("/api/ai/runs/{run_id}/events?after=0"), None)
+        .request(
+            "GET",
+            &format!("/api/ai/runs/{run_id}/events?after=0"),
+            None,
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{events}");
     assert_eq!(events["run"]["state"], "running");
@@ -1733,7 +1818,10 @@ async fn silent_model_run_retains_lease_until_completion() {
         .unwrap();
     runner.release.notify_one();
     let result = execution.await.unwrap();
-    assert!(stolen.is_none(), "silent in-flight job was reclaimed: {stolen:?}");
+    assert!(
+        stolen.is_none(),
+        "silent in-flight job was reclaimed: {stolen:?}"
+    );
     assert_eq!(result.unwrap().as_deref(), Some(job_id));
     let job = queue
         .status(&fixture.project_id, job_id)
@@ -1766,7 +1854,9 @@ async fn heartbeat_keeps_polling_an_item_that_holds_the_writer() {
         }
     }
     let fixture = fixture().await;
-    let (status, created) = fixture.create_run("t17-op-held-writer", "held writer").await;
+    let (status, created) = fixture
+        .create_run("t17-op-held-writer", "held writer")
+        .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{created}");
     let queue = JobQueue::new(fixture.repository.clone());
     let result = model_jobs::process_model_next(
@@ -1774,7 +1864,9 @@ async fn heartbeat_keeps_polling_an_item_that_holds_the_writer() {
         &queue,
         "t17-held-writer",
         Duration::from_millis(300),
-        &HoldWriter { repository: fixture.repository.clone() },
+        &HoldWriter {
+            repository: fixture.repository.clone(),
+        },
     )
     .await;
     assert!(
@@ -1799,13 +1891,21 @@ async fn queue_rechecks_expiry_after_waiting_for_writer() {
             .enqueue(
                 Some(&fixture.project_id),
                 "lease_clock_probe",
-                if finishing { "finish-clock" } else { "progress-clock" },
+                if finishing {
+                    "finish-clock"
+                } else {
+                    "progress-clock"
+                },
                 &json!({}),
             )
             .await
             .unwrap();
         let lease = queue
-            .lease_next_kind("clock-worker", Duration::from_secs(30), Some("lease_clock_probe"))
+            .lease_next_kind(
+                "clock-worker",
+                Duration::from_secs(30),
+                Some("lease_clock_probe"),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -1815,7 +1915,9 @@ async fn queue_rechecks_expiry_after_waiting_for_writer() {
             if finishing {
                 queue.finish(&lease, true, &json!({"succeeded":1})).await
             } else {
-                queue.report_progress(&lease, 1, 1, &json!({"succeeded":1})).await
+                queue
+                    .report_progress(&lease, 1, 1, &json!({"succeeded":1}))
+                    .await
             }
         };
         tokio::pin!(operation);
@@ -1837,23 +1939,47 @@ async fn queue_rechecks_expiry_after_waiting_for_writer() {
         writer.commit().await.unwrap();
         let result = operation.await;
         assert!(
-            matches!(result, Err(weblabel_api::jobs::queue::QueueError::InvalidRequest)),
+            matches!(
+                result,
+                Err(weblabel_api::jobs::queue::QueueError::InvalidRequest)
+            ),
             "waiting {finishing:?} request must recheck server time: {result:?}"
         );
-        let job = queue.status(&fixture.project_id, &queued.job_id).await.unwrap().unwrap();
+        let job = queue
+            .status(&fixture.project_id, &queued.job_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(job.state, "running");
         assert_eq!(job.progress_completed, 0);
         assert_eq!(job.result, None);
         assert_eq!(
-            fixture.db_text("SELECT lease_until FROM jobs WHERE job_id=?", &[&queued.job_id]).await,
+            fixture
+                .db_text(
+                    "SELECT lease_until FROM jobs WHERE job_id=?",
+                    &[&queued.job_id]
+                )
+                .await,
             Some(expired_at)
         );
         // Do not let this deliberately expired probe become the next case's claim.
-        queue.lease_next_kind("clock-reclaimer", Duration::from_secs(30), Some("lease_clock_probe"))
-            .await.unwrap().unwrap();
+        queue
+            .lease_next_kind(
+                "clock-reclaimer",
+                Duration::from_secs(30),
+                Some("lease_clock_probe"),
+            )
+            .await
+            .unwrap()
+            .unwrap();
     }
     let queued = queue
-        .enqueue(Some(&fixture.project_id), "claim_clock_probe", "claim-clock", &json!({}))
+        .enqueue(
+            Some(&fixture.project_id),
+            "claim_clock_probe",
+            "claim-clock",
+            &json!({}),
+        )
         .await
         .unwrap();
     let writer = fixture.repository.begin_write().await.unwrap();
@@ -1908,7 +2034,9 @@ async fn model_job_heartbeat_drops_runner_on_expiry_or_fence_loss() {
 
     for fenced in [false, true] {
         let fixture = fixture().await;
-        let (status, created) = fixture.create_run("t17-op-heartbeat-loss", "lease loss").await;
+        let (status, created) = fixture
+            .create_run("t17-op-heartbeat-loss", "lease loss")
+            .await;
         assert_eq!(status, StatusCode::ACCEPTED, "{created}");
         let job_id = created["job_id"].as_str().unwrap();
         let run_id = created["run_id"].as_str().unwrap();
@@ -1948,7 +2076,11 @@ async fn model_job_heartbeat_drops_runner_on_expiry_or_fence_loss() {
         } else {
             "UPDATE jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE job_id=?"
         };
-        sqlx::query(update).bind(job_id).execute(tx.connection()).await.unwrap();
+        sqlx::query(update)
+            .bind(job_id)
+            .execute(tx.connection())
+            .await
+            .unwrap();
         let before: (String, i64, String, String, i64, Option<String>) = sqlx::query_as(
             "SELECT worker_id,fencing_token,lease_until,state,progress_completed,result_json \
              FROM jobs WHERE job_id=?",
@@ -1981,7 +2113,11 @@ async fn model_job_heartbeat_drops_runner_on_expiry_or_fence_loss() {
         tx.commit().await.unwrap();
         assert_eq!(after, before, "a stale heartbeat cannot revive ownership");
         let (status, events) = fixture
-            .request("GET", &format!("/api/ai/runs/{run_id}/events?after=0"), None)
+            .request(
+                "GET",
+                &format!("/api/ai/runs/{run_id}/events?after=0"),
+                None,
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "{events}");
         assert_eq!(events["run"]["state"], "running");
@@ -2058,7 +2194,11 @@ async fn model_job_progress_rejects_expired_authority() {
     assert_eq!(job.progress_completed, 0);
     assert_eq!(job.result, None);
     let (status, events) = fixture
-        .request("GET", &format!("/api/ai/runs/{run_id}/events?after=0"), None)
+        .request(
+            "GET",
+            &format!("/api/ai/runs/{run_id}/events?after=0"),
+            None,
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{events}");
     assert_eq!(events["items"][2]["message"], "persisted before expiry");
@@ -2101,7 +2241,9 @@ async fn event_retention_is_explicitly_bounded() {
     assert_eq!(status, StatusCode::ACCEPTED, "{created}");
     let run_id = created["run_id"].as_str().unwrap().to_owned();
     let job_id = created["job_id"].as_str().unwrap().to_owned();
-    let (status, other) = fixture.create_run("t17-op-retention-other", "other run").await;
+    let (status, other) = fixture
+        .create_run("t17-op-retention-other", "other run")
+        .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{other}");
     let other_run_id = other["run_id"].as_str().unwrap();
     let other_job_id = other["job_id"].as_str().unwrap();
@@ -2218,7 +2360,10 @@ async fn event_retention_is_explicitly_bounded() {
     assert_eq!(status, StatusCode::OK, "{other_events_after}");
     assert_eq!(other_events_after, other_events_before);
     assert_eq!(
-        queue.status(&fixture.project_id, other_job_id).await.unwrap(),
+        queue
+            .status(&fixture.project_id, other_job_id)
+            .await
+            .unwrap(),
         Some(other_job_before)
     );
     let job = queue
@@ -2681,7 +2826,10 @@ async fn restart_recovery_concludes_runs_of_a_crashed_claimed_job() {
 
 #[tokio::test]
 async fn capability_gates_reject_changes_the_profile_cannot_produce() {
-    struct SubmitRunner(SubmitCandidates, weblabel_api::runtime::run_tokens::RunTokenStore);
+    struct SubmitRunner(
+        SubmitCandidates,
+        weblabel_api::runtime::run_tokens::RunTokenStore,
+    );
     impl RunRunner for SubmitRunner {
         fn execute<'a>(
             &'a self,
@@ -2689,10 +2837,22 @@ async fn capability_gates_reject_changes_the_profile_cannot_produce() {
         ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, model_jobs::RunnerError>> + Send + 'a>>
         {
             Box::pin(async move {
-                let token = self.1.issue_once_until(
-                    driver.run_id(), &driver.context().project_id, chrono::Utc::now().timestamp_millis() + 60_000,
-                ).ok_or_else(|| model_jobs::RunnerError::new("RUN_TOKEN_ALREADY_ISSUED", "synthetic claimed run already has a capability"))?;
-                let result = driver.submit_candidates(self.0.clone(), Some((&self.1, &token))).await;
+                let token = self
+                    .1
+                    .issue_once_until(
+                        driver.run_id(),
+                        &driver.context().project_id,
+                        chrono::Utc::now().timestamp_millis() + 60_000,
+                    )
+                    .ok_or_else(|| {
+                        model_jobs::RunnerError::new(
+                            "RUN_TOKEN_ALREADY_ISSUED",
+                            "synthetic claimed run already has a capability",
+                        )
+                    })?;
+                let result = driver
+                    .submit_candidates(self.0.clone(), Some((&self.1, &token)))
+                    .await;
                 self.1.revoke_run(driver.run_id());
                 result.map_err(model_jobs::RunnerError::from)?;
                 Ok(RunOutcome::Completed)

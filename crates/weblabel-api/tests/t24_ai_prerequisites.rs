@@ -136,7 +136,7 @@ fn intent(profile: &str) -> Value {
 }
 
 #[tokio::test]
-async fn profiles_return_only_valid_public_persisted_data_without_provisioning_defaults() {
+async fn persisted_local_ready_without_native_configuration_stays_unavailable_and_private() {
     let f = Fixture::new().await;
     let (status, _, _) = send(&f.app, "GET", "/api/model-profiles", None, None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -164,10 +164,9 @@ async fn profiles_return_only_valid_public_persisted_data_without_provisioning_d
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body,
-        json!({"items":[{"profile_id":"profile-public","provider_id":"claude_local","model_id":"test-model","auth_kind":"official_user_login","capabilities":capabilities(),"availability":"ready","verification":"not_run","runtime_version":"test-runtime","verified_at":null}],"next_cursor":null})
-    );
+    // Historical availability cannot certify an unconfigured native provider.
+    assert_eq!(body["items"][0]["profile_id"], "profile-public");
+    assert_eq!(body["items"][0]["availability"], "needs_configuration");
     let _: annotation_domain::ModelProfile =
         serde_json::from_value(body["items"][0].clone()).unwrap();
     assert!(!body.to_string().contains("private-"));

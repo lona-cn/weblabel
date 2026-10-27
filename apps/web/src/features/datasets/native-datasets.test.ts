@@ -137,3 +137,23 @@ it.each(['snapshot', 'export'] as const)('publishes the original %s ACK to the c
   else { await vi.waitFor(() => expect(job).toHaveBeenCalledWith(view.jobId, expect.any(AbortSignal))); expect(view.root.textContent).toContain(view.jobId); }
   expect(view.writes).toHaveLength(count); expect(JSON.stringify(view.writes)).toBe(original); expect(view.root.querySelector('[aria-label=原请求核对]')).toBeNull();
 });
+
+it('retains explicit scope across 1301 rows using the exact labelled disposition control on every page', async () => {
+  const view = fixture(1301, 100); await browse(view);
+  const disposition = (index: number) => testId<HTMLSelectElement>(view.root, 'dataset-disposition-' + view.rows[index].media.asset_revision_id);
+  select(disposition(0), 'include'); select(disposition(1), 'exclude');
+  for (let page = 1; page <= 13; page++) {
+    button(view.root, '下一页').click();
+    await vi.waitFor(() => expect(disposition(page * 100).getAttribute('aria-label')).toBe('image-' + page * 100 + '.png'));
+  }
+  select(disposition(1300), 'include');
+  for (let page = 12; page >= 0; page--) {
+    button(view.root, '上一页').click();
+    await vi.waitFor(() => expect(disposition(page * 100).getAttribute('aria-label')).toBe('image-' + page * 100 + '.png'));
+  }
+  expect(disposition(0).value).toBe('include'); expect(disposition(1).value).toBe('exclude'); expect(disposition(2).value).toBe('outside');
+  testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
+  await vi.waitFor(() => expect(view.writes).toHaveLength(1));
+  expect(view.writes[0].body.items).toEqual([0, 1300].map(index => ({ asset_revision_id: view.rows[index].media.asset_revision_id, annotation_revision_id: view.rows[index].head!.annotation_revision_id, split: 'train' })));
+  expect(view.writes[0].body.excluded).toEqual([{ asset_revision_id: view.rows[1].media.asset_revision_id, reason: 'user_excluded' }]);
+});

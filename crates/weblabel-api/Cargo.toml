@@ -3,18 +3,18 @@ name = "weblabel-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-default-run = "weblabel-api"
+default-run = "weblabel"
 
 [lib]
 path = "src/lib.rs"
 
 [[bin]]
-name = "weblabel-api"
-path = "src/main.rs"
-
-[[bin]]
 name = "weblabel"
 path = "src/bin/weblabel.rs"
+
+[[example]]
+name = "native-lifecycle-fixture"
+path = "../../tests/fixtures/active-host-shutdown/native.rs"
 
 [dependencies]
 annotation-domain = { path = "../annotation-domain" }
@@ -33,6 +33,7 @@ ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "
 argon2 = { version = "=0.5.3", features = ["std"] }
 rand = { version = "=0.8.5", features = ["getrandom"] }
 serde_json = { version = "=1.0.147", features = ["float_roundtrip"] }
+rusqlite = { version = "=0.32.1", features = ["backup"] }
 sha2 = "=0.10.9"
 sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 thiserror = "=2.0.17"

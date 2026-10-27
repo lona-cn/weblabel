@@ -135,7 +135,7 @@ function readRunConfig(file) {
   return validateRunConfig(JSON.parse(readPublicConfiguration(path.resolve(root, file), 16_384, 'RUN_CONFIGURATION_OUTSIDE_REPOSITORY_OR_TOO_LARGE')));
 }
 function validateRunConfig(config, { historical = false, requiredChannels = manifest.required, lockedModel = null } = {}) {
-  exact(config, ['base_url', 'provider_id', 'profile_id', 'model_id', 'host_config_path', 'authorization'], 'INVALID_RUN_CONFIGURATION');
+  exact(config, ['base_url', 'provider_id', 'profile_id', 'model_id', 'runtime_config_path', 'authorization'], 'INVALID_RUN_CONFIGURATION');
   if (config.provider_id === 'codex_local') fail('PROVIDER_RETIRED');
   const required = requiredChannels.find(item => item.provider_id === config.provider_id);
   if (!required) fail('REQUIRED_CHANNEL_ONLY_NO_SUBSTITUTION');
@@ -156,36 +156,46 @@ function validateRunConfig(config, { historical = false, requiredChannels = mani
   if (config.provider_id !== 'detector_local' && (!auth.allow_external_processing || auth.acknowledge_unknown_cost !== true)) fail('EXPLICIT_EGRESS_AND_UNKNOWN_COST_AUTHORIZATION_REQUIRED');
   return { config, required };
 }
-export function readHostBudget(config) {
-  if (typeof config.host_config_path !== 'string' || config.host_config_path.length === 0) fail('PUBLIC_SERVICE_HOST_CONFIGURATION_REQUIRED');
-  const rawHostConfiguration = readPublicConfiguration(path.resolve(root, config.host_config_path), 1_048_576, 'HOST_CONFIGURATION_OUTSIDE_REPOSITORY_OR_TOO_LARGE');
-  return validateHostConfiguration(rawHostConfiguration, config);
+export function readRuntimeBudget(config) {
+  if (typeof config.runtime_config_path !== 'string' || config.runtime_config_path.length === 0) fail('PUBLIC_SERVICE_RUNTIME_CONFIGURATION_REQUIRED');
+  const rawRuntimeConfiguration = readPublicConfiguration(path.resolve(root, config.runtime_config_path), 1_048_576, 'RUNTIME_CONFIGURATION_OUTSIDE_REPOSITORY_OR_TOO_LARGE');
+  return validateRuntimeConfiguration(rawRuntimeConfiguration, config);
 }
-function validateHostConfiguration(rawHostConfiguration, config, historical = false) {
-  const host = JSON.parse(rawHostConfiguration);
+function validateRuntimeConfiguration(rawRuntimeConfiguration, config, historical = false) {
+  const runtime = JSON.parse(rawRuntimeConfiguration);
   const forbidden = value => value && typeof value === 'object' && Object.entries(value).some(([key, item]) => ['secret_env', 'source_env', 'fetch_impl', 'transport', 'runToken', 'imageSource', 'api_key', 'token', 'password'].includes(key) || forbidden(item));
-  if (forbidden(host)) fail('PUBLIC_CONFIGURATION_ONLY_NO_PRIVATE_VALUES_OR_INJECTION');
-  if (host.apiBase !== config.base_url.replace(/\/$/, '') || !Array.isArray(host.providers)) fail('HOST_SERVICE_ORIGIN_MISMATCH');
-  const matches = host.providers.filter(item => item.provider === config.provider_id && (item.config?.profile_id === config.profile_id || ['claude_local', 'detector_local'].includes(config.provider_id)));
+  if (forbidden(runtime)) fail('PUBLIC_CONFIGURATION_ONLY_NO_PRIVATE_VALUES_OR_INJECTION');
+  exact(runtime, ['schema_version', 'timeout_ms', 'providers'], 'NATIVE_RUNTIME_CONFIGURATION_REQUIRED');
+  if (runtime.schema_version !== 1 || !Number.isSafeInteger(runtime.timeout_ms) || runtime.timeout_ms < 1 || !Array.isArray(runtime.providers) || runtime.providers.length > 500) fail('NATIVE_RUNTIME_CONFIGURATION_REQUIRED');
+  const ids = new Set();
+  for (const entry of runtime.providers) {
+    exact(entry, ['provider', 'config'], 'EXACT_SERVICE_PROVIDER_CONFIGURATION_REQUIRED');
+    const profile = entry.config?.profile_id;
+    if (!['openai_api', 'anthropic_api', 'mimo_api', 'claude_local', 'detector_local'].includes(entry.provider) || typeof profile !== 'string' || !profile || ids.has(profile)) fail('EXACT_SERVICE_PROVIDER_CONFIGURATION_REQUIRED');
+    ids.add(profile);
+  }
+  const matches = runtime.providers.filter(item => item.provider === config.provider_id && item.config?.profile_id === config.profile_id);
   if (matches.length !== 1) fail('EXACT_SERVICE_PROVIDER_CONFIGURATION_REQUIRED');
   const selected = matches[0].config;
-  if (!selected || typeof selected !== 'object' || Array.isArray(selected)) fail('EXACT_SERVICE_PROVIDER_CONFIGURATION_REQUIRED');
   if (['openai_api', 'mimo_api'].includes(config.provider_id)) {
     if (selected.model_id !== config.model_id || !/^env:[A-Za-z_][A-Za-z0-9_]*$/.test(selected.credential?.secret_ref ?? '')) fail('SERVICE_MODEL_OR_SECRET_REFERENCE_MISMATCH');
     const limits = { max_tool_turns: 8, max_total_bytes: 1_048_576, max_run_ms: 120_000, max_output_tokens: 2048, max_image_bytes: 20_971_520, max_pixels: 4_000_000, max_crops: 4 };
-    exact(selected.budgets, Object.keys(limits), 'EXPLICIT_HOST_QUANTITY_BUDGET_REQUIRED');
-    for (const [key, cap] of Object.entries(limits)) if (!Number.isSafeInteger(selected.budgets[key]) || selected.budgets[key] < 1 || selected.budgets[key] > cap) fail('HOST_QUANTITY_BUDGET_OUT_OF_BOUNDS');
-    if (selected.budgets.max_tool_turns > config.authorization.max_provider_calls_per_run) fail('AUTHORIZED_CALL_BUDGET_SMALLER_THAN_HOST_LIMIT');
-    return { rawHostConfiguration, budget: { ...selected.budgets, host_configuration_sha256: sha(rawHostConfiguration), cost_usd: null } };
+    exact(selected.budgets, Object.keys(limits), 'EXPLICIT_RUNTIME_QUANTITY_BUDGET_REQUIRED');
+    for (const [key, cap] of Object.entries(limits)) if (!Number.isSafeInteger(selected.budgets[key]) || selected.budgets[key] < 1 || selected.budgets[key] > cap) fail('RUNTIME_QUANTITY_BUDGET_OUT_OF_BOUNDS');
+    if (selected.budgets.max_tool_turns > config.authorization.max_provider_calls_per_run) fail('AUTHORIZED_CALL_BUDGET_SMALLER_THAN_RUNTIME_LIMIT');
+    return { rawRuntimeConfiguration, budget: { ...selected.budgets, max_run_ms: Math.min(selected.budgets.max_run_ms, runtime.timeout_ms), runtime_configuration_sha256: sha(rawRuntimeConfiguration), cost_usd: null } };
   }
-  if (!Number.isSafeInteger(selected.runTimeoutMs) || selected.runTimeoutMs < 1 || selected.runTimeoutMs > 120_000) fail('EXPLICIT_HOST_RUNTIME_TIMEOUT_REQUIRED');
+  const absolute = value => typeof value === 'string' && !/[\0\r\n]/.test(value) && (historical ? path.win32.isAbsolute(value) || path.posix.isAbsolute(value) : path.isAbsolute(value));
+  if (!Number.isSafeInteger(selected.timeout_ms) || selected.timeout_ms < 1 || selected.timeout_ms > 120_000) fail('EXPLICIT_NATIVE_RUNTIME_TIMEOUT_REQUIRED');
   if (config.provider_id === 'claude_local') {
-    if (!selected.budgets || !Number.isSafeInteger(selected.budgets.max_tool_turns) || selected.budgets.max_tool_turns < 1 || selected.budgets.max_tool_turns > config.authorization.max_provider_calls_per_run) fail('EXPLICIT_CLAUDE_TOOL_BUDGET_REQUIRED');
-  } else if (!historical) {
-    const python = executable('python');
-    if (!existsSync(python) || realpathSync(selected.workerCommand?.executable ?? '') !== realpathSync(python) || JSON.stringify(selected.workerCommand?.argv) !== JSON.stringify(['-m', 'weblabel_detector']) || realpathSync(selected.lockPath ?? '') !== realpathSync(path.join(root, manifest.detector.lock_path))) fail('REAL_PINNED_DETECTOR_WORKER_CONFIGURATION_REQUIRED');
-  } else if (!selected.workerCommand || typeof selected.workerCommand.executable !== 'string' || JSON.stringify(selected.workerCommand.argv) !== JSON.stringify(['-m', 'weblabel_detector']) || typeof selected.lockPath !== 'string') fail('REAL_PINNED_DETECTOR_WORKER_CONFIGURATION_REQUIRED');
-  return { rawHostConfiguration, budget: { max_run_ms: selected.runTimeoutMs, max_provider_calls_per_run: config.provider_id === 'detector_local' ? 1 : config.authorization.max_provider_calls_per_run, host_configuration_sha256: sha(rawHostConfiguration), cost_usd: null } };
+    exact(selected, ['profile_id', 'model_id', 'executable', 'timeout_ms', 'max_tool_turns', 'max_tool_result_bytes'], 'EXPLICIT_CLAUDE_NATIVE_CONFIGURATION_REQUIRED');
+    if (selected.model_id !== config.model_id || !absolute(selected.executable) || !Number.isSafeInteger(selected.max_tool_turns) || selected.max_tool_turns < 1 || selected.max_tool_turns > config.authorization.max_provider_calls_per_run || !Number.isSafeInteger(selected.max_tool_result_bytes) || selected.max_tool_result_bytes < 1 || selected.max_tool_result_bytes > 1_048_576) fail('EXPLICIT_CLAUDE_TOOL_BUDGET_REQUIRED');
+  } else {
+    exact(selected, ['profile_id', 'lock_path', 'model_dir', 'label_map_path', 'onnxruntime_library', 'timeout_ms'], 'REAL_PINNED_NATIVE_DETECTOR_CONFIGURATION_REQUIRED');
+    if (!['lock_path', 'model_dir', 'label_map_path', 'onnxruntime_library'].every(key => absolute(selected[key]))) fail('REAL_PINNED_NATIVE_DETECTOR_CONFIGURATION_REQUIRED');
+    if (!historical && realpathSync(selected.lock_path) !== realpathSync(path.join(root, manifest.detector.lock_path))) fail('REAL_PINNED_NATIVE_DETECTOR_CONFIGURATION_REQUIRED');
+  }
+  return { rawRuntimeConfiguration, budget: { max_run_ms: Math.min(selected.timeout_ms, runtime.timeout_ms), max_provider_calls_per_run: config.provider_id === 'detector_local' ? 1 : selected.max_tool_turns, runtime_configuration_sha256: sha(rawRuntimeConfiguration), cost_usd: null } };
 }
 async function generatedSamples() {
   const { default: sharp } = await import('sharp');
@@ -270,18 +280,18 @@ export function requireObservedIdentity(row, config, required) {
   row.response_id = row.receipt.response_id;
 }
 
-export async function hostExecutionConfigurationHash(rawHostConfiguration, config) {
+export async function runtimeExecutionConfigurationHash(rawRuntimeConfiguration, config) {
   // Use the project's actual Rust WASM bridge, not a second JS canonicalizer:
   // serde Value preserves float/integer forms and UTF-8 object-key ordering.
-  const directory = path.join(root, 'crates/wasm-bridge/target/weblabel-web-public/wasm');
+  const directory = process.env.WEBLABEL_WASM_BRIDGE_DIR ? path.resolve(process.env.WEBLABEL_WASM_BRIDGE_DIR) : path.join(root, 'crates/wasm-bridge/target/weblabel-web-public/wasm');
   const javascript = path.join(directory, 'wasm_bridge.js');
   const binary = path.join(directory, 'wasm_bridge_bg.wasm');
   if (!existsSync(javascript) || !existsSync(binary)) fail('EXECUTION_CONFIGURATION_HASH_WASM_BUILD_REQUIRED');
   const bridge = await import(pathToFileURL(confinedFile(root, javascript)).href);
-  if (typeof bridge.host_execution_configuration_hash !== 'function' || typeof bridge.initSync !== 'function') fail('EXECUTION_CONFIGURATION_HASH_WASM_BUILD_REQUIRED');
+  if (typeof bridge.runtime_execution_configuration_hash !== 'function' || typeof bridge.initSync !== 'function') fail('EXECUTION_CONFIGURATION_HASH_WASM_BUILD_REQUIRED');
   bridge.initSync({ module: readFileSync(confinedFile(root, binary)) });
   let hash;
-  try { hash = bridge.host_execution_configuration_hash(rawHostConfiguration, config.provider_id, config.profile_id); }
+  try { hash = bridge.runtime_execution_configuration_hash(rawRuntimeConfiguration, config.provider_id, config.profile_id); }
   catch { fail('INVALID_PUBLIC_EXECUTION_CONFIGURATION'); }
   if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) fail('INVALID_EXECUTION_CONFIGURATION_HASH');
   return hash;
@@ -306,7 +316,7 @@ async function run({ config, required }, diagnostic, reportDir, identity, skipSe
   await mkdir(evidenceDir, { recursive: true });
   /** @type {Record<string, 'not_run' | Record<string, unknown>>} */
   const errorPaths = Object.fromEntries(['quota_error', 'cancel', 'unsupported_image', 'tool_restriction'].map(key => [key, 'not_run']));
-  const evidence = { schema_version: 1, evidence_kind: 'actual_channel_live_capture', identity, capture_status: 'blocked', skipped_scope: skippedScope(skipSecurity), run_configuration_sha256: sha(JSON.stringify(config)), provider_id: config.provider_id, requested_model_id: config.model_id, required_auth_kind: required.auth_kind, status: 'blocked', samples: [], error_paths: errorPaths, identity_receipt: 'not_observed', run_error: null, resources: { terminal: 'open', browser: 'not_opened' }, local_runtime: { runner_node: process.version, runner_sha256: sha(readFileSync(fileURLToPath(import.meta.url))), checkout_host_dispatch_sha256: sha(readFileSync(path.join(root, 'apps/agent-host/src/runtime/dispatch.ts'))), executed_host_build_identity: 'must_come_from_runtime_receipt_not_checkout_hash' } };
+  const evidence = { schema_version: 1, evidence_kind: 'actual_channel_live_capture', identity, capture_status: 'blocked', skipped_scope: skippedScope(skipSecurity), run_configuration_sha256: sha(JSON.stringify(config)), provider_id: config.provider_id, requested_model_id: config.model_id, required_auth_kind: required.auth_kind, status: 'blocked', samples: [], error_paths: errorPaths, identity_receipt: 'not_observed', run_error: null, resources: { terminal: 'open', browser: 'not_opened' }, local_runtime: { runner_node: process.version, runner_sha256: sha(readFileSync(fileURLToPath(import.meta.url))), checkout_native_runner_sha256: sha(readFileSync(path.join(root, 'crates/weblabel-api/src/runtime/runner.rs'))), executed_native_build_identity: 'must_come_from_runtime_receipt_not_checkout_hash' } };
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   let browser;
   let context;
@@ -319,7 +329,7 @@ async function run({ config, required }, diagnostic, reportDir, identity, skipSe
   try {
     const indexFile = path.join(reportDir, 'index.json');
     if (existsSync(indexFile)) { const index = JSON.parse(readFileSync(confinedFile(reportDir,indexFile),'utf8')); if (index.schema_version !== 1 || index.evidence_kind !== 'required_channel_live_index' || !sameIdentity(index.identity,identity)) fail('NEW_EVIDENCE_DIRECTORY_REQUIRED'); }
-    const { budget, rawHostConfiguration } = readHostBudget(config);
+    const { budget, rawRuntimeConfiguration } = readRuntimeBudget(config);
     if (!process.stdin.isTTY || !process.stdout.isTTY) fail('HUMAN_VISUAL_REVIEW_TERMINAL_REQUIRED');
     const cookie = process.env.WEBLABEL_LIVE_SESSION_COOKIE;
     const csrf = process.env.WEBLABEL_LIVE_CSRF;
@@ -327,8 +337,8 @@ async function run({ config, required }, diagnostic, reportDir, identity, skipSe
     const { validateContract } = await import('../packages/contracts/src/validate.js');
     const { chromium, expect } = await import('@playwright/test');
     evidence.public_config_artifact = await writeArtifact(reportDir, evidenceDir, 'public-config.json', config);
-    await writeFile(path.join(evidenceDir, 'public-host-config.json'), rawHostConfiguration);
-    evidence.host_config_artifact = await artifactRef(reportDir, path.join(evidenceDir, 'public-host-config.json'));
+    await writeFile(path.join(evidenceDir, 'public-runtime-config.json'), rawRuntimeConfiguration);
+    evidence.runtime_config_artifact = await artifactRef(reportDir, path.join(evidenceDir, 'public-runtime-config.json'));
     const detector = config.provider_id === 'detector_local' ? weightsDiagnostic(true) : null;
     if (detector) {
       diagnostic.channels.find(item => item.provider_id === 'detector_local').tried_probe = detector;
@@ -348,7 +358,7 @@ async function run({ config, required }, diagnostic, reportDir, identity, skipSe
     console.error(JSON.stringify({ data_egress: external, possible_model_fees_usd: external ? null : 0, cost_display: external ? 'unknown; calls may incur fees including after cancellation' : 'local inference only', account: required.auth_kind, hard_quantity_budget: budget, max_model_runs: config.authorization.max_model_runs, samples: samples.map(({ bytes, ...publicSample }) => publicSample) }, null, 2));
     const authorizationPhrase = `AUTHORIZE T32 GENERATED ${config.provider_id}`;
     if (await question(`Type ${authorizationPhrase} to create an isolated project and execute this channel: `) !== authorizationPhrase) fail('HUMAN_AUTHORIZATION_DECLINED');
-    const executionConfigurationHash = await hostExecutionConfigurationHash(rawHostConfiguration, config);
+    const executionConfigurationHash = await runtimeExecutionConfigurationHash(rawRuntimeConfiguration, config);
     const project = await request('POST', '/api/projects', { name: `T32 live ${randomUUID()}`, description: 'Authorized generated images only; not business data', allow_self_review: true });
     const ontology = await request('POST', `/api/projects/${project.project_id}/ontologies`, { guidelines_markdown: 'Inspect actual visible helmet attributes; occlusion means unknown. Never invent a visual result.', labels: [{ label_id: 'label_person', name: 'Person', color: '#0099ff', shortcut: null, allowed_geometry_types: ['bbox_xyxy'], attributes: [{ key: 'helmet_state', kind: 'enum', required: false, default_value: 'unknown', enum_values: ['wearing', 'not_wearing', 'unknown'], min: null, max: null }] }] });
     if (external) await request('PUT', `/api/projects/${project.project_id}/external-processing-policy`, { allow_external_processing: true });
@@ -437,7 +447,7 @@ async function run({ config, required }, diagnostic, reportDir, identity, skipSe
       diagnostic.authorization = 'explicit_run_authorization';
       diagnostic.model_runs_started = started;
       diagnostic.outbound_model_calls = external ? null : 0;
-      const row = { sample: sample.kind, source_sha256: sample.source_sha256, canonical_sha256: asset.canonical_sha256, input_fingerprint: preview.request.context.input_fingerprint, run_id: queued.run_id, actual_provider: null, full_model_id: null, auth_kind: null, runtime_version: null, response_id: null, receipt: null, receipts: [], terminal: null, human_visual_review: null, accept_save: null, undo_save: null, execution_configuration_hash: preview.execution_configuration_hash, host_configuration_sha256: budget.host_configuration_sha256 };
+      const row = { sample: sample.kind, source_sha256: sample.source_sha256, canonical_sha256: asset.canonical_sha256, input_fingerprint: preview.request.context.input_fingerprint, run_id: queued.run_id, actual_provider: null, full_model_id: null, auth_kind: null, runtime_version: null, response_id: null, receipt: null, receipts: [], terminal: null, human_visual_review: null, accept_save: null, undo_save: null, execution_configuration_hash: preview.execution_configuration_hash, runtime_configuration_sha256: budget.runtime_configuration_sha256 };
       const consentHttp = await consentResponse;
       row.consent_artifact = await writeArtifact(reportDir, evidenceDir, `${sample.kind}-consent.json`, {request:consentHttp.request().postDataJSON(),response:await consentHttp.json()});
       row.media_artifact = await writeArtifact(reportDir, evidenceDir, `${sample.kind}-media.json`, asset);
@@ -618,10 +628,10 @@ function validateExecutionArtifacts(directory, row, capture, required, validateC
             if (!validateContract('ai_consent_request',consent.request).valid || !validateContract('ai_consent_response',consent.response).valid || consent.request.preview_id !== preview.preview_id || consent.response.preview_id !== preview.preview_id || consent.response.consent_id !== start.request.consent_id || consent.response.input_fingerprint !== row.input_fingerprint || preview.input_fingerprint !== row.input_fingerprint) fail('consent_binding');
             if (!validateContract('ai_preview_response', preview).valid || !validateContract('start_run_request', start.request).valid) fail('preview_start_schema');
             if (preview.profile.profile_id !== config.profile_id || preview.profile.provider_id !== required.provider_id || preview.profile.model_id !== config.model_id || preview.profile.auth_kind !== required.auth_kind || preview.profile.capabilities.image_input !== true || preview.profile.availability !== 'ready' || preview.profile.verification === 'mock_only' || queued.verification === 'mock_only' || preview.request.profile_id !== config.profile_id || start.request.profile_id !== config.profile_id || start.request.operation_id !== preview.request.operation_id || !start.request.consent_id || JSON.stringify(start.request.context) !== JSON.stringify(preview.request.context) || start.request.intent !== preview.request.intent || start.request.prompt !== preview.request.prompt || !queued || queued.profile_id !== config.profile_id || queued.provider_id !== required.provider_id || queued.model_id !== config.model_id || queued.project_id !== start.request.context.project_id || queued.input_fingerprint !== start.request.context.input_fingerprint || queued.intent !== start.request.intent) fail('preview_start_binding');
-            const host = readArtifact(directory, capture.host_config_artifact);
-            if (capture.host_config_artifact.sha256 !== row.host_configuration_sha256) throw new Error('host_configuration_hash');
+            const host = readArtifact(directory, capture.runtime_config_artifact);
+            if (capture.runtime_config_artifact.sha256 !== row.runtime_configuration_sha256) throw new Error('host_configuration_hash');
             if (sha(JSON.stringify(config)) !== capture.run_configuration_sha256 || config.provider_id !== required.provider_id || preview.execution_configuration_hash !== row.execution_configuration_hash || row.execution_configuration_hash !== capture.checked_execution_hash || preview.request?.context?.input_fingerprint !== row.input_fingerprint || preview.request?.context?.canonical_sha256 !== row.canonical_sha256 || queued.run_id !== row.run_id || !host.providers) throw new Error('actual_configuration_preview_start');
-            if (!HASH.test(row.canonical_sha256 ?? '') || !HASH.test(row.input_fingerprint ?? '') || !HASH.test(row.execution_configuration_hash ?? '') || !HASH.test(row.host_configuration_sha256 ?? '') || !HASH.test(capture.run_configuration_sha256 ?? '')) throw new Error('input_configuration_hashes');
+            if (!HASH.test(row.canonical_sha256 ?? '') || !HASH.test(row.input_fingerprint ?? '') || !HASH.test(row.execution_configuration_hash ?? '') || !HASH.test(row.runtime_configuration_sha256 ?? '') || !HASH.test(capture.run_configuration_sha256 ?? '')) throw new Error('input_configuration_hashes');
 
   return preview;
 }
@@ -655,10 +665,10 @@ export async function aggregateLiveEvidence(evidenceDir, { repository, manifest:
           config = readArtifact(directory, capture.public_config_artifact);
           validateRunConfig(config, {historical:true, requiredChannels:contract.required, lockedModel});
           if (config.provider_id !== required.provider_id || config.model_id !== capture.requested_model_id || sha(JSON.stringify(config)) !== capture.run_configuration_sha256) fail('actual_configuration');
-          const rawHost = readArtifact(directory, capture.host_config_artifact, 'text');
-          validateHostConfiguration(rawHost, config, true);
-          capture.checked_execution_hash = await hostExecutionConfigurationHash(rawHost, config);
-          if (!capture.local_runtime || typeof capture.local_runtime.runner_node !== 'string' || !/^v?\d+\.\d+\.\d+/.test(capture.local_runtime.runner_node) || capture.local_runtime.runner_sha256 !== identity.runner_sha256 || capture.local_runtime.checkout_host_dispatch_sha256 !== identity.source_hashes?.['apps/agent-host/src/runtime/dispatch.ts']) fail('runner_runtime_provenance');
+          const rawRuntime = readArtifact(directory, capture.runtime_config_artifact, 'text');
+          validateRuntimeConfiguration(rawRuntime, config, true);
+          capture.checked_execution_hash = await runtimeExecutionConfigurationHash(rawRuntime, config);
+          if (!capture.local_runtime || typeof capture.local_runtime.runner_node !== 'string' || !/^v?\d+\.\d+\.\d+/.test(capture.local_runtime.runner_node) || capture.local_runtime.runner_sha256 !== identity.runner_sha256 || capture.local_runtime.checkout_native_runner_sha256 !== identity.source_hashes?.['crates/weblabel-api/src/runtime/runner.rs']) fail('runner_runtime_provenance');
           if (capture.resources?.terminal !== 'closed' || !['closed','not_opened'].includes(capture.resources?.browser)) fail('resources_not_closed');
           capture.checked_config = config;
           captures.push(capture);
@@ -714,12 +724,12 @@ export async function aggregateLiveEvidence(evidenceDir, { repository, manifest:
         }
       }
       const groups = new Map();
-      for (const row of valid) { const key = JSON.stringify([row.full_model_id,row.auth_kind,row.runtime_version,row.receipt.runtime_version_status,row.execution_configuration_hash,row.host_configuration_sha256]); const group = groups.get(key) ?? new Set(); group.add(row.sample); groups.set(key,group); }
+      for (const row of valid) { const key = JSON.stringify([row.full_model_id,row.auth_kind,row.runtime_version,row.receipt.runtime_version_status,row.execution_configuration_hash,row.runtime_configuration_sha256]); const group = groups.get(key) ?? new Set(); group.add(row.sample); groups.set(key,group); }
       if (![...groups.values()].some(group => contract.samples.every(kind => group.has(kind)))) missing.add('same_identity_clear_occluded');
       const errorKinds = contract.required_evidence.filter(kind => ['quota_error','cancel','unsupported_image','tool_restriction'].includes(kind));
       for (const kind of errorKinds) {
         if (skipSecurity && contract.evidence_scopes?.[kind] === 'security') continue;
-        if (!captures.some(capture => valid.some(row => row.full_model_id === capture.requested_model_id && row.execution_configuration_hash === capture.checked_execution_hash && row.host_configuration_sha256 === capture.host_config_artifact.sha256) && errorProof(kind,capture.error_paths?.[kind],observations.filter(item => capture.samples.some(row => row.run_id === item.run_id)),validateContract,capture.checked_config,required))) missing.add(kind);
+        if (!captures.some(capture => valid.some(row => row.full_model_id === capture.requested_model_id && row.execution_configuration_hash === capture.checked_execution_hash && row.runtime_configuration_sha256 === capture.runtime_config_artifact.sha256) && errorProof(kind,capture.error_paths?.[kind],observations.filter(item => capture.samples.some(row => row.run_id === item.run_id)),validateContract,capture.checked_config,required))) missing.add(kind);
       }
       for (const capture of captures) {
         if (capture.run_error && !(capture.run_error === 'REAL_RUN_DID_NOT_SUCCEED' && ['quota_error','unsupported_image','cancel'].some(kind => errorProof(kind,capture.error_paths?.[kind],observations.filter(item => capture.samples.some(row => row.run_id === item.run_id)),validateContract,capture.checked_config,required)))) unexpectedFailure = true;

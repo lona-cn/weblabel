@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { runProcessGroup } from '../../scripts/dev.mjs';
 import { runTask } from '../../scripts/task.mjs';
 import { taskReportPath } from '../support/report-paths.mjs';
+import { prepare_test_api } from '../support/app.ts';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const env = Object.fromEntries(['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'COMSPEC', 'SystemDrive', 'USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'TMPDIR', 'CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN', 'RUSTC', 'RUSTDOC'].filter(key => process.env[key]).map(key => [key, process.env[key]]));
@@ -21,7 +22,7 @@ test('doctor reports missing tools without attempting an installation', () => {
   const directory = temporary();
   try {
     const absent = Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== 'path')); absent.PATH = directory;
-    const result = spawnSync(process.execPath, ['scripts/doctor.mjs', '--build-dir', path.join(directory, 'missing-release'), '--cargo-cwd', directory], { cwd: root, env: absent, encoding: 'utf8' });
+    const result = spawnSync(prepare_test_api(), ['doctor', '--mode', 'build', '--build-dir', path.join(directory, 'missing-release'), '--cargo-cwd', directory], { cwd: root, env: absent, encoding: 'utf8' });
     assert.equal(result.status, 2);
     const diagnostic = JSON.parse(result.stdout);
     assert.equal(diagnostic.readonly, true);

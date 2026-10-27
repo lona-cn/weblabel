@@ -2,7 +2,7 @@
 
 这是有权管理本机数据的操作者使用的高级运维指南，用于创建一致性备份并恢复到新目录，不是普通用户登录前的准备步骤。已启动服务的用户直接按[网页首次登录与人工标注](getting-started.md#首次登录与人工标注)操作；首次设置与恢复后设置都不需要另开 PowerShell 初始化。备份会包含**全部本地项目业务数据**，不是单个成员的项目导出。只向可信操作者提供文件访问权限；向项目成员交付数据请使用鉴权快照导出。
 
-当前 CLI 要求精确 Node **24.16.0**。先按[当前终端选择 Node](getting-started.md#当前终端选择-node)选择经官方校验的独立 runtime，并让以下命令及其子进程继承该终端 PATH；完成或异常返回时还原原 PATH，不改全局安装/配置。恢复后启动还需要用当前 pin 构建的新发行，不能改写旧 Node 24.15.0 的 `release.json`；若新发行不在默认目录，将下文启动的 `--build-dir` 改为实际构建目录。
+当前运维使用 v2 发行中的单个原生程序，不需要 Node、Python 或编译器。下文用 Windows 的 `weblabel.exe`；Linux 使用同目录的 `weblabel`。从源码先[构建发行](getting-started.md#构建与启动)，并把示例可执行路径和 build-dir 一起替换为实际的新发行目录。旧 v1 包保留不动，不手改 release 清单。
 
 恢复目标已存在、schema/hash 校验失败时按[备份恢复故障分组](troubleshooting.md#备份与恢复)保留原数据与失败证据，不覆写目标或改清单。未同步浏览器工作先按[保存与恢复](troubleshooting.md#保存与恢复)导出保全，再进行服务器备份。
 
@@ -10,10 +10,10 @@
 ## 创建备份
 
 ```powershell
-node scripts/backup.mjs --data-dir "data" --backup-dir "backups/2026-10-06 中文 备份"
+.\target\local-release\weblabel.exe backup --data-dir "data" --backup-dir "backups/2026-10-06 中文 备份"
 ```
 
-`--backup-dir` 必须不存在，且不能位于源数据目录内部。不复制源目录整体，也不复制裸主 DB 忽略 WAL。实现使用 **SQLite backup API** 从源 SQLite 连接生成事务一致的数据库快照，支持在 API 正常运行且 WAL 有提交时执行；当前 Node pin 是 24.16.0，这不把既有 T33 备份证据改记为该版本的实测（见[兼容性记录](compatibility.md)）。
+`--backup-dir` 必须不存在，且不能位于源数据目录内部。不复制源目录整体，也不忽略 WAL 裸拷主库。Rust 运维使用 **SQLite backup API** 取得事务一致快照，支持 API 正常运行且 WAL 有提交时备份。v1 备份格式与原 Node 工具互读；互操作证据不冒充全部真实安装升级或跨版本 schema 迁移保证。
 
 源业务 DB 不被 scrub/修改。对象在快照取得后根据该 DB 的媒体/导出引用收集；不可变对象的存在和 SHA256 验证完成后才发布 `backup.json`。源不存在或 hash 不符会非零退出，不生成“成功”的清单。
 
@@ -44,13 +44,9 @@ node scripts/backup.mjs --data-dir "data" --backup-dir "backups/2026-10-06 中�
 先保留旧目录，选择一个**完全不存在**的恢复目标，并确认父目录已存在。恢复成功后才能启动新目录：
 
 ```powershell
-try {
-  node scripts/restore.mjs --backup-dir "backups/2026-10-06 中文 备份" --data-dir "data-restored"
-  if ($LASTEXITCODE -ne 0) { throw "恢复失败；未启动新目录，请先处理终端错误" }
-  node scripts/start-local.mjs --build-dir "target/local-release" --data-dir "data-restored"
-} finally {
-  $env:PATH = $originalPath
-}
+.\target\local-release\weblabel.exe restore --backup-dir "backups/2026-10-06 中文 备份" --data-dir "data-restored"
+if ($LASTEXITCODE -ne 0) { throw "恢复失败；保留原数据和失败目标，不启动新目录" }
+.\target\local-release\weblabel.exe serve --build-dir "target/local-release" --data-dir "data-restored" --port 48100
 ```
 
 只接受当前发行的精确 schema/迁移，先检查清单、每个文件长度/hash、SQLite 完整性与外键、实际 schema 和当前迁移重建的 schema、实际已应用版本清单、对象引用闭包和认证已清空，全部成功才独占创建新目标。schema SQL 仅将 CRLF 规范为 LF，不放宽字段/约束/trigger 比较。
@@ -61,9 +57,9 @@ try {
 
 `--migrations-dir` 可指向可信发行中的 migrations；不要从不可信备份接受替代迁移。目标只要已存在就拒绝，包括空目录和正在使用的目录。没有 overwrite、reset，也不会隐式清空。复制失败的本次新目录保留以便检查，缺少完成标记，不能当恢复成功；选择另一个新目录重试。
 
-恢复写入 `restore.json` 完成标记，启动器验证其格式/认证处置，并检查已有用户的密码均为空、session 为零，才设置一次性恢复认证模式。API 再在兑换事务内复核，显式 flag 也不能重置有正常密码的数据库。
+恢复写入 `restore.json` 完成标记。原生服务取得数据库 OS 锁后验证标记与已清空认证资格，再开启一次性恢复认证；兑换事务内再次检查，不能重置已有正常密码的数据库。
 
-restore CLI 成功只输出 `restore_created` 并写入 `restore.json`，本身不打印恢复码。之后用恢复目录运行 start-local，才由其管理的 API 在启动终端打印一次性 `WEBLABEL_BOOTSTRAP_CODE`。打开同一启动终端显示的本地网址，页面自动显示“设置恢复后的本地账户”。按[首次登录步骤](getting-started.md#首次登录与人工标注)从该启动终端复制新码、设置并确认新密码，浏览器直接获得自己的 session/CSRF 并进入项目页，不需要另开 PowerShell 初始化。服务创建 `restore-admin-<新UUID>` 并授予全部已恢复项目 admin membership；完整保存成功提示中的实际用户名，之后重启使用它和新密码普通登录。旧用户 ID 留作审计但旧密码失效，不把旧审计身份替换成新管理员。码不可用或会话待核实时先按页面重查，不重复初始化或清业务数据。
+restore 成功只输出交接说明，不打印恢复码。随后用 `serve` 启动新恢复目录，终端才输出一次性 `WEBLABEL_BOOTSTRAP_CODE`。在精确本地网址的“设置恢复后的本地账户”中填写新码与密码。服务创建 `restore-admin-<新UUID>` 并授予已恢复项目 admin membership；保存实际新用户名，后续正常登录。历史用户 ID、成员和审计关系不变，旧密码/session 失效，不把历史改归新管理员。正常重启不会再次重置已设置的新密码。
 
 空用户备份的新库沿用正常 `local-admin` bootstrap。
 
@@ -73,6 +69,6 @@ restore CLI 成功只输出 `restore_created` 并写入 `restore.json`，本身�
 2. 按不可变 revision ID 读取历史对象与 created_by，比较原值。
 3. 打开 canonical 媒体，比较实际内容 hash。
 4. 从旧 snapshot ID 创建原生导出并鉴权下载，核对固定 manifest hash/旧审核人；新 head 不应改变快照。
-5. Ctrl+C 停止，确认锁消失，再运行 SQLite 完整性检查。
+5. Ctrl+C 停止，核对 OS 锁已可重新取得；持久 sidecar 文件保留，再检查 SQLite 完整性，不靠删除文件解锁。
 
 T33 使用程序生成媒体和本地合成密码，实际运行上述 API 与 CLI 的备份恢复路径，不调用模型。具体结果查任务报告的命令、退出码和测试数；这类工程验收不使 G4 通过。

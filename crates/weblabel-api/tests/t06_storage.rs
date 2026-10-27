@@ -326,10 +326,11 @@ async fn abandoned_and_cancelled_writes_roll_back_before_the_next_writer_commits
     recovered.commit().await.unwrap();
 
     let mut next = state.repository.begin_write().await.unwrap();
-    let ids: Vec<String> = sqlx::query_scalar("SELECT project_id FROM projects ORDER BY project_id")
-        .fetch_all(next.connection())
-        .await
-        .unwrap();
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT project_id FROM projects ORDER BY project_id")
+            .fetch_all(next.connection())
+            .await
+            .unwrap();
     assert_eq!(ids, vec!["committed"]);
     next.rollback().await.unwrap();
 }

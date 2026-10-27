@@ -107,11 +107,26 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
       const before = change.kind === 'create' ? null : change.kind === 'set_label' ? entry.fixedDocument?.objects.find(object => object.object_id === objectId) ?? null : entry.objects.get(objectId) ?? null;
       let after: AnnotationObject | null = change.kind === 'create' ? change.object : change.kind === 'set_attributes' && before ? { ...before, attributes: { ...before.attributes, ...change.values } } : null;
       const values = element('dl'), beforeValue = element('dd'), afterValue = element('dd'); values.append(element('dt', '原值'), beforeValue, element('dt', '建议值'), afterValue);
+      const comparison = element('div'), attributeDiff = change.kind === 'set_attributes' ? element('dl') : null;
+      if (attributeDiff) {
+        attributeDiff.dataset.testid = 'candidate-attribute-diff';
+        const details = element('details'); details.append(element('summary', '完整对象对照（技术详情）'), values);
+        comparison.append(attributeDiff, details);
+      } else comparison.append(values);
       const visual = element('div'), focusLocal = action('定位建议局部', 'candidate-local-' + change.change_id, context.signal, () => { localFocus = !localFocus; renderProjection(); }), focusMain = action('定位主画布', 'candidate-focus-' + change.change_id, context.signal, () => { const row = rows.get(change.change_id); refresh(); if (row && !row.focus.disabled && row.bounds && !context.focusRegion(row.bounds)) message.textContent = '当前主画布或建议区域不可用，未改变视图。'; });
       let localFocus = false;
       function renderProjection() {
         beforeValue.textContent = before ? JSON.stringify({ label_id: before.label_id, attributes: before.attributes, geometry: before.geometry }) : '—';
         afterValue.textContent = after ? JSON.stringify({ label_id: after.label_id, attributes: after.attributes, geometry: after.geometry }) : '固定投影不可用';
+        if (attributeDiff && change.kind === 'set_attributes') {
+          const show = (object: AnnotationObject | null, key: string) => !object ? '固定投影不可用'
+            : !Object.hasOwn(object.attributes, key) ? '缺少键' : JSON.stringify(object.attributes[key]) ?? '无法显示';
+          attributeDiff.replaceChildren();
+          for (const key of Object.keys(change.values)) attributeDiff.append(
+            element('dt', key + ' · 原值'), element('dd', show(before, key)),
+            element('dt', key + ' · 建议值'), element('dd', show(after, key)),
+          );
+        }
         visual.replaceChildren(readonlyVisual(entry.fixedDocument, context.getScope().assetId, before ? [before.geometry] : [], after ? [after.geometry] : [], localFocus));
         focusLocal.textContent = localFocus ? '查看整图对照' : '定位建议局部';
       }
@@ -119,7 +134,7 @@ function createCandidateCard(initial: CandidateEntry, context: CandidateViewCont
       const rejection = element('p'); rejection.setAttribute('role', 'status');
       const row = { checkbox, rejection, reject: rejectButton, focus: focusMain, bounds: change.kind === 'create' ? change.object.geometry : before?.geometry ?? null, projectionReady: change.kind !== 'set_label', render: renderProjection };
       rows.set(change.change_id, row);
-      li.append(labeled(({ create: '新增对象', set_attributes: '修改属性', set_label: '修改类别（仅对照）' }[change.kind]) + ' · ' + objectId, checkbox), rejection, values, element('p', change.reason || '未提供理由'), visual, focusLocal, focusMain, rejectButton); changesRoot.append(li); renderProjection();
+      li.append(labeled(({ create: '新增对象', set_attributes: '修改属性', set_label: '修改类别（仅对照）' }[change.kind]) + ' · ' + objectId, checkbox), rejection, comparison, element('p', change.reason || '未提供理由'), visual, focusLocal, focusMain, rejectButton); changesRoot.append(li); renderProjection();
       if (change.kind === 'set_label' && entry.fixedDocument && entry.fixedOntology && entry.fixedDocument.asset_revision_id === entry.candidate.context.asset_revision_id
         && entry.fixedDocument.ontology_version_id === entry.candidate.context.ontology_version_id && entry.fixedOntology.project_id === entry.candidate.context.project_id
         && entry.candidate.context.object_hashes[change.object_id] === change.before_hash) {

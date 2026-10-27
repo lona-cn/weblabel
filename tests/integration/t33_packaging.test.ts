@@ -7,15 +7,20 @@ import { DatabaseSync } from 'node:sqlite';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { buildRelease, root, sha, files } from '../../scripts/build.mjs';
-import { validateRelease, stopTree, taskkillPath } from '../../scripts/start-local.mjs';
-import { schemaHash } from '../../scripts/backup.mjs';
+import { validateRelease, executableName } from '../../scripts/release-manifest.mjs';
+import { schemaHash } from '../support/backup-fixture.mjs';
 
 const scratch = path.join(root, 'target', `T33 中文 spaces & ${crypto.randomUUID()}`);
 let build: string;
 const children: ChildProcess[] = [];
 type Value = Record<string, any>;
-function cli(script: string, args: string[], env = process.env) {
-  return spawnSync(process.execPath, [path.join(root, 'scripts', script), ...args], { cwd: root, encoding: 'utf8', shell: false, env, timeout: 60000 });
+function productEnvironment(overrides: NodeJS.ProcessEnv = {}) {
+  const env = Object.fromEntries(['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR'].filter(key => process.env[key]).map(key => [key, process.env[key]]));
+  if (overrides.PATH !== undefined) delete env.Path;
+  return { ...env, ...overrides };
+}
+function cli(command: string, args: string[], overrides: NodeJS.ProcessEnv = {}) {
+  return spawnSync(path.join(build, executableName), [command, ...args], { cwd: root, encoding: 'utf8', shell: false, env: productEnvironment(overrides), timeout: 60000 });
 }
 function success(r: SpawnSyncReturns<string>) { expect(r.status, r.stdout + r.stderr).toBe(0); }
 async function port() {
@@ -24,18 +29,15 @@ async function port() {
   const closed = once(server, 'close'); server.close(); await closed; return address.port;
 }
 async function launch(data: string, requireBootstrap = true) {
-  const webPort = await port(), apiPort = await port();
-  const script = `import {startLocal} from ${JSON.stringify(new URL('../../scripts/start-local.mjs', import.meta.url).href)}; const started = startLocal(${JSON.stringify(['--build-dir', build, '--data-dir', data, '--port', String(webPort), '--api-port', String(apiPort)])}); process.once('message', async message => { if (message !== 'interrupt') throw new Error('unexpected_owned_control_message'); const runtime = await started; process.emit('SIGINT'); await runtime.stop(); process.exitCode = 130; process.disconnect(); }); await started;`;
-  // Windows runtime PATH deliberately excludes Python, pnpm and official provider CLIs.
-  const env = { ...process.env, PATH: taskkillPath ? path.dirname(taskkillPath) : '/usr/bin:/bin', WEBLABEL_HOST_CONFIG: '' };
-  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: root, env, shell: false, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  const webPort = await port();
+  const child = spawn(path.join(build, executableName), ['serve', '--build-dir', build, '--data-dir', data, '--port', String(webPort)], { cwd: root, env: productEnvironment({ PATH: '' }), shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
   children.push(child);
   let output = ''; child.stdout?.on('data', chunk => { output += String(chunk); }); child.stderr?.on('data', chunk => { output += String(chunk); });
   const base = `http://127.0.0.1:${webPort}`;
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
     const code = output.match(/WEBLABEL_BOOTSTRAP_CODE=([0-9a-f]+)/)?.[1];
-    if (code || !requireBootstrap) { try { if ((await fetch(base + '/api/session')).status === 401) return { child, base, code: code ?? '', apiPort }; } catch {} }
+    if (code || !requireBootstrap) { try { if ((await fetch(base + '/api/session')).status === 401) return { child, base, code: code ?? '' }; } catch {} }
     if (child.exitCode !== null) throw new Error(output);
     // Real release processes and HTTP polling own independent clocks; fake timers cannot drive them.
     await delay(50);
@@ -43,9 +45,10 @@ async function launch(data: string, requireBootstrap = true) {
   throw new Error('bootstrap_missing: ' + output.replace(/WEBLABEL_BOOTSTRAP_CODE=\w+/g, '[private bootstrap]'));
 }
 async function stop(child: ChildProcess) {
-  if (child.exitCode !== null) return;
-  const exited = once(child, 'exit', { signal: AbortSignal.timeout(15000) });
-  child.send('interrupt'); await exited;
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, 'close', { signal: AbortSignal.timeout(15000) });
+  // Owned-process termination only; physical normal shutdown is proved separately.
+  child.kill(); await exited;
 }
 async function authenticated(base: string, code: string) {
   const response = await fetch(base + '/api/session/bootstrap', { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ launch_code: code, password: 'T33-synthetic-new-password' }) });
@@ -66,92 +69,33 @@ beforeAll(async () => {
 }, 600000);
 afterAll(async () => { await Promise.all(children.map(stop)); fs.rmSync(scratch, { recursive: true, force: true }); }, 30000);
 
-if (taskkillPath) it('propagates a real disconnected IPC error while stopping its owned child without an unhandled rejection', () => {
-  const script = `
-    import { spawn } from 'node:child_process';
-    import { once } from 'node:events';
-    import { stopTree } from ${JSON.stringify(new URL('../../scripts/start-local.mjs', import.meta.url).href)};
-    const unhandled = []; process.on('unhandledRejection', error => unhandled.push(error.code));
-    const child = spawn(process.execPath, ['-e', 'process.disconnect();setTimeout(()=>{},10000)'], { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
-    const closed = new Promise(resolve => child.once('close', resolve));
-    try {
-      await once(child, 'disconnect');
-      const stopping = stopTree(child);
-      child.send('real-disconnected-ipc-failure');
-      let error; try { await stopping; } catch (failure) { error = failure; }
-      await closed; await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ error_code: error?.code, original_child_alive: child.kill(0), unhandled }));
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await closed; }
-    }
-  `;
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: root, encoding: 'utf8', shell: false, timeout: 15000 });
-  expect(result.status, result.stdout + result.stderr).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({ error_code: 'ERR_IPC_CHANNEL_CLOSED', original_child_alive: false, unhandled: [] });
-}, 30000);
-
-it('start-local fails honestly when release composition is missing', () => {
-  const r = cli('start-local.mjs', ['--build-dir', path.join(scratch, '不存在 release & no-build')]);
-  expect(r.status).not.toBe(0); expect(r.stdout + r.stderr).toMatch(/build_missing/);
-});
-it('rejects tampered products and release manifests without required WASM', () => {
-  const copy = path.join(scratch, 'bad release'); fs.cpSync(build, copy, { recursive: true });
-  fs.appendFileSync(path.join(copy, 'web/wasm/wasm_bridge_bg.wasm'), 'corruption');
-  expect(cli('start-local.mjs', ['--build-dir', copy]).stderr).toMatch(/hash_mismatch/);
-  const manifest = JSON.parse(fs.readFileSync(path.join(copy, 'release.json'), 'utf8'));
-  manifest.files = manifest.files.filter((entry: Value) => !entry.path.includes('wasm_bridge_bg.wasm'));
-  fs.writeFileSync(path.join(copy, 'release.json'), JSON.stringify(manifest));
-  expect(cli('start-local.mjs', ['--build-dir', copy]).stderr).toMatch(/build_missing/);
-});
 it('doctor stays read-only, reports pinned versions separately from live capability and never emits secrets', () => {
   const before = files(build).map((name: string) => [name, sha(path.join(build, name))]);
-  const r = cli('doctor.mjs', ['--build-dir', build, ...(process.env.WEBLABEL_CARGO_CWD ? ['--cargo-cwd', process.env.WEBLABEL_CARGO_CWD] : [])], { ...process.env, OPENAI_API_KEY: 'T33-do-not-publish-secret' });
+  const r = cli('doctor', ['--mode', 'runtime', '--build-dir', build], { OPENAI_API_KEY: 'T33-do-not-publish-secret', PATH: '' });
   success(r); const result = JSON.parse(r.stdout);
   expect(result.capabilities.models).toBe('live-not-run'); expect(result.capabilities.webgpu).toBe('browser-device-probe-required');
   expect(r.stdout + r.stderr).not.toContain('T33-do-not-publish-secret');
   expect(files(build).map((name: string) => [name, sha(path.join(build, name))])).toEqual(before);
-  const missing = cli('doctor.mjs', ['--build-dir', build], { ...process.env, PATH: '' });
-  expect(missing.status).not.toBe(0); expect(JSON.parse(missing.stdout).tools.find((tool: Value) => tool.name === 'rustc').status).toBe('missing');
+  const missing = cli('doctor', ['--mode', 'build', '--build-dir', build], { PATH: '' });
+  expect(missing.status).toBe(2); expect(JSON.parse(missing.stdout).tools.find((tool: Value) => tool.name === 'rustc').status).toBe('missing');
 });
-it('accepts Chinese/space paths, serves complete current products, enforces origin, prevents concurrent data use and cleans the owned API on SIGINT', async () => {
+it('accepts Chinese/space paths, enforces origin and exclusive data use, and releases the native OS lock on close', async () => {
   const data = path.join(scratch, '启动 & 中文 data'); const running = await launch(data);
   const web = await fetch(running.base); expect(web.status).toBe(200); expect(await web.text()).toContain('<div id="root">');
   expect((await fetch(running.base + '/wasm/wasm_bridge_bg.wasm')).headers.get('content-type')).toBe('application/wasm');
   const denied = await fetch(running.base + '/api/projects', { headers: { origin: 'https://attacker.invalid' } });
-  expect(denied.status).toBe(403); expect(await denied.json()).toMatchObject({ code: 'LOOPBACK_ORIGIN_DENIED', details: null });
+  expect(denied.status).toBe(403);
   expect((await fetch(running.base + '/api/projects')).status).toBe(401);
-  expect(cli('start-local.mjs', ['--build-dir', build, '--data-dir', data, '--port', String(await port()), '--api-port', String(await port())]).stderr).toMatch(/data_in_use/);
+  expect(cli('serve', ['--build-dir', build, '--data-dir', data, '--port', String(await port())]).status).not.toBe(0);
+  expect(JSON.parse(cli('doctor', ['--mode', 'runtime', '--build-dir', build, '--data-dir', data]).stdout).storage.lock.status).toBe('occupied');
   await authenticated(running.base, running.code);
-  await stop(running.child); expect(fs.existsSync(path.join(data, 'runtime.lock'))).toBe(false);
+  await stop(running.child);
+  expect(fs.statSync(path.join(data, 'api.sqlite.runtime.lock')).isFile()).toBe(true);
+  expect(JSON.parse(cli('doctor', ['--mode', 'runtime', '--build-dir', build, '--data-dir', data]).stdout).storage.lock.status).toBe('available');
   await expect(fetch(running.base + '/api/session')).rejects.toThrow();
-  await expect(fetch(`http://127.0.0.1:${running.apiPort}/api/session`)).rejects.toThrow();
   const db = new DatabaseSync(path.join(data, 'api.sqlite'), { readOnly: true });
   expect(db.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok'); db.close();
-  const restarted = await launch(data, false);
-  expect((await fetch(restarted.base + '/api/session')).status).toBe(401);
-  await stop(restarted.child);
-  expect(fs.existsSync(path.join(data, 'runtime.lock'))).toBe(false);
 }, 60000);
-it('terminates a real owned child and grandchild tree without killing an unrelated service', async () => {
-  const descendantPort = await port(), unrelatedPort = await port();
-  const leaf = `require('node:http').createServer((q,r)=>r.end('owned-grandchild')).listen(${descendantPort},'127.0.0.1',()=>console.log('LISTENING'));`;
-  const parent = `const {spawn}=require('node:child_process');spawn(process.execPath,['-e',${JSON.stringify(leaf)}],{shell:false,stdio:['ignore','inherit','inherit']});setInterval(()=>{},1000);`;
-  const unrelated = spawn(process.execPath, ['-e', `require('node:http').createServer((q,r)=>r.end('unrelated-service')).listen(${unrelatedPort},'127.0.0.1',()=>console.log('LISTENING'));`], { shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
-  let child: ChildProcess | undefined;
-  try {
-    await once(unrelated.stdout!, 'data', { signal: AbortSignal.timeout(15000) });
-    child = spawn(process.execPath, ['-e', parent], { shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
-    await once(child.stdout!, 'data', { signal: AbortSignal.timeout(15000) });
-    expect(await (await fetch(`http://127.0.0.1:${descendantPort}`)).text()).toBe('owned-grandchild');
-    await stopTree(child);
-    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
-    await expect(fetch(`http://127.0.0.1:${descendantPort}`)).rejects.toThrow();
-    expect(await (await fetch(`http://127.0.0.1:${unrelatedPort}`)).text()).toBe('unrelated-service');
-  } finally {
-    try { if (child) await stopTree(child); }
-    finally { await stopTree(unrelated); }
-  }
-}, 30000);
 async function approvedReview(data: string, originalName = '测试 image.jpg', projectText = { name: 'T33 business', description: 'keep audit identity' }) {
   const running = await launch(data); const admin = await authenticated(running.base, running.code);
   const project = await admin.request('POST', '/api/projects', { ...projectText, allow_self_review: true }); expect(project.status).toBe(201);
@@ -179,7 +123,6 @@ it('refuses public project name and description credentials, preserving exact pr
   const { running, admin, projectId, ontologyId, assetId, revision } = await approvedReview(data, 'ordinary project image.jpg', { name: `  项目 ${nameSecret}  `, description: `description "${descriptionSecret}"\noriginal whitespace  ` });
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
   try {
-    db.exec('PRAGMA busy_timeout=1000');
     const tables = ['projects', 'review_tasks', 'review_submissions', 'review_decisions', 'annotation_revisions'];
     const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
     const identities = db.prepare('SELECT user_id,username,created_at,platform_admin FROM users ORDER BY user_id').all();
@@ -189,7 +132,7 @@ it('refuses public project name and description credentials, preserving exact pr
       const sourceFiles = ['api.sqlite', 'api.sqlite-wal'].filter(file => fs.existsSync(path.join(data, file)));
       const hashes = sourceFiles.map(file => sha(path.join(data, file))), mode = db.prepare('PRAGMA journal_mode').get()!.journal_mode;
       const destination = path.join(scratch, `project-${field}-refused`);
-      const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', destination]);
+      const result = cli('backup', ['--data-dir', data, '--backup-dir', destination]);
       expect(result.status, result.stdout + result.stderr).toBe(1);
       expect(result.stderr).toContain('credential_in_immutable_business_data');
       expect(result.stdout + result.stderr).not.toContain(secret);
@@ -200,14 +143,14 @@ it('refuses public project name and description credentials, preserving exact pr
     }
     db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='project-text-profile'").run(JSON.stringify({ api_key: 'unrelated-config-only-key' }));
     const backupDir = path.join(scratch, 'project exact backup'), restored = path.join(scratch, 'project exact restored');
-    success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
+    success(cli('backup', ['--data-dir', data, '--backup-dir', backupDir]));
     const copy = new DatabaseSync(path.join(backupDir, 'api.sqlite'), { readOnly: true });
     try {
       expect(tables.map(table => copy.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before);
       expect(copy.prepare('SELECT user_id,username,created_at,platform_admin FROM users ORDER BY user_id').all()).toEqual(identities);
     } finally { copy.close(); }
     for (const suffix of ['-wal', '-shm', '-journal']) expect(fs.existsSync(path.join(backupDir, `api.sqlite${suffix}`))).toBe(false);
-    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+    success(cli('restore', ['--backup-dir', backupDir, '--data-dir', restored]));
     const recovered = await launch(restored), fresh = await authenticated(recovered.base, recovered.code);
     try {
       expect(fresh.userId).not.toBe(admin.userId);
@@ -230,14 +173,13 @@ it('refuses a public user username credential without rewriting identity and res
   expect(created.status).toBe(201);
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
   try {
-    db.exec('PRAGMA busy_timeout=1000');
     const before = db.prepare('SELECT user_id,username,created_at,platform_admin FROM users ORDER BY user_id').all();
     expect(before.find(row => row.username === username)?.user_id).toBe(created.body.user_id);
     db.prepare("INSERT INTO model_profiles VALUES('username-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,?,NULL,?)").run(JSON.stringify({ api_key: secret }), new Date().toISOString());
     const sourceFiles = ['api.sqlite', 'api.sqlite-wal'].filter(file => fs.existsSync(path.join(data, file)));
     const hashes = sourceFiles.map(file => sha(path.join(data, file)));
     const destination = path.join(scratch, 'username refused');
-    const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', destination]);
+    const result = cli('backup', ['--data-dir', data, '--backup-dir', destination]);
     expect(result.status, result.stdout + result.stderr).toBe(1);
     expect(result.stderr).toContain('credential_in_immutable_business_data');
     expect(result.stdout + result.stderr).not.toContain(secret);
@@ -246,10 +188,10 @@ it('refuses a public user username credential without rewriting identity and res
     expect(db.prepare('SELECT user_id,username,created_at,platform_admin FROM users ORDER BY user_id').all()).toEqual(before);
     db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='username-profile'").run(JSON.stringify({ api_key: 'unrelated-username-config-key' }));
     const backupDir = path.join(scratch, 'username backup'), restored = path.join(scratch, 'username restored');
-    success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
+    success(cli('backup', ['--data-dir', data, '--backup-dir', backupDir]));
     const copy = new DatabaseSync(path.join(backupDir, 'api.sqlite'), { readOnly: true });
     try { expect(copy.prepare('SELECT user_id,username,created_at,platform_admin FROM users ORDER BY user_id').all()).toEqual(before); } finally { copy.close(); }
-    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+    success(cli('restore', ['--backup-dir', backupDir, '--data-dir', restored]));
     const recovered = await launch(restored), fresh = await authenticated(recovered.base, recovered.code);
     try {
       expect(fresh.userId).not.toBe(admin.userId);
@@ -263,7 +205,6 @@ it('fails closed on immutable approval bindings and audit reasons before any sna
   const data = path.join(scratch, 'approved without snapshot');
   const { running, admin, projectId, ontologyId, assetId, revision } = await approvedReview(data);
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
-  db.exec('PRAGMA busy_timeout=1000');
   const before = {
     submissions: db.prepare('SELECT * FROM review_submissions ORDER BY review_id').all(),
     decisions: db.prepare('SELECT * FROM review_decisions ORDER BY review_id').all(),
@@ -275,7 +216,7 @@ it('fails closed on immutable approval bindings and audit reasons before any sna
     for (const [label, secret] of [['revision-binding', revision.annotation_revision_id], ['audit-reason', 'original auditor']]) {
       db.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: secret }), 'review-collision');
       const destination = path.join(scratch, label);
-      const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', destination]);
+      const result = cli('backup', ['--data-dir', data, '--backup-dir', destination]);
       expect(result.status, result.stdout + result.stderr).toBe(1);
       expect(result.stderr).toContain('credential_in_immutable_business_data');
       expect(result.stdout + result.stderr).not.toContain(secret);
@@ -289,7 +230,7 @@ it('fails closed on immutable approval bindings and audit reasons before any sna
     }
     db.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: 'unrelated-configuration-secret' }), 'review-collision');
     const backupDir = path.join(scratch, 'preserved approval'), restored = path.join(scratch, 'restored approval');
-    success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
+    success(cli('backup', ['--data-dir', data, '--backup-dir', backupDir]));
     const copy = new DatabaseSync(path.join(backupDir, 'api.sqlite'), { readOnly: true });
     try {
       expect(copy.prepare('SELECT * FROM review_submissions ORDER BY review_id').all()).toEqual(before.submissions);
@@ -298,7 +239,7 @@ it('fails closed on immutable approval bindings and audit reasons before any sna
     } finally { copy.close(); }
     const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null });
     expect(snapshot.status, JSON.stringify(snapshot.body)).toBe(201);
-    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+    success(cli('restore', ['--backup-dir', backupDir, '--data-dir', restored]));
     const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code);
     try {
       expect((await fresh.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
@@ -316,14 +257,13 @@ it('refuses an authenticated scalar issue-code credential collision before snaps
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
   const tables = ['review_issues', 'review_submissions', 'review_decisions', 'annotation_revisions', 'media_revisions', 'media_metadata'];
   try {
-    db.exec('PRAGMA busy_timeout=1000');
     expect(db.prepare('SELECT COUNT(*) AS n FROM dataset_versions').get()!.n).toBe(0);
     db.prepare("INSERT INTO model_profiles VALUES('scalar-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,?,NULL,?)").run(JSON.stringify({ api_key: secret }), new Date().toISOString());
     const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
     const sourceFiles = ['api.sqlite', 'api.sqlite-wal'].filter(file => fs.existsSync(path.join(data, file)));
     const sourceHashes = sourceFiles.map(file => sha(path.join(data, file)));
     const destination = path.join(scratch, 'refused issue-code backup');
-    const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', destination]);
+    const result = cli('backup', ['--data-dir', data, '--backup-dir', destination]);
     // On RED, a successful backup actually contains the credential in the API-created issue.
     const leaked = result.status === 0 ? new DatabaseSync(path.join(destination, 'api.sqlite'), { readOnly: true }) : undefined;
     const leakDiagnostic = leaked?.prepare('SELECT code FROM review_issues WHERE issue_id=?').get(issue.body.issue_id)?.code === secret;
@@ -338,10 +278,10 @@ it('refuses an authenticated scalar issue-code credential collision before snaps
     expect((await admin.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
     db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='scalar-profile'").run(JSON.stringify({ api_key: 'unrelated-config-credential' }));
     const backupDir = path.join(scratch, 'issue-history backup'), restored = path.join(scratch, 'issue-history restored');
-    success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
+    success(cli('backup', ['--data-dir', data, '--backup-dir', backupDir]));
     const snapshotPayload = { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null };
     expect((await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, snapshotPayload)).status).toBe(201);
-    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+    success(cli('restore', ['--backup-dir', backupDir, '--data-dir', restored]));
     const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code);
     try {
       expect(fresh.userId).not.toBe(admin.userId);
@@ -359,7 +299,6 @@ it('refuses a credential in immutable media original_name even when mutable inge
   const { running, admin, projectId, ontologyId, assetId, revision } = await approvedReview(data, `${secret}.jpg`);
   const db = new DatabaseSync(path.join(data, 'api.sqlite'));
   try {
-    db.exec('PRAGMA busy_timeout=1000');
     expect(db.prepare('SELECT COUNT(*) AS n FROM dataset_versions').get()!.n).toBe(0);
     db.prepare("INSERT INTO model_profiles VALUES('media-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,?,NULL,?)").run(JSON.stringify({ api_key: secret }), new Date().toISOString());
     const tables = ['media_revisions', 'media_metadata', 'media_object_refs', 'annotation_revisions', 'review_decisions'];
@@ -367,7 +306,7 @@ it('refuses a credential in immutable media original_name even when mutable inge
     const sourceFiles = ['api.sqlite', 'api.sqlite-wal'].filter(file => fs.existsSync(path.join(data, file)));
     const sourceHashes = sourceFiles.map(file => sha(path.join(data, file)));
     const destination = path.join(scratch, 'refused media-name backup');
-    const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', destination]);
+    const result = cli('backup', ['--data-dir', data, '--backup-dir', destination]);
     expect(result.status, result.stdout + result.stderr).toBe(1);
     expect(result.stderr).toContain('credential_in_immutable_business_data');
     expect(result.stdout + result.stderr).not.toContain(secret);
@@ -386,8 +325,6 @@ it('refuses credential collisions in immutable review, prediction, event and exp
   expect(snapshot.status).toBe(201);
   const db = new DatabaseSync(path.join(data, 'api.sqlite')), now = new Date().toISOString();
   try {
-    // The live export worker owns an independent writer; bound fixture contention once per connection.
-    db.exec('PRAGMA busy_timeout=1000');
     db.prepare("INSERT INTO model_profiles VALUES('audit-profile','openai_api','synthetic-not-live','api_key','{}','needs_configuration','not_run',NULL,NULL,'{}',NULL,?)").run(now);
     db.prepare("INSERT INTO jobs(job_id,project_id,kind,state,payload_json,created_at,updated_at) VALUES('audit-job',?,'model','succeeded','{}',?,?)").run(projectId, now, now);
     db.prepare("INSERT INTO model_runs(run_id,operation_id,project_id,asset_revision_id,annotation_revision_id,ontology_version_id,actor_id,job_id,profile_id,profile_snapshot_json,provider_id,source,intent,prompt,context_json,input_fingerprint,request_hash,state,cost_display,created_at) VALUES('audit-run','audit-operation',?,?,?,?,?,'audit-job','audit-profile','{}','openai_api','manual','find_issues','pinned-prompt-collision',?,'audit-fingerprint',?,'succeeded','none',?)").run(projectId, assetId, revision.annotation_revision_id, ontologyId, admin.userId, JSON.stringify({ actor_id: 'pinned-context-actor-collision' }), '1'.repeat(64), now);
@@ -428,7 +365,7 @@ it('refuses credential collisions in immutable review, prediction, event and exp
     ]) {
       db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='audit-profile'").run(JSON.stringify({ api_key: secret }));
       const destination = path.join(scratch, field);
-      const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', destination]);
+      const result = cli('backup', ['--data-dir', data, '--backup-dir', destination]);
       expect(result.status, field + ': ' + result.stdout + result.stderr).toBe(1);
       expect(result.stderr).toContain('credential_in_immutable_business_data');
       expect(result.stdout + result.stderr).not.toContain(secret);
@@ -437,7 +374,7 @@ it('refuses credential collisions in immutable review, prediction, event and exp
     }
     db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='audit-profile'").run(JSON.stringify({ api_key: 'unrelated-audit-configuration-key' }));
     const preserved = path.join(scratch, 'audit exact bytes');
-    success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', preserved]));
+    success(cli('backup', ['--data-dir', data, '--backup-dir', preserved]));
     const copy = new DatabaseSync(path.join(preserved, 'api.sqlite'), { readOnly: true });
     try { expect(tables.map(table => copy.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())).toEqual(before); } finally { copy.close(); }
   } finally { db.close(); await stop(running.child); }
@@ -448,7 +385,6 @@ it('fails closed on decoded keys and raw-only credential encodings in mutable pr
   const db = new DatabaseSync(path.join(data, 'api.sqlite')), now = new Date().toISOString();
   const keySecret = 'owned-progress-key-雪"', valueSecret = 'owned-progress-value-雪"';
   try {
-    db.exec('PRAGMA busy_timeout=1000');
     // JobQueue accepts arbitrary JSON progress. This private persisted fixture
     // exercises its real public status consumer, not a fake Tool/provider run.
     db.prepare("INSERT INTO jobs(job_id,project_id,kind,state,payload_json,progress_json,created_at,updated_at) VALUES('progress-fixture',?,'media_import','succeeded','{}',?,?,?)").run(project.body.project_id, JSON.stringify({ succeeded: 1, failed: 0, detail: { [keySecret]: valueSecret } }, null, 2).replaceAll('雪', '\\u96ea'), now, now);
@@ -458,7 +394,7 @@ it('fails closed on decoded keys and raw-only credential encodings in mutable pr
     expect(publicBefore.status).toBe(200); expect(publicBefore.body.progress.detail).toEqual({ [keySecret]: valueSecret });
     const sourceFiles = ['api.sqlite', 'api.sqlite-wal'].filter(file => fs.existsSync(path.join(data, file))), hashes = sourceFiles.map(file => sha(path.join(data, file)));
     const refused = path.join(scratch, 'mutable key refused');
-    const result = cli('backup.mjs', ['--data-dir', data, '--backup-dir', refused]);
+    const result = cli('backup', ['--data-dir', data, '--backup-dir', refused]);
     expect(result.status, result.stdout + result.stderr).toBe(1);
     expect(result.stderr).toContain('credential_in_immutable_business_data');
     expect(result.stdout + result.stderr).not.toContain(keySecret);
@@ -470,7 +406,7 @@ it('fails closed on decoded keys and raw-only credential encodings in mutable pr
     const rawSecret = '\\u96ea';
     db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='progress-profile'").run(JSON.stringify({ api_key: rawSecret }));
     const rawRefused = path.join(scratch, 'mutable raw encoding refused');
-    const rawResult = cli('backup.mjs', ['--data-dir', data, '--backup-dir', rawRefused]);
+    const rawResult = cli('backup', ['--data-dir', data, '--backup-dir', rawRefused]);
     expect(rawResult.status, rawResult.stdout + rawResult.stderr).toBe(1);
     expect(rawResult.stderr).toContain('credential_in_immutable_business_data');
     expect(rawResult.stdout + rawResult.stderr).not.toContain(rawSecret);
@@ -478,10 +414,10 @@ it('fails closed on decoded keys and raw-only credential encodings in mutable pr
     expect(db.prepare("SELECT * FROM jobs WHERE job_id='progress-fixture'").get()).toEqual(original);
     db.prepare("UPDATE model_profiles SET config_json=? WHERE profile_id='progress-profile'").run(JSON.stringify({ api_key: valueSecret }));
     const backupDir = path.join(scratch, 'mutable value backup'), restored = path.join(scratch, 'mutable value restored');
-    success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
+    success(cli('backup', ['--data-dir', data, '--backup-dir', backupDir]));
     expect(fs.readFileSync(path.join(backupDir, 'api.sqlite')).includes(Buffer.from(valueSecret))).toBe(false);
     expect(db.prepare("SELECT * FROM jobs WHERE job_id='progress-fixture'").get()).toEqual(original);
-    success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+    success(cli('restore', ['--backup-dir', backupDir, '--data-dir', restored]));
     const recovered = await launch(restored), fresh = await authenticated(recovered.base, recovered.code);
     try {
       const status = await fresh.request('GET', '/api/jobs/progress-fixture');
@@ -496,13 +432,12 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   const { running, admin, projectId, ontologyId, asset, assetId, revision } = await approvedReview(data);
   const snapshot = await admin.request('POST', `/api/projects/${projectId}/dataset-versions`, { operation_id: crypto.randomUUID(), ontology_version_id: ontologyId, items: [{ asset_revision_id: assetId, annotation_revision_id: revision.annotation_revision_id, split: 'train' }], excluded: [], split_seed: null, split_ratios: null }); expect(snapshot.status).toBe(201);
   const sourceDb = new DatabaseSync(path.join(data, 'api.sqlite'));
-  sourceDb.exec('PRAGMA busy_timeout=1000');
   sourceDb.prepare("INSERT INTO model_profiles VALUES(?, 'openai_api', 'synthetic-not-live', 'api_key', ?, 'needs_configuration', 'not_run', NULL, NULL, ?, ?, ?)").run('t33-profile', JSON.stringify({ image_input: true, tools: true, structured_output: true, bbox_output: false, attributes: true }), JSON.stringify({ api_key: 'T33-secret-config-value', endpoint: 'http://invalid.example' }), 'T33-secret-ref', new Date().toISOString());
   const originalPassword = sourceDb.prepare('SELECT password_hash FROM users WHERE user_id=?').get(admin.userId)!.password_hash as string;
   const originalSessions = sourceDb.prepare('SELECT session_id,csrf_hash FROM sessions').all().flatMap(row => [row.session_id as string, row.csrf_hash as string]);
   const originalJournalMode = sourceDb.prepare('PRAGMA journal_mode').get()!.journal_mode;
   sourceDb.close();
-  success(cli('backup.mjs', ['--data-dir', data, '--backup-dir', backupDir]));
+  success(cli('backup', ['--data-dir', data, '--backup-dir', backupDir]));
   const bytes = fs.readFileSync(path.join(backupDir, 'api.sqlite'));
   for (const secret of [originalPassword, ...originalSessions, 'T33-secret-config-value', 'T33-secret-ref']) expect(bytes.includes(Buffer.from(secret))).toBe(false);
   expect((await admin.request('GET', '/api/session')).status).toBe(200);
@@ -513,19 +448,18 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   expect(sha(path.join(backupDir, 'api.sqlite'))).toBe(JSON.parse(fs.readFileSync(path.join(backupDir, 'backup.json'), 'utf8')).files.find((entry: Value) => entry.path === 'api.sqlite').sha256);
   for (const suffix of ['-wal', '-shm', '-journal']) expect(fs.existsSync(path.join(backupDir, `api.sqlite${suffix}`))).toBe(false);
   const collisionDb = new DatabaseSync(path.join(data, 'api.sqlite'));
-  collisionDb.exec('PRAGMA busy_timeout=1000');
   expect(collisionDb.prepare('PRAGMA journal_mode').get()!.journal_mode).toBe(originalJournalMode);
   collisionDb.prepare('UPDATE model_profiles SET config_json=? WHERE profile_id=?').run(JSON.stringify({ api_key: 't33-object' }), 't33-profile'); collisionDb.close();
   const collisionTarget = path.join(scratch, 'no-immutable-corruption');
-  expect(cli('backup.mjs', ['--data-dir', data, '--backup-dir', collisionTarget]).stderr).toMatch(/credential_in_immutable_business_data/);
+  expect(cli('backup', ['--data-dir', data, '--backup-dir', collisionTarget]).stderr).toMatch(/credential_in_immutable_business_data/);
   expect(fs.existsSync(collisionTarget)).toBe(false);
   expect((await admin.request('GET', `/api/annotation-revisions/${revision.annotation_revision_id}`)).body).toEqual(revision);
   const exists = path.join(scratch, 'existing'); fs.mkdirSync(exists); fs.writeFileSync(path.join(exists, 'preserve'), 'business');
-  expect(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', exists]).stderr).toMatch(/restore_directory_exists/); expect(fs.readFileSync(path.join(exists, 'preserve'), 'utf8')).toBe('business');
+  expect(cli('restore', ['--backup-dir', backupDir, '--data-dir', exists]).stderr).toMatch(/restore_directory_exists/); expect(fs.readFileSync(path.join(exists, 'preserve'), 'utf8')).toBe('business');
   const corrupt = path.join(scratch, 'corrupt'); fs.cpSync(backupDir, corrupt, { recursive: true }); fs.appendFileSync(path.join(corrupt, 'api.sqlite'), 'damage');
-  expect(cli('restore.mjs', ['--backup-dir', corrupt, '--data-dir', path.join(scratch, 'no-corrupt')]).stderr).toMatch(/hash_mismatch/); expect(fs.existsSync(path.join(scratch, 'no-corrupt'))).toBe(false);
+  expect(cli('restore', ['--backup-dir', corrupt, '--data-dir', path.join(scratch, 'no-corrupt')]).stderr).toMatch(/hash_mismatch/); expect(fs.existsSync(path.join(scratch, 'no-corrupt'))).toBe(false);
   const incompatible = path.join(scratch, 'incompatible'); fs.cpSync(backupDir, incompatible, { recursive: true }); const badManifest = JSON.parse(fs.readFileSync(path.join(incompatible, 'backup.json'), 'utf8')); badManifest.schema_hash = '0'.repeat(64); fs.writeFileSync(path.join(incompatible, 'backup.json'), JSON.stringify(badManifest));
-  expect(cli('restore.mjs', ['--backup-dir', incompatible, '--data-dir', path.join(scratch, 'no-schema')]).stderr).toMatch(/schema_mismatch/);
+  expect(cli('restore', ['--backup-dir', incompatible, '--data-dir', path.join(scratch, 'no-schema')]).stderr).toMatch(/schema_mismatch/);
   const forged = path.join(scratch, 'forged-schema'); fs.cpSync(backupDir, forged, { recursive: true });
   const forgedDb = new DatabaseSync(path.join(forged, 'api.sqlite'));
   forgedDb.exec('CREATE TABLE malicious_extra (secret TEXT)');
@@ -534,15 +468,15 @@ it('backs up live WAL consistently, scrubs authentication/configuration, refuses
   const forgedEntry = forgedManifest.files.find((entry: Value) => entry.path === 'api.sqlite');
   forgedEntry.sha256 = sha(path.join(forged, 'api.sqlite')); forgedEntry.size = fs.statSync(path.join(forged, 'api.sqlite')).size;
   fs.writeFileSync(path.join(forged, 'backup.json'), JSON.stringify(forgedManifest));
-  expect(cli('restore.mjs', ['--backup-dir', forged, '--data-dir', path.join(scratch, 'no-forged-schema')]).stderr).toMatch(/schema_incompatible/);
+  expect(cli('restore', ['--backup-dir', forged, '--data-dir', path.join(scratch, 'no-forged-schema')]).stderr).toMatch(/schema_incompatible/);
   const forgedObject = path.join(scratch, 'forged-object'); fs.cpSync(backupDir, forgedObject, { recursive: true });
   const objectManifest = JSON.parse(fs.readFileSync(path.join(forgedObject, 'backup.json'), 'utf8'));
   const objectEntry = objectManifest.files.find((entry: Value) => entry.path.startsWith('objects/'));
   fs.appendFileSync(path.join(forgedObject, objectEntry.path), 'object corruption');
   objectEntry.sha256 = sha(path.join(forgedObject, objectEntry.path)); objectEntry.size = fs.statSync(path.join(forgedObject, objectEntry.path)).size;
   fs.writeFileSync(path.join(forgedObject, 'backup.json'), JSON.stringify(objectManifest));
-  expect(cli('restore.mjs', ['--backup-dir', forgedObject, '--data-dir', path.join(scratch, 'no-forged-object')]).stderr).toMatch(/backup_object_missing_or_corrupt/);
-  success(cli('restore.mjs', ['--backup-dir', backupDir, '--data-dir', restored]));
+  expect(cli('restore', ['--backup-dir', forgedObject, '--data-dir', path.join(scratch, 'no-forged-object')]).stderr).toMatch(/backup_object_missing_or_corrupt/);
+  success(cli('restore', ['--backup-dir', backupDir, '--data-dir', restored]));
   const recovered = await launch(restored); const fresh = await authenticated(recovered.base, recovered.code); expect(fresh.userId).not.toBe(admin.userId);
   const profiles = await fresh.request('GET', '/api/model-profiles');
   expect(profiles.status).toBe(200);

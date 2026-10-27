@@ -15,12 +15,10 @@ export interface ShutdownEvidence {
   cleanup: {
     host_listener_closed: boolean;
     api_listener_closed: boolean;
-    runtime_lock_absent: boolean;
+    persistent_OS_lock_available: boolean;
     sqlite_integrity: string;
     foreign_key_errors: unknown[];
     backstop_used_before_observation: boolean;
   };
 }
-export interface PreparedTerminalAssembly { assembly_path: string; sha256: string; preparation_directory: string }
-export function prepareTerminalAssembly(options: { reportDir: string }): Promise<PreparedTerminalAssembly>;
-export function activeHostShutdown(mode: string, preparedTerminal: PreparedTerminalAssembly, release: string, options: { reportDir: string; skipSecurity?: boolean }): Promise<ShutdownEvidence>;
+export function activeHostShutdown(mode: string, release: string, options: { reportDir: string; skipSecurity?: boolean }): Promise<ShutdownEvidence>;

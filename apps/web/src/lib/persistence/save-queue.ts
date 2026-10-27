@@ -472,9 +472,9 @@ export class SaveQueue {
   getStatus(asset_revision_id: Id): SaveStatusSnapshot {
     const state = this.states.get(asset_revision_id);
     if (state === undefined) return IDLE_SNAPSHOT;
-    // Authorization can expire before the React layout cleanup calls revoke.
+    // Authorization can expire before the page owner calls revoke.
     // Withdraw only the current certificate, without writes or notifications
-    // during useSyncExternalStore reads, and cache the projection for stability.
+    // during snapshot reads, and cache the projection for stability.
     if (state.snapshot.local_commit && (!this.writable() || !this.authorizedWork(state, this.owner, false))) {
       state.local_commit = null;
       state.snapshot = { ...state.snapshot, local_commit: null,

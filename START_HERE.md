@@ -3,6 +3,8 @@
 这个目录已经有可运行的本地应用。想使用它，先读[构建、登录和标注指南](docs/getting-started.md)；想继续开发，按下面的步骤恢复，不要重新初始化仓库。
 
 [文档总入口](docs/README.md)提供操作者、开发者、维护/验收者路线。继续开发先用[开发指南](docs/development.md)选择当前模块与验证，再按[文档治理](docs/documentation-policy.md)同步维护相关说明。
+当前源码入口是原生HTML/TypeScript与唯一Rust产品`weblabel`；Node/pnpm只用于构建、开发和验证，不是新发行的产品运行依赖。业务wire保持v1，发行布局为v2，备份格式仍为v1。旧Node发行的历史证据不替代原生版重验；重构进度以STATUS和对应实际提交、运行报告为准，不能据此升级T32/T35。
+
 
 ## 继续开发
 

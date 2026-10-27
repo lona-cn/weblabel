@@ -118,7 +118,6 @@ export interface MediaRevision {
 ```
 
 发布 ontology 创建新 ID；已有任务和文档继续引用旧版。v0.1 禁止后台直接原位删除已使用类别。新规范迁移为显式复制文档并生成新版本，需要显示变更报告。
-发布时先拒绝非项目 Admin，再以 `BEGIN IMMEDIATE` 获取 SQLite writer lock；在同一事务内重新确认当前 membership 为 Admin、读取 `MAX(version_no)`、插入新版本并提交。等待锁期间被降权或移除的请求分别返回 `403 PROJECT_ADMIN_REQUIRED` / `404 PROJECT_NOT_FOUND`，不分配或写入版本；后台 writer 与并发发布不能使旧 WAL read snapshot 升级失败或产生重复 version_no。
 
 ## C3. 编辑 facade 与 Rust 核心
 
@@ -195,7 +194,7 @@ C3 的 flags 只属于编辑器会话，不进入保存文档。业务 UI 可持
 set_viewport/selection/hide 不改变业务 generation。取消/无效操作不增加 generation。undo/redo 改变文档且 generation 单调递增，不倒退。
 T28前端只在成功的document_changed/suggestion decision逻辑提交读取committed snapshot；选中/隐藏/锁定仅更新局部UI投影与历史状态，不调用整文档快照或远端保存。local flags投影不可修改且只在Rust成功后发布；INVALID_FLAGS/未知object与locked mutation拒绝不能清空已确认选中/undo状态，切图重新建立会话并清理flags。
 
-持久实例buffer按局部对象range更新；视口仅改变uniform和绘制ranges。资源计数来自实际创建/释放/上传/submit，logical texture bytes与V8 heap分别标识，不称真实VRAM。跨JS/WASM bytes当前只计实际RGBA输入，bridge耗时仅涵盖原生桥调用，不认证完整React/SaveQueue CPU或物理可见帧。
+持久实例buffer按局部对象range更新；视口仅改变uniform和绘制ranges。资源计数来自实际创建/释放/上传/submit，logical texture bytes与V8 heap分别标识，不称真实VRAM。跨JS/WASM bytes当前只计实际RGBA输入，bridge耗时仅涵盖原生桥调用，不认证完整HTML/TypeScript控件与SaveQueue CPU或物理可见帧。
 
 T31原生selected controls：未锁定、未隐藏的选中对象在四角及四边中点绘制8个8CSS像素方块。锚点先做canonical→CSS变换再加±4CSS偏移，DPR不进入持久坐标；4CSS可见fringe独立于bbox描边margin，零面积视口不产生绘制ranges。复用同一48-byte实例buffer和已有bind；一次扫描生成可复用bbox/control ranges，全部bbox后再绘controls。
 
@@ -222,9 +221,9 @@ Host发布lost/recovering期间阻止编辑，CPU只读访问和保存队列继�
 
 T30资源寿命：pending的requestAdapter/requestDevice只持轻量请求元数据；旧renderer/scene保留在可同步dispose的共享owner。dispose在等待门释放前销毁旧buffer/texture/device并释放scene引用；晚返回的新device销毁且不配置旧canvas。
 
-请求完成后才同步借saved scene上传并move，不克隆整图/CPU文档，不跨await持facade/session borrow。release不导出simulate_device_loss；测试从浏览器外部捕获真实GPUDevice并destroy。Canvas CSS尺寸不受backing intrinsic尺寸反馈；状态/alert/retry用overlay，Dense与独立React消费者提供positioned stage。
+请求完成后才同步借saved scene上传并move，不克隆整图/CPU文档，不跨await持facade/session borrow。release不导出simulate_device_loss；测试从浏览器外部捕获真实GPUDevice并destroy。Canvas CSS尺寸不受backing intrinsic尺寸反馈；状态/alert/retry用overlay，生产原生工作台与仅test mode的Dense harness都提供positioned stage。
 
-父控件订阅Host状态且仅ready可编辑；工具/完成状态在Native成功后更新React投影，不因恢复重复set_tool或清空preview。
+父控件订阅EditorHost状态且仅ready可编辑；工具/完成状态在Native成功后更新只读DOM投影，不因恢复重复set_tool或清空preview。
 
 Rust 函数边界：`geometry::image_to_css([f64;2], Viewport)->[f64;2]`、`css_to_image`、`validate_bbox(&BBox,w:u32,h:u32)->Result<(),DomainError>`；`editor_core::Editor::new(document,ontology)->Result<Editor,DomainError>`；`Editor::dispatch(EditorCommand)->Result<EditorDelta,DomainError>`；`Editor::document()->&AnnotationDocument` 仅不可变借用，`Editor::snapshot()->AnnotationDocument` 保持独立owned copy。渲染模块依赖只读render scene，不反向修改Editor。
 
@@ -232,7 +231,7 @@ WASM public facade 按 C3 命名；内部 JsValue/serde_wasm_bindgen 包装留�
 
 T24只读扩展决策：`get_object_hashes`从Rust当前已校验文档生成C4对象hash，复用annotation-domain的canonical序列化；不在JS重新实现浮点/属性序列化，也不复制完整Rust文档。仅在运行准备或逻辑generation变化后读取；pointermove、pan和选择变化不得全量重算hash。
 
-接受/撤销由EditorHost onDelta唯一保存边界入队，UI只flush并等待对应generation的远端ACK，禁止再用React旧props覆盖快照。
+接受/撤销由EditorHost onDelta唯一保存边界入队，UI只flush并等待对应generation的远端ACK，禁止再用较早的UI投影覆盖快照。
 
 T24会话恢复决策：`Editor::from_snapshot(document,ontology,generation)`以载入文档配对的逻辑generation创建新会话，不恢复旧undo栈。WASM `create_editor` 必须传入此generation；工作台切图/草稿恢复沿用SaveQueue.local_generation，不能将已保存或待保存资产重置为0，不能丢弃queue/journal来绕过ACK检查。
 
@@ -296,11 +295,11 @@ export interface RunEvent {
 
 原始 provider 输出、usage、预处理变换单独保存为 Prediction/ModelRun 内部记录；API 返回做过大小限制和敏感信息处理的内容，不给前端任意文件路径。SuggestionSet.state 可变化，Prediction 内容不可覆盖。
 
-Detector 本地 probe/run 的 deadline 从 spawn 后即生效，覆盖 stdin 写入、stdout 逐行读取与残缺尾行、stderr 排空、candidate 提交和真实进程退出；收到有效响应或 worker 已 exit0 都不能提前解除未完成生命周期的期限。run 的 private lifecycle signal 也约束 production candidate HTTP；deadline/cancel 必须回收所属子进程与暂存目录，且每次 run 只有一个 terminal。HTTP 观察被中断不等于服务端已接收的提交被回滚，不能据此宣称候选从未提交。
+Detector 使用同一产品的 `weblabel detector-worker` 原生隔离子进程，不依赖Python服务。deadline覆盖排队、stdin写入、stdout有界frame、stderr预算、真实退出及所属进程树回收；成功frame不能提前解除生命周期期限。候选经服务端RunDriver提交前重验原run capability与权威scope，过期/取消结果不能采纳；已进入事务的提交另按持久化结果核对，不能以本地等待中断宣称从未提交。每次run只有一个terminal，无模型warmup或自动重试。
 
 T32 named API receipt（仅 `openai_api` / `mimo_api`）：终态 succeeded/failed/cancelled 的 `data.receipts` 按实际尝试的上游 HTTP turn 顺序保存，`data.receipt` 为最新项，无上游请求时为 null、receipts=[]。被本地配置/turn budget 阻止而未尝试的请求不产生 receipt；HTTP 502 等已尝试但未给身份的 turn 保留 null 身份项，不能用上一 turn 或请求配置填充。
 
-每项形状：`{provider_id,requested_model_id,actual_model_id,response_id,auth_kind,transport,runtime_version,runtime_version_status,budgets}`。`provider_id`/`requested_model_id` 为 Host 已配置事实；`auth_kind='api_key'`；transport 为 `openai_responses_sse` / `mimo_chat_completions_sse`（协议而非官方 endpoint/付费账户的证明）。
+每项形状：`{provider_id,requested_model_id,actual_model_id,response_id,auth_kind,transport,runtime_version,runtime_version_status,budgets}`。`provider_id`/`requested_model_id` 为原生runtime已配置事实；`auth_kind='api_key'`；transport 为 `openai_responses_sse` / `mimo_chat_completions_sse`（协议而非官方 endpoint/付费账户的证明）。
 
 上游 metadata 不得改变这些事实、内部工具 call/result ID、schema 或权限。
 
@@ -308,7 +307,7 @@ T32 named API receipt（仅 `openai_api` / `mimo_api`）：终态 succeeded/fail
 
 已观测值在同一 turn 后续缺字段时不被清空；不同 turn 分别保存。未知嵌套 metadata 和营销/配置别名不是实际模型身份。
 
-HTTP server runtime 版本未正式暴露：`runtime_version=null,runtime_version_status='not_exposed'`；Node/Host 构建版本是另一个本地事实，不能冒充服务端版本。`budgets={max_tool_turns,max_run_ms,max_total_bytes,request_timeout_ms,cost_usd:null}` 记录当前实际强制配置；max_run_ms 在 beginTurn 边界检查，不承诺硬墙钟中断；request_timeout_ms 是每次 HTTP/SSE deadline，max_total_bytes 是累计已消费 SSE data UTF-8 字节，max_tool_turns 是允许请求回合上限。
+HTTP 服务端 runtime 版本未正式暴露：`runtime_version=null,runtime_version_status='not_exposed'`；本机 Rust 产品构建版本是另一事实，不能冒充上游版本。`budgets={max_tool_turns,max_run_ms,max_total_bytes,request_timeout_ms,cost_usd:null}` 记录实际强制配置；每次 HTTP/SSE deadline、累计已消费 data 字节与回合上限分别记录，不把本机断连当远端计费取消。
 
 未强制货币上限、未知费用保持 null，不虚构 currency cap。
 
@@ -316,7 +315,7 @@ HTTP server runtime 版本未正式暴露：`runtime_version=null,runtime_versio
 
 C4 RunEvent.data 已是通用 unknown JSON，Rust model_jobs→ai/events→events API 原样脱敏持久化，无 DTO/migration。
 
-T32观测checkpoint：OpenAI/MiMo在实际attempt或已识别身份/有效usage改变时，使用现有progress事件持久化同形receipts/receipt/usage/cost_display；不逐token发事件，不扩大16KiB/4096事件上限。服务端cancel立即撤销run token并停止Host，不等待其终态data；取消前checkpoint为已观测证据，取消后不接受候选。
+T32观测checkpoint：OpenAI/MiMo在实际attempt或已识别身份/有效usage改变时，使用现有progress事件持久化同形receipts/receipt/usage/cost_display；不逐token发事件，不扩大16KiB/4096事件上限。服务端cancel立即撤销原run capability并取消对应原生运行，不等待其终态data；取消前checkpoint为已观测证据，取消后不接受候选。
 
 Rust 原生 HTTP 在最终 FIFO writer 内重做授权，并用原 run capability 的同步 gate 首次 poll 上游请求；实际 attempt checkpoint 与该 writer 的提交先于立即取消终态。准备阶段不进入 receipts，收到 POST 后的首个取消终态不能只留下 prepared。
 
@@ -330,7 +329,7 @@ checkpoint 的 INSERT/COMMIT 失败不是“没有请求”的证据。原 capab
 
 T32授权配置指纹：AiPreviewResponse必含execution_configuration_hash。API与WASM复用annotation-domain对Rust serde_json::Value规范序列化的SHA256，JS不得parse/stringify重建浮点/大整数/键序。
 
-只读host_execution_configuration_hash接收原始Host JSON与provider/profile，唯一选择实际执行配置；missing/ambiguous拒绝。显式live授权在consent/start前比较此hash与实际API preview，配置和预算亦被已有input_fingerprint绑定；仅检查公开文件不等于正在执行的Host/数据库配置。
+只读 runtime_execution_configuration_hash 接收原始 schema_version=1 原生运行配置与精确 provider/profile，唯一选择实际执行配置；missing/ambiguous 拒绝，整数与浮点类别保留。显式授权在 consent/start 前比较 hash 与实际 API preview；配置、预算仍由 input_fingerprint 绑定。只核对公开文件不能证明实际服务/数据库配置，旧 hash 入口无 alias。
 
 现有 16 KiB event data cap 不扩大。默认 8 turn 常规完整 ID 记录仍可持久化；恶意超长 model/id 或配置过大 turn 上限可能触发现有 event_data_too_large，届时 live consumer 必须诊断缺证据/blocked，不能把 requested identity 当成功或扩大预算。
 
@@ -346,52 +345,26 @@ request_hash 与 input_fingerprint 同样明确定义、包含全部相关输入
 
 `Create` 只允许 detector 或显式启用 bbox_output 的 profile；VLM 属性审校不允许改变 bbox、创建/删除正式对象。模型返回不在 allowed_ops 中的动作以 422 拒绝，不能偷偷照做。
 
-Model worker 在首个 item 前执行 fenced progress checkpoint；item 与周期为原 claim lease_for/3 的续租 future 必须并发 poll，成功续租后 reset 周期。续租失败即 drop item 及其 RuntimeLease；item/renewal 的作用域先结束，再写下一个 checkpoint 或终态，避免 item 持有 SQLite writer 时互等。续租沿用 JobQueue 现有 MAX_LEASE 规则，不改变 claim 的初始期限或测试 deadline。进度的 succeeded/failed owned Value 只在结果变化时重算，heartbeat 借用缓存，Queue 的 &Value/JSON 契约不变。
+## C5. 原生 provider、MCP 与私有 worker
 
-所有 worker-owned 状态、started/interruption/terminal、RunDriver event 与 candidate 写入，必须在对应 SQLite writer 事务内用 fresh server now 验证原 job_id、running、worker_id、fencing_token 和未过期 lease，再进入持久化 funnel。RunDriver 私有借用原不可变 LeasedJob，不重载新 owner、不获得 claim/renew 权利；等待 writer 前的时钟不能证明等待后仍有权限。现有 AgentTools 的 run-token/授权通道保持独立，不把这个 RunDriver guard 描述为该通道的 worker epoch fencing。
+Rust factory 按精确 provider_id/profile_id 选择 HTTP、Claude 或检测器实现；RunDriver 绑定不可变 context、原始 run capability、授权与事件写入门。没有 TypeScript ProviderAdapter 产品接口、Node Host IPC 或第二条授权路径。
 
-## C5. ProviderAdapter 与私有 Host 协议
+私有 detector 的 RuntimeEnvelope 保持 protocol_version=1、id、request/response、probe/start_run、payload；旧 event/cancel_run/shutdown 方法不保留兼容 alias。NDJSON 单行最多 4 MiB，stdout 专用、stderr 脱敏；超长、截断、未知 method、关联 ID 不符必须在解码/消费边界失败。图片只通过本次批准的映射/受限文件输入，不塞入控制行。
 
-```ts
-export interface ProviderAdapter {
-  probe(): Promise<ModelProfile[]>;
-  run(input: StartRunRequest, ctx: RuntimeContext, signal: AbortSignal): AsyncIterable<RunEvent>;
-}
-export interface RuntimeContext {
-  run_id: Id;
-  read_region(grant_id: Id, region: BBox | null): Promise<{ bytes: Uint8Array; mime: 'image/png'; transform_to_canonical: number[] }>;
-  get_document(): Promise<AnnotationDocument>;
-  get_ontology(): Promise<OntologyVersion>;
-  submit_candidates(candidate: unknown): Promise<SuggestionSet>;
-  report_issues(issues: unknown): Promise<void>;
-}
-export interface RuntimeEnvelope {
-  protocol_version: 1;
-  id: Id;
-  kind: 'request' | 'response' | 'event';
-  method: 'probe' | 'start_run' | 'cancel_run' | 'shutdown' | 'run_event';
-  payload: unknown;
-}
-```
+Claude stream-json 使用固定原生 parser 与帧/累计/工具/时间预算。terminal usage 的观察先于成功、候选提交和退出/回收结论；原始根退出时先回收占住 pipe 的自有后代，再解析已缓冲数据。不能因根退出丢掉已到达 usage，也不能等后代 EOF 到总运行超时才发现崩溃。
 
-unknown 值必须在契约入口立即按 JSON Schema 验证，不能以 `any` 传入业务逻辑。NDJSON 一行一消息，单行 ≤4 MiB，stdout 专用；stderr 日志脱敏。图片字节不塞入该行：API 创建运行暂存 grant，Host/Worker 只获得已批准映射。每个 request 必有 response；超时、重复 ID、未知 method、进程退出、截断/超长行必须被测试。
+外部工具与模型输出在服务端按 schema/domain、scope、预算和 capability 重验，不把 unknown 当业务类型。取消撤销原始 capability，晚到结果不能重新授权。已返回完整结果的隔离证据与计费未知分别记录，不能由本机进程退出承诺远端退款。
 
 协议错误终止本次运行，不重启后自动重发可能已计费调用。
 三个API适配器只在本run私有内存保存已解析credential；所有公开RunEvent的message、嵌套data值及键按该确切值脱敏，包括未校验工具名、合法工具call_id及上游错误正文。供应商协议内部保留原始call_id；错误分类、已观察usage和未知null用量不被脱敏改写。
 
-Linux 每个受管 Host 及 Node Host 创建的 provider child 都使用发行 API 二进制的私有、单线程 broker，只有各 broker 设置 process-local subreaper；原 CLI executable、argv、allowlisted env、cwd 和 stdio 原样转发，不增加 shell。API 在 spawn 前捕获自身 process pidfd；Node child broker 以 getppid 与 /proc start_ticks 在 pidfd_open 前后确认原 Node parent 身份。创建线程退出不能终止仍然存活的所属运行。pidfd/subreaper 不可用或启动失败必须明确报错，不退回裸 PID、环境 marker 或已失效 PPID 链。控制 FD 只在 broker 内保留，CLI exec 前关闭继承。
-
-Node child 启动先通过既有 executable/cwd/env policy，再从受信父进程的 WEBLABEL_API_BINARY 定位 broker；API 仅为显式 WEBLABEL_HOST_CONFIG 的受管 Host 注入此内部 locator，并覆盖 provider 同名配置，普通 CLI 不额外获得该变量。READY 后私有 byte 0 为 GO、byte 1 为 STOP-before-exec；STOP 经实际 ECHILD 清理确认后完成，不执行 provider 或记入请求 ledger。GO 前 EOF/未知 byte 失败关闭。Node 在检查 child.pid 前注册 exec-error listener；无 PID 的 exec 拒绝返回 controlled spawn_failed、关闭自己的 stdio，并保留后到的 errno/cause 与脱敏诊断，不让 unhandled error 杀死 Host。
-
-Linux 清理由私有根能力持有目标 identity/pidfd/完成通道，Reader/Host 析构不能使异步 RuntimeLease 丢失该能力。正常退出、崩溃、deadline、cancel、父 API/Node process death 或控制通道 EOF 都回收本根后代（含 setsid/double-fork），不触碰其他运行或无关进程。只有 waitpid 确认 ECHILD 后才发送成功完成确认；wait 同时要求确认与真正 CLI 退出状态。missing ACK、EOF、信号失败或超过完整 5 秒预算保持清理失败，同一根缓存一次完整尝试结果，Drop 与显式清理不能另起预算或把失败重试成成功。ACK 不证明具体哪些 PID 收到 SIGKILL，Node reclaim report 不伪造 killed 列表；CLI 原退出码/信号仍保留。这是进程所有权与生命周期机制，不是第三方 CLI 权限 sandbox，也不证明远端收费调用已取消。
-
-MCP 入口是 Agent Host 包中的独立 stdio 命令。Claude 只安装本项目 server 配置，不读取项目里任意第三方 MCP 配置。它通过 loopback `/internal/agent-tools/{tool}` 与 API 通信，使用专门生成的短期 run-scoped Bearer，不能使用管理员 session。该路由同样检查允许Host和已提供的Origin；私有非浏览器客户端可省略Origin，浏览器cookie不替代Bearer，也不触发浏览器CSRF规则。token只在子进程环境/私有通道传递，不在argv、工具参数或输出里传递；到期/取消后立即失效。
+MCP 入口是同一个产品的 `weblabel mcp-stdio`。Claude 只加载本项目受限 server 配置，通过 loopback `/internal/agent-tools/{tool}` 使用专用 run-scoped Bearer 调用同一 AgentToolService，不能用管理员 session。浏览器不可指定任意 server、可执行文件或命令。
 
 该路由同样检查允许Host和已提供的Origin；私有非浏览器客户端可省略Origin，浏览器cookie不替代Bearer，也不触发浏览器CSRF规则。token只在子进程环境/私有通道传递，不在argv、工具参数或输出里传递；到期/取消后立即失效。
 
-检测器locked file先解析真实target并限定在显式配置的resolved weights root，再stat/hash/read；大小和SHA256使用同一打开FD，processor/model loader各自前重新校验。operator显式配置的公开外部模型根仍可供独立worker使用；verify-live文件检查授权限repository内，不能把仓库默认weights的hash称为外部worker实际权重证明。
+原生检测器先将模型、配置和label mapping解析到显式配置的真实目录，再检查打开的普通文件句柄、大小和SHA256。模型经同一已校验读取所得bytes交给ORT `commit_from_memory_directly`，不让模型loader按未核对路径重新打开；原生runtime库另按固定hash检查。Windows检查文件句柄的最终落点并限制共享写入，其他平台保留canonical路径复核；不将这些边界外推为任意第三方动态loader的跨平台原子TOCTOU保证。
 
-路径复核拒绝已观察的verify/load间escape，不承诺第三方loader打开前的OS级原子TOCTOU消除；默认diagnostic不hash大文件、不启动Python探针、不登录/调用模型。
+默认doctor只读报告配置，不创建ORT Session、不探测或调用真实模型。R05叶文件软链接实机负控为用户明确跳过，不宣称已运行；其余路径/大小/hash守卫保留。开发验收的唯一20次账本已耗尽，生产普通请求不套用该开发计数。
 
 允许工具及参数：
 
@@ -432,7 +405,7 @@ MCP 入口是 Agent Host 包中的独立 stdio 命令。Claude 只安装本项�
 | PUT /api/assets/{asset_revision_id}/annotation | SaveRequest → SaveResponse | T11 |
 | GET /api/jobs/{id} | 作业状态、progress_completed/progress_total、progress/result；逐资产结果位于 kind 对应 result 内，不是通用顶层 items | T17 |
 | GET /api/model-profiles | 持久公开能力/验证投影，不回传秘密，空库为空 | T16/UX |
-| GET /api/model-profile-presets | platform_admin；固定Host脱敏预设，limit默认50、1–100，after排他profile_id | UX |
+| GET /api/model-profile-presets | platform_admin；原生runtime配置的脱敏预设，limit默认50、1–100，after排他profile_id | UX |
 | GET/PUT /api/model-profiles/{id} | platform_admin；GET profile+configuration_hash；PUT仅原hash，历史不同配置409，首次not_run，不执行模型 | UX |
 | POST /api/ai/previews | {request:StartRunRequest,grants:{allow_image,allow_object_context,preview_crop}} → 服务端不可变preview、权威fingerprint、固定request/profile/grants及expires_at；不执行模型 | T25 |
 | POST /api/ai/consents | {preview_id} → 绑定实际actor/pins/profile/policy/scope的consent_id；仅记录批准，真实dispatch每次重验；旧仅fingerprint意图不再是启动凭据 | T25（取代T24前置创建契约） |
@@ -482,7 +455,7 @@ Interrupted无对应RunEventType（C4冻结8值），恢复事件以`failed`+`da
 
 T19裁定：Prediction出处校验固定身份引用（object_id/prediction_id/model_run_id真实存在且属于该run），不固定接受时刻的对象内容——接受后的手工编辑保留prediction出处，内容变化由revision history记录。`suggestion_set_states`由决策journal重算；T25落地reject路由时，rejected/stale终态不得被静默覆盖，reject必须阻止后续accept除非用户显式重新确认。
 
-`GET /health` 返回 204、无 JSON；wire schema_version 与 Host protocol_version 均为 1，URL 没有 `/v1` 前缀。ApiError 的公开字段是 code/message/request_id/details；当前部分 Axum extractor 拒绝尚不统一为该包络，响应 x-request-id 与错误 body.request_id 也不保证一致。
+`GET /health` 返回 204、无 JSON；业务wire schema_version保持1，URL没有 `/v1` 前缀。原Node Host IPC已切除，不能把其历史protocol_version当成当前产品入口或MCP协议版本。ApiError的公开字段是code/message/request_id/details；当前部分Axum extractor拒绝尚不统一为该包络，响应x-request-id与错误body.request_id也不保证一致。
 
 ### 当前 UX 状态不变量
 
@@ -501,10 +474,11 @@ submit结束lease，不额外release；continue重验session、原review/actor/�
 
 ## C7. SQLite 表与不可变对象
 
-写事务在原有限期限内依次取得 Repository 共享 FIFO 准入、PoolConnection 并同步 detach 为专属 SqliteConnection，再执行 BEGIN IMMEDIATE；SQL 执行和关闭确认期间保留连接与准入所有权。成功 COMMIT/ROLLBACK 也关闭连接，不归池，以确认 Windows 文件句柄释放。失败、超时、future 取消或未提交事务被放弃时，独立关闭线程持有连接和准入直到 SQLx worker 停止，不受 Tokio shutdown 取消。COMMIT 已持久化后的关闭错误不改写业务结果或触发重复写入；busy_timeout、原始调用预算及 PoolTimedOut 映射不变。独立 auth pool 不使用 Repository 准入，仍遵守自己的原始写入预算。
-bootstrap在auth pool读取users/恢复资格之前取得同一BEGIN IMMEDIATE guard，管理员、恢复项目成员和session仍在单笔事务提交。AuthState::new(pool, config, write_timeout)的唯一AppState caller传入原ServerConfig.write_timeout；密码hash在SQL事务外，不把该预算冒充完整HTTP请求期限。空队列export worker仍运行，不以禁用worker、重试或扩大预算掩盖deferred read-to-write升级的SQLITE_BUSY。事务取消的回滚/连接关闭不意味着外层handler取消后会重新开放launch code；其既有one-use行为未变。
+T06预留migrations 0001_core：users/sessions/projects/memberships/ontology_versions/media_assets/media_revisions/annotation_revisions/annotation_heads/idempotency_keys/jobs/job_items。
 
-T06预留migrations 0001_core：users/sessions/projects/memberships/ontology_versions/media_assets/media_revisions/annotation_revisions/annotation_heads/idempotency_keys/jobs/job_items。T17增加0008_ai（主Agent按仓库实际序号分配，覆盖草案中的0002_ai）：model_profiles/model_runs/predictions/suggestion_sets/suggestion_decisions/run_events/consents。T26增加0009_workflow：review_tasks/task_leases/review_submissions/review_decisions/review_issues。T27迁移编号由主Agent在依赖落地后按仓库实际序号分配。禁止多个Agent同时分配migration编号。
+T17增加0008_ai（主Agent按仓库实际序号分配，覆盖草案中的0002_ai）：model_profiles/model_runs/predictions/suggestion_sets/suggestion_decisions/run_events/consents。T26增加0009_workflow：review_tasks/task_leases/review_submissions/review_decisions/review_issues。
+
+T27迁移编号由主Agent在依赖落地后按仓库实际序号分配。禁止多个Agent同时分配migration编号。
 T14 migration 0007增加不可变annotation_import_batches与annotation_exports，preview记录base head及loss report；commit与revision同一事务。
 
 外键开启；关键关联包含 project_id 校验，head unique(asset_revision_id,ontology_version_id)。idempotency unique(actor_id,operation_id,operation_kind)。作业 lease 与任务租约分开；重启恢复 running job 为 interrupted/retryable，并且模型调用存在费用不确定性时要求显式重试。
@@ -534,7 +508,7 @@ Review：批准 r8，保存 r9 后 r8 保留 approved，r9=pending/unsubmitted�
 
 冻结预览、实际scope、服务端配置版本指纹与授权/job/run同事务，按[ADR 0002](adr/0002-server-owned-ai-authorization.md)实施。预览/consent的10分钟是新START窗口；成功START另持久化独立10分钟run capability deadline，旧NULL记录拒绝执行。
 
-公共StartRunRequest保持原DTO，权威fingerprint由server preview返回；私有profile配置不回传浏览器，只由服务端经Host私有输入传递。
+公共 StartRunRequest 保持原 DTO，权威 fingerprint 由服务端 preview 返回。私有 profile 配置不回传浏览器，只由服务端原生 factory 与本次授权驱动消费。
 
 授权HTTP公共DTO由annotation-domain::ai_authorization定义并通过xtask生成TS/JSON Schema：AiApprovedGrants、AiPreviewRequest/Response、AiConsentRequest/Response、ExternalProcessingPolicy。
 

@@ -18,6 +18,10 @@ export function hardwareKind(info) {
   if (/nvidia|intel|amd|apple|blackwell|DiscreteGpu|IntegratedGpu/i.test(text)) return 'hardware';
   return 'unknown';
 }
+export function loadedWasmMatches(loaded, expected) {
+  return typeof expected === 'string' && /^[a-f0-9]{64}$/.test(expected)
+    && Array.isArray(loaded) && loaded.length > 0 && loaded.every(hash => hash === expected);
+}
 export function summarize(samples) {
   if (!Array.isArray(samples) || samples.length < 1000 || samples.some(row => !Number.isFinite(row.cpu_ms) || row.cpu_ms < 0 || !Number.isFinite(row.double_raf_ms) || row.double_raf_ms < 0 || row.submissions !== 1)) throw new Error('Invalid workload: require >=1000 finite samples, each with one actual GPU submission; no filtering');
   const p95 = key => samples.map(row => row[key]).sort((a, b) => a - b)[Math.ceil(samples.length * 0.95) - 1];
@@ -75,7 +79,7 @@ export function parseBrowserReport(text) {
 }
 function safeEnvironment(runtime, target) {
   const env = {};
-  for (const key of ['PATH','PATHEXT','SystemRoot','WINDIR','COMSPEC','USERPROFILE','HOME','APPDATA','LOCALAPPDATA','PNPM_HOME','COREPACK_HOME','CARGO_HOME','RUSTUP_HOME','RUSTUP_TOOLCHAIN','RUSTC','RUSTDOC','VCINSTALLDIR','WindowsSdkDir','INCLUDE','LIB','LIBPATH']) if (process.env[key] !== undefined) env[key] = process.env[key];
+  for (const key of ['PATH','PATHEXT','SystemRoot','WINDIR','COMSPEC','USERPROFILE','HOME','APPDATA','LOCALAPPDATA','PNPM_HOME','COREPACK_HOME','CARGO_HOME','RUSTUP_HOME','RUSTUP_TOOLCHAIN','RUSTC','RUSTDOC','RUSTC_WRAPPER','VCINSTALLDIR','WindowsSdkDir','INCLUDE','LIB','LIBPATH']) if (process.env[key] !== undefined) env[key] = process.env[key];
   Object.assign(env, { TEMP: runtime, TMP: runtime, TMPDIR: runtime, CARGO_TARGET_DIR: target, CARGO_NET_OFFLINE: 'true', RUSTUP_AUTO_INSTALL: '0', COREPACK_ENABLE_NETWORK: '0', WEBLABEL_SKIP_SECURITY: '1' });
   return env;
 }
@@ -127,7 +131,7 @@ export async function main(args = process.argv.slice(2)) {
     finally { await writes; await reference(log); }
     if (record.runner_exit_code !== 0) {
       const output = await readFile(log,'utf8');
-      if (['cargo-version','bindgen-version','release-wasm','release-bindgen','api','host'].includes(name) && /no matching package named|attempting to make an HTTP request|failed to download|target may not be installed|toolchain[^\n]*not installed|Cannot find (?:module|package)/i.test(output)) throw new Prerequisite(name + ' missing installed/offline prerequisite; see ' + relative(log));
+      if (['cargo-version','bindgen-version','release-wasm','release-bindgen','api'].includes(name) && /no matching package named|attempting to make an HTTP request|failed to download|target may not be installed|toolchain[^\n]*not installed|Cannot find (?:module|package)/i.test(output)) throw new Prerequisite(name + ' missing installed/offline prerequisite; see ' + relative(log));
       throw new Error(name + ' exited ' + record.runner_exit_code + ' (native exit=' + record.exit_code + ', signal=' + record.signal + ')');
     }
     return record;
@@ -161,13 +165,9 @@ export async function main(args = process.argv.slice(2)) {
     environment.wasm = { ...(await reference(wasmFile)), bytes: (await stat(wasmFile)).size };
     env.WEBLABEL_WASM_BRIDGE_DIR = wasmOutput;
     await writeFile(path.join(run, 'environment.json'), JSON.stringify(environment,null,2));
-    await execute('api', [cargo,'build','--locked','--offline','--manifest-path',path.join(root,'Cargo.toml'),'--target-dir',buildTarget,'-p','weblabel-api','--bin','weblabel-api'], cargoCwd);
-    env.WEBLABEL_API_BINARY = path.join(buildTarget,'debug',process.platform === 'win32' ? 'weblabel-api.exe' : 'weblabel-api');
+    await execute('api', [cargo,'build','--locked','--offline','--manifest-path',path.join(root,'Cargo.toml'),'--target-dir',buildTarget,'-p','weblabel-api','--bin','weblabel'], cargoCwd);
+    env.WEBLABEL_API_BINARY = path.join(buildTarget,'debug',process.platform === 'win32' ? 'weblabel.exe' : 'weblabel');
     environment.api = await reference(env.WEBLABEL_API_BINARY);
-    const host = path.join(runtime,'agent-host');
-    await execute('host', [process.execPath,path.join(root,'scripts/build-agent-host.mjs'),'--out-dir',host]);
-    env.WEBLABEL_T30_HOST_SCRIPT = path.join(host,'runtime.mjs');
-    environment.host = await reference(env.WEBLABEL_T30_HOST_SCRIPT);
     await writeFile(path.join(run,'environment.json'),JSON.stringify(environment,null,2));
     const reserve = createServer();
     await new Promise((resolve,reject) => { reserve.once('error',reject); reserve.listen(0,'127.0.0.1',resolve); });
@@ -244,7 +244,7 @@ export async function main(args = process.argv.slice(2)) {
         if (browser.status !== 'passed') continue; // Partial failure samples stay preserved, never promoted.
         if(sample.count!==count || sample.seed!==17 || sample.warmup_per_scenario!==40 || sample.sample_count_per_scenario!==1000 || JSON.stringify(sample.canonical_dimensions)!=='[2048,2048]') throw new Error('Invalid fixed workload metadata: '+count);
         if(!Array.isArray(sample.adapters) || !sample.adapters.length || hardwareKind(sample.adapters.at(-1))!=='hardware') throw new Prerequisite('No actual non-software adapter proof: '+count);
-        if(JSON.stringify(sample.loaded_wasm_sha256)!==JSON.stringify([environment?.wasm?.sha256])) throw new Error('Actual loaded WASM hash mismatch: '+count);
+        if(!loadedWasmMatches(sample.loaded_wasm_sha256, environment?.wasm?.sha256)) throw new Error('Actual loaded WASM hash mismatch: '+count);
         const performance=gate(count,sample.scenarios);
         for(const rows of Object.values(sample.scenarios)) if(rows.length!==1000 || rows.some(row=>row.native_submissions!==1)) throw new Error('Invalid actual native submissions: '+count);
         if(performance.failures.length) throw new Error(performance.failures.join('; '));

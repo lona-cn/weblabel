@@ -54,6 +54,9 @@
 .accounts-page th { font-weight: 500; background: var(--surface-2, #20292e); color: var(--muted, #adb9be); }
 .accounts-page tr:last-child td { border-bottom: 0; }
 .accounts-page td.accounts-actions { display: flex; margin-top: 0; min-width: 360px; }
+.accounts-page .accounts-project-skeleton { display: grid; gap: 16px; margin-block: 16px; padding: 20px; border: 1px solid var(--border, #3e4a52); border-radius: 6px; }
+.accounts-page .accounts-project-skeleton span { display: block; width: 70%; height: 14px; background: var(--border, #3e4a52); border-radius: 4px; }
+.accounts-page .accounts-project-skeleton span:nth-child(2) { width: 45%; }
 .accounts-page .accounts-admin-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); gap: 24px; align-items: start; }
 .accounts-page .accounts-preset-columns { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); gap: 24px; align-items: start; }
 .accounts-page .accounts-ontology-columns { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
@@ -68,8 +71,8 @@
 :is(#root, body) .accounts-page .accounts-policy-state[data-state=allowed] { color: var(--accent, #69d9bb); border-color: var(--accent, #69d9bb); }
 :is(#root, body) .accounts-page .accounts-policy-state[data-state=unknown] { color: var(--warning, #f1c975); }
 .accounts-auth { padding: 0; min-height: 100dvh; }
-.accounts-auth .accounts-brand { display: flex; height: 56px; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--border, #3e4a52); background: var(--surface-1, #181e22); font-size: 22px; font-weight: 600; }
-.accounts-auth .accounts-brand strong { color: var(--accent, #69d9bb); }
+:is(.accounts-auth, .accounts-projects) .accounts-brand { display: flex; height: 56px; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid var(--border, #3e4a52); background: var(--surface-1, #181e22); font-size: 22px; font-weight: 600; }
+:is(.accounts-auth, .accounts-projects) .accounts-brand strong { color: var(--accent, #69d9bb); }
 .accounts-auth .accounts-auth-content { display: grid; place-items: center; min-height: calc(100dvh - 56px); padding: 40px 24px; }
 .accounts-auth .accounts-auth-card { width: min(100%, 532px); padding: 32px; border: 1px solid var(--border, #3e4a52); background: var(--surface-1, #181e22); border-radius: 6px; }
 .accounts-auth .accounts-auth-wide { width: min(100%, 1040px); }
@@ -78,6 +81,12 @@
 .accounts-auth .accounts-auth-aside { border-left: 1px solid var(--border, #3e4a52); padding-left: 32px; }
 .accounts-auth form:not(.accounts-auth-wide) button[type=submit] { width: 100%; }
 .accounts-page [hidden] { display: none !important; }
+.accounts-projects > .accounts-brand { min-height: 56px; height: auto; margin: -24px -32px 0; padding: 6px 24px; gap: 16px; flex-wrap: wrap; }
+.accounts-projects .accounts-brand nav { display: flex; flex: 1; align-items: center; flex-wrap: wrap; gap: 8px; }
+:is(#root, body) .accounts-projects .accounts-brand :is(button, nav, .accounts-project-identity) { font-size: 14px; }
+.accounts-projects .accounts-brand nav [aria-current=page] { padding: 8px 12px; border-bottom: 3px solid var(--accent, #69d9bb); }
+.accounts-projects > .accounts-project-context { min-height: 44px; display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin: 0 -32px 24px; padding: 8px 32px; background: var(--surface-1, #181e22); border-bottom: 1px solid var(--border, #3e4a52); }
+.accounts-projects > .accounts-project-context small { color: var(--muted, #adb9be); }
 /* Dense, labelled form rows: identity, type, required/null and default stay visible. */
 :is(#root, body) .accounts-ontology-form .accounts-label { padding: 12px; margin: 0 0 12px; }
 :is(#root, body) .accounts-ontology-form .accounts-field { margin-bottom: 8px; }
@@ -118,6 +127,8 @@
 @media (max-width: 1099px) {
   .accounts-page { padding: 20px; }
   .accounts-auth { padding: 0; }
+  .accounts-projects > .accounts-brand { margin: -20px -20px 0; padding-inline: 20px; }
+  .accounts-projects > .accounts-project-context { margin-inline: -20px; padding-inline: 20px; }
   .accounts-page .accounts-delivery-steps { grid-template-columns: repeat(2, 1fr); }
   .accounts-page :is(.accounts-ontology-columns, .accounts-admin-columns, .accounts-preset-columns) { grid-template-columns: 1fr; }
   .accounts-page .accounts-label-fields { grid-template-columns: 1fr 1fr; }

@@ -6,6 +6,8 @@ import { createTaskSession } from './task-session';
 import { api } from '../../lib/t15/api';
 import { TransportError } from '../../lib/persistence/types';
 import type { ReviewTask } from '../review/api';
+import { reviewApi } from '../review/api';
+import { applyDelta } from './workspace-data';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); vi.restoreAllMocks(); });
@@ -56,4 +58,31 @@ it('recertifies an unchanged clean server baseline after replacing the page writ
   expect((await f.storage.get('asset', current.envelope.draft_id))?.write_token).toBe(current.local_commit?.write_token);
   expect(current.envelope.record).toMatchObject({ document: f.document, generation: 0, synced_generation: 0, pending: null, used_operation_ids: [] });
   expect(f.transport.save).not.toHaveBeenCalled();
+});
+
+it('submits the actual committed completion through SaveQueue and freezes continuation only after its local and remote receipts', async () => {
+  const f = setup(); await f.state.queue.whenPersisted('asset');
+  const host = f.state.host!, completed = { ...f.document, completion: 'complete' as const };
+  f.state.fixedTask = f.task; f.taskSession.onLeaseChange({ task_id: 'task', asset_revision_id: 'asset', ontology_version_id: 'ontology', fencing_token: 7 });
+  f.host.getGeneration.mockReturnValue(1); f.host.getCommittedSnapshot.mockReturnValue(completed);
+  applyDelta(f.state, f.port, host, { ...f.delta, generation: 1, document_changed: true });
+  await f.state.queue.whenPersisted('asset');
+  const local = f.state.queue.getStatus('asset').local_commit!;
+  expect(local.generation).toBe(1); expect((await f.storage.get('asset', local.draft_id))?.record).toMatchObject({ generation: 1, document: completed });
+  expect(f.transport.save).not.toHaveBeenCalled(); expect(f.state.host).toBe(host);
+  const saved = { ...f.revision, annotation_revision_id: 'saved-completion', document: completed };
+  f.transport.save.mockImplementation(async request => ({ operation_id: request.operation_id, revision: saved, idempotent_replay: false }));
+  vi.spyOn(api, 'annotation').mockResolvedValue(saved);
+  const submission = { task_id: 'task', review_id: 'review', submitted_by: 'actor', revision_ids: [saved.annotation_revision_id], state: 'pending', lease_ended: true, created_at: 'now' };
+  const submitted: string[] = [];
+  await f.taskSession.onSubmitTask(f.task, async revision => { submitted.push(revision); f.taskSession.onLeaseChange(null); });
+  await f.state.queue.whenPersisted('asset');
+  expect(submitted).toEqual(['saved-completion']); expect(f.transport.save).toHaveBeenCalledTimes(1);
+  expect(f.transport.save.mock.calls[0][0]).toMatchObject({ document: completed, lease: { task_id: 'task', fencing_token: 7 } });
+  expect(f.state.queue.getStatus('asset')).toMatchObject({ phase: 'synced', base_revision_id: 'saved-completion', local_commit: { generation: 1 } }); expect(f.state.host).toBe(host); expect(f.state.lease).toBeNull();
+  vi.spyOn(api, 'session').mockResolvedValue(f.state.session!); vi.spyOn(reviewApi, 'submission').mockResolvedValue(submission);
+  const next = { ...f.task, task_id: 'next' }; vi.spyOn(reviewApi, 'tasks').mockResolvedValue({ items: [next], next_cursor: null });
+  const continuation = await f.taskSession.onContinueTask?.({ task: f.task, submission, isCurrent: () => true });
+  expect(continuation?.task.task_id).toBe('next'); expect(continuation?.proof.isCurrent(null)).toBe(true); expect(f.transport.save).toHaveBeenCalledTimes(1);
+  f.host.getGeneration.mockReturnValue(2); expect(continuation?.proof.isCurrent(null)).toBe(false);
 });

@@ -7,9 +7,6 @@
 // way IndexedDB would, and the fake IDBFactory emulates the browser IndexedDB
 // request/error surface for the production IndexedDbDraftStorage adapter.
 // Fake timers (injected TestClock / vi.useFakeTimers) drive the 400ms debounce.
-import * as matchers from '@testing-library/jest-dom/matchers';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AnnotationDocument } from '../../../../../packages/contracts/generated/AnnotationDocument';
@@ -17,7 +14,6 @@ import type { AnnotationRevision } from '../../../../../packages/contracts/gener
 import type { SaveResponse } from '../../../../../packages/contracts/generated/SaveResponse';
 import type { SuggestionDecisionIntent } from '../../../../../packages/contracts/generated/SuggestionDecisionIntent';
 
-import { SaveStatus } from '../../features/workbench/SaveStatus';
 import {
   DraftStore,
   IndexedDbDraftStorage,
@@ -46,7 +42,6 @@ import type {
   SaveRequest,
 } from './types';
 
-expect.extend(matchers);
 async function seedBranch(storage: DraftStorage, record: DraftRecord) {
   const envelope = { asset_revision_id: record.asset_revision_id, draft_id: crypto.randomUUID(), write_token: crypto.randomUUID(), record, sources: [] };
   await storage.put(envelope);
@@ -419,7 +414,6 @@ function makeRecord(overrides: Partial<DraftRecord> = {}): DraftRecord {
 }
 
 afterEach(() => {
-  cleanup();
   vi.useRealTimers();
 });
 
@@ -1104,67 +1098,6 @@ describe('T13 behavior 6: debounce, single flight and asset switching', () => {
     expect(transport.saves[0].request.operation_id).toBe('op-1');
   });
 
-  it('the unsaved indicator reflects the real queue state', async () => {
-    const fixture = makeQueue();
-    render(
-      createElement(SaveStatus, {
-        queue: fixture.queue,
-        scopeKey: 'test-scope',
-        isCurrentScope: (key: string) => key === 'test-scope',
-        canReconcileInScope: (key: string) => key === 'test-scope', canWrite: (key: string) => key === 'test-scope',
-        canRetryOwnedFuture: () => false,
-        asset_revision_id: 'asset_a',
-      }),
-    );
-    const status = () => screen.getByTestId('save-status');
-    expect(status()).toHaveAttribute('data-phase', 'idle');
-    expect(status()).toHaveAttribute('data-dirty', 'false');
-
-    await act(async () => {
-      enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-      await fixture.queue.whenPersisted('asset_a');
-    });
-    expect(status()).toHaveAttribute('data-phase', 'saved_local');
-    expect(status()).toHaveAttribute('data-dirty', 'true');
-
-    await act(async () => {
-      fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
-    });
-    expect(status()).toHaveAttribute('data-phase', 'saving');
-
-    await act(async () => {
-      fixture.transport.ackSave(0, 'r8');
-      await microtasks();
-    });
-    expect(status()).toHaveAttribute('data-phase', 'synced');
-    expect(status()).toHaveAttribute('data-dirty', 'false');
-  });
-
-  it('the indicator keeps the dirty flag after a stale ACK and shows the failed save', async () => {
-    const fixture = makeQueue();
-    render(createElement(SaveStatus, { queue: fixture.queue, asset_revision_id: 'asset_a', scopeKey: 'test-scope', isCurrentScope: (key: string) => key === 'test-scope', canReconcileInScope: (key: string) => key === 'test-scope', canWrite: (key: string) => key === 'test-scope', canRetryOwnedFuture: () => false }));
-    const status = () => screen.getByTestId('save-status');
-
-    await act(async () => {
-      enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-      fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
-    });
-    await act(async () => {
-      enqueue(fixture, { generation: 9, document: makeDocument() });
-      fixture.transport.ackSave(0, 'r8');
-      await microtasks();
-    });
-    expect(status()).toHaveAttribute('data-dirty', 'true');
-    expect(status()).toHaveAttribute('data-phase', 'saved_local');
-
-    await act(async () => {
-      fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
-      fixture.transport.failNetwork(1);
-      await microtasks();
-    });
-    expect(status()).toHaveAttribute('data-phase', 'save_failed');
-    expect(status()).toHaveTextContent(/草稿已保留/);
-  });
 });
 
 // ===========================================================================
@@ -1509,91 +1442,3 @@ describe('T13 fetch transport against the T11 API', () => {
   });
 });
 
-// ===========================================================================
-// SaveStatus surface: failure and conflict banners (test ids per
-// docs/testing-contracts.md §3).
-// ===========================================================================
-
-describe('T13 SaveStatus rescue and conflict surfaces', () => {
-  it('shows a storage failure with the draft download and never claims local save', async () => {
-    const fixture = makeQueue();
-    const exported: NativeDraftExport[] = [];
-    render(
-      createElement(SaveStatus, {
-        queue: fixture.queue,
-        scopeKey: 'test-scope',
-        isCurrentScope: (key: string) => key === 'test-scope',
-        canReconcileInScope: (key: string) => key === 'test-scope', canWrite: (key: string) => key === 'test-scope',
-        canRetryOwnedFuture: () => false,
-        asset_revision_id: 'asset_a',
-        onExportDraft: (draft) => exported.push(draft),
-      }),
-    );
-    await act(async () => {
-      fixture.storage.failNextPut(
-        new StorageError({ code: 'QUOTA_EXCEEDED', message: 'quota exceeded' }),
-      );
-      enqueue(fixture, { generation: 8, document: makeDocument(), base_revision_id: 'r7' });
-      await fixture.queue.whenPersisted('asset_a');
-    });
-
-    const status = screen.getByTestId('save-status');
-    expect(status).toHaveAttribute('data-phase', 'storage_error');
-    expect(status).not.toHaveTextContent(/已保存到本地/);
-
-    fireEvent.click(screen.getByTestId('export-local-draft'));
-    expect(exported).toHaveLength(1);
-    expect(exported[0].unsynced).toBe(true);
-    expect(exported[0].document).toEqual(makeDocument());
-  });
-
-  it('offers keep-local/export and view-server on a recovery conflict without auto-resolving', async () => {
-    const fixture = makeQueue();
-    const record = makeRecord({ base_revision_id: 'r7', generation: 9, synced_generation: 7, draft_owner: { actor_id: 'test-actor', project_id: 'test-project' } });
-    const head = makeRevision('r8', makeDocument({ completion: 'complete' }));
-    const report = compareWithServer(record, head);
-    if (report.kind !== 'conflict') throw new Error('expected conflict');
-
-    const exported: NativeDraftExport[] = [];
-    const viewed: Array<AnnotationRevision | null> = [];
-    fixture.transport.head = head;
-    await fixture.queue.forkFromRecord(await seedBranch(fixture.storage, record));
-
-    render(
-      createElement(SaveStatus, {
-        queue: fixture.queue,
-        scopeKey: 'test-scope',
-        isCurrentScope: (key: string) => key === 'test-scope',
-        canReconcileInScope: (key: string) => key === 'test-scope', canWrite: (key: string) => key === 'test-scope',
-        canRetryOwnedFuture: () => false,
-        asset_revision_id: record.asset_revision_id,
-        recovery: report,
-        onExportDraft: (draft) => exported.push(draft),
-        onViewServer: (revision) => viewed.push(revision),
-      }),
-    );
-    expect(screen.getByTestId('recovery-banner')).toBeInTheDocument();
-    expect(screen.getByTestId('conflict-banner')).toBeInTheDocument();
-    // Recovery itself never wrote anything.
-    expect(fixture.transport.saves).toHaveLength(0);
-
-    fireEvent.click(screen.getByTestId('conflict-view-server'));
-    await act(async () => {
-      await microtasks();
-    });
-    expect(viewed).toEqual([head]);
-    expect(fixture.transport.saves).toHaveLength(0);
-
-    fireEvent.click(screen.getByTestId('conflict-keep-local'));
-    await act(async () => {
-      await microtasks();
-    });
-    expect(exported).toHaveLength(1);
-    expect(exported[0].document).toEqual(record.document);
-    // The explicit keep-local resolution resumes automatic writes on the new base.
-    fixture.clock.advance(SAVE_DEBOUNCE_MS); await microtasks();
-    expect(fixture.transport.saves).toHaveLength(1);
-    expect(fixture.transport.saves[0].request.base_revision_id).toBe('r8');
-    expect(fixture.transport.saves[0].request.document).toEqual(record.document);
-  });
-});
