@@ -245,7 +245,8 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   mountEditorKeyboard(objectsRoot, state, port, signal);
   const childContext = { session: context.session, navigate: context.navigate, route: context.route, signal };
   cleanup.push(context.mountReview(reviewRoot, { ...childContext, projectId: state.projectId, taskSession, initialQueue: context.route.queue ?? 'all', getQueue: () => reviewQueue,
-    getScope: () => ({ session: sessionCurrent(state) ? state.session : null, project: state.project, assets: state.assets, ontologies: state.ontologies, assetId: state.assetId, ontologyId: state.ontologyId }), subscribe: state.subscribe }));
+    getScope: () => ({ session: sessionCurrent(state) ? state.session : null, project: state.project, assets: state.assets, ontologies: state.ontologies, assetId: state.assetId, ontologyId: state.ontologyId }), subscribe: state.subscribe,
+    setReviewViewOpen(open) { if (open) port.cancelGesture(); state.modal = open || state.importViewModal || !!shell.querySelector('dialog[open]'); state.notify(); } }));
   let managementMounted = false;
   function mountManagementIfOpen() {
     if (!managementDetails.open || managementMounted) return;

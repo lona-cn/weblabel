@@ -14,6 +14,7 @@ export interface ReviewMountContext extends PageContext {
   getQueue(): TaskQueue;
   getScope(): Readonly<{ session: Session | null; project: Project | null; assets: readonly ApiMedia[]; ontologies: readonly OntologyVersion[]; assetId: string; ontologyId: string }>;
   subscribe(listener: () => void): () => void;
+  setReviewViewOpen(open: boolean): void;
 }
 export interface ManagementMountContext extends PageContext {
   projectId: string;

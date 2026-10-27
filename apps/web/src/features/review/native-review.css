@@ -6,11 +6,24 @@
 .native-delivery [data-testid^='review-task-'] { min-width: 0; }
 .native-delivery textarea { width: 100%; min-height: 96px; }
 .native-delivery[data-testid=fixed-revision-page] svg { max-height: min(50dvh, 520px); }
-.native-delivery[data-testid=fixed-revision-page] .revision-fixed-label { fill: var(--fg); stroke: var(--surface-0); stroke-width: 3px; stroke-linejoin: round; paint-order: stroke fill; font-weight: 600; pointer-events: none; }
-.native-delivery[data-testid=fixed-revision-page] :is(.revision-fixed-identity, .revision-fixed-object) dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 0; margin: 0; }
-.native-delivery[data-testid=fixed-revision-page] :is(.revision-fixed-identity, .revision-fixed-object) :is(dt, dd) { margin: 0; padding: 6px 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
-.native-delivery[data-testid=fixed-revision-page] :is(.revision-fixed-identity, .revision-fixed-object) dt { color: var(--muted); }
-.native-delivery[data-testid=fixed-revision-page] [aria-label='已变化对象的固定版本对照'] { table-layout: fixed; }
+.native-delivery .revision-fixed-label { fill: var(--fg); stroke: var(--surface-0); stroke-width: 3px; stroke-linejoin: round; paint-order: stroke fill; font-weight: 600; pointer-events: none; }
+.native-delivery :is(.revision-fixed-identity, .revision-fixed-object) dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 0; margin: 0; }
+.native-delivery :is(.revision-fixed-identity, .revision-fixed-object) :is(dt, dd) { margin: 0; padding: 6px 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.native-delivery :is(.revision-fixed-identity, .revision-fixed-object) dt { color: var(--muted); }
+.native-delivery [aria-label='已变化对象的固定版本对照'] { table-layout: fixed; }
 @media (forced-colors: active) {
   .native-delivery svg { border-color: CanvasText; }
 }
+.r07-workbench dialog.review-expanded { position: fixed; inset: 56px 0 0; width: 100vw; height: calc(100dvh - 56px); max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--surface-0); overflow: hidden; }
+.r07-workbench dialog.review-expanded[open] { display: flex; flex-direction: column; }
+.r07-workbench dialog.review-expanded::backdrop { background: transparent; }
+.review-expanded > h2 { margin: 0; padding: 16px 20px 0; }
+.review-expanded-context { padding: 0 20px; color: var(--muted); overflow-wrap: anywhere; }
+.review-expanded-content { flex: 1; min-height: 0; overflow: auto; padding: 0 20px 12px; }
+.review-expanded-content svg { max-height: min(42dvh, 440px); }
+.review-expanded-footer { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface-1); }
+.review-expanded-footer .review-decision { flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.review-expanded-footer .review-decision > label { flex: 1 1 320px; margin: 0; }
+.review-expanded-footer .review-decision textarea { min-height: 64px; }
+.review-expanded-footer button { min-height: 44px; }
+@media (max-width: 1099px) { .r07-workbench dialog.review-expanded { inset: 0; height: 100dvh; } .review-expanded-footer { flex-wrap: wrap; } }

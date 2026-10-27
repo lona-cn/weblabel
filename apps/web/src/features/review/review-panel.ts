@@ -9,6 +9,7 @@ import { element, actions, field, options, details, lifetime, createAuthorizedRe
 import { diagnosticText as failureText } from '../import-export/loss-report';
 import { mountReviewList } from './review-list';
 import { assertRevision, mountRevisionReviewView } from './revision-review-view';
+import { createDialog } from '../../ui/dialog';
 
 type LeaseWrite = { taskId: string; action: 'acquire' | 'renew' | 'release' | 'transfer'; actor: string; holderId?: string };
 type Decision = { taskId: string; actor: string; reviewId: string; decision: 'approve' | 'reject'; reason: string; revisionIds: string[] };
@@ -32,7 +33,7 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
   let memberCursor: string | null = null, mediaCursor: string | null = null, membersReady = false, mediaReady = false;
   const pageBusy = new Set<string>(); const timers = new Set<number>(); let renewal: number | null = null;
   const panel = element('section', undefined, 'native-delivery'); panel.setAttribute('aria-label', '任务与审核');
-  const title = element('h2', '任务与审核'); const status = element('div'); status.setAttribute('role', 'status');
+  const title = element('h2', '任务与审核'); title.tabIndex = -1; const status = element('div'); status.setAttribute('role', 'status');
   const error = element('p'); error.setAttribute('role', 'alert'); error.dataset.testid = 'review-error'; error.hidden = true;
   const toolbar = element('div', undefined, 'delivery-toolbar'); const filter = element('select'); const summary = element('p');
   options(filter, [{ value: 'all', text: '全部' }, { value: 'mine', text: '我的待办' }, { value: 'pending', text: '待审核' }, { value: 'returned', text: '退回' }, { value: 'closed', text: '结束' }], queue);
@@ -199,17 +200,48 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
     transfer.addEventListener('change', () => { transferDrafts.set(task.task_id, transfer.value); }, { signal: rowLife.signal });
     const claim = action('领取任务', () => void acquire(view.task)); const submitButton = action('同步并提交当前版本', () => void submit(view.task), 'task-submit');
     const transferButton = action('转交任务', () => { const target = transfer.value; if (!current() || role !== 'admin' || fenced() || !members.some(item => item.user_id === target)) return; void perform(async () => { await mutateLease(view.task.task_id, 'transfer', target); if (lease?.task_id === view.task.task_id) install(null); }); }, `task-transfer-${task.task_id}`);
-    const diffButton = action('查看审核差异', () => void loadDiff(), `review-diff-${task.task_id}`); const diffRoot = element('div'); diffRoot.dataset.testid = `review-diff-content-${task.task_id}`;
+    const diffButton = action('查看审核差异', () => { if (snapshot) openExpanded(); else void loadDiff(); }, `review-diff-${task.task_id}`); const diffRoot = element('div'); diffRoot.dataset.testid = `review-diff-content-${task.task_id}`;
     const reason = element('textarea'); reason.required = true; reason.value = reasonDrafts.get(task.task_id) ?? (task.review_id ? writes.decisions.get(task.review_id)?.reason : '') ?? ''; const unknownDecision = element('div');
     const approve = action('批准', () => void decide('approve'), 'review-approve'), reject = action('退回', () => void decide('reject'), 'review-reject');
-    const reviewControls = element('div'); reviewControls.append(field('理由', reason), unknownDecision, approve, reject);
+    const reviewControls = element('div', undefined, 'review-decision'); reviewControls.append(field('理由', reason), unknownDecision, approve, reject);
     controls.append(claim, submitButton, field('转交至项目标注者', transfer), transferButton, diffButton); node.append(heading, metadata, conclusion, controls, diffRoot, reviewControls);
     let snapshot: { reviewId: string; revision: AnnotationRevision; parent: AnnotationRevision | null; issues: ReviewIssue[] } | null = null, diffDispose: (() => void) | null = null, loading = false;
+    let expandedDialog: ReturnType<typeof createDialog> | null = null, expandedFooter: HTMLElement | null = null, expandedContext: HTMLElement | null = null, expanded = false;
+    let returnScroll: { element: Element; top: number; left: number } | null = null;
+    function restoreExpanded() {
+      if (!expanded) return;
+      expanded = false; node.append(diffRoot, reviewControls);
+      if (rowLife.alive) context.setReviewViewOpen(false);
+      else queueMicrotask(() => context.setReviewViewOpen(false));
+      if (returnScroll && rowLife.alive && panel.isConnected) { returnScroll.element.scrollTop = returnScroll.top; returnScroll.element.scrollLeft = returnScroll.left; }
+      returnScroll = null;
+    }
+    function openExpanded() {
+      const fixed = view.task;
+      if (!current() || !rowLife.alive || expanded || !snapshot || snapshot.reviewId !== fixed.review_id || fixed.revision_ids?.length !== 1 || fixed.revision_ids[0] !== snapshot.revision.annotation_revision_id) return;
+      if (!expandedDialog) {
+        const dialog = createDialog({ id: `review-expanded-${fixed.task_id}`, title: '审核差异', testId: 'review-expanded', signal: rowLife.signal, fallbackFocus: () => panel.querySelector<HTMLElement>('[data-testid="task-list-refresh"]') });
+        dialog.element.classList.add('native-delivery', 'review-expanded'); dialog.content.classList.add('review-expanded-content');
+        const heading = dialog.element.querySelector('h2')!; heading.tabIndex = -1; heading.setAttribute('autofocus', '');
+        const close = dialog.element.querySelector<HTMLButtonElement>('button')!; close.textContent = '返回任务队列';
+        expandedContext = element('p', undefined, 'review-expanded-context'); dialog.element.insertBefore(expandedContext, dialog.content);
+        expandedFooter = element('footer', undefined, 'review-expanded-footer'); expandedFooter.append(close); dialog.element.append(expandedFooter);
+        (panel.closest('.r07-workbench') ?? panel).append(dialog.element);
+        dialog.element.addEventListener('close', restoreExpanded, { signal: rowLife.signal }); expandedDialog = dialog;
+      }
+      expandedContext!.textContent = `任务 ${fixed.task_id} · 图片 ${fixed.asset_revision_id} · 规范 ${fixed.ontology_version_id} · 固定提交 ${snapshot.revision.annotation_revision_id} · 基线 ${snapshot.parent?.annotation_revision_id ?? '无父版本'}`;
+      const scrolling = document.scrollingElement;
+      if (scrolling) { returnScroll = { element: scrolling, top: scrolling.scrollTop, left: scrolling.scrollLeft }; scrolling.scrollTop = 0; scrolling.scrollLeft = 0; }
+      expanded = true; expandedDialog.content.append(diffRoot); expandedFooter!.prepend(reviewControls);
+      try { expandedDialog.open(diffButton); }
+      catch (cause) { restoreExpanded(); throw cause; }
+      context.setReviewViewOpen(true);
+    }
     const view = { task, node, update() {
       const value = view.task; const states: Record<string, string> = { open: '待标注', submitted: '待审核', closed: '已结束' }; heading.textContent = `${value.task_id} · ${states[value.state] ?? value.state}`;
       metadata.textContent = `图片 ${value.asset_revision_id} · 规范 ${value.ontology_version_id} · 标注者 ${value.assignee_id} · 固定提交 ${value.revision_ids?.join(', ') ?? '未提交'}`;
       conclusion.textContent = value.review_decision ? `审核结论：${value.review_decision === 'approve' ? '已批准' : '已退回'} · ${value.review_reason ?? ''}` : '尚无审核结论。';
-      if (snapshot && (snapshot.reviewId !== value.review_id || value.revision_ids?.length !== 1 || snapshot.revision.annotation_revision_id !== value.revision_ids[0])) { diffDispose?.(); snapshot = null; diffDispose = null; }
+      if (snapshot && (snapshot.reviewId !== value.review_id || value.revision_ids?.length !== 1 || snapshot.revision.annotation_revision_id !== value.revision_ids[0])) { expandedDialog?.close(); diffDispose?.(); snapshot = null; diffDispose = null; }
       const canAnnotate = ['admin', 'annotator'].includes(role ?? '') && (value.assignee_id === actor || !!session?.platform_admin) && value.state === 'open';
       claim.hidden = !canAnnotate; submitButton.hidden = !canAnnotate; claim.disabled = busy || fenced() || !current(); submitButton.disabled = busy || fenced() || lease?.task_id !== value.task_id || !current();
       transfer.parentElement!.hidden = role !== 'admin' || value.state !== 'open'; transferButton.hidden = transfer.parentElement!.hidden; transfer.disabled = busy || fenced() || !current(); transferButton.disabled = transfer.disabled;
@@ -219,7 +251,13 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
       reason.disabled = !!pending || busy || !current(); approve.disabled = reject.disabled = busy || !current() || !!pending || !reason.value.trim() || snapshot?.reviewId !== value.review_id;
       unknownDecision.replaceChildren(); if (pending) unknownDecision.append(element('p', '审核结果未知，原固定版本与理由保留，只读刷新核对，不重发。'), details('原审核请求', pending));
     }, dispose() { rowLife.dispose(); } }; rowViews.set(task.task_id, view);
-    rowLife.add(() => { diffDispose?.(); node.remove(); });
+    rowLife.add(() => {
+      const wasExpanded = expanded; restoreExpanded(); expandedDialog?.dispose(); diffDispose?.(); node.remove();
+      if (wasExpanded && life.alive && panel.isConnected && document.activeElement === document.body) {
+        const fallback = panel.closest('.r07-workbench')?.querySelector<HTMLElement>('[data-testid="nav-review"]') ?? title;
+        fallback.focus({ preventScroll: true });
+      }
+    });
     reason.addEventListener('input', () => { reasonDrafts.set(task.task_id, reason.value); view.update(); }, { signal: rowLife.signal });
     async function loadDiff() {
       const fixed = view.task; if (!current() || !rowLife.alive || busy || loading || !fixed.review_id || fixed.revision_ids?.length !== 1) return; loading = true; view.update();
@@ -230,7 +268,8 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
         if (parent) assertRevision(parent, revision.parent_revision_id!, fixed.asset_revision_id, fixed.ontology_version_id);
         const issues = await reviewApi.issues(fixed.review_id, rowLife.signal); if (!current() || !rowLife.alive || view.task.review_id !== fixed.review_id || view.task.revision_ids?.[0] !== revision.annotation_revision_id) return;
         snapshot = { reviewId: fixed.review_id, revision, parent, issues: issues.items }; diffDispose?.();
-        diffDispose = mountRevisionReviewView(diffRoot, { projectId: context.projectId, revision, parent, issues: issues.items, signal: rowLife.signal, isCurrent: current });
+        diffDispose = mountRevisionReviewView(diffRoot, { projectId: context.projectId, revision, parent, issues: issues.items, signal: rowLife.signal, isCurrent: current, detailed: true });
+        openExpanded();
       } catch (cause) { if (current() && rowLife.alive) fail(cause); } finally { if (rowLife.alive) { loading = false; view.update(); } }
     }
     async function decide(decision: 'approve' | 'reject') {

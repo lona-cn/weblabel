@@ -26,7 +26,7 @@ export function mountFixedRevisionPage(root: HTMLElement, context: FixedRevision
     const parent = revision.parent_revision_id ? await reviewApi.revision(revision.parent_revision_id, reads.signal) : null; if (!reads.current()) return;
     if (parent) assertRevision(parent, revision.parent_revision_id!, context.assetId, context.ontologyId);
     status.hidden = true; workbench.disabled = false;
-    life.add(mountRevisionReviewView(view, { projectId: context.projectId, revision, parent, issues: [], signal: reads.signal, isCurrent: reads.current, fixedPage: true }));
+    life.add(mountRevisionReviewView(view, { projectId: context.projectId, revision, parent, issues: [], signal: reads.signal, isCurrent: reads.current, detailed: true }));
   })().catch(error => { if (reads.current()) { status.setAttribute('role', 'alert'); status.textContent = error instanceof Error ? error.message : '指定固定版本读取失败。'; } });
   life.add(() => main.remove()); return life.dispose;
 }
