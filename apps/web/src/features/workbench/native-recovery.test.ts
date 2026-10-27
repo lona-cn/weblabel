@@ -70,6 +70,26 @@ it('reports an unconfirmed save immediately after the response is lost, but not 
   expect(banner.hidden).toBe(false);
   expect(banner.textContent).toContain('原请求结果未知');
 });
+it('warns about unresolved saved branches even when the active queue is clean', async () => {
+  const f = setup(), root = document.createElement('section'); document.body.append(root);
+  await f.state.queue.whenPersisted('asset');
+  mountSaveView(root, f.state, f.port, f.recovery, f.owner.signal);
+  const status = root.querySelector<HTMLElement>('[data-testid=save-status]')!;
+  const initial = status.textContent;
+  const record = f.state.queue.toRecord('asset')!;
+  const retained = { asset_revision_id: 'asset', draft_id: 'retained', write_token: 'retained-token', sources: [], record: { ...record, generation: 1, draft_owner: { actor_id: 'actor', project_id: f.state.projectId } } };
+  await f.storage.put(retained); await f.recovery.refresh();
+  expect(f.state.queue.getStatus('asset').dirty).toBe(false);
+  expect(status.textContent).toContain('草稿');
+  expect(status.textContent).not.toBe(initial);
+  const archived = { asset_revision_id: 'asset', draft_id: 'archive', write_token: 'archive-token', sources: [{ draft_id: retained.draft_id, write_token: retained.write_token, action: 'use_server' as const }], record };
+  await f.storage.put(archived); await f.recovery.refresh();
+  expect(status.textContent).toBe(initial);
+  f.state.legacyRows = [{ key: 'old', record: { value: 'retained' } }]; f.state.notify();
+  expect(status.textContent).toContain('草稿');
+  f.state.legacyRows = []; f.state.notify();
+  expect(status.textContent).toBe(initial);
+});
 
 it('explicitly saves a newer edit after reconciling an old ACK and reopening its scope', async () => {
   const f = setup(), root = document.createElement('section'); document.body.append(root);

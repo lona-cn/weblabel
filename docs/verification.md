@@ -51,6 +51,7 @@ WASM 构建缺固定工具时输出结构化前置诊断并退出2，实际编�
 `--skip-security` 的 browser 子图以完整标题排除 `F11 two actual pages sharing head and lease have exactly one complete save and unsynced loser draft`，登记到 excluded_tests；非权限 task lineage 与 late ACK 保留。integration 继续排除既有 `F10/F11 concurrent real CAS plus transferred and expired lease reject without partial revisions`。本轮只用实际 Playwright `--list` 核对 F11 未调度，不运行该权限/lease race。
 `--skip-security` 同时按完整标题排除 T33 packaging 的凭据碰撞/脱敏、不可变审核审计故障注入、带 origin 拒绝的混合启动和含秘密断言的 doctor 用例；完整标题登记在 excluded_tests。正常包装缺前置、产物完整性、owned 子树退出和正常 WAL 备份/恢复仍保留。生命周期由独立物理 Ctrl+C startup 证明，不以运行被排除安全断言替代。此前门禁误漏排这些标题的原始结果保留，不计为安全验收；失败凭据碰撞用例在 bootstrap 前中止，也不能计为专题验证。
 这些标题排除不是完整安全专题排除：`cargo test --workspace` 和 Web 测试集中仍有安全相关用例，`scripts/release-smoke.mjs` 的 `exerciseRuntime` seed helper 也含未认证和跨源负控。用户要求跳过安全专题时，不得直接运行包含这些路径的完整 runner 或该 fixture；既有误执行如实记录，不作为安全验收。
+硬件 GPU runner 的合成 bootstrap fixture 此前即使设置 `WEBLABEL_SKIP_SECURITY=1` 仍检查响应是否包含密码，属于误执行已跳过的安全专题断言，不能计为安全验收；修正后仅在未跳过安全时执行该检查，正常安全范围不变。此修正不使上述完整 runner 成为安全跳过模式。
 
 根 Playwright 配置显式启动独占的 recovery origin（默认 `127.0.0.1:5191`，可用 `WEBLABEL_T30_ORIGIN` 指定独立 loopback 端口），供 T13/T30 使用；不得以用户已有服务替代。T25/T30 通过实际 `AI 审校` 按钮展开折叠面板后再输入，不修改产品默认折叠状态。T09-D 验证真实 Native 文档、canonical 几何、generation 与 undo/redo 在 hover 前后不变，保留真实 GPU idle/resize 验证；不再把合法初始化的累计 `get_snapshot` 次数当作 pointermove 违规，也不重钉实现计数。
 单图新导出由同一 `EditorPort.canExport()` 约束父级 admission 与 `prepareExport()`：当前固定 LoadedAsset 的 Host 必须 ready 或真实 terminal-error，读取/初始化/恢复期间不能开始新导出。该条件不是写角色或 editableHost 门禁：只读服务端版本仍可导出；原产物显式下载、未知操作保留、损失确认与 stale-scope 围栏不变。切图卸载期间 GPU 诊断明确回到 idle/none，不沿用前一设备的 ready 标记。
@@ -73,10 +74,12 @@ Windows 原生子树的回收不能仅凭 Job 活动计数为零或已退出的�
 
 R1 中 healthy ACK 本地回执屏障只阻断远端传输，不撤销当前合法 Native 编辑。Workbench 使用 SaveQueue.canAcceptEdits(asset, ontology) 判断本地 admission；已由 Native 提交的完整文档与 ordered journal 仍由 queue 保留，非 barrier paused/rescue 的既有内存政策不变。writes_paused、原 owner/scope guard、真实 receipt、write-token CAS、one-shot continuation 与 local_commit 保持 fail-closed；最新完整本地记录真正持久之前不得准备下一次 HTTP。真实回归在 pointerdown/up 之间释放实际服务端提交的旧 ACK，并保持物理 IndexedDB 回执 transaction，验证完整 canonical 文档、单次 undo/redo、精确新请求与 reload；48 步独立几何 oracle 的串行等待不能替代该时序证明。
 原保存响应丢失时，若 pending 结果为 unknown 且请求已停止等待，工作台立即显示原操作结果未知，不能把网络错误当作服务端拒绝。原 ACK 确认后若有更晚的已持久化编辑，旧范围的自动续发仍受原 guard 约束；只有当前范围显式保存/完成动作、同一写入者和新的有效资格成立时，才可放弃已过期的继续发送 guard，并以原 ACK 的 revision 为 base 保存新编辑。未确认的 pending、尚未落盘的本地回执、一次性续发限制和 lease/fencing 均不绕过。
+工作台资产列表、完成状态选择和只读分支比较使用同一组完成状态名称，不能将协议枚举直接显示给用户。重新打开后即使当前内存队列为 idle 或 synced，仍有未解决分支或旧库救援记录时，主保存状态须提示有待恢复或救援的本地草稿；已同步、已恢复或已留档的分支不误报。只改变显示，不自动选择、修改或重试原分支。
 
 T31 的所属 Vite 由当前 Node 直接启动 `owned-vite-service.mjs`。正常收尾关闭所属 stdin pipe，等待真实 `server.close()` 与 native close，再观察独占 loopback listener 已关闭；不以 Windows `taskkill /T` 冒充正常关闭。超时或非零/signal/仍监听保持 failed；有界 forced backstop 仅用于回收，不洗绿。fast 登记真实 listener 的运行中 EOF 与启动中 EOF 两项回归。硬件 workload、2000/10000 数量、sample seed 与性能阈值不变；任何实测 P95 越界仍失败。
 真实生命周期会多次重新加载同一 WASM：GPU 门禁要求至少一次实际加载，且每一次捕获的 SHA-256 都与本次发行构建完全相同；空列表、缺失或任意一次不一致均失败。第一次独占运行中两项 hardware 测试各实际捕获六次相同 hash，但外层错误地只接受单元素数组而失败，原结果与全部8000行保留；不得把重读该材料写成原命令通过，也不得改变样本、warmup、阈值或挑选性能结果。
 随后固定阈值的独占GPU命令通过3/3、8000行；一次完整 release 中的GPU子关亦通过3/3。该完整 release 自身仍 failed：Rust workspace 有一项工作器等待超时、浏览器有一项旧隐藏返回按钮假设；后续API库103/103及定向浏览器通过不抹去失败，也不能证明超时根因。该次 `skipped_scope` 为空，live证据和完整 smoke/review 仍缺失；R10/R11与完整发布不因此通过。
+最新本地源码的真实硬件 2000 对象 `committed_edit` CPU P95 为 8.043 ms，超过未修改的 8 ms 门槛；旧源码的通过结果不能替代该失败。独立诊断采样显示 IndexedDB 耐久写入为主要热点，但尚未证明其造成门槛失败，不为通过而删除或延迟耐久写。
 release 的 release_gates 逐项列出 G0..G5 的 scope、实际 required_commands、SHA 绑定 evidence_refs、engineering_status 与完整 status。缺少命令为 not_started，缺少材料为 missing，不能从总状态或历史 commit 推导通过。G1/G3/G5 必须同时读取当前源码的 smoke；G5 还必须有独立完整规格/质量 review。smoke 的十三项场景只能引用同文件中已校验 SHA 的 artifacts；部分或损坏材料不能通过。
 
 G3/G4/G5 在本轮安全 skipped_by_user 时完整 status 为 blocked，即使各自工程子集通过。G4 的 live 未授权/未实际验收同样阻断；G5 不声称已经完成商业30%效率试点。release 的 engineering_status 也检查实际 review/smoke，不能只看子命令退出码。执行失败优先 failed，其余任何必需 missing/blocked/skipped/not_verified 保持 blocked；只有六关及全部范围满足才允许 full_1_0_ready。

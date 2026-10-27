@@ -6,7 +6,7 @@ import { mountCanvasView } from './canvas-view';
 import { mountObjectsView } from './objects-view';
 import { mountAttributesView } from './attributes-view';
 import { mountToolbarView, mountEditorKeyboard } from './toolbar-view';
-import { mountSaveView } from './save-view';
+import { COMPLETION_LABELS, mountSaveView } from './save-view';
 import { mountAiWorkbenchView } from '../ai/ai-workbench-view';
 import { mountActivityView } from './activity-view';
 import { mountHelpView } from './help-view';
@@ -165,7 +165,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
       }
       li.hidden = !!query && !asset.original_name.toLocaleLowerCase().includes(query);
       const button = li.firstElementChild as HTMLButtonElement; button.setAttribute('aria-current', String(state.assetId === id));
-      const summary = state.queue.getOwnedSummary(id, state.projectId, state.session?.user_id ?? ''); li.lastElementChild!.textContent = summary?.failed ? '保存待核对' : summary?.pending ? '待同步' : state.assetId === id ? state.document?.completion ?? '' : '';
+      const summary = state.queue.getOwnedSummary(id, state.projectId, state.session?.user_id ?? ''); li.lastElementChild!.textContent = summary?.failed ? '保存待核对' : summary?.pending ? '待同步' : state.assetId === id && state.document ? COMPLETION_LABELS[state.document.completion] : '';
     }
     for (const [id, node] of assetNodes) if (!present.has(id)) { node.remove(); assetNodes.delete(id); }
   }

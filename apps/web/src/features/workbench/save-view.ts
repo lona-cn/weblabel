@@ -8,6 +8,12 @@ import type { EditorPort } from './editor-port';
 import { action, element, labeled, option } from './view-elements';
 import { reportError, sessionCurrent, writableRole, type WorkspaceState } from './workspace-state';
 
+export const COMPLETION_LABELS: Readonly<Record<Completion, string>> = {
+  unprocessed: '未处理',
+  in_progress: '标注中',
+  complete: '已完成',
+  confirmed_negative: '已确认无目标',
+};
 const PHASE: Record<SavePhase, string> = { idle: '无待保存更改', unsaved: '有未保存更改', saved_local: '本地事务已完成，待同步', saving: '正在同步到服务器', synced: '服务器已确认', save_failed: '保存失败，草稿已保留', storage_error: '本地存储失败，当前修改尚未持久保存', paused: '写入已暂停，保留原请求', conflict: '保存结果或版本待核对，自动写入已暂停' };
 export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: EditorPort, recovery: DraftRecovery, signal: AbortSignal): () => void {
   const status = element('p'); status.dataset.testid = 'save-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
@@ -31,7 +37,7 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
   const keep = action('导出并保留本地草稿', 'keep-local-export', signal, () => void perform(recovery.keepLocal));
   controls.append(save, retry, rescue, server, keep);
   const completion = element('select'); completion.dataset.testid = 'completion-state';
-  for (const [value, text] of [['unprocessed', '未处理'], ['in_progress', '标注中'], ['complete', '已完成'], ['confirmed_negative', '已确认无目标']]) completion.append(option(value, text));
+  for (const [value, text] of Object.entries(COMPLETION_LABELS)) completion.append(option(value, text));
   const negative = element('input'); negative.type = 'checkbox'; negative.dataset.testid = 'negative-confirmation';
   const negativeLabel = labeled('我已检查图片，确认没有目标对象。没有画框不代表没有目标。', negative);
   const complete = action('标注完成并保存', 'complete-annotation', signal, () => {
@@ -47,7 +53,7 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
   const branchList = element('div'), compare = element('div'), branchActions = element('div', undefined, 'r07-button-row');
   recoveryBanner.append(element('h2', '草稿恢复'), element('p', '明确选择一个本地分支后恢复或使用服务器版本并留档。不会自动选择最新分支，不会自动合并；原记录与来源始终保留。'), branchList, compare, branchActions);
   let chosen: string | null = null, branchRows: readonly DraftBranchEnvelope[] | null = null, lastDocument = state.document, legacyRows = state.legacyRows, differenceIndex = 0;
-  let lastDiagnostic: SaveStatusSnapshot | null = null;
+  let lastDiagnostic: SaveStatusSnapshot | null = null, hasUnresolvedBranches = false;
   const recover = action('恢复选中分支', 'recover-selected-branch', signal, () => { if (chosen) void perform(() => recovery.choose(chosen!, 'recover')); });
   const useServer = action('使用服务器版并留档选中分支', 'archive-selected-branch', signal, () => { if (chosen) void perform(() => recovery.choose(chosen!, 'use_server')); });
   const rescueBranch = action('下载选中分支原始草稿', 'rescue-selected-branch', signal, () => { if (chosen) void perform(() => recovery.rescue(chosen!)); });
@@ -69,13 +75,12 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
       if (id) { const tr = element('tr'); tr.append(element('th', id), element('td', JSON.stringify(serverObjects.get(id) ?? null)), element('td', JSON.stringify(localObjects.get(id) ?? null))); table.append(tr); }
       const previous = action('上一处差异', 'draft-diff-previous', signal, () => { differenceIndex--; updateComparison(); }), next = action('下一处差异', 'draft-diff-next', signal, () => { differenceIndex++; updateComparison(); });
       previous.disabled = differenceIndex === 0; next.disabled = differenceIndex >= ids.length - 1;
-      compare.append(element('p', '服务器完成状态：' + serverDocument.completion + '；本地：' + local.completion), table, previous, element('span', (ids.length ? differenceIndex + 1 : 0) + ' / ' + ids.length + ' 处对象差异'), next);
+      compare.append(element('p', '服务器完成状态：' + COMPLETION_LABELS[serverDocument.completion] + '；本地：' + COMPLETION_LABELS[local.completion]), table, previous, element('span', (ids.length ? differenceIndex + 1 : 0) + ' / ' + ids.length + ' 处对象差异'), next);
     } catch { compare.append(element('p', '原始记录不可读，只能下载救援。')); }
   }
   function update() {
     const snapshot = state.queue.getStatus(state.assetId), record = state.queue.toRecord(state.assetId), current = sessionCurrent(state);
     const unresolved = !!record?.pending && record.pending_outcome === 'unknown' && !snapshot.saving;
-    status.textContent = (unresolved ? '保存结果未知，原请求已保留' : PHASE[snapshot.phase]) + ' · 本地版本 ' + snapshot.local_generation + ' / 服务器确认 ' + snapshot.synced_generation;
     status.dataset.state = snapshot.phase;
     status.dataset.phase = snapshot.phase; status.dataset.dirty = String(snapshot.dirty);
     if (lastCertificate !== snapshot) {
@@ -108,6 +113,10 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     if (branchRows !== state.branches || legacyRows !== state.legacyRows) {
       branchRows = state.branches; legacyRows = state.legacyRows; branchList.replaceChildren();
       const dispositions = classifyDraftBranches(state.branches, state.queue.getDraftBranchSnapshot(state.assetId));
+      hasUnresolvedBranches = state.legacyRows.length > 0 || state.branches.some(row => {
+        const disposition = dispositions.get(row.draft_id);
+        return disposition === 'unresolved' || disposition === 'rescue_only';
+      });
       for (const row of state.branches) {
         if (classifyReadonlySnapshot(row.record, row.asset_revision_id) === 'clean_snapshot') continue;
         const radio = element('input'); radio.type = 'radio'; radio.name = 'r07-draft-branch'; radio.value = row.draft_id; radio.checked = chosen === row.draft_id;
@@ -124,6 +133,9 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     recover.disabled = useServer.disabled = busy || state.branchBusy || !chosen || rescueOnly || !current || !writableRole(state);
     rescueBranch.disabled = busy || !current || !chosen;
     recoveryBanner.hidden = !branchList.childElementCount && !(state.recovery && ['restored', 'conflict', 'unreachable'].includes(state.recovery.kind));
+    const retained = hasUnresolvedBranches && !snapshot.dirty && (snapshot.phase === 'idle' || snapshot.phase === 'synced');
+    status.textContent = (unresolved ? '保存结果未知，原请求已保留' : retained ? '存在待恢复或救援的本地草稿' : PHASE[snapshot.phase])
+      + (retained ? ' · 当前分支本地版本 ' : ' · 本地版本 ') + snapshot.local_generation + ' / 服务器确认 ' + snapshot.synced_generation;
   }
   completion.addEventListener('change', () => { if (!port.getHost()) return; negative.checked = false; if (completion.value !== 'confirmed_negative') port.dispatch({ kind: 'set_completion', completion: completion.value as Completion }); update(); }, { signal });
   negative.addEventListener('change', update, { signal });
