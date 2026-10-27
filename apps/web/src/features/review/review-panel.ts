@@ -30,6 +30,8 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
   const reasonDrafts = new Map<string, string>();
   const transferDrafts = new Map<string, string>();
   let members: { user_id: string; username: string; role: string }[] = [], media: ApiMedia[] = [], ontologies: OntologyVersion[] = [];
+  let assetsSource: readonly ApiMedia[] | null = null, ontologiesSource: readonly OntologyVersion[] | null = null, membersSource: typeof members | null = null;
+  let assetNames = new Map<string, string>(), ontologyNames = new Map<string, string>(), memberNames = new Map<string, string>(), memberSignature = '';
   let memberCursor: string | null = null, mediaCursor: string | null = null, membersReady = false, mediaReady = false;
   const pageBusy = new Set<string>(); const timers = new Set<number>(); let renewal: number | null = null;
   const panel = element('section', undefined, 'native-delivery'); panel.setAttribute('aria-label', '任务与审核');
@@ -56,12 +58,15 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
   const memberRefresh = action('刷新可选成员', () => void loadPage('members', null), 'task-members-refresh');
   const memberMore = action('继续读取成员', () => void loadPage('members', memberCursor), 'task-members-more');
   const createButton = element('button', '创建任务'); createButton.type = 'submit'; createButton.className = 'primary';
-  creation.append(element('h3', '创建标注任务'), field('图片版本', assetSelect), mediaRefresh, mediaMore, field('类别规范版本', ontologySelect), field('指派项目标注者', assigneeSelect), memberRefresh, memberMore, createButton);
-  const listRoot = element('div'); const rowViews = new Map<string, { task: ReviewTask; node: HTMLElement; update(): void; dispose(): void }>();
+  creation.append(field('图片版本', assetSelect), mediaRefresh, mediaMore, field('类别规范版本', ontologySelect), field('指派项目标注者', assigneeSelect), memberRefresh, memberMore, createButton);
+  const creationDetails = element('details', undefined, 'review-task-creation'); creationDetails.append(element('summary', '创建标注任务'), creation);
+  const listRoot = element('div', undefined, 'review-task-list'); const columns = element('div', undefined, 'review-task-columns'); columns.setAttribute('aria-hidden', 'true');
+  for (const label of ['任务', '图片', '固定规范', '标注者', '状态', '提交版本', '租约信息', '操作']) columns.append(element('span', label));
+  listRoot.append(columns); const rowViews = new Map<string, { task: ReviewTask; node: HTMLElement; update(): void; dispose(): void }>();
   const list = mountReviewList<ReviewTask>(listRoot, '项目任务', task => task.task_id, renderTask, life.signal, id => {
     rowViews.get(id)?.dispose(); rowViews.delete(id);
   });
-  panel.append(title, toolbar, summary, status, error, unknown, releaseButton, submitCheck, nextButton, creation, listRoot, element('p', '任务每20秒续期，60秒未续期会释放。审核只绑定提交的固定版本；新head不继承旧批准。')); root.append(panel);
+  panel.append(title, toolbar, summary, status, error, unknown, releaseButton, submitCheck, nextButton, creationDetails, listRoot, element('p', '任务每20秒续期，60秒未续期会释放。审核只绑定提交的固定版本；新head不继承旧批准。')); root.append(panel);
   const reads = createAuthorizedReadScope(life.signal, context.session, context.projectId, () => {
     validScope = false; taskRead++; taskLoading = false;
     for (const timer of timers) clearTimeout(timer); timers.clear();
@@ -87,11 +92,16 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
     submitCheck.hidden = !writes.pending; submitCheck.disabled = busy || !current(); nextButton.hidden = !writes.confirmed || !port.onContinueTask; nextButton.disabled = busy || !!writes.leaseWrite || !current() || !['admin', 'annotator'].includes(role ?? '');
     unknown.replaceChildren();
     for (const [name, value] of [['创建结果尚未确认；不能重复创建', writes.create], ['租约操作结果未知；任务刷新不会解锁租约写入', writes.leaseWrite], ['提交结果未知；固定原请求只读核对', writes.pending]] as const) if (value) { const block = element('section'); if (value === writes.create) block.dataset.testid = 'task-create-unknown'; if (value === writes.leaseWrite && writes.leaseWrite?.action === 'acquire') block.dataset.testid = 'task-claim-unknown'; block.append(element('p', name), details('固定原请求', value), action('只读核对任务', () => { if (current() && !busy) void refresh().catch(fail); })); unknown.append(block); }
-    creation.hidden = role !== 'admin';
+    creationDetails.hidden = creation.hidden = role !== 'admin';
     for (const select of [assetSelect, ontologySelect, assigneeSelect]) select.disabled = busy || !!writes.create || !current(); createButton.disabled = busy || !!writes.create || !current();
     mediaMore.hidden = mediaReady && mediaCursor === null; memberMore.hidden = membersReady && memberCursor === null;
     for (const button of [mediaRefresh, mediaMore, memberRefresh, memberMore]) button.disabled = busy || pageBusy.size > 0 || !current();
-    list.update(current() ? tasks.filter(task => queueMatches(task, queue, actor)) : []); for (const view of rowViews.values()) view.update();
+    const scope = context.getScope();
+    if (scope.assets !== assetsSource) { assetsSource = scope.assets; assetNames = new Map(scope.assets.map(item => [item.asset_revision_id, item.original_name])); }
+    if (scope.ontologies !== ontologiesSource) { ontologiesSource = scope.ontologies; ontologyNames = new Map(scope.ontologies.map(item => [item.ontology_version_id, `ontology ${item.version_no}`])); }
+    if (members !== membersSource) { membersSource = members; memberNames = new Map(members.map(item => [item.user_id, item.username])); memberSignature = JSON.stringify(members); }
+    const visible = current() ? tasks.filter(task => queueMatches(task, queue, actor)) : [];
+    columns.hidden = !visible.length; list.update(visible); for (const view of rowViews.values()) view.update();
   }
   async function refresh(cursor: string | null = null) {
     if (!current() || taskLoading) return; const sequence = ++taskRead; taskLoading = true; render();
@@ -195,7 +205,10 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
   function renderTask(task: ReviewTask): HTMLElement {
     const cached = rowViews.get(task.task_id); if (cached) { cached.task = task; cached.update(); return cached.node; }
     const rowLife = lifetime(reads.signal), action = actions(rowLife.signal);
-    const node = element('article'); node.dataset.testid = `review-task-${task.task_id}`; const heading = element('h3'); const metadata = element('p'); const conclusion = element('p'); const controls = element('div');
+    const node = element('article', undefined, 'review-task-row'); node.dataset.testid = `review-task-${task.task_id}`;
+    const cell = (label: string) => { const wrapper = element('div', undefined, 'review-task-cell'), name = element('span', label + '：', 'review-task-cell-label'), value = element('span', undefined, 'review-task-cell-value'); wrapper.append(name, value); return { wrapper, value }; };
+    const taskCell = cell('任务'), imageCell = cell('图片'), ontologyCell = cell('固定规范'), assigneeCell = cell('标注者'), stateCell = cell('状态'), revisionCell = cell('提交版本'), leaseCell = cell('租约信息');
+    const conclusion = element('small', undefined, 'review-task-conclusion'), controls = element('div', undefined, 'review-task-actions'); stateCell.wrapper.append(conclusion);
     const transfer = element('select'); let transferMembers = '';
     transfer.addEventListener('change', () => { transferDrafts.set(task.task_id, transfer.value); }, { signal: rowLife.signal });
     const claim = action('领取任务', () => void acquire(view.task)); const submitButton = action('同步并提交当前版本', () => void submit(view.task), 'task-submit');
@@ -204,13 +217,15 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
     const reason = element('textarea'); reason.required = true; reason.value = reasonDrafts.get(task.task_id) ?? (task.review_id ? writes.decisions.get(task.review_id)?.reason : '') ?? ''; const unknownDecision = element('div');
     const approve = action('批准', () => void decide('approve'), 'review-approve'), reject = action('退回', () => void decide('reject'), 'review-reject');
     const reviewControls = element('div', undefined, 'review-decision'); reviewControls.append(field('理由', reason), unknownDecision, approve, reject);
-    controls.append(claim, submitButton, field('转交至项目标注者', transfer), transferButton, diffButton); node.append(heading, metadata, conclusion, controls, diffRoot, reviewControls);
+    const transferDetails = element('details', undefined, 'review-task-transfer'); transferDetails.append(element('summary', '转交'), field('转交至项目标注者', transfer), transferButton);
+    controls.append(claim, submitButton, transferDetails, diffButton); diffRoot.hidden = true; reviewControls.hidden = true;
+    node.append(taskCell.wrapper, imageCell.wrapper, ontologyCell.wrapper, assigneeCell.wrapper, stateCell.wrapper, revisionCell.wrapper, leaseCell.wrapper, controls, diffRoot, reviewControls);
     let snapshot: { reviewId: string; revision: AnnotationRevision; parent: AnnotationRevision | null; issues: ReviewIssue[] } | null = null, diffDispose: (() => void) | null = null, loading = false;
     let expandedDialog: ReturnType<typeof createDialog> | null = null, expandedFooter: HTMLElement | null = null, expandedContext: HTMLElement | null = null, expanded = false;
     let returnScroll: { element: Element; top: number; left: number } | null = null;
     function restoreExpanded() {
       if (!expanded) return;
-      expanded = false; node.append(diffRoot, reviewControls);
+      expanded = false; diffRoot.hidden = true; reviewControls.hidden = true; node.append(diffRoot, reviewControls);
       if (rowLife.alive) context.setReviewViewOpen(false);
       else queueMicrotask(() => context.setReviewViewOpen(false));
       if (returnScroll && rowLife.alive && panel.isConnected) { returnScroll.element.scrollTop = returnScroll.top; returnScroll.element.scrollLeft = returnScroll.left; }
@@ -232,22 +247,30 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
       expandedContext!.textContent = `任务 ${fixed.task_id} · 图片 ${fixed.asset_revision_id} · 规范 ${fixed.ontology_version_id} · 固定提交 ${snapshot.revision.annotation_revision_id} · 基线 ${snapshot.parent?.annotation_revision_id ?? '无父版本'}`;
       const scrolling = document.scrollingElement;
       if (scrolling) { returnScroll = { element: scrolling, top: scrolling.scrollTop, left: scrolling.scrollLeft }; scrolling.scrollTop = 0; scrolling.scrollLeft = 0; }
-      expanded = true; expandedDialog.content.append(diffRoot); expandedFooter!.prepend(reviewControls);
+      expanded = true; diffRoot.hidden = false; expandedDialog.content.append(diffRoot); expandedFooter!.prepend(reviewControls); view.update();
       try { expandedDialog.open(diffButton); }
       catch (cause) { restoreExpanded(); throw cause; }
       context.setReviewViewOpen(true);
     }
     const view = { task, node, update() {
-      const value = view.task; const states: Record<string, string> = { open: '待标注', submitted: '待审核', closed: '已结束' }; heading.textContent = `${value.task_id} · ${states[value.state] ?? value.state}`;
-      metadata.textContent = `图片 ${value.asset_revision_id} · 规范 ${value.ontology_version_id} · 标注者 ${value.assignee_id} · 固定提交 ${value.revision_ids?.join(', ') ?? '未提交'}`;
-      conclusion.textContent = value.review_decision ? `审核结论：${value.review_decision === 'approve' ? '已批准' : '已退回'} · ${value.review_reason ?? ''}` : '尚无审核结论。';
+      const value = view.task; const states: Record<string, string> = { open: '待标注', submitted: '待审核', closed: '已结束' };
+      const name = assetNames.get(value.asset_revision_id), norm = ontologyNames.get(value.ontology_version_id), assignee = value.assignee_id === actor ? session?.username : memberNames.get(value.assignee_id);
+      taskCell.value.textContent = value.task_id; taskCell.value.title = value.task_id;
+      imageCell.value.textContent = name ?? value.asset_revision_id; imageCell.value.title = name ? `${name} · ${value.asset_revision_id}` : value.asset_revision_id;
+      ontologyCell.value.textContent = norm ?? value.ontology_version_id; ontologyCell.value.title = norm ? `${norm} · ${value.ontology_version_id}` : value.ontology_version_id;
+      assigneeCell.value.textContent = assignee ? `${assignee} · ${value.assignee_id}` : value.assignee_id; assigneeCell.value.title = assigneeCell.value.textContent;
+      stateCell.value.textContent = value.state === 'open' && value.review_decision === 'reject' ? '已退回' : states[value.state] ?? value.state;
+      conclusion.textContent = value.review_decision ? `${value.review_decision === 'approve' ? '已批准' : '已退回'}${value.review_reason ? `：${value.review_reason}` : ''}` : '';
+      revisionCell.value.textContent = value.revision_ids?.join(', ') ?? '未提交'; revisionCell.value.title = revisionCell.value.textContent;
+      leaseCell.value.textContent = lease?.task_id === value.task_id ? fenced() ? '原操作待核对' : '本人持有（当前回执）' : '未知';
       if (snapshot && (snapshot.reviewId !== value.review_id || value.revision_ids?.length !== 1 || snapshot.revision.annotation_revision_id !== value.revision_ids[0])) { expandedDialog?.close(); diffDispose?.(); snapshot = null; diffDispose = null; }
       const canAnnotate = ['admin', 'annotator'].includes(role ?? '') && (value.assignee_id === actor || !!session?.platform_admin) && value.state === 'open';
-      claim.hidden = !canAnnotate; submitButton.hidden = !canAnnotate; claim.disabled = busy || fenced() || !current(); submitButton.disabled = busy || fenced() || lease?.task_id !== value.task_id || !current();
-      transfer.parentElement!.hidden = role !== 'admin' || value.state !== 'open'; transferButton.hidden = transfer.parentElement!.hidden; transfer.disabled = busy || fenced() || !current(); transferButton.disabled = transfer.disabled;
-      const signature = JSON.stringify(members); if (transferMembers !== signature) { transferMembers = signature; options(transfer, [{ value: '', text: '选择项目成员' }, ...members.map(item => ({ value: item.user_id, text: `${item.username} · ${item.user_id}` }))], transferDrafts.get(value.task_id) ?? transfer.value); }
+      claim.hidden = !canAnnotate || lease?.task_id === value.task_id; submitButton.hidden = !canAnnotate || lease?.task_id !== value.task_id;
+      claim.disabled = busy || fenced() || !current(); submitButton.disabled = busy || fenced() || lease?.task_id !== value.task_id || !current();
+      transferDetails.hidden = role !== 'admin' || value.state !== 'open'; transfer.parentElement!.hidden = transferDetails.hidden; transferButton.hidden = transferDetails.hidden; transfer.disabled = busy || fenced() || !current(); transferButton.disabled = transfer.disabled;
+      if (transferMembers !== memberSignature) { transferMembers = memberSignature; options(transfer, [{ value: '', text: '选择项目成员' }, ...members.map(item => ({ value: item.user_id, text: `${item.username} · ${item.user_id}` }))], transferDrafts.get(value.task_id) ?? transfer.value); }
       const canReview = ['admin', 'reviewer'].includes(role ?? ''); diffButton.hidden = !canReview || !value.review_id || !value.revision_ids; diffButton.disabled = busy || loading || !current();
-      reviewControls.hidden = !canReview || value.state !== 'submitted' || !value.review_id; const pending = value.review_id ? writes.decisions.get(value.review_id) : undefined;
+      reviewControls.hidden = !expanded || !canReview || value.state !== 'submitted' || !value.review_id; const pending = value.review_id ? writes.decisions.get(value.review_id) : undefined;
       reason.disabled = !!pending || busy || !current(); approve.disabled = reject.disabled = busy || !current() || !!pending || !reason.value.trim() || snapshot?.reviewId !== value.review_id;
       unknownDecision.replaceChildren(); if (pending) unknownDecision.append(element('p', '审核结果未知，原固定版本与理由保留，只读刷新核对，不重发。'), details('原审核请求', pending));
     }, dispose() { rowLife.dispose(); } }; rowViews.set(task.task_id, view);
