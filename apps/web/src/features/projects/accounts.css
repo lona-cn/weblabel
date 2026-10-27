@@ -57,6 +57,12 @@
 .accounts-page .accounts-project-skeleton { display: grid; gap: 16px; margin-block: 16px; padding: 20px; border: 1px solid var(--border, #3e4a52); border-radius: 6px; }
 .accounts-page .accounts-project-skeleton span { display: block; width: 70%; height: 14px; background: var(--border, #3e4a52); border-radius: 4px; }
 .accounts-page .accounts-project-skeleton span:nth-child(2) { width: 45%; }
+.accounts-projects .accounts-project-notice { padding: 12px 16px; border: 1px solid var(--warning, #f5c76e); border-radius: 6px; color: var(--warning, #f5c76e); }
+.accounts-projects .accounts-project-list { margin: 16px 0; padding: 20px; border: 1px solid var(--border, #3e4a52); border-radius: 6px; background: var(--surface-1, #181e22); }
+.accounts-projects .accounts-project-list .accounts-table-scroll { margin: 0; }
+.accounts-projects .accounts-project-list .accounts-project-skeleton { margin: 0; border: 0; border-bottom: 1px solid var(--border, #3e4a52); border-radius: 0; }
+.accounts-projects .accounts-project-list > .accounts-status { text-align: center; margin: 24px auto 16px; max-width: 600px; }
+.accounts-projects .accounts-project-list > button { display: block; margin: 0 auto; }
 .accounts-page .accounts-admin-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); gap: 24px; align-items: start; }
 .accounts-page .accounts-preset-columns { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); gap: 24px; align-items: start; }
 .accounts-page .accounts-ontology-columns { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }

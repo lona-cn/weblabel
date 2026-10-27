@@ -34,7 +34,10 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
   });
   const placeholder = el('div', undefined, 'accounts-project-skeleton'); placeholder.setAttribute('aria-hidden', 'true');
   for (let i = 0; i < 3; i++) placeholder.append(el('span'));
-  const listArea = el('section'); listArea.append(guide, loading, viewDraft, listing.wrap, placeholder, reload, el('p', '单图导出不等于已批准数据集。团队交付需独立审核，默认禁止自审核。'));
+  const listPanel = el('section', undefined, 'accounts-project-list');
+  listPanel.append(el('h2', '项目列表'), listing.wrap, placeholder, loading, reload);
+  const listArea = el('section');
+  listArea.append(guide, el('p', '单图导出不等于已批准数据集。团队交付需独立审核，默认禁止自审核。', 'accounts-project-notice'), listPanel, viewDraft);
   const platform = el('div'), members = el('div');
   const platformButton = button('平台账号管理', 'platform-accounts-open', scope.signal, () => { if (!scope.current()) return; childDispose?.(); childProjectId = null; members.replaceChildren(); members.hidden = false; childDispose = mountMemberManager(members, { ...context, project: null }); members.scrollIntoView({ block: 'start' }); });
   if (entry.session.platform_admin) platform.append(platformButton);
@@ -151,8 +154,11 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
     create.disabled = s.busy || !s.listingReady || s.unknown === 'ontology' || !!s.confirmed;
     viewDraft.hidden = s.listingReady || !creationStarted || !!s.selected || !!s.confirmed;
     placeholder.hidden = !s.busy || s.listingReady; listing.wrap.setAttribute('aria-busy', String(s.busy && !s.listingReady));
-    summary.set(s.error); notice.textContent = s.notice ?? ''; reload.disabled = s.busy;
-    loading.textContent = s.busy ? '正在处理…' : !s.listingReady ? '项目列表尚未完整读取，不能创建。' : s.projects.length ? '' : '尚无项目。请先新建项目并定义类别与属性。';
+    const listError = !editorVisible && !s.busy && !s.listingReady && !!s.error;
+    summary.set(listError ? `项目列表读取失败：${s.error}` : s.error); notice.textContent = s.notice ?? ''; reload.disabled = s.busy;
+    loading.textContent = s.busy && !s.listingReady ? '正在读取项目列表…尚未取得列表，不能判断是否为空；读取成功前不能创建。'
+      : s.busy ? '正在处理…' : !s.listingReady ? '尚未取得项目列表，不能判断是否为空；读取成功前不能创建。'
+      : s.projects.length ? '' : '尚无项目。请先新建项目并定义类别与属性。';
     listing.body.replaceChildren();
     for (const project of s.projects) {
       const row = el('tr'), actions = el('td'); actions.className = 'accounts-actions';

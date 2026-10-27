@@ -208,6 +208,13 @@
     "unsupported_continuity": "The final source was also exercised in an actual browser without an adapter; the unsupported card and pointer-operated diagnostic remained available.",
     "limits": "The local native release was built from dirty source with the hashes above; the public commit itself was not rebuilt. This one synthetic document and injected allocation failure do not establish all U22/U23 or 48 visual states, authorization, IME, current-source GPU performance or full release. The earlier corrected 69-case subset predates this source and was not rerun. Owned services were forcibly terminated rather than physically interrupted."
   },
+  "u45_list_loading_and_network_error": {
+    "scope": "The existing project-list guide, warning, table, loading skeleton, status and retry share one layout. Loading names the list read and its unknown-empty state; failure names the operation while retaining the original error. No controller, authorization or server protocol changed.",
+    "source_sha256": {"projects-page.ts": "03d1bc6ca73a524fa00960ca4c849c0b4d8b7422facdb007f3d54d20948e8d96", "accounts.css": "1c6207f28f76fe98c5dde3974d7f7069a54f1834a92032cc0b0fde2f6b4d7e78"},
+    "actual_smoke": "With a synthetic local draft in a real native browser, one actual list GET was held then deliberately aborted. Loading showed no project rows, an aria-hidden skeleton and disabled creation. Failure retained the original error and draft while submission remained disabled. A later actual GET restored the project row and the same draft, without any POST.",
+    "keyboard": "A separate keyboard-triggered aborted GET restored focus to retry; its error alert was focusable. At 900x600 an actual Tab scrolled retry into view and root clientWidth equaled scrollWidth at 885px.",
+    "limits": "The local native release was built from dirty source with the hashes above; the public commit itself was not rebuilt. No 403, authorization denial or revocation was exercised. Empty-list and other U45 states, all 48 visual states, current-source GPU performance and full release remain unverified. The earlier corrected 69-case subset predates this source and was not rerun. Owned services were forcibly terminated rather than physically interrupted."
+  },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",
     "online_backup": "The actual source service responded 200 while SQLite was in WAL mode with a WAL file; the native backup and fresh-target restore commands both exited 0.",
