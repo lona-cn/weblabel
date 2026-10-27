@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
-  "previous_public_source_commit": "a10c4aaacbb35a29adbcd02cf150732e3a59c062",
-  "public_base_commit": "a10c4aaacbb35a29adbcd02cf150732e3a59c062",
-  "provenance": "This publication changes scoped compact AI run controls, the reviewed-input fingerprint and guidance. The transferred product, fingerprint and user-guide Git blobs match the locally exercised source commit; individual smokes below identify which predate later changes. The public commit itself was not rebuilt. Raw synthetic data and authentication material remain private.",
+  "previous_public_source_commit": "4954f236cae0d4d09dbd12cf74971e01f0d77fbb",
+  "public_base_commit": "4954f236cae0d4d09dbd12cf74971e01f0d77fbb",
+  "provenance": "This publication changes the scoped fixed-revision comparison, reviewed-input fingerprint and guidance. The transferred product, fingerprint and user-guide Git blobs match the locally exercised source commit; individual smokes below identify which predate later changes. The public commit itself was not rebuilt. Raw synthetic data and authentication material remain private.",
   "shared_fixture_scope_deviation": {
     "error": "The earlier supposedly nonsecurity Web subset mistakenly included native-outcome and native-objects, both importing native-test-support. Its synthetic fixture contains markup-like security payloads and revoke cleanup; three outcome cases and the objects case invoke it. The fourth outcome case imports the same module. This execution was outside the user-skipped boundary and does not constitute security acceptance.",
     "historical_raw_and_excluded": "A retained initial single-Web-file smoke reported raw 50/50, with four native-outcome cases excluded. The expanded gate, two U14 gates, format, domain and U26 gates reported raw 57/57, 57/57, 57/57, 65/65, 73/73 and 74/74 respectively, with five cases from each excluded from nonsecurity acceptance. The original totals remain historical observations. The format consumer regression spawned the then-current subset once more. The earlier two-file consumer did not retain its exact allowlist, so fixture execution there is unknown.",
     "u36_focused_file": "The native-outcome file was also run twice for U36; neither invocation counts as nonsecurity acceptance. Separate real-browser observations remain as recorded.",
-    "correction": "Both shared-fixture files were removed from the audited Web allowlist. A separate corrected run passed 69/69 selected cases across seven Web files, while the overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2. That run predates the later U26 focus-movement fix and U21, U22/U23, U45, U43, U39 and U27 changes; it is not claimed for current source.",
+    "correction": "Both shared-fixture files were removed from the audited Web allowlist. A separate corrected run passed 69/69 selected cases across seven Web files, while the overall gate remained blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2. That run predates the later U26 focus-movement fix and U21, U22/U23, U45, U43, U39, U27 and U31 changes; it is not claimed for current source.",
     "security_acceptance": "not_verified"
   },
   "full_release_attempt": {
@@ -251,6 +251,12 @@
     "actual_smoke": "A local native release and hardware WebGPU browser at 1024x768 showed the actual progress and enabled 44px cancel control inside the viewport; before the change both were below it. Closing and switching drawers preserved the same run; one explicit cancel request reached the server and the UI displayed cancelled.",
     "fixture": "Two held loopback-only synthetic protocol requests, no real or paid model calls or detector forwards. The earlier copied fixture seed had a disclosed security-scope deviation and was not rerun.",
     "limits": "The local build used dirty source with the hashes above; the public commit was not rebuilt. One state and viewport do not establish full U27, all 48 states, current GPU performance, skipped security or full R10. The corrected 69-case subset predates this source."
+  },
+  "u31_fixed_revision_view": {
+    "scope": "The fixed-revision page exposes fixed identity, parent, object labels, read-only object attributes and changed fields; a revision without a parent explicitly has no comparison. Shared review decisions and server protocol are unchanged.",
+    "source_sha256": {"fixed-revision-page.ts": "fc3d90ee0aee27cc9cbf99d58e10013f3927844130a03c040c55b37057cd8f62", "revision-review-view.ts": "0a8a1adf3a73021cc61a070f7299dd3342312cd0781c51db773a5916531e5235", "native-review.css": "33134ca8ae0544732f36f296dea241d058ae33fa67eff0dbef71ad147da2f253"},
+    "actual_smoke": "On a locally built native release with owned synthetic data, 1536x1024 showed the fixed identity, three actual labeled outlines and one state difference clear to issue; the difference table fit in view. Explicit object focus and switching parent/fixed versions showed their actual attributes and canonical xyxy, and full-image view restored. No write requests occurred during interaction. At 900x600 the root had no horizontal overflow. An actual root revision disabled baseline switching and explicitly said no parent comparison.",
+    "limits": "The local build used dirty source with the hashes above; the public commit was not rebuilt. Geometry, creation/removal, origin, dense labels, exact reference geometry, full U31, 48 states, skipped security and current GPU performance were not accepted. The corrected 69-case subset predates this source; the fixed-revision test file contains skipped revocation cases and was not run. No model or detector was called. The copied synthetic seed's earlier security-scope deviation was not rerun."
   },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",

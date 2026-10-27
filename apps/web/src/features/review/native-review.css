@@ -5,6 +5,12 @@
 .native-delivery .delivery-scroll li { border-bottom: 1px solid var(--border); padding: 16px; background: var(--surface-1); }
 .native-delivery [data-testid^='review-task-'] { min-width: 0; }
 .native-delivery textarea { width: 100%; min-height: 96px; }
+.native-delivery[data-testid=fixed-revision-page] svg { max-height: min(50dvh, 520px); }
+.native-delivery[data-testid=fixed-revision-page] .revision-fixed-label { fill: var(--fg); stroke: var(--surface-0); stroke-width: 3px; stroke-linejoin: round; paint-order: stroke fill; font-weight: 600; pointer-events: none; }
+.native-delivery[data-testid=fixed-revision-page] :is(.revision-fixed-identity, .revision-fixed-object) dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 0; margin: 0; }
+.native-delivery[data-testid=fixed-revision-page] :is(.revision-fixed-identity, .revision-fixed-object) :is(dt, dd) { margin: 0; padding: 6px 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.native-delivery[data-testid=fixed-revision-page] :is(.revision-fixed-identity, .revision-fixed-object) dt { color: var(--muted); }
+.native-delivery[data-testid=fixed-revision-page] [aria-label='已变化对象的固定版本对照'] { table-layout: fixed; }
 @media (forced-colors: active) {
   .native-delivery svg { border-color: CanvasText; }
 }

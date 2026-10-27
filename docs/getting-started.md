@@ -164,6 +164,8 @@ sh ./launch.sh --data-dir "/home/你的用户名/WebLabel数据"
 
 从指定 revision 入口检查固定图片/规范/版本，页面只读且不跟随 head；缺目标或不匹配显示错误，不跳到第一张图片。批准/退回仍在任务审核队列。“打开此图片的当前标注”明确离开历史版本后重新读取当前 head。
 
+固定版本页面直接显示项目、图片、规范、revision 和父版本凭证；有父版本时列出变化字段的前后值。选择对象可查看只读属性和 canonical xyxy，定位只改变只读投影；没有父版本时明确说明无法比较，不把整份文档当作新增差异。
+
 取景控件从 Native getViewport 读取实时缩放/平移；适配画布、聚焦选中对象或 AI 候选区域只改变视口，不保存几何。重叠框命中顺序与位置由 Native hitstack 回执显示，不按 DOM 猜框。pointermove 只预览，pointerup 才形成一次有效文档命令与一个 undo；取消无提交。
 
 平台管理员打开“AI 审校”中的“服务端模型配置”，读取本机操作者已准备的固定 Host 预设，明确选择后保存。网页只提交 configuration_hash，不接收秘密、路径、启动参数；不会登录、下载权重或运行模型。空列表/配置不可用时继续人工标注。写入未知时只读 GET 原 profile，比较 profile/provider/model/auth/capabilities 和哈希；404 仍可能在途，不能自动重写。静态 ready/not_run 不是 live_passed，项目策略和逐次 preview/consent 仍必需。
