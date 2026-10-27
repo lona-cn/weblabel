@@ -11,7 +11,7 @@ type Choice = { disposition: 'include' | 'exclude' | 'outside'; split: 'train' |
 type Page = { cursor: string | null; items: AssetAnnotationHead[]; next: string | null };
 type Plan = { batches: PlannedItem[][]; seed: string };
 type Snapshot = { id: string; manifest: string; ontology: string; batch: number; request: string };
-type Job = { id: string; snapshot: string; format: Format; state: string; artifact: Artifact | null; error: string | null };
+type Job = { id: string; snapshot: string; format: Format; state: string; artifact: Artifact | null; error: string | null; downloadConfirmed: boolean };
 type Intent = { kind: 'snapshot' | 'export'; operationId: string; path: string; body: string; uncertain: boolean; sending: boolean };
 type Delivery = { ontology: string; format: Format; pages: Page[]; pageIndex: number; visited: Set<string>; choices: Map<string, Choice>; seed: string; plan: Plan | null; planConfirmed: boolean; batch: number; snapshots: Map<number, Snapshot>; history: Snapshot[]; jobs: Job[]; intents: Intent[]; listeners: Set<() => void> };
 // View-local intent retention is deliberately separate from annotation SaveQueue.
@@ -203,7 +203,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
         viewedSnapshot = null;
       } else {
         if (!uuid(response.job_id) || !['queued', 'running', 'succeeded', 'failed'].includes(String(response.state)) || response.format !== selectedFormat || !strictReport(response.loss_report) || !snapshot) throw new Error('导出确认回执无效。');
-        intent.uncertain = false; state.jobs.push({ id: response.job_id, snapshot: snapshot.id, format: selectedFormat, state: String(response.state), artifact: null, error: null }); loss = null; ack = false;
+        intent.uncertain = false; state.jobs.push({ id: response.job_id, snapshot: snapshot.id, format: selectedFormat, state: String(response.state), artifact: null, error: null, downloadConfirmed: false }); loss = null; ack = false;
       }
     } catch (cause) {
       intent.uncertain = isAmbiguous(cause);
@@ -217,6 +217,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     jobsRoot.replaceChildren(element('h2', '导出作业与下载'));
     for (const job of state.jobs) { const block = element('section'); block.append(element('p', `已有作业 ${job.id} · 固定DatasetVersion ${job.snapshot} · ${job.format} · ${job.state}`));
       if (job.error) { const message = element('p', job.error); message.setAttribute('role', 'alert'); block.append(message); }
+      if (job.downloadConfirmed) { const message = element('p', 'ZIP签名、字节数与SHA-256已校验，已发起下载。'); message.setAttribute('role', 'status'); block.append(message); }
       const check = action('重新检查已有作业状态', () => void poll(job), 'export-status-check'); check.disabled = busy || !current(); block.append(check);
       if (job.artifact) { block.append(element('p', `已就绪 · ${job.artifact.byte_size}字节 · SHA-256 ${job.artifact.object_sha256}`), lossView(job.artifact.loss_report)); const download = action('下载数据包', () => void downloadJob(job), 'export-download'); download.disabled = busy || !current(); download.className = 'primary'; block.append(download); }
       jobsRoot.append(block);
@@ -238,8 +239,8 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     if (job) timer = window.setTimeout(() => { timer = null; void poll(job); }, 500);
   }
   async function downloadJob(job: Job) {
-    if (!current() || busy || !job.artifact || job.artifact.byte_size > ZIP_CAP) return; busy = true; render();
-    try { await downloadVerified(job.artifact, `dataset-${job.snapshot}-${job.format}.zip`, reads.signal, true, current); if (current()) { status.textContent = 'ZIP签名、字节数与SHA-256已校验，已发起下载。'; job.error = null; } }
+    if (!current() || busy || !job.artifact || job.artifact.byte_size > ZIP_CAP) return; job.downloadConfirmed = false; busy = true; render();
+    try { await downloadVerified(job.artifact, `dataset-${job.snapshot}-${job.format}.zip`, reads.signal, true, current); if (current()) { job.downloadConfirmed = true; job.error = null; } }
     catch (cause) { if (current()) job.error = `已有产物保留，重新下载不会创建新导出。${failureText(cause)}`; }
     finally { busy = false; render(); }
   }

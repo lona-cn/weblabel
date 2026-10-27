@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { webcrypto } from 'node:crypto';
+import { Blob as NodeBlob } from 'node:buffer';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AssetAnnotationHead } from '../../../../../packages/contracts/generated/AssetAnnotationHead';
 import type { SessionController } from '../../app/session';
@@ -165,6 +166,25 @@ it('starts a new explicit delivery range after remount while retaining prior imm
   testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
   await vi.waitFor(() => expect(view.writes.filter(write => write.path.endsWith('/dataset-versions'))).toHaveLength(2));
   expect(JSON.stringify(view.writes[0])).toBe(original); expect((view.writes.at(-1)!.body.items as { annotation_revision_id: string }[])[0].annotation_revision_id).toBe(uuid(9999));
+});
+it('retains verified download confirmation on the existing dataset job', async () => {
+  const bytes = new Uint8Array(22); bytes.set([0x50, 0x4b, 0x05, 0x06]);
+  const digest = Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
+  vi.stubGlobal('Blob', NodeBlob);
+  const NativeURL = URL; vi.stubGlobal('URL', class extends NativeURL { static createObjectURL() { return 'blob:synthetic'; } static revokeObjectURL() {} });
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(bytes, { headers: { 'content-type': 'application/zip', 'content-length': String(bytes.length) } })));
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  const view = fixture(); const artifact = { export_id: view.jobId, format: 'native', download_url: `/api/exports/${view.jobId}/download`, byte_size: bytes.length, object_sha256: digest, loss_report: { losses: [] } };
+  vi.spyOn(api, 'job').mockResolvedValue({ job_id: view.jobId, kind: 'dataset_export', state: 'succeeded', progress_completed: 1, progress_total: 1, result: artifact });
+  await browse(view); select(testId(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`), 'include');
+  testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
+  await vi.waitFor(() => expect(testId<HTMLButtonElement>(view.root, 'export-start').disabled).toBe(false)); testId<HTMLButtonElement>(view.root, 'export-start').click();
+  await vi.waitFor(() => expect(testId<HTMLButtonElement>(view.root, 'export-status-check').disabled).toBe(false)); testId<HTMLButtonElement>(view.root, 'export-status-check').click();
+  await vi.waitFor(() => expect(testId<HTMLButtonElement>(view.root, 'export-download').disabled).toBe(false)); testId<HTMLButtonElement>(view.root, 'export-download').click();
+  await vi.waitFor(() => expect(view.root.querySelector('[aria-label="导出作业与下载"]')?.textContent).toContain('ZIP签名、字节数与SHA-256已校验，已发起下载。'));
+  view.dispose(); view.remount();
+  expect(view.root.querySelector('[aria-label="导出作业与下载"]')?.textContent).toContain('ZIP签名、字节数与SHA-256已校验，已发起下载。');
+  expect(view.writes).toHaveLength(2);
 });
 it('does not use new delivery or remount to unlock an unknown snapshot original request', async () => {
   const view = fixture(); view.intercept(() => { throw new TypeError('ACK lost'); }); await browse(view); select(testId(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`), 'include'); testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();

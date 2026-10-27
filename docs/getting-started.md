@@ -168,6 +168,8 @@ sh ./launch.sh --data-dir "/home/你的用户名/WebLabel数据"
 
 损失表保留服务端实际字段和技术原因，并说明标签文件中的影响；切换导出格式会清除旧报告和同意，必须针对新格式重新检查。
 
+下载校验通过后，已有作业显示 ZIP 签名、字节数和 SHA-256 已校验并已发起下载；这不等同于浏览器已完成文件保存。重新下载只使用该已有作业，不创建新导出。
+
 ![显式范围、train / val / test、固定快照与导出](images/readme/08-dataset-export.png)
 
 ![COCO / YOLO 信息损失说明与显式确认](images/readme/09-loss-confirmation.png)
