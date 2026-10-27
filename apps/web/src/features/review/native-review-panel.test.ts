@@ -94,6 +94,17 @@ it.each(['media', 'member'] as const)('preserves paged creation selections acros
   await vi.waitFor(() => { expect(select.value).toBe(selected); expect(select.selectedOptions[0].disabled).toBe(false); });
   expect(button(view.root, '创建任务').disabled).toBe(false);
 });
+it('shows the confirmed task identity even when the refreshed page does not contain it', async () => {
+  const view = fixture(); admin(view);
+  vi.spyOn(reviewApi, 'createTask').mockResolvedValue({ task_id: 'created-task', project_id: view.task.project_id, asset_revision_id: 'image', ontology_version_id: 'ontology', assignee_id: 'target', state: 'open', created_at: '2026-10-10' });
+  vi.mocked(reviewApi.tasks).mockResolvedValue({ items: [], next_cursor: 'later-page' }); view.mount();
+  await vi.waitFor(() => expect(view.root.textContent).toContain('接收者 · target'));
+  selectLabel(view.root, '图片版本', 'image'); selectLabel(view.root, '类别规范版本', 'ontology'); selectLabel(view.root, '指派项目标注者', 'target');
+  view.root.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  await vi.waitFor(() => expect(view.root.textContent).toContain('created-task'));
+  expect(view.root.querySelector('[data-testid=task-create-unknown]')).toBeNull();
+});
+
 it('retains an unknown task creation target and does not create again after readonly refresh', async () => {
   const view = fixture(); admin(view); const create = vi.spyOn(reviewApi, 'createTask').mockRejectedValue(new TypeError('ACK lost')); view.mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain('接收者 · target')); selectLabel(view.root, '图片版本', 'image'); selectLabel(view.root, '类别规范版本', 'ontology'); selectLabel(view.root, '指派项目标注者', 'target');

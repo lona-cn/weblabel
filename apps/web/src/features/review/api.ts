@@ -2,6 +2,7 @@ import type { AnnotationRevision } from '../../../../../packages/contracts/gener
 import { api, type ApiMedia } from '../../lib/t15/api';
 export type TaskCreateTarget = Readonly<{ project_id: string; asset_revision_id: string; ontology_version_id: string; assignee_id: string }>;
 export type TaskCreatePreparation = { token: symbol; isCurrent(): boolean; validateCurrent(): Promise<boolean>; release(): void };
+export type TaskCreateReceipt = { task_id: string; project_id: string; asset_revision_id: string; ontology_version_id: string; assignee_id: string; state: 'open'; created_at: string };
 
 export type ReviewTask = { task_id:string; project_id:string; asset_revision_id:string; ontology_version_id:string; assignee_id:string; state:string; created_at:string; review_id:string|null; revision_ids:string[]|null; review_decision:'approve'|'reject'|null; review_reason:string|null };
 export type ReviewIssue = { issue_id:string; review_id:string; annotation_revision_id:string; ontology_version_id:string; object_id:string|null; code:string; message:string; region:unknown; created_at:string };
@@ -10,7 +11,7 @@ export type ReviewLeaseResponse = { task_id:string; holder_id:string|null; fenci
 export const reviewApi = {
   assetsPage: (projectId:string, cursor:string|null = null, signal?:AbortSignal) => api.request<{items:ApiMedia[];next_cursor:string|null}>(`/api/projects/${encodeURIComponent(projectId)}/assets?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
   tasks: (projectId:string, cursor:string|null = null, signal?:AbortSignal) => api.request<{items:ReviewTask[];next_cursor:null|string}>(`/api/projects/${encodeURIComponent(projectId)}/tasks?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
-  createTask: (projectId:string, body:{asset_revision_id:string;ontology_version_id:string;assignee_id:string}) => api.request(`/api/projects/${encodeURIComponent(projectId)}/tasks`,{method:'POST',body:JSON.stringify(body)}),
+  createTask: (projectId:string, body:{asset_revision_id:string;ontology_version_id:string;assignee_id:string}) => api.request<TaskCreateReceipt>(`/api/projects/${encodeURIComponent(projectId)}/tasks`,{method:'POST',body:JSON.stringify(body)}),
   lease: (taskId:string, action:'acquire'|'renew'|'release'|'transfer', holder_id?:string) => api.request<ReviewLeaseResponse>(`/api/tasks/${encodeURIComponent(taskId)}/lease`,{method:'POST',body:JSON.stringify({action,...(holder_id?{holder_id}:{})})}),
   submit: (taskId:string, annotationRevisionId:string) => api.request<TaskSubmission>(`/api/tasks/${encodeURIComponent(taskId)}/submit`,{method:'POST',body:JSON.stringify({annotation_revision_ids:[annotationRevisionId]})}),
   submission: (taskId:string, signal?:AbortSignal) => api.request<TaskSubmission>(`/api/tasks/${encodeURIComponent(taskId)}/submission`, { signal }),

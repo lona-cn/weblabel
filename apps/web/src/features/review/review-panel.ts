@@ -58,8 +58,9 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
   const memberRefresh = action('刷新可选成员', () => void loadPage('members', null), 'task-members-refresh');
   const memberMore = action('继续读取成员', () => void loadPage('members', memberCursor), 'task-members-more');
   const selectionNote = element('p'); selectionNote.setAttribute('role', 'status');
+  const createReceipt = element('p'); createReceipt.dataset.testid = 'task-create-receipt'; createReceipt.setAttribute('role', 'status');
   const createButton = element('button', '创建任务'); createButton.type = 'submit'; createButton.className = 'primary';
-  creation.append(field('图片版本', assetSelect), mediaRefresh, mediaMore, field('类别规范版本', ontologySelect), field('指派项目标注者', assigneeSelect), memberRefresh, memberMore, selectionNote, createButton);
+  creation.append(field('图片版本', assetSelect), mediaRefresh, mediaMore, field('类别规范版本', ontologySelect), field('指派项目标注者', assigneeSelect), memberRefresh, memberMore, selectionNote, createButton, createReceipt);
   for (const select of [assetSelect, assigneeSelect]) select.addEventListener('change', render, { signal: life.signal });
   const creationDetails = element('details', undefined, 'review-task-creation'); creationDetails.append(element('summary', '创建标注任务'), creation);
   const listRoot = element('div', undefined, 'review-task-list'); const columns = element('div', undefined, 'review-task-columns'); columns.setAttribute('aria-hidden', 'true');
@@ -190,7 +191,12 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
     if (!current() || role !== 'admin' || writes.create || !members.some(item => item.user_id === assigneeSelect.value) || !media.some(item => item.asset_revision_id === assetSelect.value) || !ontologies.some(item => item.ontology_version_id === ontologySelect.value)) return;
     const target: TaskCreateTarget = Object.freeze({ project_id: context.projectId, asset_revision_id: assetSelect.value, ontology_version_id: ontologySelect.value, assignee_id: assigneeSelect.value });
     void perform(async () => { const ticket = await port.onPrepareTaskCreate(target); try { if (!current() || !ticket.isCurrent() || !await ticket.validateCurrent() || !current() || !ticket.isCurrent()) return false;
-      writes.create = target; render(); try { await reviewApi.createTask(context.projectId, target); writes.create = null; } catch (reason) { if (classifyWriteFailure(reason) === 'rejected') writes.create = null; throw reason; }
+      writes.create = target; createReceipt.textContent = ''; render(); try {
+        const receipt = await reviewApi.createTask(context.projectId, target);
+        if (!receipt || typeof receipt.task_id !== 'string' || !receipt.task_id || receipt.project_id !== target.project_id || receipt.asset_revision_id !== target.asset_revision_id || receipt.ontology_version_id !== target.ontology_version_id || receipt.assignee_id !== target.assignee_id || receipt.state !== 'open') throw new Error('任务创建回执与原请求不匹配，结果未知；不要重复创建。');
+        writes.create = null;
+        if (current()) createReceipt.textContent = `服务器已创建任务 ${receipt.task_id} · 图片 ${receipt.asset_revision_id} · 规范 ${receipt.ontology_version_id} · 标注者 ${receipt.assignee_id}。`;
+      } catch (reason) { if (classifyWriteFailure(reason) === 'rejected') writes.create = null; throw reason; }
     } finally { ticket.release(); } });
   }, { signal: life.signal });
   async function submit(task: ReviewTask) {
