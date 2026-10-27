@@ -64,3 +64,7 @@
 .r07-help-footer button{min-width:170px;min-height:44px}
 @media(max-width:1099px){.r07-workbench dialog.r07-help{inset:0;height:100dvh}.r07-help-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.r07-help-footer{flex-wrap:wrap}.r07-help-footer p{flex-basis:100%}.r07-help-footer button{width:100%}}
+
+.r07-save-primary{align-items:center}
+.r07-save-primary label{display:flex;align-items:center;gap:8px;min-height:44px;margin:0}
+.r07-save-primary :is(button,select){min-height:44px}

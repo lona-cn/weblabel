@@ -35,7 +35,7 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
   const rescue = action('下载本地草稿', 'export-local-draft', signal, () => void perform(() => recovery.rescue()));
   const server = action('查看服务器版本（只读）', 'view-server', signal, () => void perform(recovery.viewServer));
   const keep = action('导出并保留本地草稿', 'keep-local-export', signal, () => void perform(recovery.keepLocal));
-  controls.append(save, retry, rescue, server, keep);
+  controls.append(retry, rescue, server, keep);
   const completion = element('select'); completion.dataset.testid = 'completion-state';
   for (const [value, text] of Object.entries(COMPLETION_LABELS)) completion.append(option(value, text));
   const negative = element('input'); negative.type = 'checkbox'; negative.dataset.testid = 'negative-confirmation';
@@ -49,7 +49,9 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
   const diagnostics = element('details'); diagnostics.dataset.testid = 'save-diagnostic'; const diagnosticText = element('pre'); diagnostics.append(element('summary', '保存技术诊断（上次操作）'), diagnosticText);
   const recoveryBanner = element('section'); recoveryBanner.dataset.testid = 'recovery-banner';
   const conflictBanner = element('p'); conflictBanner.dataset.testid = 'conflict-banner'; conflictBanner.setAttribute('role', 'status');
-  root.append(status, receipts, certificate, conflictBanner, recoveryBanner, controls, labeled('完成状态（保存的文档状态）', completion), negativeLabel, complete, diagnostics, error);
+  const primary = element('div', undefined, 'r07-save-primary r07-button-row');
+  primary.append(save, labeled('完成状态（保存的文档状态）', completion), negativeLabel, complete);
+  root.append(status, conflictBanner, primary, receipts, certificate, recoveryBanner, controls, diagnostics, error);
   const branchList = element('div'), compare = element('div'), branchActions = element('div', undefined, 'r07-button-row');
   recoveryBanner.append(element('h2', '草稿恢复'), element('p', '明确选择一个本地分支后恢复或使用服务器版本并留档。不会自动选择最新分支，不会自动合并；原记录与来源始终保留。'), branchList, compare, branchActions);
   let chosen: string | null = null, branchRows: readonly DraftBranchEnvelope[] | null = null, lastDocument = state.document, legacyRows = state.legacyRows, differenceIndex = 0;
