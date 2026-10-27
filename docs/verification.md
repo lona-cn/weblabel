@@ -81,6 +81,7 @@ T31 的所属 Vite 由当前 Node 直接启动 `owned-vite-service.mjs`。正常
 真实生命周期会多次重新加载同一 WASM：GPU 门禁要求至少一次实际加载，且每一次捕获的 SHA-256 都与本次发行构建完全相同；空列表、缺失或任意一次不一致均失败。第一次独占运行中两项 hardware 测试各实际捕获六次相同 hash，但外层错误地只接受单元素数组而失败，原结果与全部8000行保留；不得把重读该材料写成原命令通过，也不得改变样本、warmup、阈值或挑选性能结果。
 随后固定阈值的独占GPU命令通过3/3、8000行；一次完整 release 中的GPU子关亦通过3/3。该完整 release 自身仍 failed：Rust workspace 有一项工作器等待超时、浏览器有一项旧隐藏返回按钮假设；后续API库103/103及定向浏览器通过不抹去失败，也不能证明超时根因。该次 `skipped_scope` 为空，live证据和完整 smoke/review 仍缺失；R10/R11与完整发布不因此通过。
 最近一次针对工作台显示修复源码的真实硬件测量，2000 对象 `committed_edit` CPU P95 为 8.043 ms，超过未修改的 8 ms 门槛；旧源码的通过结果不能替代该失败。后续仅修改验证器与 fixture，未重新测量 GPU。独立诊断采样显示 IndexedDB 耐久写入为主要热点，但尚未证明其造成门槛失败，不为通过而删除或延迟耐久写。
+用户明确跳过上述一次 2000 对象 `committed_edit` CPU P95 超标作为 R10 阻塞；该硬件结果仍为 failed，不能写成通过，原 8 ms 门槛、其他场景与授权范围均不改变。
 release 的 release_gates 逐项列出 G0..G5 的 scope、实际 required_commands、SHA 绑定 evidence_refs、engineering_status 与完整 status。缺少命令为 not_started，缺少材料为 missing，不能从总状态或历史 commit 推导通过。G1/G3/G5 必须同时读取当前源码的 smoke；G5 还必须有独立完整规格/质量 review。smoke 的十三项场景只能引用同文件中已校验 SHA 的 artifacts；部分或损坏材料不能通过。
 
 G3/G4/G5 在本轮安全 skipped_by_user 时完整 status 为 blocked，即使各自工程子集通过。G4 的 live 未授权/未实际验收同样阻断；G5 不声称已经完成商业30%效率试点。release 的 engineering_status 也检查实际 review/smoke，不能只看子命令退出码。执行失败优先 failed，其余任何必需 missing/blocked/skipped/not_verified 保持 blocked；只有六关及全部范围满足才允许 full_1_0_ready。

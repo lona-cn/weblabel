@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
-  "previous_public_source_commit": "3a74e895a71d58532bd506f429d2d4b40668be99",
-  "public_base_commit": "3a74e895a71d58532bd506f429d2d4b40668be99",
+  "previous_public_source_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
+  "public_base_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
   "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
@@ -99,6 +99,7 @@
     "workload": {"sizes": [2000, 10000], "scenarios": 4, "warmups_each": 40, "samples_each": 1000, "raw_rows": 8000, "thresholds_unchanged": true},
     "p95_2000_ms": {"pointer_drag": {"cpu": 2.344, "double_raf": 30.5}, "pan": {"cpu": 1.244, "double_raf": 29.9}, "zoom": {"cpu": 1.225, "double_raf": 29.5}, "committed_edit": {"cpu": 8.043, "double_raf": 29.1}},
     "failure": "The committed-edit CPU p95 exceeds the unchanged 8 ms maximum; the cause remains unresolved. An earlier-source pass does not replace this failure.",
+    "user_waiver": "The user waived only this observed 2000-object committed_edit CPU p95 failure as an R10 blocker to continue. The hardware run remains failed, the original 8 ms threshold and verifier are unchanged, and the other scenarios and authorization boundaries are not waived.",
     "followup_profile": "A separate 160-edit real-hardware diagnostic found the IndexedDB write callback and native put to be the largest sampled non-idle stack. It was not an acceptance timing run and does not establish the cause of the p95 failure. Durable writes were not removed or delayed.",
     "limits": "The 10000-box run is supplemental stress, not the 2000-box threshold. Double-rAF is a scheduling proxy, not physical display latency. No GPU timestamps or physical VRAM measurements."
   },
