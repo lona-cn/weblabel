@@ -166,6 +166,8 @@ sh ./launch.sh --data-dir "/home/你的用户名/WebLabel数据"
 
 选择 native / COCO / YOLO，点击“生成导出并检查信息损失”。阅读本次数据集导出的真实 loss；需要确认时勾选“我已阅读并明确接受上述信息损失”，再点击“确认损失并生成导出”。原生格式用于无损交付；COCO / YOLO 标签省略属性、对象 ID 和来源，具体损失以实际报告为准（当前 YOLO 报告字段为 `annotation.attributes`、`annotation.object_ids`、`annotation.provenance`）。完整数据集 ZIP 的 `manifest.json` 仍保留完成状态、批准元数据和固定 revision，不能把标签省略这些信息说成整个 ZIP 丢失完成或批准信息。此边界仅针对数据集交付；单图导出仍按其自身实际 loss 判断。等待已有作业完成后“下载数据包”；下载失败只重新下载已有产物，不新建作业。
 
+损失表保留服务端实际字段和技术原因，并说明标签文件中的影响；切换导出格式会清除旧报告和同意，必须针对新格式重新检查。
+
 ![显式范围、train / val / test、固定快照与导出](images/readme/08-dataset-export.png)
 
 ![COCO / YOLO 信息损失说明与显式确认](images/readme/09-loss-confirmation.png)

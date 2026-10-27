@@ -59,6 +59,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   const exports = element('section'); const snapshotText = element('p'); const format = element('select'); format.dataset.testid = 'export-format'; options(format, [{ value: 'native', text: '原生格式（无损）' }, { value: 'yolo', text: 'YOLO' }, { value: 'coco', text: 'COCO' }], state.format);
   const exportStart = action('生成导出并检查信息损失', () => void startExport(false), 'export-start');
   const lossRoot = element('div'); const ackInput = element('input'); ackInput.type = 'checkbox'; ackInput.dataset.testid = 'export-loss-ack'; const ackLabel = field('我已阅读并明确接受上述信息损失', ackInput);
+  ackLabel.prepend(ackInput);
   const exportConfirm = action('确认损失并生成导出', () => void startExport(true), 'export-confirm'); exports.append(element('h2', '固定DatasetVersion导出'), snapshotText, field('导出格式', format), exportStart, lossRoot, ackLabel, exportConfirm);
   const pendingRoot = element('div'), historyRoot = element('section'), jobsRoot = element('section'); jobsRoot.setAttribute('aria-label', '导出作业与下载');
   historyRoot.setAttribute('aria-label', '已确认不可变快照历史');

@@ -10,7 +10,7 @@
 [data-testid='datasets-page'] table { table-layout: fixed; }
 [data-testid='datasets-page'] :is(th, td) { vertical-align: top; }
 [data-testid='datasets-page'] tr[data-selected='true'] { background: var(--surface-2); }
-[data-testid='datasets-page'] :is(select, input) { width: 100%; }
+[data-testid='datasets-page'] :is(select, input:not([type='checkbox'])) { width: 100%; }
 [data-testid='datasets-page'] .dataset-table-viewport { max-height: min(38dvh, 420px); overflow: auto; }
 [data-testid='datasets-page'] .dataset-table-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [data-testid='datasets-page'] .dataset-table-viewport table { display: table; min-width: 900px; }

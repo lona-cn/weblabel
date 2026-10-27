@@ -84,6 +84,32 @@ it('retains unknown snapshot operation and only reads on reconciliation', async 
   await vi.waitFor(() => expect(button(view.root, '只读核对原请求')).toBeDefined()); const original = view.writes[0].body.operation_id; button(view.root, '只读核对原请求').click();
   await vi.waitFor(() => expect(view.heads).toHaveBeenCalledTimes(2)); expect(view.writes).toHaveLength(1); expect(view.root.textContent).toContain(String(original)); expect(testId<HTMLButtonElement>(view.root, 'snapshot-create').disabled).toBe(true);
 });
+it('explains actual dataset label losses before explicit export consent', async () => {
+  const view = fixture(); const losses = [
+    { field: 'annotation.attributes', reason: 'attributes omitted from label members' },
+    { field: 'annotation.object_ids', reason: 'object IDs omitted from label members' },
+    { field: 'annotation.provenance', reason: 'provenance omitted from label members' },
+  ];
+  view.intercept(path => {
+    if (path.endsWith('/dataset-versions')) return { dataset_version_id: view.snapshotId, manifest_sha256: view.digest };
+    throw new ApiFailure(422, 'LOSS_ACK_REQUIRED', 'loss', { loss_report: { losses } }, uuid(90));
+  });
+  await browse(view); select(testId(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`), 'include');
+  testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
+  await vi.waitFor(() => expect(testId<HTMLButtonElement>(view.root, 'export-start').disabled).toBe(false));
+  select(testId(view.root, 'export-format'), 'yolo'); testId<HTMLButtonElement>(view.root, 'export-start').click();
+  await vi.waitFor(() => expect(view.root.querySelector('[aria-label="格式损失报告"]')).not.toBeNull());
+  const report = view.root.querySelector<HTMLElement>('[aria-label="格式损失报告"]')!;
+  const rows = [...report.querySelectorAll('tbody tr')].map(row => [...row.querySelectorAll('th, td')].map(cell => cell.textContent));
+  expect(rows).toEqual([
+    ['annotation.attributes', '目标格式的标签文件不包含对象属性；详情以服务端报告为准。', losses[0].reason],
+    ['annotation.object_ids', '目标格式的标签文件不包含稳定对象 ID；详情以服务端报告为准。', losses[1].reason],
+    ['annotation.provenance', '目标格式的标签文件不包含对象来源；详情以服务端报告为准。', losses[2].reason],
+  ]);
+  expect([...report.querySelectorAll('thead th[scope="col"]')].map(cell => cell.textContent)).toEqual(['字段', '实际影响', '技术原因']);
+  expect(testId<HTMLInputElement>(view.root, 'export-loss-ack').checked).toBe(false);
+  expect(testId<HTMLButtonElement>(view.root, 'export-confirm').disabled).toBe(true);
+});
 it('freezes immutable revision identities before loss acknowledgement and export job creation', async () => {
   const view = fixture(); const loss = { losses: [{ field: 'attributes', reason: 'target has no attributes' }] };
   view.intercept((path, body) => { if (path.endsWith('/dataset-versions')) return { dataset_version_id: view.snapshotId, manifest_sha256: view.digest }; if (!body.loss_ack) throw new ApiFailure(422, 'LOSS_ACK_REQUIRED', 'loss', { loss_report: loss }, uuid(90)); return { job_id: view.jobId, format: body.format, state: 'queued', loss_report: loss }; });

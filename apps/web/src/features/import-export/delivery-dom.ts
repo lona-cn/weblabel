@@ -23,10 +23,12 @@ export function details(title: string, value: unknown): HTMLDetailsElement {
 }
 export function lossView(report: LossReport): HTMLElement {
   const section = element('section'); section.setAttribute('aria-label', '格式损失报告'); section.append(element('h3', '实际损失报告'));
-  if (!report.losses.length) section.append(element('p', '服务端报告未列出损失。'));
-  const table = element('table'); const body = element('tbody');
-  for (const loss of report.losses) { const row = element('tr'); row.append(element('th', loss.field), element('td', explanations[loss.field] ?? '字段发生变化，请核对技术说明。'), element('td', loss.reason)); body.append(row); }
-  table.append(body); section.append(table); return section;
+  if (!report.losses.length) { section.append(element('p', '服务端报告未列出损失。')); return section; }
+  const table = element('table'); const head = element('thead'), header = element('tr'), body = element('tbody');
+  for (const name of ['字段', '实际影响', '技术原因']) { const cell = element('th', name); cell.scope = 'col'; header.append(cell); }
+  head.append(header);
+  for (const loss of report.losses) { const row = element('tr'), field = element('th', loss.field); field.scope = 'row'; row.append(field, element('td', explanations[loss.field] ?? '字段发生变化，请核对技术说明。'), element('td', loss.reason)); body.append(row); }
+  table.append(head, body); section.append(table); return section;
 }
 export function lifetime(parent: AbortSignal) {
   const owner = new AbortController(); const cleanups: (() => void)[] = []; let disposed = false;

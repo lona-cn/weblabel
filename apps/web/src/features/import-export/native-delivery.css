@@ -40,7 +40,7 @@
 .native-import-dialog .delivery-import-visual svg { max-height: min(38dvh, 400px); }
 .native-delivery .delivery-import-label { fill: var(--fg); stroke: var(--surface-0); paint-order: stroke fill; stroke-linejoin: round; font-weight: 600; pointer-events: none; }
 .native-import-dialog [aria-label='格式损失报告'] table { table-layout: fixed; }
-.native-import-dialog [aria-label='格式损失报告'] th { width: 18%; overflow-wrap: normal; }
+.native-import-dialog [aria-label='格式损失报告'] :is(thead th:first-child, tbody th) { width: 18%; overflow-wrap: normal; }
 @media (max-width: 1099px) { .r07-workbench dialog.native-import-dialog { inset: 0; height: 100dvh; } }
 .native-delivery .delivery-warning { color: var(--warning); }
 @media (max-width: 1099px) {

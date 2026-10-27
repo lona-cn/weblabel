@@ -10,6 +10,9 @@ export function readLossReport(value: unknown): LossReport | null {
   return { losses };
 }
 export const explanations: Record<string, string> = {
+  'annotation.attributes': '目标格式的标签文件不包含对象属性；详情以服务端报告为准。',
+  'annotation.object_ids': '目标格式的标签文件不包含稳定对象 ID；详情以服务端报告为准。',
+  'annotation.provenance': '目标格式的标签文件不包含对象来源；详情以服务端报告为准。',
   attributes: '对象属性无法完整表示，目标格式可能不保留属性。',
   attribute_defaults: '规范默认属性：这些值并非来源标注，仅按固定目标规范的默认值填入，不代表还原来源属性；请核对后明确决定是否接受。',
   origin: '对象来源及追溯引用将发生变化或无法保留。',
