@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "scope": "sanitized_source_cutover_and_bounded_engineering_evidence",
+  "public_base_commit": "85df761b6e092d8e49824c50f228b6488cfacde6",
+  "public_source_commit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd",
+  "contract": {"business_wire":1,"backup_restore":1,"release_layout":2},
+  "r09": {
+    "status":"done",
+    "product":"Single native Rust executable serves the native HTML/TypeScript workbench and owns the internal runtime commands; Node/pnpm remain development and packaging tools, not product runtime dependencies.",
+    "obsolete_product_paths_removed":["React/TSX application roots and dependencies","Node agent-host product runtime","Python detector product runtime","Node launcher, backup, restore, doctor and preflight shims"],
+    "inherited_private_validation":{"native_workspace":{"passed":513,"failed":0,"ignored":0},"web_and_integration":{"passed":484,"failed":0,"files":51,"scope":"earlier source checkpoint; later production changes are documented separately"},"bootstrap":{"passed":21,"failed":0,"skipped":0},"portable":{"checks":29,"status":"passed","shutdown":"forced owned process; not graceful shutdown proof"},"interop":{"checks":11,"status":"passed"},"physical_startup":{"hardware_webgpu":true,"save_http":200,"reload_document_and_revision_exact":true,"owned_ctrl_c_exit":0},"review":"Independent scoped source and result review approved after the recorded fixes; no claim of complete diff coverage."},
+    "provenance_limit":"The inherited validation was executed on the original private source and synthetic data, not rerun under this public commit. Raw authentication material, databases, browser traces, model artifacts and logs remain private."
+  },
+  "r10_partial_hardware_evidence": {
+    "status":"standalone_hardware_gate_passed_not_full_R10",
+    "source_snapshot_sha256":"6a3b6bc686d4fd3508e1316654483b4f03d9a82cca6f1b7965b6e75cbc9f1333",
+    "public_worktree_source_snapshot":"byte-for-byte identical after a per-command Git checkout EOL override; source commit differs from the private measured run, and a default Windows checkout may use different physical line endings",
+    "hardware":"NVIDIA Blackwell, non-fallback browser WebGPU on a GeForce RTX 5060 Ti",
+    "browser_version":"153.0.8010.12",
+    "tests":{"collected":3,"passed":3,"failed":0,"skipped":0,"flaky":0},
+    "workload":{"dimensions":[2048,2048],"box_counts":[2000,10000],"seed":17,"warmup_per_scenario":40,"valid_samples_per_scenario":1000,"scenarios":4,"total_raw_rows":8000},
+    "p95_2k_ms":{"pointer_drag":{"cpu":2.353,"double_raf_proxy":30.6},"pan":{"cpu":1.181,"double_raf_proxy":30.4},"zoom":{"cpu":1.143,"double_raf_proxy":30.2},"committed_edit":{"cpu":7.066,"double_raf_proxy":30.0}},
+    "threshold_2k_ms":{"cpu":8,"double_raf_proxy":33},
+    "stress_10k_committed_edit_cpu_p95_ms":28.711,
+    "prior_failures_preserved":["An earlier full-release run failed the original 2k committed-edit CPU threshold at 11.108 ms on an older source.","The first later exclusive run failed its outer provenance check because six identical actual WASM loads were incorrectly required to be a one-element list. All 8000 rows and the failure remain in the private archive; this was fixed by checking every actual load without filtering or deduplication."],
+    "limitations":["One corrected run is not a repeatability or speedup claim.","Double-rAF is a scheduling proxy, not measured physical display latency.","10k is supplementary stress, not an 8 ms gate.","This does not establish all R10 visual/recovery/operations cases, R11, live model support, G4 or T35."],
+    "raw_run_sha256":"4928b326b9510553584cb1f3e34d187913dbff9b9f0d46c8d1c6308b4b72f7e7",
+    "raw_2000_sha256":"e1174991a2cc3b23a2e14d4181cba521f6bb90aaf0d7c8d0c21edb0f70914e3b",
+    "raw_10000_sha256":"15bcff3158dd77d0cb7683e1ade9cfbb0196fea98e6202fcee1af09ebf320a32",
+    "raw_visibility":"private project-local archive; hashes do not by themselves give public access or reproduce the run"
+  },
+  "public_worktree_checks":{"documentation_structure":{"files_checked":77,"links_checked":360,"errors":0},"source_identity":"verified against the measured current-source input bytes, not against public commit identity"},
+  "detector_budget":{"used":20,"limit":20,"new_forwards_for_r09_r10":0,"R05_B1_N1_R1":"explicitly waived by user, not passed"},
+  "current_status":{"R09":"done","R10":"running","R11":"pending","T32":"blocked","T35":"pending","full_release_passed":false},
+  "public_data_exclusions":["private report history","real or synthetic auth/session material","databases and raw draft envelopes","model weights and runtime binaries","original private logs and browser traces"]
+}

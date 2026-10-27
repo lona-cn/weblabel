@@ -10,7 +10,7 @@
 
 ## 原生 HTML / Rust 重构增量
 
-[原生源码整合记录](publication/native-html-rust-rebuild.json)保留先前公开源码的实际验证范围；[R05 完成记录](publication/r05-accepted.json)记录三项用户豁免、原账本 20/20 与真实六普通图／五同 tensor 路径。保留形状、有限值、输入 hash、raw boxes、类别／阈值与 canonical 几何校验；raw logits 只作诊断，独立 rotate/tensor 未执行、未通过。旋转后处理已修复同一原始角点的 x/y 映射，并以已有真实输出零推理复算十一条路径。[先前数值失败](publication/r05-continuation.json)不改写。R05 done，R09 已就绪但尚未切换；R10/R11、T32/T35 不升级。模型运行来自原私有源目录，不冒充公开 SHA 再次推理；原始数组、nonce 账本、模型、runtime、数据库与日志不公开。
+[原生源码整合记录](publication/native-html-rust-rebuild.json)保留先前公开源码的实际验证范围；[R05 完成记录](publication/r05-accepted.json)记录三项用户豁免、原账本 20/20 与真实六普通图／五同 tensor 路径。保留形状、有限值、输入 hash、raw boxes、类别／阈值与 canonical 几何校验；raw logits 只作诊断，独立 rotate/tensor 未执行、未通过。旋转后处理已修复同一原始角点的 x/y 映射，并以已有真实输出零推理复算十一条路径。[先前数值失败](publication/r05-continuation.json)不改写。R05 与 [R09 源码切换](publication/r09-native-cutover.json)已完成；R10 仍在执行，R11、T32/T35 不升级。独占硬件 GPU 有一次限定范围通过，先前失败和来源差异均保留；不能据此宣称 R10、全部模型或完整发行通过。模型运行来自原私有源目录，不冒充公开 SHA 再次推理；原始数组、nonce 账本、模型、runtime、数据库与日志不公开。
 
 
 ## 当前还卡在哪里

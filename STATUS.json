@@ -1172,30 +1172,28 @@
           "original_actualcommit": "bcc63da74e8b81e9259b40fa38e03001bcf8f650"
         },
         "R09": {
-          "status": "pending",
-          "base_commit": null,
-          "integrated_commit": null,
-          "actualcommit": null,
-          "evidence": [],
+          "status": "done",
+          "base_commit": "85df761b6e092d8e49824c50f228b6488cfacde6",
+          "integrated_commit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd",
+          "actualcommit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd",
+          "evidence": ["reports/publication/r09-native-cutover.json"],
           "blockers": [],
           "original_base_commit": null,
           "original_integrated_commit": null,
           "archived_original_evidence": [],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Source cutover committed publicly; original scoped R09 execution and independent review are inherited from private source and described in the sanitized receipt, not rerun under the public commit."
         },
         "R10": {
-          "status": "pending",
-          "base_commit": null,
+          "status": "running",
+          "base_commit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd",
           "integrated_commit": null,
           "actualcommit": null,
-          "evidence": [],
-          "blockers": [
-            "Dependency R09 is not ready"
-          ],
+          "evidence": ["reports/publication/r09-native-cutover.json"],
+          "blockers": [],
           "original_base_commit": null,
           "original_integrated_commit": null,
           "archived_original_evidence": [],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "evidence_scope": "Partial standalone GPU and other synthetic engineering checks only; complete visual, recovery, operations and release acceptance remain outstanding."
         },
         "R11": {
           "status": "pending",
@@ -1215,7 +1213,7 @@
       "release_gate_change": false,
       "original_private_head": "90e68307a9b338b7821ff22615511d0b9f537bee",
       "preview_catalog_visibility": "private archive; original accepted design evidence is not republished",
-      "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates.",
+      "evidence_scope": "R00-R09 source cutover and inherited scoped acceptance are recorded separately from current R10 work; R10/R11, T32/T35, live models and full release are not complete.",
       "integration_verification": {
         "status": "passed",
         "public_base": "e61f12cd276c7772ea646b5385ad078a7949300e",
@@ -1228,7 +1226,7 @@
         "source_binding": "Public source commit; original private task and acceptance provenance preserved separately in original_* and archived_original_evidence fields."
       },
       "original_base_commit": "196f6da536ba6f9a9b6a45bb17cade3a70fd0c4d",
-      "latest_implementation_commit": "ca78b47afdc5963005d1ed72eabf2aa463dc445b"
+      "latest_implementation_commit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd"
     }
   },
   "tasks": {
