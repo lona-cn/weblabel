@@ -78,7 +78,11 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   const toolbar = element('div', undefined, 'r07-toolbar'), canvas = mountCanvasView(state, port, signal, context.hostOptions);
   toolbar.id = 'canvas-toolbar-row';
   const error = element('p', undefined, 'r07-workspace-error'); error.setAttribute('role', 'alert'); error.dataset.testid = 'workbench-error';
-  center.append(toolbar, error, canvas.element);
+  const selectionSummary = element('section', undefined, 'r07-selection-summary'), selectionText = element('p');
+  selectionSummary.dataset.testid = 'compact-selection-summary'; selectionSummary.setAttribute('aria-label', '当前选择'); selectionSummary.hidden = true;
+  const selectionAttributes = action('打开属性', 'selection-open-attributes', signal, () => openInspector('attributes', selectionAttributes));
+  selectionSummary.append(selectionText, selectionAttributes);
+  center.append(toolbar, error, canvas.element, selectionSummary);
   const inspectorTabs = element('div', undefined, 'r07-inspector-tabs'), attributesRoot = element('section'), aiRoot = element('section');
   inspectorTabs.setAttribute('role', 'tablist'); inspectorTabs.setAttribute('aria-label', '检查器');
   let inspectorView: 'attributes' | 'ai' = 'attributes';
@@ -161,6 +165,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   });
   const attributesLauncher = action('属性', 'toggle-attributes', signal, () => openInspector('attributes', attributesLauncher)), aiLauncher = action('AI 审校', 'toggle-ai', signal, () => openInspector('ai', aiLauncher));
   for (const [button, target] of [[assetsLauncher, assets], [attributesLauncher, attributesRoot], [aiLauncher, aiRoot]] as const) button.setAttribute('aria-controls', target.id);
+  selectionAttributes.setAttribute('aria-controls', attributesRoot.id);
   launchers.append(assetsLauncher, attributesLauncher, aiLauncher); contextBar.append(launchers);
   function showInspector(view: 'attributes' | 'ai') {
     inspectorView = view; attributesRoot.hidden = view !== 'attributes'; aiRoot.hidden = view !== 'ai';
@@ -230,6 +235,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
     }
     for (const [id, node] of assetNodes) if (!present.has(id)) { node.remove(); assetNodes.delete(id); }
   }
+  let summaryObjects: WorkspaceState['objects'] | null = null, summaryId = '', summaryIndex = -1;
   function update() {
     for (const asset of state.assets) if (!saveSubscriptions.has(asset.asset_revision_id)) {
       const id = asset.asset_revision_id;
@@ -266,6 +272,21 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
     }
     ontology.value = state.ontologyId; ontology.disabled = !sessionCurrent(state) || !!state.fixedTask || !!state.preparation || !!state.importing || state.submission || state.branchBusy;
     renderAssets();
+    const selected = selectedIds(state);
+    selectionSummary.hidden = !compact.matches || !selected.length;
+    if (!selectionSummary.hidden) {
+      if (selected.length === 1) {
+        if (summaryObjects !== state.objects || summaryId !== selected[0]) {
+          summaryObjects = state.objects; summaryId = selected[0]; summaryIndex = state.objects.findIndex(object => object.object_id === summaryId);
+        }
+        const object = state.objects[summaryIndex], flag = state.flags[selected[0]];
+        const category = object && (state.loaded?.ontology.labels.find(label => label.label_id === object.label_id)?.name ?? object.label_id);
+        selectionText.textContent = object
+          ? '当前选中 ' + category + ' #' + (summaryIndex + 1) + ' · ' + object.object_id + ' · ' + (port.getHost() && !flag?.locked ? '可编辑' : '只读') + ' · ' + (flag?.locked ? '已锁定' : '未锁定') + (flag?.hidden ? ' · 已隐藏' : '')
+          : '当前选中对象不可用，请核对图片与规范。';
+      } else selectionText.textContent = '已选择 ' + selected.length + ' 个对象';
+    }
+    selectionAttributes.setAttribute('aria-expanded', String(inspectorDialog.element.open && inspectorView === 'attributes'));
     assetsLauncher.setAttribute('aria-expanded', String(compact.matches ? assetsDialog.element.open : !assetsHome.hidden)); attributesLauncher.setAttribute('aria-expanded', String(compact.matches ? inspectorDialog.element.open && inspectorView === 'attributes' : !inspectorHome.hidden && inspectorView === 'attributes')); aiLauncher.setAttribute('aria-expanded', String(compact.matches ? inspectorDialog.element.open && inspectorView === 'ai' : !inspectorHome.hidden && inspectorView === 'ai'));
   }
   assetSearch.addEventListener('input', renderAssets, { signal }); ontology.addEventListener('change', () => { void controller.selectOntology(ontology.value); }, { signal });
