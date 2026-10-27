@@ -32,6 +32,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     viewedSnapshot = null; invalidate(); renderFreezeDetails(); render();
   });
   nav.append(returnRange);
+  const heading = element('div', undefined, 'dataset-heading'); heading.append(title, nav);
   const steps = element('ol'); steps.setAttribute('aria-label', '数据交付状态'); steps.append(element('li', '1 选择明确范围'), element('li', '2 固定不可变快照'), element('li', '3 检查损失并导出'));
   const error = element('p'); error.setAttribute('role', 'alert'); error.hidden = true; const status = element('p'); status.setAttribute('role', 'status');
   const ontology = element('select'); ontology.dataset.testid = 'dataset-ontology'; options(ontology, [{ value: '', text: '明确选择固定规范版本' }]);
@@ -61,7 +62,8 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   const exportConfirm = action('确认损失并生成导出', () => void startExport(true), 'export-confirm'); exports.append(element('h2', '固定DatasetVersion导出'), snapshotText, field('导出格式', format), exportStart, lossRoot, ackLabel, exportConfirm);
   const pendingRoot = element('div'), historyRoot = element('section'), jobsRoot = element('section'); jobsRoot.setAttribute('aria-label', '导出作业与下载');
   historyRoot.setAttribute('aria-label', '已确认不可变快照历史');
-  main.append(title, nav, steps, status, error, field('类别规范版本', ontology), read, summary, pager, tableViewport, planning, freezeSummary, exports, pendingRoot, historyRoot, jobsRoot); root.append(main); title.focus();
+  const scopePicker = element('div', undefined, 'dataset-scope-picker'); scopePicker.append(field('类别规范版本', ontology), read);
+  main.append(heading, steps, status, error, scopePicker, summary, pager, tableViewport, planning, freezeSummary, exports, pendingRoot, historyRoot, jobsRoot); root.append(main); title.focus();
   function current() { return life.alive && validScope && reads.current(); }
   function unresolved() { return state.intents.find(intent => intent.uncertain); }
   function canEdit() { return current() && !unresolved(); }
