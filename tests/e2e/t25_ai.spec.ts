@@ -72,7 +72,7 @@ test('T25 Engineering Mock G2: actual flush/freeze, consent, background predicti
   await expect(page.getByTestId('object-list').getByRole('option')).toHaveCount(1);
   await page.getByTestId('inspector-ai').click();
   await page.getByTestId('ai-provider').selectOption('profile_mock_local');
-  await page.getByRole('combobox', { name: '运行任务' }).selectOption('detect');
+  await page.getByRole('radio', { name: '检测对象' }).check();
   await page.getByTestId('ai-prompt').fill('Engineering Mock only: add synthetic candidate for G2, not real inference');
   const runPosts: unknown[] = [];
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/ai/runs') runPosts.push(request.postDataJSON()); });

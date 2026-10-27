@@ -208,7 +208,7 @@ function savedFixtureState(page: Page): Promise<SavedFixtureState> {
 test('T24 selected-subset acceptance is one undo unit with reversible journal intents', async ({ page }) => {
   await bootPage(page);
   await page.getByTestId('ai-provider').selectOption('profile-t24');
-  await page.getByRole('combobox', { name: '运行任务' }).selectOption('detect');
+  await page.getByRole('radio', { name: '检测对象' }).check();
   await page.getByTestId('ai-prompt').fill('Detect two objects and leave the third for review.');
   await page.getByTestId('ai-run').click();
   await page.getByTestId('ai-consent').getByRole('checkbox').check();

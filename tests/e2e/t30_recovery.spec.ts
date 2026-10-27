@@ -150,7 +150,7 @@ test('F07 late runA at assetB cannot overwrite either asset or newer before_hash
   const otherBefore=await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id);
   await page.getByTestId('inspector-ai').click();
   await page.getByTestId('ai-provider').selectOption('profile_mock_local');
-  await page.getByTestId(`object-item-${objectId}`).click();await page.getByRole('combobox',{name:'运行任务'}).selectOption('audit_attributes');await page.getByTestId('ai-prompt').fill('Engineering Mock attribute boundary; no live inference');
+  await page.getByTestId(`object-item-${objectId}`).click();await page.getByRole('radio',{name:'检查属性'}).check();await page.getByTestId('ai-prompt').fill('Engineering Mock attribute boundary; no live inference');
   const release=Promise.withResolvers<void>(),held=Promise.withResolvers<{items:SuggestionSet[];run:{run_id:string}}>();
   await page.route('**/api/ai/runs/*/suggestions*',async route=>{const response=await actualResponse(route,seededProject.apiBaseUrl);const body=await response.json();if(body.items.length){held.resolve(body);await release.promise;}await route.fulfill({response});});
   const previewResponse=page.waitForResponse(response=>response.url().includes('/api/ai/previews')&&response.request().method()==='POST');
@@ -464,7 +464,7 @@ test('F07 late actual engineering Mock detect result is scoped to A while B is o
   const first=await head(seededProject.api,asset.asset_revision_id,seededProject.ontology_version_id),second=await head(seededProject.api,other.asset_revision_id,seededProject.ontology_version_id);
   await page.getByTestId('inspector-ai').click();
   await page.getByTestId('ai-provider').selectOption('profile_mock_local');
-  await page.getByRole('combobox',{name:'运行任务'}).selectOption('detect');await page.getByTestId('ai-prompt').fill('Explicit engineering Mock late result; no live inference');
+  await page.getByRole('radio',{name:'检测对象'}).check();await page.getByTestId('ai-prompt').fill('Explicit engineering Mock late result; no live inference');
   const gate=Promise.withResolvers<void>(),held=Promise.withResolvers<{items:SuggestionSet[]}>();
   await page.route('**/api/ai/runs/*/suggestions*',async route=>{const response=await actualResponse(route,seededProject.apiBaseUrl),body=await response.json();if(body.items.length){held.resolve(body);await gate.promise;}await route.fulfill({response});});
   await page.getByTestId('ai-run').click();await page.getByTestId('ai-consent').getByRole('checkbox').check();await page.getByTestId('ai-authorize').click();

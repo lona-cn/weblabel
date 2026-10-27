@@ -15,6 +15,10 @@ import { reportError, selectedIds, sessionCurrent, type WorkspaceState } from '.
 import { action, element, labeled, option } from '../workbench/view-elements';
 import { createDialog } from '../../ui/dialog';
 
+let intentSequence = 0;
+const availabilityLabels: Record<ModelProfile['availability'], string> = { ready: '可用', needs_login: '需要登录', needs_configuration: '需要配置', unsupported: '不支持', blocked: '不可用' };
+const verificationLabels: Record<ModelProfile['verification'], string> = { not_run: '未验证', mock_only: '仅模拟验证', live_passed: '真实验证通过', live_failed: '真实验证失败' };
+
 export interface AiWorkbenchView {
   refreshProfiles(): Promise<void>;
   getRunScope(): RunScope | null;
@@ -22,10 +26,16 @@ export interface AiWorkbenchView {
 }
 export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, port: EditorPort, signal: AbortSignal, navigate: (url: URL) => void): AiWorkbenchView {
   const readSignal = AbortSignal.any([signal, state.readonlyRequests.signal]);
-  root.dataset.testid = 'ai-panel'; root.setAttribute('aria-label', '工作台 AI 审校');
-  const profiles = element('select'); profiles.dataset.testid = 'ai-provider'; const profileInfo = element('p');
+  root.dataset.testid = 'ai-panel'; root.dataset.runState = 'idle'; root.setAttribute('aria-label', '工作台 AI 审校');
+  const profiles = element('select'); profiles.dataset.testid = 'ai-provider'; const profileIdentity = element('p'), profileInfo = element('p', undefined, 'r07-ai-profile-status');
   const rules = element('details'), ruleBody = element('div'); rules.append(element('summary', '本次固定类别规范'), ruleBody);
-  const intent = element('select'); intent.setAttribute('aria-label', '运行任务'); for (const [value, text] of [['audit_attributes', '检查属性'], ['find_issues', '查找问题'], ['detect', '检测对象']]) intent.append(option(value, text));
+  const intent = element('fieldset', undefined, 'r07-ai-intents'); intent.setAttribute('aria-label', '运行任务'); intent.append(element('legend', '任务'));
+  const intentName = 'r07-ai-intent-' + ++intentSequence;
+  for (const [value, text] of [['audit_attributes', '检查属性'], ['find_issues', '查找问题'], ['detect', '检测对象']] as const) {
+    const input = element('input'); input.type = 'radio'; input.name = intentName; input.value = value; input.checked = value === 'audit_attributes';
+    intent.append(labeled(text, input));
+  }
+  const selectedIntent = () => intent.querySelector<HTMLInputElement>('input:checked')!.value as RunIntent;
   const prompt = element('textarea'); prompt.dataset.testid = 'ai-prompt'; prompt.rows = 4;
   const scopeText = element('p'), error = element('p'); error.setAttribute('role', 'alert');
   const access = element('details'), accessFields = element('fieldset'), cropFields = element('div'), scopeError = element('p');
@@ -55,7 +65,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   const checked = element('input'); checked.type = 'checkbox';
   const consentBody = element('div', undefined, 'r07-ai-consent-content'), consentProvider = element('p');
   const consentNotice = element('p', '费用未知；取消运行不保证退款。');
-  const candidatesRoot = element('section'); candidatesRoot.setAttribute('aria-label', 'AI 建议与问题'); const outcomeRoot = element('section');
+  const candidatesRoot = element('section'); candidatesRoot.setAttribute('aria-label', 'AI 建议与问题'); const outcomeRoot = element('section'); outcomeRoot.dataset.testid = 'ai-outcome';
   let profileList: readonly ModelProfile[] = [], controller: RunController | null = null, disposeControllerSubscription: (() => void) | null = null;
   let lastReady: { context: RunContext; ontology: OntologyVersion } | null = null, preview: ConsentPreview | null = null, previewIdentity: string | null = null;
   let preparing = false, preparation = 0, decisionRevision = 0, disposed = false, previousEvents: unknown = null, currentOptions: RunControllerOptions | null = null;
@@ -94,11 +104,11 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
     const fixed = lastReady, asset = state.assetId, crop = grants.preview_crop, previousCrop = currentOptions?.grants.preview_crop;
     const selectedProfile = profileList.find(profile => profile.profile_id === profiles.value) ?? null;
     if (currentOptions?.context === fixed.context && currentOptions.ontology === fixed.ontology && currentOptions.asset_revision_id === asset
-      && currentOptions.profile === selectedProfile && currentOptions.intent === intent.value && currentOptions.prompt === prompt.value && currentOptions.csrfToken === csrfToken()
+      && currentOptions.profile === selectedProfile && currentOptions.intent === selectedIntent() && currentOptions.prompt === prompt.value && currentOptions.csrfToken === csrfToken()
       && currentOptions.grants.allow_image === grants.allow_image && currentOptions.grants.allow_object_context === grants.allow_object_context
       && previousCrop?.x_min === crop?.x_min && previousCrop?.y_min === crop?.y_min && previousCrop?.x_max === crop?.x_max && previousCrop?.y_max === crop?.y_max) return currentOptions;
     return { asset_revision_id: asset, profile: selectedProfile, context: fixed.context, ontology: fixed.ontology,
-      intent: intent.value as RunIntent, prompt: prompt.value, grants, saveQueue: state.queue, csrfToken: csrfToken(),
+      intent: selectedIntent(), prompt: prompt.value, grants, saveQueue: state.queue, csrfToken: csrfToken(),
       dispatch: command => port.dispatch(command), getDocument: port.getSnapshot, getGeneration: () => port.getReadHost()?.getGeneration() ?? null,
       refreshContext(snapshot) {
         const loaded = state.loaded, host = port.getHost();
@@ -173,7 +183,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
       error.textContent = ''; update();
     } catch (reason) { if (!read.signal.aborted && !disposed) error.textContent = '模型列表读取失败；人工标注可继续：' + reportError(reason); }
   };
-  root.append(element('h2', 'AI 审校'), rules, labeled('模型预设', profiles), profileInfo, action('只读重新检查模型列表', 'ai-profiles-refresh', signal, () => void refreshProfiles()), labeled('任务', intent), labeled('指令', prompt), access, scopeText, run, error, progress, candidatesRoot, outcomeRoot);
+  root.append(element('h2', 'AI 审校'), rules, labeled('模型预设', profiles), profileIdentity, profileInfo, action('只读重新检查模型列表', 'ai-profiles-refresh', signal, () => void refreshProfiles()), intent, labeled('指令', prompt), access, scopeText, run, error, progress, candidatesRoot, outcomeRoot);
   function updateControls() {
     const snapshot = controller?.getSnapshot(), profile = profileList.find(item => item.profile_id === profiles.value);
     if (ruleOntology !== state.loaded?.ontology) {
@@ -186,7 +196,9 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
         }
       }
     }
-    profileInfo.textContent = profile ? 'model_id: ' + profile.model_id + ' · ' + profile.availability + ' · ' + profile.verification + (profile.runtime_version ? ' · ' + profile.runtime_version : '') + '。配置就绪不代表真实运行已验证。' : '暂无选定模型。人工标注不依赖 AI 配置；本页不接收 token、私有路径或命令。';
+    profileIdentity.textContent = profile ? 'model_id: ' + profile.model_id + (profile.runtime_version ? ' · ' + profile.runtime_version : '') : '暂无选定模型。';
+    profileInfo.dataset.availability = profile?.availability ?? 'none';
+    profileInfo.textContent = profile ? availabilityLabels[profile.availability] + ' (' + profile.availability + ') · ' + verificationLabels[profile.verification] + ' (' + profile.verification + ')。配置就绪不代表真实运行已验证。' : '人工标注不依赖 AI 配置；本页不接收 token、私有路径或命令。';
     const grants = requestedGrants();
     run.disabled = preparing || !!snapshot?.busy || !port.getHost() || !profile || profile.availability !== 'ready' || !prompt.value.trim() || !grants;
     profiles.disabled = intent.disabled = prompt.disabled = allowImage.disabled = allowObjects.disabled = preparing || !!snapshot?.busy;
@@ -201,6 +213,7 @@ export function mountAiWorkbenchView(root: HTMLElement, state: WorkspaceState, p
   function updateRun() {
     if (!controller || disposed) return;
     const snapshot = controller.getSnapshot();
+    root.dataset.runState = snapshot.runId || snapshot.events.length || snapshot.candidates.length || snapshot.error ? 'active' : 'idle';
     if (lastWaiting !== snapshot.modelWaiting) { lastWaiting = snapshot.modelWaiting; state.activity.setKind(lastWaiting ? 'model_wait' : 'task'); }
     if (lastRun !== snapshot.runScope) { lastRun = snapshot.runScope; state.activity.setBinding({}); state.notify(); }
     const terminal = snapshot.events.find(isTerminalRunEvent);

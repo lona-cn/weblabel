@@ -72,7 +72,7 @@ test('T13 two same-context offline tabs retain independent Native documents, jou
     await expect(tab.getByTestId('tool-box')).toBeEnabled();
     await tab.getByTestId('inspector-ai').click();
     await tab.getByTestId('ai-provider').selectOption('profile_mock_local');
-    await tab.getByRole('combobox', { name: '运行任务' }).selectOption('detect'); await tab.getByTestId('ai-prompt').fill('Synthetic Engineering Mock only; retain this tab’s selected acceptance.');
+    await tab.getByRole('radio', { name: '检测对象' }).check(); await tab.getByTestId('ai-prompt').fill('Synthetic Engineering Mock only; retain this tab’s selected acceptance.');
     await tab.getByTestId('ai-run').click(); await tab.getByTestId('ai-consent').getByRole('checkbox').check(); await tab.getByTestId('ai-authorize').click();
     await expect(tab.locator('[data-testid^="candidate-"] input[type="checkbox"]').first()).toBeEnabled();
     await tab.locator('[data-testid^="candidate-"] input[type="checkbox"]').first().check();

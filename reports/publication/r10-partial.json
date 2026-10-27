@@ -2,7 +2,7 @@
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
   "previous_public_source_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
-  "public_base_commit": "3ecdb558a341cadb4809810931f51f4f11823d7c",
+  "public_base_commit": "55f7fdb3a44c850ad272e1a55edac41f0c04fe4d",
   "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
@@ -96,6 +96,14 @@
     "behavior": "The actual workbench showed needs_configuration and not_run, three task choices, a nonempty instruction and a disabled run-scope action. With the unavailable profile selected, a real hardware-WebGPU canvas drag added one synthetic object and one undo restored the original object list. No AI/model POST was observed.",
     "visual_limit": "The actual controls are in a narrow workbench inspector rather than the approved dedicated three-column U36 reference. The screenshot is retained privately; U36 visual equivalence and the full visual matrix are not passed.",
     "diagnostics": "An initial WebGPU-text wait timed out while the ontology selection was reset during loading; selection was repeated after the list settled. Eight aborted startup GET requests were observed; their cause was not established."
+  },
+  "u36_redesign": {
+    "scope": "The existing AI panel and controller move into an accessible three-column configuration dialog and return to the inspector on close; task selection uses one radio group. Only reviewed U36 source, migrated test consumers and user-facing documentation were published; the public commit itself was not rebuilt.",
+    "source_sha256": {"workbench-page.ts": "ce76074eeb930e0a4cf0dfa21df5ed79b282d4ee9ad1a8c947d169e88bae5a0c", "native-workbench.css": "5126949e401e63b08d66b63a0afa6d1c389089894661907eeadbb1cb1120be59", "ai-workbench-view.ts": "ffa4082109ff8bbe1cde3f25fd94c914de44a130d1996153a265b2a5144d5e33"},
+    "actual_smoke": "A locally built native release with synthetic data and a no-credential unavailable profile displayed two selected object outlines, three task choices and a disabled run-scope control on hardware WebGPU. Twelve forward tabs and reverse Tab stayed in the dialog; Escape restored selection, task, profile and focus. At 900x600 the configuration and inspector closed in sequence with canvas inert until the latter closed. Drawing and one undo worked after return. No AI/model POST was observed.",
+    "checks": "Web and consumer TypeScript checks exited 0; one existing focused AI outcome file reported four passing tests. The migrated Playwright consumers were typechecked but not run.",
+    "limits": "The local release was built from a dirty worktree; exact changed source hashes are recorded above. Configured-provider preview and active-run presentation were not exercised, and no model forward or live call was made. This scoped U36 observation is not all-48-state or full R10 acceptance; the changed UI source has no new GPU performance benchmark.",
+    "diagnostics": "Eight startup GET requests were reported aborted in the final browser; their cause was not established."
   },
   "online_backup_restore": {
     "scope": "Earlier locally built native release before the later display changes, with project-owned synthetic data; no model call, fixture seed helper or real business data. The public commit itself was not rebuilt.",

@@ -14,3 +14,32 @@
 @media(max-height:650px){.r07-workspace{height:auto;min-height:420px}.r07-canvas-stage{min-height:320px}.r07-workbench dialog{max-height:calc(100dvh - 16px)}}
 @media(prefers-reduced-motion:reduce){.r07-workbench *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 @media(forced-colors:active){.r07-workbench button,.r07-workbench input,.r07-workbench select,.r07-workbench textarea{border-color:ButtonText}.r07-workbench :focus-visible{outline-color:Highlight}.r07-object-row[aria-selected=true]{outline:2px solid Highlight}.r07-workbench button[aria-pressed=true],.r07-workbench button[aria-selected=true]{border:2px solid Highlight}}
+
+.r07-ai-intents{display:flex;flex-wrap:wrap;gap:8px;min-width:0;margin:12px 0;padding:0;border:0}
+.r07-ai-intents legend{padding:0;margin-bottom:6px}
+.r07-ai-intents label{display:flex;flex:1 1 110px;justify-content:flex-start;gap:8px;margin:0;padding:8px;border:1px solid var(--control-border);border-radius:5px}
+.r07-ai-intents label:has(input:checked){border-color:var(--accent)}
+.r07-ai-intents input{order:-1}
+.r07-ai-profile-status[data-availability=needs_configuration],.r07-ai-profile-status[data-availability=needs_login],.r07-ai-profile-status[data-availability=blocked],.r07-ai-profile-status[data-availability=unsupported]{padding:8px;border-inline-start:3px solid var(--warning);background:var(--surface-2);color:var(--warning)}
+
+.r07-workbench dialog.r07-ai-config{position:fixed;inset:56px 0 0;width:100vw;height:calc(100dvh - 56px);max-width:none;max-height:none;margin:0;padding:0;border:0;border-radius:0;background:var(--surface-0);overflow:hidden}
+.r07-workbench dialog.r07-ai-config[open]{display:flex;flex-direction:column}
+.r07-workbench dialog.r07-ai-config::backdrop{background:transparent}
+.r07-ai-config-contextbar{padding:12px 20px;border-bottom:1px solid var(--border);background:var(--surface-1);color:var(--muted)}
+.r07-ai-config>h2{font-size:24px;margin:0;padding:16px 20px 0}
+.r07-ai-config-grid{display:grid;grid-template-columns:minmax(220px,1fr) minmax(380px,1.35fr) minmax(220px,.95fr);gap:12px;flex:1;min-height:0;padding:16px 20px;overflow:auto}
+.r07-ai-config-grid>section{min-width:0;overflow:auto;padding:16px;border:1px solid var(--border);border-radius:6px;background:var(--surface-1)}
+.r07-ai-config-source .r07-readonly-visual svg{max-height:260px}
+.r07-ai-config-source ul{max-height:220px;overflow:auto;padding-inline-start:20px}
+.r07-ai-config-form [data-testid=ai-provider]{flex:1;min-width:0}
+.r07-ai-config-form label:has(textarea){display:block}
+.r07-ai-config-form textarea{min-height:130px;margin-top:8px}
+.r07-ai-config-form [data-run-state=idle] :is([data-testid=ai-run-progress],[aria-label="AI 建议与问题"],[data-testid=ai-outcome]){display:none}
+.r07-ai-config-guide ol{padding-inline-start:24px}
+.r07-ai-config-guide li{padding:8px 0;border-bottom:1px solid var(--border)}
+.r07-ai-config-footer{display:flex;align-items:center;gap:12px;padding:12px 20px;border-top:1px solid var(--border);background:var(--surface-1)}
+.r07-ai-config-footer p{flex:1;color:var(--muted)}
+.r07-ai-config-footer button{min-height:44px}
+.r07-ai-config-footer [data-testid=ai-run]{min-width:180px;border-color:var(--accent)}
+@media(max-width:1099px){.r07-workbench dialog.r07-ai-config{inset:0;height:100dvh}.r07-ai-config-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}.r07-ai-config-guide{grid-column:1/-1}}
+@media(max-width:700px){.r07-ai-config-grid{display:block}.r07-ai-config-grid>section{overflow:visible;margin-bottom:12px}.r07-ai-config-footer{flex-wrap:wrap}.r07-ai-config-footer p{flex-basis:100%}}

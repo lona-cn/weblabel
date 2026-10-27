@@ -167,6 +167,8 @@ sh ./launch.sh --data-dir "/home/你的用户名/WebLabel数据"
 
 平台管理员打开“AI 审校”中的“服务端模型配置”，读取本机操作者已准备的固定 Host 预设，明确选择后保存。网页只提交 configuration_hash，不接收秘密、路径、启动参数；不会登录、下载权重或运行模型。空列表/配置不可用时继续人工标注。写入未知时只读 GET 原 profile，比较 profile/provider/model/auth/capabilities 和哈希；404 仍可能在途，不能自动重写。静态 ready/not_run 不是 live_passed，项目策略和逐次 preview/consent 仍必需。
 
+在工作台的“AI 审校”侧栏选择“展开配置与提示”，可在大视图同时查看当前图片、已选对象的只读 canonical 轮廓、完整 model_id、配置/验证状态、三个任务和指令。未选对象时范围为当前版本全部对象；实际外发范围仍以服务器授权预览为准。关闭或按 Escape 返回原侧栏，保留选择和输入；确认运行范围只进入授权预览，不自动开始模型运行。
+
 具有项目写权限者对已运行产生的固定建议逐项查看差异，可拒绝单项或选中项；拒绝独立持久化 journal，不改正式文档、不产生几何 undo。接受/撤销仍通过 Native 命令和 SaveRequest 同事务。已接受项先撤销并确认保存才能拒绝；拒绝项后续接受返回 CHANGE_REJECTED。未知拒绝保留 set/operation/有序 change_ids，只读查询同一 operation 的完整 journal，不重新 POST，不凭汇总 rejected IDs 当原请求确认。本轮未授权真实账号或模型运行；完整接口见[API参考](api-reference.md)。
 
 ### 8. 下次使用密码登录
