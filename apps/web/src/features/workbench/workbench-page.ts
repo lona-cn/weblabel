@@ -193,6 +193,51 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   shell.append(header, contextBar, workspace, saveRoot, transferDetails, reviewDetails, managementDetails, activityDetails, helpRoot, assetsDialog.element, inspectorDialog.element, aiConfigDialog.element); root.append(shell);
   const cleanup = [mountToolbarView(toolbar, state, port, signal), mountObjectsView(objectsRoot, state, port, signal), mountAttributesView(attributesRoot, state, port, signal), mountSaveView(saveRoot, state, port, recovery, signal), unsubscribeAiConfig];
   const ai = mountAiWorkbenchView(aiRoot, state, port, signal, context.navigate);
+  const activityDialog = createDialog({ id: 'r07-activity-expanded', title: '自愿工时与运行摘要', testId: 'activity-expanded', signal });
+  activityDialog.element.classList.add('r07-activity-expanded');
+  const activityContext = element('p', undefined, 'r07-activity-context');
+  const activityColumn = element('section', undefined, 'r07-activity-card'), outcomeColumn = element('section', undefined, 'r07-activity-card');
+  const outcomeSlot = element('div'), noOutcome = element('div');
+  noOutcome.setAttribute('role', 'status');
+  noOutcome.append(element('h3', '运行结果 · 决策记录'), element('p', '当前图片没有匹配的运行摘要；未记录的工时和费用不填零。'));
+  const activityOutcome = aiRoot.querySelector<HTMLElement>('[data-testid="ai-outcome"]')!;
+  const activityRunStatus = aiRoot.querySelector<HTMLElement>('[data-testid="ai-status"]')!, activityRunStatusHome = activityRunStatus.parentElement!;
+  activityColumn.append(element('h3', '工时记录')); outcomeColumn.append(outcomeSlot, noOutcome);
+  activityDialog.content.classList.add('r07-activity-grid'); activityDialog.content.append(activityColumn, outcomeColumn);
+  activityDialog.element.insertBefore(activityContext, activityDialog.content);
+  const activityClose = activityDialog.element.querySelector<HTMLButtonElement>('button')!; activityClose.textContent = '返回工作台';
+  const activityFooter = element('footer', undefined, 'r07-activity-footer');
+  activityFooter.append(element('p', '工时由本人自愿记录；运行结果不代表准确率或人工修正归因。'), activityClose);
+  activityDialog.element.append(activityFooter); shell.append(activityDialog.element);
+  let activityReturnScroll: { element: Element; top: number; left: number } | null = null;
+  function restoreActivityScroll() {
+    if (!activityReturnScroll) return;
+    activityReturnScroll.element.scrollTop = activityReturnScroll.top;
+    activityReturnScroll.element.scrollLeft = activityReturnScroll.left;
+    activityReturnScroll = null;
+  }
+  function renderActivityContext() {
+    if (!activityDialog.element.open) return;
+    const run = ai.getRunScope(), loaded = state.loaded;
+    const matches = !!run && !!loaded && run.projectId === state.projectId && run.assetRevisionId === state.assetId && run.ontologyVersionId === loaded.ontology.ontology_version_id;
+    activityContext.textContent = [state.project?.name ?? '项目', loaded?.media.original_name ?? '未选择图片', state.fixedTask ? '任务 ' + state.fixedTask.task_id : '未关联任务', matches ? '当前图片有匹配运行' : '当前图片无匹配运行'].join(' · ');
+    outcomeSlot.hidden = !matches; noOutcome.hidden = matches;
+  }
+  const activityLauncher = action('展开工时与运行摘要', 'activity-expand', signal, () => {
+    if (!sessionCurrent(state) || activityDialog.element.open) return;
+    const scrolling = document.scrollingElement;
+    if (scrolling) { activityReturnScroll = { element: scrolling, top: scrolling.scrollTop, left: scrolling.scrollLeft }; scrolling.scrollTop = 0; scrolling.scrollLeft = 0; }
+    port.cancelGesture(); activityColumn.append(activityRoot); outcomeSlot.append(activityRunStatus, activityOutcome);
+    try { activityDialog.open(activityLauncher); }
+    catch (cause) { activityDetails.append(activityRoot); activityRunStatusHome.prepend(activityRunStatus); aiRoot.append(activityOutcome); restoreActivityScroll(); throw cause; }
+    state.modal = true; renderActivityContext(); state.notify();
+  });
+  activityDetails.insertBefore(activityLauncher, activityRoot);
+  activityDialog.element.addEventListener('close', () => {
+    activityDetails.append(activityRoot); activityRunStatusHome.prepend(activityRunStatus); aiRoot.append(activityOutcome);
+    state.modal = !!shell.querySelector('dialog[open]'); state.notify(); restoreActivityScroll();
+  }, { signal });
+  cleanup.push(state.subscribe(renderActivityContext));
   aiRoot.insertBefore(aiConfigLauncher, aiRoot.firstElementChild?.nextSibling ?? null);
   cleanup.push(mountActivityView(activityRoot, shell, state, ai.getRunScope, signal), mountHelpView(helpRoot, state, port, signal));
   mountEditorKeyboard(center, state, port, signal);

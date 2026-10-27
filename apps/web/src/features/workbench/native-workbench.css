@@ -89,3 +89,23 @@
 .r07-workbench .r07-drawer-left>button{position:static;width:auto;min-width:80px;margin:0 0 12px}
 .r07-drawer-left>div{grid-column:1 / -1;min-height:0;overflow:auto}
 .r07-drawer-left .r07-assets>h2,.r07-drawer-left .r07-assets>.r07-button-row{display:none}
+
+.r07-workbench dialog.r07-activity-expanded{position:fixed;inset:56px 0 0;width:100vw;height:calc(100dvh - 56px);max-width:none;max-height:none;margin:0;padding:0;border:0;border-radius:0;background:var(--surface-0);overflow:hidden}
+.r07-workbench dialog.r07-activity-expanded[open]{display:flex;flex-direction:column}
+.r07-workbench dialog.r07-activity-expanded::backdrop{background:transparent}
+.r07-activity-expanded>h2{font-size:24px;margin:0;padding:16px 20px 0}
+.r07-activity-context{padding:0 20px;color:var(--muted)}
+.r07-activity-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:16px;flex:1;min-height:0;padding:16px 20px;overflow:auto}
+.r07-activity-card{min-width:0;padding:16px;border:1px solid var(--border);border-radius:6px;background:var(--surface-1)}
+.r07-activity-card>h3,.r07-activity-card [data-testid=ai-outcome]>h3{margin:0 0 12px}
+.r07-activity-expanded [data-testid=activity-panel]>h2{display:none}
+.r07-activity-expanded [data-testid=activity-panel] label{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:44px}
+.r07-activity-expanded [data-testid=activity-panel] button{min-height:44px;margin:4px 8px 4px 0}
+.r07-activity-expanded :is([data-testid=activity-totals],[data-testid=ai-outcome] dl){display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;margin:12px 0;border:1px solid var(--border);border-radius:5px}
+.r07-activity-expanded :is([data-testid=activity-totals],[data-testid=ai-outcome] dl) :is(dt,dd){margin:0;padding:6px 10px;border-bottom:1px solid var(--border)}
+.r07-activity-expanded :is([data-testid=activity-totals],[data-testid=ai-outcome] dl) dt{color:var(--muted)}
+.r07-activity-footer{display:flex;align-items:center;gap:12px;padding:12px 20px;border-top:1px solid var(--border);background:var(--surface-1)}
+.r07-activity-footer p{flex:1;color:var(--muted)}
+.r07-activity-footer button{min-width:170px;min-height:44px}
+@media(max-width:1099px){.r07-workbench dialog.r07-activity-expanded{inset:0;height:100dvh}.r07-activity-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.r07-activity-footer{flex-wrap:wrap}.r07-activity-footer p{flex-basis:100%}.r07-activity-footer button{width:100%}}
