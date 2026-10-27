@@ -57,8 +57,10 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
   const mediaMore = action('继续读取媒体', () => void loadPage('media', mediaCursor), 'task-media-more');
   const memberRefresh = action('刷新可选成员', () => void loadPage('members', null), 'task-members-refresh');
   const memberMore = action('继续读取成员', () => void loadPage('members', memberCursor), 'task-members-more');
+  const selectionNote = element('p'); selectionNote.setAttribute('role', 'status');
   const createButton = element('button', '创建任务'); createButton.type = 'submit'; createButton.className = 'primary';
-  creation.append(field('图片版本', assetSelect), mediaRefresh, mediaMore, field('类别规范版本', ontologySelect), field('指派项目标注者', assigneeSelect), memberRefresh, memberMore, createButton);
+  creation.append(field('图片版本', assetSelect), mediaRefresh, mediaMore, field('类别规范版本', ontologySelect), field('指派项目标注者', assigneeSelect), memberRefresh, memberMore, selectionNote, createButton);
+  for (const select of [assetSelect, assigneeSelect]) select.addEventListener('change', render, { signal: life.signal });
   const creationDetails = element('details', undefined, 'review-task-creation'); creationDetails.append(element('summary', '创建标注任务'), creation);
   const listRoot = element('div', undefined, 'review-task-list'); const columns = element('div', undefined, 'review-task-columns'); columns.setAttribute('aria-hidden', 'true');
   for (const label of ['任务', '图片', '固定规范', '标注者', '状态', '提交版本', '租约信息', '操作']) columns.append(element('span', label));
@@ -93,7 +95,12 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
     unknown.replaceChildren();
     for (const [name, value] of [['创建结果尚未确认；不能重复创建', writes.create], ['租约操作结果未知；任务刷新不会解锁租约写入', writes.leaseWrite], ['提交结果未知；固定原请求只读核对', writes.pending]] as const) if (value) { const block = element('section'); if (value === writes.create) block.dataset.testid = 'task-create-unknown'; if (value === writes.leaseWrite && writes.leaseWrite?.action === 'acquire') block.dataset.testid = 'task-claim-unknown'; block.append(element('p', name), details('固定原请求', value), action('只读核对任务', () => { if (current() && !busy) void refresh().catch(fail); })); unknown.append(block); }
     creationDetails.hidden = creation.hidden = role !== 'admin';
-    for (const select of [assetSelect, ontologySelect, assigneeSelect]) select.disabled = busy || !!writes.create || !current(); createButton.disabled = busy || !!writes.create || !current();
+    const staleMedia = !!assetSelect.value && !media.some(item => item.asset_revision_id === assetSelect.value);
+    const staleMember = !!assigneeSelect.value && !members.some(item => item.user_id === assigneeSelect.value);
+    selectionNote.hidden = !staleMedia && !staleMember;
+    selectionNote.textContent = staleMedia || staleMember ? `所选${[staleMedia && '图片', staleMember && '成员'].filter(Boolean).join('和')}尚未在已读取分页中确认；请继续读取或重新选择后创建。` : '';
+    for (const select of [assetSelect, ontologySelect, assigneeSelect]) select.disabled = busy || !!writes.create || !current();
+    createButton.disabled = busy || !!writes.create || !current() || staleMedia || staleMember;
     mediaMore.hidden = mediaReady && mediaCursor === null; memberMore.hidden = membersReady && memberCursor === null;
     for (const button of [mediaRefresh, mediaMore, memberRefresh, memberMore]) button.disabled = busy || pageBusy.size > 0 || !current();
     const scope = context.getScope();
@@ -110,6 +117,11 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
       tasks = cursor === null ? page.items : [...new Map([...tasks, ...page.items].map(task => [task.task_id, task])).values()]; taskCursor = page.next_cursor; tasksReady = true;
     } finally { if (life.alive && sequence === taskRead) { taskLoading = false; render(); } }
   }
+  function updateChoices(select: HTMLSelectElement, rows: { value: string; text: string; disabled?: boolean }[]) {
+    const selected = select.value, previous = select.selectedOptions[0];
+    if (selected && previous && !rows.some(row => row.value === selected)) rows.push({ value: selected, text: previous.text, disabled: true });
+    options(select, rows, selected);
+  }
   async function loadPage(kind: 'members' | 'media', cursor: string | null) {
     if (!current() || role !== 'admin' || busy || pageBusy.has(kind)) return; pageBusy.add(kind); render();
     try {
@@ -118,13 +130,13 @@ export function mountReviewPanel(root: HTMLElement, context: ReviewMountContext)
         const qualified = page.items.filter(item => ['admin', 'annotator'].includes(item.role));
         members = cursor === null ? qualified : [...new Map([...members, ...qualified].map(item => [item.user_id, item])).values()];
         memberCursor = page.next_cursor; membersReady = true;
-        options(assigneeSelect, [{ value: '', text: '选择项目成员' }, ...members.map(item => ({ value: item.user_id, text: `${item.username} · ${item.user_id}` }))]);
+        updateChoices(assigneeSelect, [{ value: '', text: '选择项目成员' }, ...members.map(item => ({ value: item.user_id, text: `${item.username} · ${item.user_id}` }))]);
       } else {
         const page = await reviewApi.assetsPage(context.projectId, cursor, reads.signal); if (!current()) return;
         if (page.items.some(item => item.project_id !== context.projectId)) throw new Error('媒体范围不匹配。');
         media = cursor === null ? page.items : [...new Map([...media, ...page.items].map(item => [item.asset_revision_id, item])).values()];
         mediaCursor = page.next_cursor; mediaReady = true;
-        options(assetSelect, [{ value: '', text: '选择图片版本' }, ...media.map(item => ({ value: item.asset_revision_id, text: `${item.original_name} · ${item.asset_revision_id}` }))]);
+        updateChoices(assetSelect, [{ value: '', text: '选择图片版本' }, ...media.map(item => ({ value: item.asset_revision_id, text: `${item.original_name} · ${item.asset_revision_id}` }))]);
       }
     } catch (reason) { if (current()) fail(reason); } finally { pageBusy.delete(kind); render(); }
   }

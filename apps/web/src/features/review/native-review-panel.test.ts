@@ -75,6 +75,25 @@ function selectLabel(root: HTMLElement, name: string, value: string) {
   const select = [...root.querySelectorAll('label')].find(label => label.firstChild?.textContent === name)!.control as HTMLSelectElement;
   select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); return select;
 }
+it.each(['media', 'member'] as const)('preserves paged creation selections across %s refresh without treating unconfirmed choices as current', async kind => {
+  const view = fixture(); admin(view);
+  const image = { project_id: view.task.project_id, asset_id: 'asset', asset_revision_id: 'image', original_name: 'image.png', original_sha256: 'a'.repeat(64), canonical_sha256: 'a'.repeat(64), canonical_width: 20, canonical_height: 20, exif_orientation: 1, original_to_canonical: [1, 0, 0, 0, 1, 0, 0, 0, 1], source_group_id: 'group' };
+  vi.mocked(reviewApi.assetsPage).mockImplementation(async (_project, cursor) => cursor ? { items: [{ ...image, asset_revision_id: 'later-image' }], next_cursor: null } : { items: [image], next_cursor: 'next' });
+  vi.mocked(api.members).mockImplementation(async (_project, cursor) => cursor ? { items: [{ user_id: 'later-member', username: '后页成员', role: 'annotator' }], next_cursor: null } : { items: [{ user_id: 'actor', username: '本人', role: 'admin' }], next_cursor: 'next' });
+  view.mount();
+  const more = kind === 'media' ? '继续读取媒体' : '继续读取成员', refresh = kind === 'media' ? '刷新可选媒体' : '刷新可选成员';
+  const label = kind === 'media' ? '图片版本' : '指派项目标注者', selected = kind === 'media' ? 'later-image' : 'later-member';
+  await vi.waitFor(() => expect(button(view.root, more).hidden).toBe(false)); button(view.root, more).click();
+  await vi.waitFor(() => expect(view.root.textContent).toContain(selected));
+  const select = selectLabel(view.root, label, selected); expect(select.value).toBe(selected);
+  button(view.root, refresh).click();
+  await vi.waitFor(() => { expect(select.value).toBe(selected); expect(select.selectedOptions[0].disabled).toBe(true); });
+  expect(button(view.root, '创建任务').disabled).toBe(true);
+  expect(view.root.textContent).toContain('尚未在已读取分页中确认');
+  button(view.root, more).click();
+  await vi.waitFor(() => { expect(select.value).toBe(selected); expect(select.selectedOptions[0].disabled).toBe(false); });
+  expect(button(view.root, '创建任务').disabled).toBe(false);
+});
 it('retains an unknown task creation target and does not create again after readonly refresh', async () => {
   const view = fixture(); admin(view); const create = vi.spyOn(reviewApi, 'createTask').mockRejectedValue(new TypeError('ACK lost')); view.mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain('接收者 · target')); selectLabel(view.root, '图片版本', 'image'); selectLabel(view.root, '类别规范版本', 'ontology'); selectLabel(view.root, '指派项目标注者', 'target');
