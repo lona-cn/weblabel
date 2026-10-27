@@ -12,6 +12,7 @@ export interface ProjectSnapshot {
 }
 export interface ProjectController {
   getSnapshot(): ProjectSnapshot;
+  hasPublicationAck(): boolean;
   subscribe(listener: () => void): () => void;
   listing(): Promise<void>;
   configure(project: Project): Promise<void>;
@@ -130,6 +131,7 @@ export function createProjectController(onOpen: (project: Project) => void, auth
   }
   return {
     getSnapshot: () => state,
+    hasPublicationAck: () => publicationAck !== null,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     listing, configure, submit, reconcile,
     edit(next: Partial<Pick<ProjectSnapshot, 'name' | 'labels' | 'guidelines'>>) { if (!frozen()) patch(next); },

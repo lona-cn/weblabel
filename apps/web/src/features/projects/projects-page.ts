@@ -166,7 +166,15 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
       }); manage.disabled = !sessionCanManage(context, project.project_id) || s.busy; actions.append(manage);
       row.append(el('td', project.name), el('td', ({ admin: '项目管理员', annotator: '标注员', reviewer: '审核员', viewer: '只读员' } as Record<string, string>)[project.role ?? ''] ?? '权限未知'), actions); listing.body.append(row);
     }
-    title.textContent = s.selected ? `${s.selected.name} · 不可变规范配置` : s.confirmed ? '项目已创建 · 补充规范' : '新建项目';
+    const unknownVersionReview = s.unknown === 'ontology' && !controller.hasPublicationAck() && !!s.selected && !!s.baseline;
+    const focusWasInEditor = unknownVersionReview && !columns.hidden && columns.contains(document.activeElement);
+    columns.hidden = unknownVersionReview;
+    if (version.element.parentElement !== (unknownVersionReview ? actions : editor)) {
+      if (unknownVersionReview) actions.prepend(version.element);
+      else editor.insertBefore(version.element, labels);
+    }
+    title.textContent = unknownVersionReview ? `${s.selected!.name} · 发布结果未知` : s.selected ? `${s.selected.name} · 不可变规范配置` : s.confirmed ? '项目已创建 · 补充规范' : '新建项目';
+    if (focusWasInEditor) title.focus();
     if (name.control.value !== s.name) name.control.value = s.name; name.control.readOnly = frozen || !!s.selected || !!s.confirmed;
     if (guidelines.control.value !== s.guidelines) guidelines.control.value = s.guidelines; guidelines.control.readOnly = frozen;
     budget.textContent = `已配置 ${s.labels.length} 个类别 · ${s.labels.reduce((count, label) => count + label.attributes.length, 0)} 个属性。名称 / 属性键 ≤128 字节；文本默认值 ≤4096 字节；指南 ${new TextEncoder().encode(s.guidelines).byteLength}/65536 UTF-8 字节。null 为显式空值，"" 为空字符串。`;
@@ -202,7 +210,7 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
       }
       if (comparison.changes.length) differences.append(diff.wrap);
       else { const unchanged = el('p', '与固定版本语义一致，没有类别、属性或指南变更。'); unchanged.dataset.testid = 'ontology-diff-unchanged'; differences.append(unchanged); }
-      differences.append(el('p', s.unknown ? '发布结果未知：原发布输入已保留，不自动重发。相似版本不能证明属于此次发布。' : '发布只产生新的固定规范，不修改已发布版本。'));
+      differences.append(el('p', s.unknown ? controller.hasPublicationAck() ? '发布已确认，后续核对未完成。请只读核对，不会重复发布。' : '发布结果未知：原发布输入已保留，不自动重发。相似版本不能证明属于此次发布。' : '发布只产生新的固定规范，不修改已发布版本。'));
     }
   }
   form.addEventListener('submit', event => { event.preventDefault(); void controller.submit().then(() => { if (scope.current() && controller.getSnapshot().error && !controller.getSnapshot().unknown) summary.node.focus(); }); }, { signal: scope.signal });
