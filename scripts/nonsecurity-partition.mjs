@@ -10,7 +10,7 @@ const inputs = [
   'pnpm-workspace.yaml', 'vitest.config.ts', 'apps/web/package.json', 'apps/web/tsconfig.json',
   'apps/web/src', 'packages/contracts/generated',
 ];
-// Reviewed: geometry t03, editor t04/t12/commercial projection, the exact format cases and six Web files named in verify.mjs.
+// Reviewed: geometry t03, editor t04/t12/commercial projection, exact domain/format cases and eight Web files named in verify.mjs.
 // Other tests, their fixtures, live/model work and GPU performance remain unreviewed.
 const reviewedFingerprint = '1f50c829d36e9ca69c2be9c7abc11c4a4670bbf1fe93d107981702faab3a6745';
 const sha = value => createHash('sha256').update(value).digest('hex');

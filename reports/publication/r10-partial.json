@@ -77,6 +77,12 @@
     "guard": "The 284 fingerprinted input files include dependencies and do not represent 284 individually reviewed tests. Security topics, other unaudited tests, model execution and GPU performance remain excluded.",
     "limits": "Even with the selected tests passing, the actual gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2. The public commit itself was not independently rebuilt or retested."
   },
+  "audited_domain_followup": {
+    "scope": "Five reviewed annotation-domain cases were run individually with exact Rust names, and the U07 publication and U44 help regressions were added to the reviewed Web subset. Other cases in the mixed targets, including security and symlink cases, were not run.",
+    "actual_local_run": {"geometry": "7/7", "editor_core": "39/39", "domain_cases": "5/5", "format_cases": "8/8", "web": "14/14", "selected_total": "73/73", "failed": 0},
+    "fingerprint": "The 286 fingerprinted input files include dependencies and do not represent 286 individually reviewed tests. The public checkout input fingerprint matched the locally exercised input snapshot.",
+    "limits": "The actual gate returned blocked / NONSECURITY_PARTITION_INCOMPLETE / exit 2 because other tests remain unreviewed. Security topics, model execution and GPU performance were not run. The public commit itself was not independently rebuilt or retested."
+  },
   "save_recovery": {
     "reproduction": "A real native save committed with HTTP 200 before its response was deliberately dropped. The original pending operation survived continued local editing and switching images. Before the fix, unknown was not surfaced in the primary status and explicit saving of the newer edit did not send a new request.",
     "focused_tests": {"passed": 6, "failed": 0, "filtered": 43, "web_typescript_exit": 0, "test_typescript_exit": 0, "note": "Two behavior cases failed before the first fix; the primary-status case failed before its later fix."},
