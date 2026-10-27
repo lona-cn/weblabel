@@ -2,7 +2,7 @@
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
   "previous_public_source_commit": "ea7487a820be0f901e4cbe47a98d94d993e18f49",
-  "public_base_commit": "19df2fcba64129eb7d5d00d0fd99696889e4445c",
+  "public_base_commit": "53b094403bfb44012c7cf94c0297a8dcb0c348ae",
   "provenance": "The nineteen changed product and test Git blobs match locally exercised source snapshots; individual smokes below identify which predate the latest display and runner changes. The public commit itself was not rebuilt or directly measured. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
@@ -24,7 +24,7 @@
     "windows_test": "failed: descendant remained observable after native process reclamation",
     "linux_partial_copy": "passed in the Rust workspace at the earlier public commit",
     "container": "skipped",
-    "scope_deviation": "The pre-existing workflow attempted the user-skipped security topic; its results are not security acceptance and the topic is not repeated during this session."
+    "scope_deviation": "The pre-existing workflow attempted the user-skipped security topic; its results are not security acceptance. Additional prior synthetic HTTP/MCP and UI scope deviations are recorded separately below."
   },
   "windows_native_cleanup": {
     "real_child_handle_before_fix": {"passed": 0, "failed": 1, "exit": 101, "observation": "The original crash-descendant process handle was not yet signaled when reclaim returned."},
@@ -58,6 +58,7 @@
     "cleanup": "The owned browser and fixture stopped; synthetic default data and controller sources were archived and checked by member hash before the isolated worktree was removed without force."
   },
   "earlier_fixture_scope_deviation": "The earlier handoff and member/terminal and partial-import UI fixture invocations used a shared seed helper that attempted unauthorized and cross-origin negative controls despite the user-skipped security scope. Earlier and latest hardware GPU runs also executed a bootstrap response password-omission assertion through their synthetic fixture despite the security skip flag. These are not security acceptance; no real user credentials were used. The GPU fixture now respects the skip flag, and the unpartitioned full runner fails closed before launching commands when security is skipped.",
+  "additional_prior_scope_deviation": "Earlier R10 synthetic HTTP/MCP tests also exercised unauthorized/forbidden, secret-redaction, unapproved-destination, private-grant, policy/token-revocation, budget and cross-project token negative cases despite the user-skipped security scope. An earlier project-state UI check also exercised synthetic 403 denial and policy negative states. These are not security acceptance and were not rerun here; no real credentials or private business data were used.",
   "security_skip_runner_guard": {
     "behavior": "With --skip-security, fast, integration, browser and release return blocked with SECURITY_SKIP_PARTITION_INCOMPLETE before starting child commands because their security cases are not fully partitioned. GPU and offline live dispatch retain their existing scope.",
     "focused_test": "One selected regression started all four actual CLI entry points and verified exit 2, blocked status, security skipped and zero commands. No user-skipped security cases were executed by this test.",
