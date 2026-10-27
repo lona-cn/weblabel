@@ -158,7 +158,7 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
     summary.set(listError ? `项目列表读取失败：${s.error}` : s.error); notice.textContent = s.notice ?? ''; reload.disabled = s.busy;
     loading.textContent = s.busy && !s.listingReady ? '正在读取项目列表…尚未取得列表，不能判断是否为空；读取成功前不能创建。'
       : s.busy ? '正在处理…' : !s.listingReady ? '尚未取得项目列表，不能判断是否为空；读取成功前不能创建。'
-      : s.projects.length ? '' : '尚无项目。请先新建项目并定义类别与属性。';
+      : s.projects.length ? '' : '项目列表已读取，当前没有可访问的项目。请先新建项目并定义类别与属性。';
     listing.body.replaceChildren();
     for (const project of s.projects) {
       const row = el('tr'), actions = el('td'); actions.className = 'accounts-actions';
