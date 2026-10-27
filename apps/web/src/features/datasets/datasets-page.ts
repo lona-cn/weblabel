@@ -13,14 +13,14 @@ type Plan = { batches: PlannedItem[][]; seed: string };
 type Snapshot = { id: string; manifest: string; ontology: string; batch: number; request: string };
 type Job = { id: string; snapshot: string; format: Format; state: string; artifact: Artifact | null; error: string | null };
 type Intent = { kind: 'snapshot' | 'export'; operationId: string; path: string; body: string; uncertain: boolean; sending: boolean };
-type Delivery = { ontology: string; format: Format; pages: Page[]; pageIndex: number; choices: Map<string, Choice>; seed: string; plan: Plan | null; planConfirmed: boolean; batch: number; snapshots: Map<number, Snapshot>; history: Snapshot[]; jobs: Job[]; intents: Intent[]; listeners: Set<() => void> };
+type Delivery = { ontology: string; format: Format; pages: Page[]; pageIndex: number; visited: Set<string>; choices: Map<string, Choice>; seed: string; plan: Plan | null; planConfirmed: boolean; batch: number; snapshots: Map<number, Snapshot>; history: Snapshot[]; jobs: Job[]; intents: Intent[]; listeners: Set<() => void> };
 // View-local intent retention is deliberately separate from annotation SaveQueue.
 const deliveries = new Map<string, Delivery>();
 export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContext): () => void {
   const life = lifetime(context.signal); const auth = context.session.getSnapshot(); const session = auth.kind === 'authenticated' ? auth.session : null;
   const action = actions(life.signal);
   const key = JSON.stringify([context.projectId, session?.user_id]); let delivery = deliveries.get(key);
-  if (!delivery) { delivery = { ontology: '', format: 'native', pages: [], pageIndex: 0, choices: new Map(), seed: '17', plan: null, planConfirmed: false, batch: 0, snapshots: new Map(), history: [], jobs: [], intents: [], listeners: new Set() }; deliveries.set(key, delivery); }
+  if (!delivery) { delivery = { ontology: '', format: 'native', pages: [], pageIndex: 0, visited: new Set(), choices: new Map(), seed: '17', plan: null, planConfirmed: false, batch: 0, snapshots: new Map(), history: [], jobs: [], intents: [], listeners: new Set() }; deliveries.set(key, delivery); }
   const state = delivery; let validScope = true, busy = false, revision = 0, freezeConfirmed = false, failedPage: { cursor: string | null; index: number } | null = null, timer: number | null = null;
   let loss: { snapshot: string; format: Format; report: LossReport } | null = null, ack = false;
   let viewedSnapshot: Snapshot | null = null;
@@ -75,7 +75,8 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     newRange.disabled = disabled || state.intents.some(intent => intent.sending);
     returnRange.hidden = viewedSnapshot === null; returnRange.disabled = disabled;
     ontology.disabled = disabled || state.snapshots.size > 0; ontology.value = state.ontology; read.disabled = disabled || !state.ontology || state.snapshots.size > 0;
-    summary.textContent = `已浏览 ${new Set(state.pages.flatMap(page => page.items.map(row => row.media.asset_revision_id))).size} 张 · 纳入 ${selected().filter(choice => choice.disposition === 'include').length} · 明确排除 ${selected().filter(choice => choice.disposition === 'exclude').length}；未浏览图片与范围外图片不会自动纳入或排除。`;
+    let included = 0, excluded = 0; for (const choice of state.choices.values()) { if (choice.disposition === 'include') included++; else if (choice.disposition === 'exclude') excluded++; }
+    summary.textContent = `已浏览 ${state.visited.size} 张 · 纳入 ${included} · 明确排除 ${excluded} · 范围外 ${state.visited.size - included - excluded}；未浏览图片与范围外图片不会自动纳入或排除。`;
     previous.disabled = disabled || !state.pageIndex; next.disabled = disabled || !page?.next; pageNumber.textContent = `第${state.pageIndex + 1}页`; include.disabled = exclude.disabled = disabled || !page || !!state.snapshots.size; retry.hidden = !failedPage; retry.disabled = disabled;
     seed.disabled = disabled || state.snapshots.size > 0; previewPlan.disabled = disabled || state.snapshots.size > 0 || !selected().length; confirmPlan.hidden = !state.plan; confirmPlan.disabled = disabled || state.planConfirmed || state.snapshots.size > 0; batch.parentElement!.hidden = !state.plan;
     const batchOptions = state.plan?.batches.map((_, index) => ({ value: String(index), text: `批${index + 1}${state.snapshots.has(index) ? ' · 已冻结' : ' · 尚未冻结'}` })) ?? [];
@@ -105,7 +106,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     const archived = new Set(state.history.map(fixed => fixed.id));
     for (const fixed of state.snapshots.values()) if (!archived.has(fixed.id)) { state.history.push(fixed); archived.add(fixed.id); }
     // Only the editable selection draft is renewed; immutable history and all original receipts remain.
-    state.ontology = ''; state.pages = []; state.pageIndex = 0; state.choices = new Map();
+    state.ontology = ''; state.pages = []; state.pageIndex = 0; state.visited.clear(); state.choices = new Map();
     state.plan = null; state.planConfirmed = false; state.batch = 0; state.snapshots = new Map();
     viewedSnapshot = null; failedPage = null; invalidate(); freezeDetails.replaceChildren(); planRoot.replaceChildren();
     renderRows(); render(); ontology.focus();
@@ -155,7 +156,8 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     if (!canEdit() || busy || !state.ontology) return; const fixed = revision, fixedOntology = state.ontology; busy = true; render();
     try {
       const page = await api.projectAnnotationHeads(context.projectId, fixedOntology, cursor, reads.signal); if (!current() || fixed !== revision) return;
-      if (page.items.some(row => row.media.project_id !== context.projectId || (row.head && row.head.ontology_version_id !== fixedOntology)) || (page.next_cursor !== null && (page.next_cursor === cursor || state.pages.some(value => value.cursor === page.next_cursor)))) throw new Error('分页摘要范围无效。');
+      if (page.items.some(row => row.media.project_id !== context.projectId || (row.head && row.head.ontology_version_id !== fixedOntology)) || (page.next_cursor !== null && (page.next_cursor === cursor || state.pages.some((value, previous) => previous < index && value.cursor === page.next_cursor)))) throw new Error('分页摘要范围无效。');
+      for (const row of page.items) state.visited.add(row.media.asset_revision_id);
       state.pages = [...state.pages.slice(0, index), { cursor, items: page.items, next: page.next_cursor }]; state.pageIndex = index; failedPage = null; error.hidden = true; renderRows();
     } catch (cause) { if (current() && fixed === revision) { failedPage = { cursor, index }; showError(cause); } } finally { busy = false; render(); }
   }
@@ -240,7 +242,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     try { if (state.ontology) await api.projectAnnotationHeads(context.projectId, state.ontology, null, reads.signal); if (current()) showError(new Error(`只读状态已观察；当前API未提供operation ${intent.operationId}的快照/导出查询证明，保持原请求未知，不重发或声称成功。`)); }
     catch (cause) { if (current()) showError(cause); } finally { busy = false; render(); }
   }
-  ontology.addEventListener('change', () => { if (!canEdit() || busy || state.snapshots.size) return; state.ontology = ontology.value; state.pages = []; state.pageIndex = 0; state.choices = new Map(); state.plan = null; state.planConfirmed = false; state.batch = 0; failedPage = null; invalidate(); freezeDetails.replaceChildren(); renderRows(); render(); }, { signal: life.signal });
+  ontology.addEventListener('change', () => { if (!canEdit() || busy || state.snapshots.size) return; state.ontology = ontology.value; state.pages = []; state.pageIndex = 0; state.visited.clear(); state.choices = new Map(); state.plan = null; state.planConfirmed = false; state.batch = 0; failedPage = null; invalidate(); freezeDetails.replaceChildren(); renderRows(); render(); }, { signal: life.signal });
   seed.addEventListener('input', () => { if (!canEdit() || busy || state.snapshots.size) return; state.seed = seed.value; state.plan = null; state.planConfirmed = false; invalidate(); freezeDetails.replaceChildren(); render(); }, { signal: life.signal });
   batch.addEventListener('change', () => { if (!canEdit() || busy || !state.planConfirmed) return; state.batch = Number(batch.value); viewedSnapshot = null; invalidate(); freezeDetails.replaceChildren(); render(); }, { signal: life.signal });
   format.addEventListener('change', () => { if (!canEdit() || busy) return; state.format = format.value as Format; loss = null; ack = false; revision++; render(); }, { signal: life.signal });

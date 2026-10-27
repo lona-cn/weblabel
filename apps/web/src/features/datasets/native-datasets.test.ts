@@ -45,6 +45,20 @@ it('requires explicit ontology and include/exclude choices, never adding unbrows
   expect(body.items).toEqual([{ asset_revision_id: view.rows[0].media.asset_revision_id, annotation_revision_id: view.rows[0].head!.annotation_revision_id, split: 'train' }]); expect(body.excluded).toEqual([{ asset_revision_id: view.rows[1].media.asset_revision_id, reason: 'user_excluded' }]);
   expect(JSON.stringify(body)).not.toContain(view.rows[2].media.asset_revision_id); expect(testId<HTMLSelectElement>(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`).disabled).toBe(true);
 });
+it('retains visited scope and explicit choices when the first page is refreshed after browsing later pages', async () => {
+  const view = fixture(); await browse(view); button(view.root, '下一页').click();
+  await vi.waitFor(() => expect(view.root.textContent).toContain('image-2.png'));
+  select(testId(view.root, `dataset-disposition-${view.rows[2].media.asset_revision_id}`), 'exclude');
+  const summary = testId<HTMLElement>(view.root, 'dataset-scope-summary');
+  expect(summary.textContent).toContain('已浏览 3 张'); expect(summary.textContent).toContain('明确排除 1');
+  button(view.root, '读取图片范围').click();
+  await vi.waitFor(() => expect(view.root.textContent).toContain('image-0.png'));
+  expect(view.root.textContent).not.toContain('分页摘要范围无效');
+  expect(summary.textContent).toContain('已浏览 3 张'); expect(summary.textContent).toContain('明确排除 1'); expect(summary.textContent).toContain('范围外 2');
+  button(view.root, '下一页').click(); await vi.waitFor(() => expect(view.root.textContent).toContain('image-2.png'));
+  expect(testId<HTMLSelectElement>(view.root, `dataset-disposition-${view.rows[2].media.asset_revision_id}`).value).toBe('exclude');
+  expect(view.writes).toEqual([]);
+});
 it('keeps source groups in the same split when members are explicitly included on later pages', async () => {
   const view = fixture(); await browse(view); select(testId(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`), 'include'); select(testId(view.root, `dataset-split-${view.rows[0].media.asset_revision_id}`), 'val');
   button(view.root, '下一页').click(); await vi.waitFor(() => expect(view.root.textContent).toContain('image-2.png')); select(testId(view.root, `dataset-disposition-${view.rows[2].media.asset_revision_id}`), 'include');
