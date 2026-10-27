@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "scope": "scoped_regressions_and_inherited_synthetic_smokes_not_complete_R10",
-  "public_source_commit": "6c4208e56b3acec64627dfdf6f89975a4404ce0e",
-  "public_base_commit": "eff4262e79e84198e749e2972fcbe4cafff65fbb",
-  "provenance": "The twelve changed product and test Git blobs match the locally exercised source; public documentation is sanitized independently. The public commit itself was not rebuilt or retested. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
+  "previous_public_source_commit": "6c4208e56b3acec64627dfdf6f89975a4404ce0e",
+  "public_base_commit": "fdebc4474eb277237fd475483c6e4fe3383071f4",
+  "provenance": "The fifteen changed product and test Git blobs match the locally exercised snapshots; individual smokes below identify when their source predates the latest save changes. Public documentation is sanitized independently. The public commit itself was not rebuilt or retested. Raw logs, browser profiles, databases and synthetic authentication material remain in the private project archive.",
   "full_release_attempt": {
     "status": "failed",
     "exit": 1,
@@ -41,8 +41,8 @@
     "terminal_event_race": "Two focused regressions failed before and 17 passed after; a real local synthetic run retained cancelled then later progress events while the UI remained cancelled. No response or paid model call was injected.",
     "review": "Real synthetic roles exercised claim, renewal, release, submit, continue, independent fixed-revision approval and a later unapproved head; these are partial U28-U31 evidence, not the complete visual matrix."
   },
-  "current_synthetic_native_manual": {
-    "provenance": "The native release was built and exercised locally; its product and test Git blobs match the public source commit. The public commit itself was not rebuilt.",
+  "earlier_synthetic_native_manual": {
+    "provenance": "This locally built and exercised native release predates the additional save-recovery changes in this publication; it is not a final-source manual smoke.",
     "release_manifest_sha256": "5db9880915a35646d18f0c9ff2d48e1bc640c1fab4ec7a0b7cab0f3124cfe6f0",
     "scope": "Fresh synthetic local data, empty product PATH, no fixture API seeding and no real or paid model calls.",
     "workflow": "Actual browser setup, project/ontology creation, one batch of procedural PNG and EXIF2/6 JPEGs, hardware WebGPU draw, one undo and redo, attribute and decimal geometry edits, local IndexedDB and server ACK, reload, and existing-artifact Native ZIP download.",
@@ -50,21 +50,28 @@
     "export": {"bytes": 3734, "sha256": "ff87812b8ecda9bcee804fe908cf6abc5cd57ab7fa060321e99c6d7469ef8824", "zip_crc": "passed", "independent_reader": "Exact server document, note attribute and xyxy [10.25,20.5,110.75,80.75] matched."},
     "limitations": "The browser recorded four aborted GETs during navigation, no pageerror entries. This one synthetic workflow does not establish all 48 visual states or complete R10. Fixture shutdown forced its own native child, not physical Ctrl+C."
   },
-  "current_synthetic_legacy_handoff": {
-    "scope": "A freshly isolated frozen old launcher used its own default data with synthetic records; the current native release took over the same origin and canonical data. No security negative controls or model calls.",
+  "earlier_synthetic_legacy_handoff": {
+    "scope": "A freshly isolated frozen old launcher used its own default data with synthetic records; the then-current native release took over the same origin and canonical data. This predates the additional save-recovery changes. No security negative controls or model calls.",
     "backup_and_cutover": "The old backup validated before switch; all 40 database table hashes were unchanged immediately after switch, and no new bootstrap was issued.",
     "recovery": "An offline legacy edit created one durable pending operation. Native explicit branch recovery preserved the old branch and pending request; no automatic PUT was observed before the explicit retry. One PUT returned 200; ACK operation, parent and document matched the preserved pending state, and the same actor and accepted revision remained after reload.",
     "limitation": "The browser recorded the response body but not the outgoing request body; exact outgoing bytes are not claimed. Deliberate offline failure and diagnostic wait timeouts were retained in the private evidence.",
     "cleanup": "The owned browser and fixture stopped; synthetic default data and controller sources were archived and checked by member hash before the isolated worktree was removed without force."
   },
-  "earlier_legacy_scope_deviation": "The earlier handoff's shared seed helper attempted unauthorized and cross-origin negative controls despite the user-skipping security scope. They are not security acceptance; the current handoff did not repeat them.",
+  "earlier_fixture_scope_deviation": "The earlier handoff and member/terminal and partial-import UI fixture invocations used a shared seed helper that attempted unauthorized and cross-origin negative controls despite the user-skipped security scope. They are not security acceptance; the later fresh-manual, later handoff and save-recovery controllers did not repeat them.",
+  "save_recovery": {
+    "reproduction": "A real native save committed with HTTP 200 before its response was deliberately dropped. The original pending operation survived continued local editing and switching images. Before the fix, unknown was not surfaced in the primary status and explicit saving of the newer edit did not send a new request.",
+    "focused_tests": {"passed": 6, "failed": 0, "filtered": 43, "web_typescript_exit": 0, "test_typescript_exit": 0, "note": "Two behavior cases failed before the first fix; the primary-status case failed before its later fix."},
+    "native_continued_edit_smoke": "On the earlier save-queue fix, explicitly retrying the exact original request produced a 200 idempotent replay; the later local edit remained dirty. Explicitly saving that edit sent a new operation based on the acknowledged revision, and a server GET after reload matched it. The save-queue blob is unchanged in the final source.",
+    "native_final_primary_status_smoke": "On the final local source, an actual committed HTTP 200 response was dropped and the primary unknown status was observed inside the 1536x1024 viewport. Explicit retry sent the original body byte-for-byte and returned a 200 idempotent replay; the UI then became synced.",
+    "limits": "The browser recorded navigation aborts and the deliberately failed request; no pageerror was recorded. Synthetic fixture shutdown forcibly stopped its own native child. These checks do not establish full R10."
+  },
   "current_hardware_gpu": {
-    "provenance": "Measured locally against product and test Git blobs matching the public source; the public commit was not rebuilt or directly measured.",
+    "provenance": "Measured locally against the final save-fix source snapshot SHA-256 101e26fa7be23889483bea288e04a1ffa5865c1f0b41219c7c7454341a337977; changed product and test blobs match this publication. The public commit itself was not rebuilt or directly measured. Snapshot identity remained unchanged during the run.",
     "status": "passed",
     "adapter": "NVIDIA Blackwell, non-fallback",
     "tests": {"collected": 3, "passed": 3, "failed": 0, "skipped": 0, "flaky": 0},
     "workload": {"sizes": [2000, 10000], "scenarios": 4, "warmups_each": 40, "samples_each": 1000, "raw_rows": 8000},
-    "p95_2000_ms": {"pointer_drag": {"cpu": 2.379, "double_raf": 30.6}, "pan": {"cpu": 1.204, "double_raf": 30.4}, "zoom": {"cpu": 1.269, "double_raf": 30.2}, "committed_edit": {"cpu": 7.133, "double_raf": 30.0}},
+    "p95_2000_ms": {"pointer_drag": {"cpu": 2.359, "double_raf": 30.6}, "pan": {"cpu": 1.165, "double_raf": 30.3}, "zoom": {"cpu": 1.153, "double_raf": 30.2}, "committed_edit": {"cpu": 7.068, "double_raf": 30.0}},
     "limits": "The 10000-box run is supplemental stress, not the 2000-box threshold. Double-rAF is a scheduling proxy, not physical display latency. No GPU timestamps or physical VRAM measurements."
   },
   "verification_scope": "The user-skipped security topic remains not verified. The full release runner is not repeated: its --skip-security option still includes security-related cases in the Rust workspace and web suite.",

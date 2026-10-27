@@ -24,7 +24,7 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     try { await callback(); } catch (reason) { if (!signal.aborted) error.textContent = reportError(reason); }
     finally { busy = false; if (!signal.aborted) update(); }
   };
-  const save = action('保存', 'save-current', signal, () => { const asset = state.assetId, current = port.scopeGuard(); if (port.canSave()) void perform(() => state.queue.flush(asset, () => current() && port.canSave())); });
+  const save = action('保存', 'save-current', signal, () => { const asset = state.assetId, current = port.scopeGuard(); if (port.canSave()) void perform(() => state.queue.flushExplicit(asset, () => current() && port.canSave())); });
   const retry = action('重试原保存', 'save-retry', signal, () => void perform(recovery.retry));
   const rescue = action('下载本地草稿', 'export-local-draft', signal, () => void perform(() => recovery.rescue()));
   const server = action('查看服务器版本（只读）', 'view-server', signal, () => void perform(recovery.viewServer));
@@ -38,7 +38,7 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     if (!port.getHost()) return;
     if (completion.value === 'confirmed_negative') { if (!negative.checked || state.objects.length) return; port.dispatch({ kind: 'set_completion', completion: 'confirmed_negative' }); }
     else port.dispatch({ kind: 'set_completion', completion: 'complete' });
-    const current = port.scopeGuard(); if (port.canSave()) void perform(() => state.queue.flush(state.assetId, () => current() && port.canSave()));
+    const current = port.scopeGuard(); if (port.canSave()) void perform(() => state.queue.flushExplicit(state.assetId, () => current() && port.canSave()));
   });
   const diagnostics = element('details'); diagnostics.dataset.testid = 'save-diagnostic'; const diagnosticText = element('pre'); diagnostics.append(element('summary', '保存技术诊断（上次操作）'), diagnosticText);
   const recoveryBanner = element('section'); recoveryBanner.dataset.testid = 'recovery-banner';
@@ -74,7 +74,8 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
   }
   function update() {
     const snapshot = state.queue.getStatus(state.assetId), record = state.queue.toRecord(state.assetId), current = sessionCurrent(state);
-    status.textContent = PHASE[snapshot.phase] + ' · 本地版本 ' + snapshot.local_generation + ' / 服务器确认 ' + snapshot.synced_generation;
+    const unresolved = !!record?.pending && record.pending_outcome === 'unknown' && !snapshot.saving;
+    status.textContent = (unresolved ? '保存结果未知，原请求已保留' : PHASE[snapshot.phase]) + ' · 本地版本 ' + snapshot.local_generation + ' / 服务器确认 ' + snapshot.synced_generation;
     status.dataset.state = snapshot.phase;
     status.dataset.phase = snapshot.phase; status.dataset.dirty = String(snapshot.dirty);
     if (lastCertificate !== snapshot) {
@@ -87,7 +88,7 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     }
     receipts.textContent = (snapshot.local_commit ? '✓ 本地事务已持久化 · ' + snapshot.local_commit.draft_id + ' / ' + snapshot.local_commit.write_token + ' · 编辑序号 ' + snapshot.local_commit.edit_seq : '本地事务尚未完成或凭证不可用')
       + ' ｜ ' + (snapshot.last_ack ? '服务器 ACK：' + snapshot.last_ack.revision_id + ' · 版本 ' + snapshot.last_ack.generation : '服务器尚未确认') + ' ｜ dirty=' + snapshot.dirty;
-    conflictBanner.hidden = !snapshot.writes_paused && state.recovery?.kind !== 'conflict';
+    conflictBanner.hidden = !snapshot.writes_paused && state.recovery?.kind !== 'conflict' && !unresolved;
     conflictBanner.textContent = record?.pending_outcome === 'unknown' ? '原请求结果未知：后续错误不证明原请求被拒绝。保留 operation、payload、pending、journal；不得换编号或新 lease 包装原请求。' : '版本或原请求待核对；本地草稿已保留，不自动覆盖任一方。';
     save.disabled = busy || !port.canSave() || snapshot.writes_paused;
     retry.disabled = busy || !current || !port.canReconcile() || !(port.canSave() || state.queue.canRetryRetained(state.assetId, () => port.canReconcile()) || state.futureProof);

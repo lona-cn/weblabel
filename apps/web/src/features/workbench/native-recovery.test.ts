@@ -51,6 +51,58 @@ it('replays only the original unknown operation and payload after a new task lea
   expect(f.transport.save).toHaveBeenCalledTimes(2); expect(f.transport.save.mock.calls[1][0]).toEqual(original.request); expect(f.transport.save.mock.calls[1][0].lease).toBeNull();
   expect(f.state.queue.toRecord('asset')!.pending!.operation_id).toBe(original.operation_id);
 });
+it('reports an unconfirmed save immediately after the response is lost, but not while it is in flight', async () => {
+  const f = setup(), root = document.createElement('section'); document.body.append(root);
+  cleanups.push(f.state.queue.subscribe('asset', () => f.state.notify()));
+  mountSaveView(root, f.state, f.port, f.recovery, f.owner.signal);
+  await f.state.queue.whenPersisted('asset');
+  const response = Promise.withResolvers<{ operation_id: string; revision: typeof f.revision; idempotent_replay: boolean }>();
+  f.transport.save.mockReturnValueOnce(response.promise);
+  f.state.queue.enqueue({ asset_revision_id: 'asset', ontology_version_id: 'ontology', generation: 1, document: f.document });
+  const sending = f.state.queue.flush('asset');
+  await vi.waitFor(() => expect(f.state.queue.getStatus('asset').saving).toBe(true));
+  const banner = root.querySelector<HTMLElement>('[data-testid=conflict-banner]')!;
+  expect(banner.hidden).toBe(true);
+  response.reject(new TransportError({ kind: 'network', message: 'synthetic response lost' }));
+  await sending;
+  expect(f.state.queue.toRecord('asset')?.pending_outcome).toBe('unknown');
+  expect(root.querySelector('[data-testid=save-status]')?.textContent).toContain('结果未知');
+  expect(banner.hidden).toBe(false);
+  expect(banner.textContent).toContain('原请求结果未知');
+});
+
+it('explicitly saves a newer edit after reconciling an old ACK and reopening its scope', async () => {
+  const f = setup(), root = document.createElement('section'); document.body.append(root);
+  cleanups.push(f.state.queue.subscribe('asset', () => f.state.notify()));
+  await f.state.queue.whenPersisted('asset');
+  const first = { ...f.document, completion: 'complete' as const };
+  const newer = { ...f.document, objects: [{ ...f.document.objects[0], attributes: { ...f.document.objects[0].attributes, text: 'newer' } }] };
+  f.transport.save.mockRejectedValueOnce(new TransportError({ kind: 'network', message: 'synthetic ACK lost' }))
+    .mockImplementationOnce(async request => ({ operation_id: request.operation_id, revision: { ...f.revision, annotation_revision_id: 'old-ack', document: request.document }, idempotent_replay: true }))
+    .mockImplementationOnce(async request => ({ operation_id: request.operation_id, revision: { ...f.revision, annotation_revision_id: 'new-ack', document: request.document }, idempotent_replay: false }));
+  f.state.queue.enqueue({ asset_revision_id: 'asset', ontology_version_id: 'ontology', generation: 1, document: first });
+  await f.state.queue.flush('asset');
+  const original = f.state.queue.toRecord('asset')!.pending!.request;
+  f.state.queue.enqueue({ asset_revision_id: 'asset', ontology_version_id: 'ontology', generation: 2, document: newer });
+  await f.state.queue.whenPersisted('asset');
+  f.state.loaded = { ...f.state.loaded!, readOnlyPreview: true };
+  f.state.reload = vi.fn(async () => {
+    f.state.scope = {}; f.state.loaded = { ...f.state.loaded!, readOnlyPreview: false };
+    f.state.document = newer; f.state.objects = newer.objects; f.host.getGeneration.mockReturnValue(2);
+    f.state.nativeDocuments.set(f.state.host!, newer);
+  });
+  await f.recovery.retry();
+  expect(f.state.reload).toHaveBeenCalledTimes(1);
+  expect(f.transport.save.mock.calls[1][0]).toEqual(original);
+  expect(f.state.queue.getStatus('asset')).toMatchObject({ dirty: true, local_generation: 2, synced_generation: 1 });
+  await f.state.queue.flush('asset');
+  expect(f.transport.save).toHaveBeenCalledTimes(2);
+  mountSaveView(root, f.state, f.port, f.recovery, f.owner.signal);
+  root.querySelector<HTMLButtonElement>('[data-testid=save-current]')!.click();
+  await vi.waitFor(() => expect(f.transport.save).toHaveBeenCalledTimes(3));
+  expect(f.transport.save.mock.calls[2][0]).toMatchObject({ base_revision_id: 'old-ack', document: newer });
+  await vi.waitFor(() => expect(f.state.queue.getStatus('asset')).toMatchObject({ dirty: false, synced_generation: 2 }));
+});
 it('requires explicit negative confirmation and exposes separate actual local/remote receipts', async () => {
   const f = setup(), root = document.createElement('section'); document.body.append(root); await f.state.queue.whenPersisted('asset');
   f.state.document = { ...f.document, objects: [] }; f.state.objects = [];

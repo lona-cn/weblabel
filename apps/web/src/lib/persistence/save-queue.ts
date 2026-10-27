@@ -353,6 +353,19 @@ export class SaveQueue {
     }
   }
 
+  /** A fresh explicit save may resume a durable newer edit after its ACK scope expired. */
+  async flushExplicit(asset_revision_id: Id, guard: SaveSyncGuard): Promise<void> {
+    const state = this.states.get(asset_revision_id), owner = this.owner;
+    if (!state || !this.writable(owner) || !guard()) return;
+    const continuation = state.ack_continuation;
+    if (continuation?.continueWork && continuation.owner === owner && !continuation.guard() &&
+      this.authorizedWork(state, owner, false) && state.dirty && !state.paused && !state.owner_paused &&
+      !state.pending && !state.in_flight && !state.pump_promise && !state.ack_local_barrier &&
+      !state.save_error && !state.storage_error && !state.conflict && isLocalCommitted(state) &&
+      owner.canPrepareOperation(state.asset_revision_id, state.ontology_version_id) && guard()) state.ack_continuation = null;
+    await this.flush(asset_revision_id, guard);
+  }
+
   /** Read-only eligibility for an original retained request or installed ACK PUT.
    * Scope is caller freshness, never permission to prepare a new operation. */
   canRetryRetained(asset_revision_id: Id, scopeGuard: SaveSyncGuard): boolean {
