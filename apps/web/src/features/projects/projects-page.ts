@@ -25,8 +25,11 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
   }
   const heading = el('div', undefined, 'accounts-heading'); heading.append(el('h1', '项目'));
   const create = button('＋ 新建项目', 'project-create-toggle', scope.signal, () => openCreation(create), true); heading.append(create);
-  const guide = el('ol', undefined, 'accounts-delivery-steps'); guide.setAttribute('aria-label', '首次人工交付四步');
-  for (const text of ['项目规范：定义类别与属性', '导入：图片及已有标注', '标注保存：确认服务端保存', '交付：单图导出或审核后冻结数据集']) guide.append(el('li', text));
+  const guide = el('section', undefined, 'accounts-delivery-guide'), steps = el('ol', undefined, 'accounts-delivery-steps');
+  guide.append(el('h2', '首次人工交付四步'), steps); steps.setAttribute('aria-label', '首次人工交付四步');
+  for (const [index, text] of ['项目规范：定义类别与属性', '导入：图片及已有标注', '标注保存：确认服务端保存', '交付：单图导出或审核后冻结数据集'].entries()) {
+    const item = el('li'), number = el('span', String(index + 1), 'accounts-delivery-number'); number.setAttribute('aria-hidden', 'true'); item.append(number, el('span', text)); steps.append(item);
+  }
   const summary = errorSummary(), notice = status(), loading = status();
   const listing = table(['项目名称', '我的角色', '操作']);
   const reload = button('重新读取项目列表', 'projects-reload', scope.signal, () => {
@@ -49,7 +52,9 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
   const createEntry = button('新建项目与规范（展开）', 'project-create-entry', scope.signal, () => openCreation(createEntry));
   createEntry.classList.add('accounts-project-create-entry');
   const listArea = el('section');
-  listArea.append(guide, el('p', '单图导出不等于已批准数据集。团队交付需独立审核，默认禁止自审核。', 'accounts-project-notice'), listPanel, createEntry, viewDraft, el('p', '账号创建仅限平台管理员；项目成员由项目管理员按真实 user_id 管理。', 'accounts-project-roles'));
+  const deliveryNotice = el('p', undefined, 'accounts-project-notice');
+  deliveryNotice.append(el('span', '单图导出不等于已批准数据集。'), el('span', '团队交付需独立审核，默认禁止自审核。'));
+  listArea.append(guide, deliveryNotice, listPanel, createEntry, viewDraft, el('p', '账号创建仅限平台管理员；项目成员由项目管理员按真实 user_id 管理。', 'accounts-project-roles'));
   const platform = el('div'), members = el('div');
   const platformButton = button('平台账号管理', 'platform-accounts-open', scope.signal, () => { if (!scope.current()) return; childDispose?.(); childProjectId = null; members.replaceChildren(); members.hidden = false; childDispose = mountMemberManager(members, { ...context, project: null }); members.scrollIntoView({ block: 'start' }); });
   if (entry.session.platform_admin) platform.append(platformButton);
@@ -159,6 +164,10 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
   }
   function render() {
     if (!scope.current()) return; const s = controller.getSnapshot();
+    const populated = s.listingReady && s.projects.length > 0;
+    listArea.dataset.listPopulated = String(populated);
+    const noticeNext = populated ? createEntry : listPanel;
+    if (deliveryNotice.nextElementSibling !== noticeNext) listArea.insertBefore(deliveryNotice, noticeNext);
     const frozen = s.busy || !!s.unknown || (!!s.creationDraft && !s.selected) || (!!s.selected && !sessionCanManage(context, s.selected.project_id));
     heading.hidden = editorVisible; listArea.hidden = editorVisible; form.hidden = !editorVisible;
     platform.hidden = editorVisible || !s.listingReady && !s.projects.length;
