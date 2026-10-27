@@ -37,6 +37,19 @@ async function browse(view: { root: HTMLElement; ontologyId: string }) {
   await vi.waitFor(() => expect(testId<HTMLSelectElement>(view.root, 'dataset-ontology').options.length).toBe(2)); select(testId(view.root, 'dataset-ontology'), view.ontologyId); button(view.root, '读取图片范围').click();
   await vi.waitFor(() => expect(view.root.querySelector('[data-testid^=dataset-disposition-]')).not.toBeNull());
 }
+it('shows exact asset and annotation identities under labeled columns before snapshot confirmation', async () => {
+  const view = fixture(); await browse(view);
+  select(testId(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`), 'include');
+  select(testId(view.root, `dataset-disposition-${view.rows[1].media.asset_revision_id}`), 'exclude');
+  testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
+  const table = view.root.querySelector<HTMLTableElement>('[aria-label="本批完整固定范围"]')!;
+  const first = table.tBodies[0].rows[0];
+  expect(first.cells[0].textContent).toContain(view.rows[0].media.asset_revision_id);
+  expect(first.cells[1].textContent).toBe(view.rows[0].head!.annotation_revision_id);
+  expect([...table.querySelectorAll('thead th[scope="col"]')].map(cell => cell.textContent)).toEqual(['图片 / 资产修订', '固定标注修订', '固定规范', '审核资格', '范围决定', '数据划分']);
+  expect(table.tBodies[0].rows[1].cells[0].textContent).toContain(view.rows[1].media.asset_revision_id);
+  expect(view.writes).toEqual([]);
+});
 it('requires explicit ontology and include/exclude choices, never adding unbrowsed assets', async () => {
   const view = fixture(); expect(view.heads).not.toHaveBeenCalled(); await browse(view);
   select(testId(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`), 'include'); select(testId(view.root, `dataset-disposition-${view.rows[1].media.asset_revision_id}`), 'exclude');

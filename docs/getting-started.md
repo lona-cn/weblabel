@@ -162,6 +162,8 @@ sh ./launch.sh --data-dir "/home/你的用户名/WebLabel数据"
 
 每张纳入图片可明确选择 train / val / test；同 source_group_id 的图片保持同一 split。需要确定性计划时填写非空 seed（默认文本 17），点击“预览整组划分与分批范围”，检查每批精确 ID、纳入/排除和 split，再点击“确认整组划分”。SHA-256 对 seed + NUL + group 分配 80/10/10 桶，实际数量不保证比例；同组可跨批但 split 相同。每批含排除最多 1024 项且至少一项纳入；纳入不足以分摊到每批时需明确调整范围，不静默丢项。选择当前交付批次，检查冻结摘要，再次确认冻结。只有固定规范、已批准且 complete 或 confirmed_negative 的实际 revision 可纳入。记录每批快照编号，逐批独立导出；冻结后范围不可原位改写。项数预算不等于体积，96 MiB ZIP 限制仍由服务端实际检查。
 
+首次点击“冻结所选修订”只展开确认表；按页核对图片名称及资产修订、固定标注修订、规范、审核资格、范围决定和划分，再次点击才会提交。切换批次会清除原确认，需要重新检查该批。
+
 选择 native / COCO / YOLO，点击“生成导出并检查信息损失”。阅读本次数据集导出的真实 loss；需要确认时勾选“我已阅读并明确接受上述信息损失”，再点击“确认损失并生成导出”。原生格式用于无损交付；COCO / YOLO 标签省略属性、对象 ID 和来源，具体损失以实际报告为准（当前 YOLO 报告字段为 `annotation.attributes`、`annotation.object_ids`、`annotation.provenance`）。完整数据集 ZIP 的 `manifest.json` 仍保留完成状态、批准元数据和固定 revision，不能把标签省略这些信息说成整个 ZIP 丢失完成或批准信息。此边界仅针对数据集交付；单图导出仍按其自身实际 loss 判断。等待已有作业完成后“下载数据包”；下载失败只重新下载已有产物，不新建作业。
 
 ![显式范围、train / val / test、固定快照与导出](images/readme/08-dataset-export.png)

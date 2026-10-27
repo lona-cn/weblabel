@@ -170,9 +170,12 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   }
   function renderFreezeDetails() {
     freezeDetails.replaceChildren(); const active = activeChoices(); if (!freezeConfirmed) return;
-    const exact = element('table'); exact.setAttribute('aria-label', '本批完整固定范围'); const tbody = element('tbody'); exact.append(tbody); let index = 0;
+    const exact = element('table'); exact.setAttribute('aria-label', '本批完整固定范围');
+    const head = element('thead'), header = element('tr');
+    for (const name of ['图片 / 资产修订', '固定标注修订', '固定规范', '审核资格', '范围决定', '数据划分']) { const cell = element('th', name); cell.scope = 'col'; header.append(cell); }
+    head.append(header); const tbody = element('tbody'); exact.append(head, tbody); let index = 0;
     const heading = element('p'), controls = element('div'); const prev = action('上一页固定范围', () => { if (index > 0) { index--; paint(); } }), next = action('下一页固定范围', () => { if ((index + 1) * 100 < active.length) { index++; paint(); } }); controls.append(prev, next);
-    function paint() { tbody.replaceChildren(); for (const choice of active.slice(index * 100, (index + 1) * 100)) { const row = element('tr'); row.append(element('td', choice.row.media.original_name), element('td', choice.row.head?.annotation_revision_id ?? '无版本'), element('td', state.ontology), element('td', eligible(choice.row, state.ontology) ? '已批准' : '不符合纳入资格'), element('td', choice.disposition === 'include' ? '纳入' : `排除：${choice.reason}`), element('td', choice.split)); tbody.append(row); } heading.textContent = `${index * 100 + 1}–${Math.min(active.length, (index + 1) * 100)} / ${active.length}`; prev.disabled = index === 0; next.disabled = (index + 1) * 100 >= active.length; }
+    function paint() { tbody.replaceChildren(); for (const choice of active.slice(index * 100, (index + 1) * 100)) { const row = element('tr'); row.append(element('td', `${choice.row.media.original_name} · ${choice.row.media.asset_revision_id}`), element('td', choice.row.head?.annotation_revision_id ?? '无版本'), element('td', state.ontology), element('td', eligible(choice.row, state.ontology) ? '已批准' : '不符合纳入资格'), element('td', choice.disposition === 'include' ? '纳入' : `排除：${choice.reason}`), element('td', choice.split)); tbody.append(row); } heading.textContent = `${index * 100 + 1}–${Math.min(active.length, (index + 1) * 100)} / ${active.length}`; prev.disabled = index === 0; next.disabled = (index + 1) * 100 >= active.length; }
     const viewport = element('div', undefined, 'dataset-table-viewport'); viewport.setAttribute('role', 'region'); viewport.setAttribute('aria-label', '本批固定范围表格（可滚动）'); viewport.tabIndex = 0; viewport.append(exact);
     freezeDetails.append(heading, viewport, controls); paint();
   }

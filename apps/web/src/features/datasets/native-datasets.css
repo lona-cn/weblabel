@@ -27,4 +27,9 @@
   [data-testid='datasets-page'] [aria-label='图片与数据划分'] :is(th, td):nth-child(4) { min-width: 160px; }
   [data-testid='datasets-page'] [aria-label='图片与数据划分'] :is(th, td):nth-child(5) { min-width: 150px; }
   [data-testid='datasets-page'] [aria-label='图片与数据划分'] :is(th, td):last-child { min-width: 280px; }
+  [data-testid='datasets-page'] [aria-label='本批完整固定范围'] :is(th, td) { min-width: 120px; }
+  [data-testid='datasets-page'] [aria-label='本批完整固定范围'] :is(th, td):nth-child(1) { min-width: 240px; }
+  [data-testid='datasets-page'] [aria-label='本批完整固定范围'] :is(th, td):nth-child(2),
+  [data-testid='datasets-page'] [aria-label='本批完整固定范围'] :is(th, td):nth-child(3) { min-width: 220px; }
+  [data-testid='datasets-page'] [aria-label='本批完整固定范围'] :is(th, td):nth-child(5) { min-width: 160px; }
 }
