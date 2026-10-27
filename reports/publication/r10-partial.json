@@ -11,6 +11,7 @@
     "rust_workspace": {"observed": 263, "passed": 262, "failed": 1, "note": "A real export-worker join exceeded its existing ten-second deadline; later isolated and full API library passes did not establish the cause."},
     "browser": {"collected": 39, "passed": 38, "failed": 1, "note": "The failed member workflow used an obsolete hidden back control; the corrected focused path later passed."},
     "hardware_gpu": {"collected": 3, "passed": 3, "failed": 0, "skipped": 0, "flaky": 0, "rows": 8000, "device": "NVIDIA Blackwell, non-fallback", "thresholds_unchanged": true},
+    "scope_deviation": "This earlier unscoped release command also attempted user-skipped security cases, including the F11 browser case. The original results are retained but do not establish security acceptance.",
     "live": "blocked: required channel evidence absent; no real or paid model calls",
     "full_1_0_ready": false
   },
@@ -40,6 +41,25 @@
     "terminal_event_race": "Two focused regressions failed before and 17 passed after; a real local synthetic run retained cancelled then later progress events while the UI remained cancelled. No response or paid model call was injected.",
     "review": "Real synthetic roles exercised claim, renewal, release, submit, continue, independent fixed-revision approval and a later unapproved head; these are partial U28-U31 evidence, not the complete visual matrix."
   },
+  "current_synthetic_native_manual": {
+    "provenance": "The native release was built and exercised locally; its product and test Git blobs match the public source commit. The public commit itself was not rebuilt.",
+    "release_manifest_sha256": "5db9880915a35646d18f0c9ff2d48e1bc640c1fab4ec7a0b7cab0f3124cfe6f0",
+    "scope": "Fresh synthetic local data, empty product PATH, no fixture API seeding and no real or paid model calls.",
+    "workflow": "Actual browser setup, project/ontology creation, one batch of procedural PNG and EXIF2/6 JPEGs, hardware WebGPU draw, one undo and redo, attribute and decimal geometry edits, local IndexedDB and server ACK, reload, and existing-artifact Native ZIP download.",
+    "media_readback": "All three source hashes, orientations, canonical dimensions and original-to-canonical transforms matched the procedural input manifest.",
+    "export": {"bytes": 3734, "sha256": "ff87812b8ecda9bcee804fe908cf6abc5cd57ab7fa060321e99c6d7469ef8824", "zip_crc": "passed", "independent_reader": "Exact server document, note attribute and xyxy [10.25,20.5,110.75,80.75] matched."},
+    "limitations": "The browser recorded four aborted GETs during navigation, no pageerror entries. This one synthetic workflow does not establish all 48 visual states or complete R10. Fixture shutdown forced its own native child, not physical Ctrl+C."
+  },
+  "current_hardware_gpu": {
+    "provenance": "Measured locally against product and test Git blobs matching the public source; the public commit was not rebuilt or directly measured.",
+    "status": "passed",
+    "adapter": "NVIDIA Blackwell, non-fallback",
+    "tests": {"collected": 3, "passed": 3, "failed": 0, "skipped": 0, "flaky": 0},
+    "workload": {"sizes": [2000, 10000], "scenarios": 4, "warmups_each": 40, "samples_each": 1000, "raw_rows": 8000},
+    "p95_2000_ms": {"pointer_drag": {"cpu": 2.379, "double_raf": 30.6}, "pan": {"cpu": 1.204, "double_raf": 30.4}, "zoom": {"cpu": 1.269, "double_raf": 30.2}, "committed_edit": {"cpu": 7.133, "double_raf": 30.0}},
+    "limits": "The 10000-box run is supplemental stress, not the 2000-box threshold. Double-rAF is a scheduling proxy, not physical display latency. No GPU timestamps or physical VRAM measurements."
+  },
+  "verification_scope": "The user-skipped security topic remains not verified. The full release runner is not repeated: its --skip-security option still includes security-related cases in the Rust workspace and web suite.",
   "this_push": {"ci": "intentionally skipped for this commit to avoid repeating the user-skipped security topic; no workflow was changed", "automated_container_publication": "not run"},
   "detector_budget": {"used": 20, "limit": 20, "new_forwards": 0, "waivers": ["R05-B1", "R05-N1", "R05-R1"]},
   "status": {"R09": "done", "R10": "running", "R11": "pending", "T32": "blocked", "T35": "pending", "full_release_passed": false}
