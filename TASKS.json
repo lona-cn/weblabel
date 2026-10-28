@@ -1888,7 +1888,7 @@
     },
     {
       "id": "R10",
-      "title": "全量行为、视觉、发行、恢复和硬件 GPU 回归",
+      "title": "精简本地行为、视觉与真实设备回归",
       "owner": "wl-qa",
       "depends_on": [
         "R09"
@@ -1910,13 +1910,7 @@
         [
           "node",
           "scripts/verify.mjs",
-          "release"
-        ],
-        [
-          "node",
-          "scripts/verify-gpu.mjs",
-          "--report-dir",
-          "reports/T31/html-rust-rebuild/r10"
+          "lean"
         ]
       ],
       "external_gate": true,

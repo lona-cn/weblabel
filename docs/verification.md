@@ -127,6 +127,7 @@ T31 的所属 Vite 由当前 Node 直接启动 `owned-vite-service.mjs`。正常
 最近一次针对工作台显示修复源码的真实硬件测量，2000 对象 `committed_edit` CPU P95 为 8.043 ms，超过未修改的 8 ms 门槛；旧源码的通过结果不能替代该失败。至用户作出该项豁免时，后续仅修改验证器与 fixture，未重新测量 GPU；之后 U36 工作台源码又已变化，当前 UI 的硬件性能仍未测量。独立诊断采样显示 IndexedDB 耐久写入为主要热点，但尚未证明其造成门槛失败，不为通过而删除或延迟耐久写。
 用户明确跳过上述一次 2000 对象 `committed_edit` CPU P95 超标作为 R10 阻塞；该硬件结果仍为 failed，不能写成通过，原 8 ms 门槛、其他场景与授权范围均不改变。
 用户随后选择保留 U16 的内嵌导出界面并跳过全页参考图差异，另跳过 U20 实际配额故障恢复复现；两项作为用户豁免，不计视觉通过或恢复通过。其他视觉状态、恢复要求及安全/live 授权边界未豁免。
+用户随后要求精简过度测试：精简 R10 以受影响模块定向回归和一次真实原生浏览器闭环为准，按改动覆盖代表性布局、关键断点与必要 DPR；48 态全截图、8000 样本 GPU 性能及无关修改后的旧版交接/备份重放不再阻断该精简范围。`node scripts/verify.mjs lean` 只报告所选回归，实际浏览器 smoke 单独记录，完整发行和硬件门禁、历史失败及 T32/T35 状态不变；未运行不记通过。
 release 的 release_gates 逐项列出 G0..G5 的 scope、实际 required_commands、SHA 绑定 evidence_refs、engineering_status 与完整 status。缺少命令为 not_started，缺少材料为 missing，不能从总状态或历史 commit 推导通过。G1/G3/G5 必须同时读取当前源码的 smoke；G5 还必须有独立完整规格/质量 review。smoke 的十三项场景只能引用同文件中已校验 SHA 的 artifacts；部分或损坏材料不能通过。
 
 G3/G4/G5 在本轮安全 skipped_by_user 时完整 status 为 blocked，即使各自工程子集通过。G4 的 live 未授权/未实际验收同样阻断；G5 不声称已经完成商业30%效率试点。release 的 engineering_status 也检查实际 review/smoke，不能只看子命令退出码。执行失败优先 failed，其余任何必需 missing/blocked/skipped/not_verified 保持 blocked；只有六关及全部范围满足才允许 full_1_0_ready。

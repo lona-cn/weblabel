@@ -11,7 +11,7 @@ import { checkNonsecurityPartition } from './nonsecurity-partition.mjs';
 import { ownedReportRoot, projectOutputPath } from '../tests/support/report-paths.mjs';
 
 const root = fs.realpathSync(fileURLToPath(new URL('../', import.meta.url)));
-const gates = new Set(['fast', 'integration', 'browser', 'gpu', 'live', 'release', 'nonsecurity-audited']);
+const gates = new Set(['fast', 'integration', 'browser', 'gpu', 'live', 'release', 'nonsecurity-audited', 'lean']);
 const securitySkipUnpartitionedGates = new Set(['fast', 'integration', 'browser', 'release']);
 const sha = value => createHash('sha256').update(value).digest('hex');
 const relative = file => path.relative(root, file).replaceAll('\\', '/');
@@ -282,7 +282,7 @@ export function describeReleaseGates(result) {
 function parseOptions(argv) {
   const gate = argv[0];
   if (!gates.has(gate)) throw new Error('UNKNOWN_VERIFICATION_GATE');
-  const options = { gate, skipSecurity: gate === 'nonsecurity-audited' };
+  const options = { gate, skipSecurity: gate === 'nonsecurity-audited' || gate === 'lean' };
   const seen = new Set();
   for (let index = 1; index < argv.length; index += 1) {
     const key = argv[index];
@@ -318,7 +318,9 @@ export async function verify(argv = process.argv.slice(2)) {
   const options = parseOptions(argv);
   const runId = new Date().toISOString().replaceAll(/[:.]/g, '-') + '-' + randomUUID();
   const reportDir = ownedReportRoot(projectOutputPath(options.reportDir ?? `reports/T35/verification/${runId}`));
-  const temporary = projectOutputPath(`target/defect-repair/verification/${runId}`), cache = projectOutputPath(`target/build-cache/verification/${runId}/main`);
+  const temporary = projectOutputPath(`target/defect-repair/verification/${runId}`);
+  const cache = projectOutputPath(options.gate === 'lean' ? (process.env.WEBLABEL_LEAN_CARGO_TARGET_DIR ?? 'target/build-cache/verification/lean/main') : `target/build-cache/verification/${runId}/main`);
+  if (!relative(cache).startsWith('target/build-cache/')) throw new Error('BUILD_CACHE_OUTSIDE_PROJECT_CACHE');
   // Runtime and build-cache directories are created only after scope admission.
   const result = { schema_version: 1, evidence_kind: 'current_source_engineering_verification', gate: options.gate, status: 'blocked', base_commit: null, identity: null, source_hashes: null, manifest_sha256: null, started_at: new Date().toISOString(), ended_at: null, environment: { os: os.platform(), arch: os.arch(), release: os.release(), node: process.version, credential_environment: 'not_forwarded', account_state: 'not_inspected' }, commands: [], evidence: [], blockers: [], skipped_scope: options.skipSecurity ? ['security'] : [], excluded_tests: [], full_1_0_ready: false, outbound_model_calls: 0 };
   const controller = new AbortController();
@@ -340,6 +342,10 @@ export async function verify(argv = process.argv.slice(2)) {
         return result;
       }
       result.blockers.push('NONSECURITY_PARTITION_INCOMPLETE');
+    }
+    if (options.gate === 'lean') {
+      result.skipped_scope.push('unselected_tests', 'full_visual_matrix', 'gpu_performance', 'model_execution', 'full_release');
+      result.scope = 'selected_local_regressions_only_browser_smoke_separate';
     }
     fs.mkdirSync(temporary, { recursive: true }); fs.mkdirSync(cache, { recursive: true });
     env = childEnvironment(temporary, cache, reportDir, options.skipSecurity);
@@ -419,9 +425,36 @@ export async function verify(argv = process.argv.slice(2)) {
       const output = path.join(reportDir, 'nonsecurity-web.json');
       await step('nonsecurity-web', [node, 'node_modules/vitest/vitest.mjs', 'run', '--project', 'web', 'apps/web/src/features/workbench/native-help-layout.test.ts', 'apps/web/src/features/workbench/native-attributes-escape.test.ts', 'apps/web/src/features/projects/native-project-publication.test.ts', 'apps/web/src/features/datasets/delivery-plan.test.ts', 'apps/web/src/features/import-export/protocol.test.ts', 'apps/web/src/ui/dialog.test.ts', 'apps/web/src/ui/virtual-list.test.ts', '--maxWorkers=1', '--reporter=json', `--outputFile=${output}`], 'vitest', output);
     };
+    const lean = async () => {
+      await step('lean-plan', [node, 'scripts/verify-plan.mjs']);
+      await step('lean-docs', [node, 'tools/check-docs.mjs']);
+      await step('lean-web-types', [node, 'apps/web/node_modules/typescript/bin/tsc', '--noEmit', '-p', 'apps/web/tsconfig.json']);
+      const rustCases = [
+        ['geometry', 't03_geometry', 'c8_vector_and_zoom_anchor_are_exact'],
+        ['editor-core', 't04_editor', 'one_hundred_pointer_moves_commit_exactly_one_create'],
+        ['editor-core', 't04_editor', 'create_undo_redo_restores_document_and_generation_never_rewinds'],
+        ['dataset-formats', 't14_formats', 'yolo_export_import_uses_continuous_pixel_coordinates_and_reports_losses'],
+        ['weblabel-api', 't11_save', 'save_cas_replay_conflict_and_history_are_atomic'],
+      ];
+      for (const [index, [crate, file, name]] of rustCases.entries()) {
+        await step(`lean-rust-${index + 1}`, ['cargo', 'test', '--locked', '-p', crate, '--test', file, name, '--', '--exact'], 'cargo');
+      }
+      const webCases = [
+        ['apps/web/src/lib/persistence/t13_queue.test.ts', 'keeps generation 9 dirty and saves it on top of the acknowledged r8'],
+        ['apps/web/src/lib/persistence/t13_queue.test.ts', 're-sends the identical operation_id and payload on retry'],
+        ['apps/web/src/features/datasets/native-datasets.test.ts', 'requires explicit ontology and include/exclude choices, never adding unbrowsed assets'],
+        ['apps/web/src/features/review/native-review-panel.test.ts', 'shows the confirmed task identity even when the refreshed page does not contain it'],
+        ['apps/web/src/features/ai/model-profile-settings.test.ts', 'shows the confirmed preset as configured after reconciling a lost save response'],
+        ['apps/web/src/lib/persistence/t13_queue.test.ts', 'a diverged head is a conflict offering keep-local/export and view-server, never last-write-wins'],
+      ];
+      for (const [index, [file, name]] of webCases.entries()) {
+        const output = path.join(reportDir, `lean-web-${index + 1}.json`);
+        await step(`lean-web-${index + 1}`, [node, 'node_modules/vitest/vitest.mjs', 'run', '--project', 'web', file, '--testNamePattern', `${escapePattern(name)}$`, '--maxWorkers=1', '--reporter=json', `--outputFile=${output}`], 'vitest', output);
+      }
+    };
     const gpu = () => step('gpu', [node, 'scripts/verify-gpu.mjs', '--report-dir', relative(path.join(reportDir, 'T31'))], 'gpu', path.join(reportDir, 'T31/result.json'));
     const live = () => step('live', [node, 'scripts/verify-live.mjs', ...(options.liveEvidence ? ['--live-evidence', options.liveEvidence] : ['--check-required']), '--report-dir', relative(path.join(reportDir, 'T32')), ...(options.skipSecurity ? ['--skip-security'] : [])], 'live', path.join(reportDir, 'T32/result.json'));
-    const stages = { fast, integration, browser, gpu, live, 'nonsecurity-audited': nonsecurityAudited };
+    const stages = { fast, integration, browser, gpu, live, lean, 'nonsecurity-audited': nonsecurityAudited };
     if (options.gate !== 'release') await stages[options.gate]();
     else {
       for (const action of [fast, integration, browser, gpu, live]) { signal.throwIfAborted(); await action(); }
@@ -450,7 +483,7 @@ export async function verify(argv = process.argv.slice(2)) {
       signal.throwIfAborted();
     }
     result.status = result.commands.some(row => row.status === 'failed') ? 'failed' : result.commands.some(row => row.status !== 'passed') || result.blockers.length ? 'blocked' : 'passed';
-    result.engineering_status = options.gate !== 'nonsecurity-audited' && result.commands.length && result.commands.filter(row => row.name !== 'live').every(row => row.status === 'passed') ? 'passed' : 'blocked';
+    result.engineering_status = !['nonsecurity-audited', 'lean'].includes(options.gate) && result.commands.length && result.commands.filter(row => row.name !== 'live').every(row => row.status === 'passed') ? 'passed' : 'blocked';
   } catch (error) {
     result.status = signal.aborted ? 'cancelled' : ['ENOENT', 'ENOTDIR'].includes(error.code) ? 'blocked' : 'failed'; result.blockers.push(signal.aborted ? signal.reason : error.code ?? error.message);
   } finally {

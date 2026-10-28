@@ -464,6 +464,15 @@
     "followup_profile": "A separate 160-edit real-hardware diagnostic found the IndexedDB write callback and native put to be the largest sampled non-idle stack. It was not an acceptance timing run and does not establish the cause of the p95 failure. Durable writes were not removed or delayed.",
     "limits": "The 10000-box run is supplemental stress, not the 2000-box threshold. Double-rAF is a scheduling proxy, not physical display latency. No GPU timestamps or physical VRAM measurements."
   },
+  "lean_local_profile": {
+    "scope": "User-approved local critical-path verification only; original complete release and GPU gates remain unchanged.",
+    "local_source_base": "c39a163cfc3d150cdc1b88924bbcb7ea189a5466",
+    "local_source_snapshot_sha256": "fbbcfae264c6ddbbf859e28008a0d03db44a75f3d55d4693aff4a04490757de6",
+    "selected_tests": {"rust_passed": 5, "web_passed": 6, "filtered_not_passed": true},
+    "native_smoke": "Local actual native release and NVIDIA WebGPU, synthetic image and accounts: draw, undo/redo, durable save and reload, separate reviewer approved the same fixed revision, and native single-revision and one-item dataset exports were independently read back.",
+    "paged_scope": "Synthetic dataset first/boundary/last pages visited; 1536 API identities matched the database. Complete UI identity union was not established.",
+    "limitations": "This public checkout differs from the locally exercised product in datasets-page.ts; the public checkout was not rebuilt or browser-smoked. Browser diagnostics included aborted requests and the owned native process was forcibly stopped. The selected gate is not full release evidence."
+  },
   "verification_scope": "The user-skipped security topic remains not verified. Earlier subset and U36 focused runs unintentionally executed the shared fixture as corrected above; those cases do not count as nonsecurity acceptance. The full release runner now fails closed before commands when --skip-security is set because Rust, Web and browser cases remain unpartitioned. U16 layout and U20 quota-recovery waivers do not waive the other visual, recovery or authorization requirements.",
   "this_push": {"ci": "intentionally skipped for this commit to avoid repeating the user-skipped security topic; no workflow was changed", "automated_container_publication": "not run"},
   "detector_budget": {"used": 20, "limit": 20, "new_forwards": 0, "waivers": ["R05-B1", "R05-N1", "R05-R1"]},
