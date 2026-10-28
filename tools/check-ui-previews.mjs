@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {execFileSync} from 'node:child_process';
 import sharp from 'sharp';
 
 export const PREVIEW_IDS = Object.freeze([
@@ -30,6 +31,28 @@ export async function checkUIPreviews(catalogPath, projectRoot = process.cwd()) 
   } catch (error) { return {ok:false,scope:'generated_design_previews_only_not_product_verification',errors:[`catalog: ${error.message}`]}; }
   if (catalog.schema_version !== 1) errors.push('expected schema_version 1');
   if (!Array.isArray(catalog.items)) return {ok:false,scope:'generated_design_previews_only_not_product_verification',errors:[...errors,'items must be an array']};
+  const sourceRevision = catalog.source_revision;
+  const gitOptions = {cwd:root, encoding:'utf8', stdio:['ignore','pipe','pipe'], env:{...process.env, GIT_NO_LAZY_FETCH:'1', GIT_TERMINAL_PROMPT:'0'}};
+  let validRevision = sourceRevision === undefined;
+  if (sourceRevision !== undefined) {
+    try {
+      const format = execFileSync('git', ['rev-parse', '--show-object-format'], gitOptions).trim();
+      const length = format === 'sha1' ? 40 : format === 'sha256' ? 64 : 0;
+      validRevision = typeof sourceRevision === 'string' && sourceRevision.length === length && /^[0-9a-f]+$/.test(sourceRevision)
+        && execFileSync('git', ['cat-file', '-t', sourceRevision], gitOptions).trim() === 'commit';
+    } catch { validRevision = false; }
+    if (!validRevision) errors.push('source_revision must identify an available full commit without network access');
+  }
+  const historicalSources = new Map();
+  function checkHistoricalSource(source) {
+    if (!validRevision) throw new Error('source_revision is not an available full commit');
+    if (historicalSources.has(source)) return historicalSources.get(source);
+    const result = execFileSync('git', ['ls-tree', '-z', sourceRevision, '--', `:(literal)${source}`], gitOptions);
+    const entry = result.match(/^100(?:644|755) blob [0-9a-f]{40,64}\t([^\0]+)\0$/);
+    if (!entry || entry[1] !== source) throw new Error('source must be a regular file in the recorded revision');
+    historicalSources.set(source, true);
+    return true;
+  }
   if (catalog.items.length !== PREVIEW_IDS.length) errors.push(`expected exactly ${PREVIEW_IDS.length} previews`);
   const seen = new Set(), images = new Set();
   const referenceHashes = new Map();
@@ -65,9 +88,12 @@ export async function checkUIPreviews(catalogPath, projectRoot = process.cwd()) 
     if (!Array.isArray(item.source_paths) || !item.source_paths.length) errors.push(`${id}: missing source_paths`);
     else for (const source of item.source_paths) {
       try {
-        if (!nonempty(source) || path.isAbsolute(source)) throw new Error('source path must be relative');
-        const resolved = await fs.realpath(path.resolve(root,source));
-        if (!within(root,resolved) || !(await fs.stat(resolved)).isFile()) throw new Error('source must be an in-project file');
+        if (!nonempty(source) || path.isAbsolute(source) || source.includes('\\') || source.split('/').some(part=>!part || part==='.' || part==='..')) throw new Error('source path must be project-relative');
+        if (sourceRevision !== undefined) checkHistoricalSource(source);
+        else {
+          const resolved = await fs.realpath(path.resolve(root,source));
+          if (!within(root,resolved) || !(await fs.stat(resolved)).isFile()) throw new Error('source must be an in-project file');
+        }
       } catch (error) { errors.push(`${id}: invalid source ${source}: ${error.message}`); }
     }
     const prompt = item.prompt;

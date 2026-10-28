@@ -234,3 +234,4 @@ T34只实现测量工具，不能生成“节省30%”的虚假实测结论。�
 每个任务至少 reports/Txx/result.json、tests.log、review.md；需要视觉的任务另有 screenshots/ 与 traces/；真实敏感媒体不进入Git，使用脱敏截图/哈希。最终 reports/release.json 包含各关卡 pass/fail/blocked、版本矩阵、已知限制、实际启动命令和剩余动作。
 
 计划结构检查只能证明任务图、文件引用与 JSON 结构符合要求。产品是否完成，要看实际运行结果；已实现的部分和仍 blocked 的关卡分别列出，不能用计划完整性替代产品验收。
+设计预览目录可用 `source_revision` 记录生成时的完整 Git commit；此时 `source_paths` 是历史设计输入，检查器验证该 revision 内的普通文件，不要求它们在重构后的工作树仍存在。没有 `source_revision` 的目录仍验证当前项目内真实文件；缺历史对象或路径仍失败。该检查只核对设计材料结构、图像和来源，不证明现有产品已实现或通过视觉验收。

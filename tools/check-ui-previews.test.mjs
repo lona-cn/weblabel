@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {execFileSync} from 'node:child_process';
 import sharp from 'sharp';
 import {checkUIPreviews, PREVIEW_IDS, SCORE_DIMENSIONS} from './check-ui-previews.mjs';
 
@@ -41,6 +42,29 @@ test('accepts 48 distinct decoded images with complete dual reviews',async()=>{
   assert.equal(result.ok,true,JSON.stringify(result.errors));
   assert.equal(result.preview_count,48);
   assert.equal(result.scope,'generated_design_previews_only_not_product_verification');
+});
+test('validates sources in a recorded revision and rejects a missing historical file',async()=>{
+  const candidate=structuredClone(catalog);
+  candidate.source_revision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
+  for(const item of candidate.items)item.source_paths=['tools/check-ui-previews.mjs'];
+  const file=path.join(directory,`catalog-${serial++}.json`);
+  await fs.writeFile(file,JSON.stringify(candidate));
+  const result=await checkUIPreviews(file,root);
+  assert.equal(result.ok,true,JSON.stringify(result.errors));
+  candidate.items[0].source_paths=['tools/preview-source-that-does-not-exist.mjs'];
+  await fs.writeFile(file,JSON.stringify(candidate));
+  const missing=await checkUIPreviews(file,root);
+  assert.equal(missing.ok,false);
+  assert.ok(missing.errors.some(error=>error.startsWith('U01: invalid source')));
+  candidate.items[0].source_paths=['tools/check-ui-previews.mjs'];
+  const tree=execFileSync('git',['rev-parse','HEAD^{tree}'],{cwd:root,encoding:'utf8'}).trim();
+  for(const revision of [tree, candidate.source_revision + '0']) {
+    candidate.source_revision=revision;
+    await fs.writeFile(file,JSON.stringify(candidate));
+    const invalid=await checkUIPreviews(file,root);
+    assert.equal(invalid.ok,false);
+    assert.ok(invalid.errors.includes('source_revision must identify an available full commit without network access'));
+  }
 });
 test('missing a generic state cannot be hidden by duplicating another page',async()=>{
   const result = await check(value=>{value.items[value.items.length-1]=structuredClone(value.items[0]);});
