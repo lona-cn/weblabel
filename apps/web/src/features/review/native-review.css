@@ -28,7 +28,7 @@
 }
 .native-delivery textarea { width: 100%; min-height: 96px; }
 .native-delivery[data-testid=fixed-revision-page] svg { max-height: min(50dvh, 520px); }
-.native-delivery .revision-fixed-label { fill: var(--fg); stroke: var(--surface-0); stroke-width: 3px; stroke-linejoin: round; paint-order: stroke fill; font-weight: 600; pointer-events: none; }
+.native-delivery .revision-fixed-label { fill: var(--fg); stroke: var(--surface-0); stroke-width: 2px; stroke-linejoin: round; paint-order: stroke fill; vector-effect: non-scaling-stroke; font-weight: 600; pointer-events: none; }
 .native-delivery :is(.revision-fixed-identity, .revision-fixed-object) dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 0; margin: 0; }
 .native-delivery :is(.revision-fixed-identity, .revision-fixed-object) :is(dt, dd) { margin: 0; padding: 6px 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .native-delivery :is(.revision-fixed-identity, .revision-fixed-object) dt { color: var(--muted); }

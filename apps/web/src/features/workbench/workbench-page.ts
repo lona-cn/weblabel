@@ -5,6 +5,7 @@ import { createWorkbenchController } from './controller';
 import { mountCanvasView } from './canvas-view';
 import { mountObjectsView } from './objects-view';
 import { mountAttributesView } from './attributes-view';
+import { mountSelectionContextView } from './selection-context-view';
 import { mountToolbarView, mountEditorKeyboard } from './toolbar-view';
 import { COMPLETION_LABELS, mountSaveView } from './save-view';
 import { mountAiWorkbenchView } from '../ai/ai-workbench-view';
@@ -99,6 +100,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   let inspectorView: 'attributes' | 'ai' = 'attributes';
   const attributesTab = action('对象属性', 'inspector-attributes', signal, () => showInspector('attributes')), aiTab = action('AI 审校', 'inspector-ai', signal, () => showInspector('ai'));
   attributesRoot.id = 'r07-attributes'; aiRoot.id = 'r07-ai';
+  const selectionContext = element('section'); attributesRoot.append(selectionContext);
   for (const [tab, pane] of [[attributesTab, attributesRoot], [aiTab, aiRoot]] as const) { tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', pane.id); tab.id = pane.id + '-tab'; pane.setAttribute('role', 'tabpanel'); pane.setAttribute('aria-labelledby', tab.id); }
   inspectorTabs.append(attributesTab, aiTab); inspector.append(inspectorTabs, attributesRoot, aiRoot);
   inspectorTabs.addEventListener('keydown', event => { if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return; event.preventDefault(); showInspector(inspectorView === 'attributes' ? 'ai' : 'attributes'); (inspectorView === 'ai' ? aiTab : attributesTab).focus(); }, { signal });
@@ -203,6 +205,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
     inspectorView = view; attributesRoot.hidden = view !== 'attributes'; aiRoot.hidden = view !== 'ai';
     attributesTab.setAttribute('aria-selected', String(view === 'attributes')); aiTab.setAttribute('aria-selected', String(view === 'ai'));
     attributesTab.tabIndex = view === 'attributes' ? 0 : -1; aiTab.tabIndex = view === 'ai' ? 0 : -1;
+    state.notify();
   }
   function openInspector(view: 'attributes' | 'ai', trigger: HTMLElement) {
     showInspector(view);
@@ -223,7 +226,7 @@ export function mountWorkbenchPage(root: HTMLElement, context: WorkbenchPageCont
   }, { signal });
   compact.addEventListener('change', layout, { signal });
   shell.append(header, contextBar, workspace, saveRoot, transferDetails, reviewDetails, managementDetails, activityDetails, helpRoot, reviewPage, assetsDialog.element, inspectorDialog.element, aiConfigDialog.element); root.append(shell);
-  const cleanup = [mountToolbarView(toolbar, state, port, signal), mountObjectsView(objectsRoot, state, port, signal), mountAttributesView(attributesRoot, state, port, signal), mountSaveView(saveRoot, state, port, recovery, signal), unsubscribeAiConfig];
+  const cleanup = [mountToolbarView(toolbar, state, port, signal), mountObjectsView(objectsRoot, state, port, signal), mountSelectionContextView(selectionContext, state, port, signal, () => compact.matches && inspectorDialog.element.open && inspectorView === 'attributes'), mountAttributesView(attributesRoot, state, port, signal), mountSaveView(saveRoot, state, port, recovery, signal), unsubscribeAiConfig];
   const ai = mountAiWorkbenchView(aiRoot, state, port, signal, context.navigate);
   const activityDialog = createDialog({ id: 'r07-activity-expanded', title: '自愿工时与运行摘要', testId: 'activity-expanded', signal });
   activityDialog.element.classList.add('r07-activity-expanded');

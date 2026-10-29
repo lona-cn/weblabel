@@ -13,7 +13,7 @@
 .native-delivery :is(button, a) { color: var(--fg); background: var(--surface-2); border: 1px solid var(--control-border); border-radius: 4px; padding: 8px 16px; margin: 4px 8px 4px 0; cursor: pointer; min-height: 40px; }
 .native-delivery button.primary { background: var(--accent); color: var(--surface-0); font-weight: 600; border-color: var(--accent); }
 .native-delivery :is(button, input, select):disabled { color: var(--muted); cursor: not-allowed; }
-.native-delivery [role='alert'] { color: var(--error); border-left: 3px solid var(--error); padding: 8px 12px; }
+.native-delivery [role='alert'] { color: var(--error); border-left: 1px solid var(--error); padding: 8px 12px; }
 .native-delivery [role='status'], .native-delivery .delivery-muted { color: var(--muted); }
 .native-delivery table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 .native-delivery :is(td, th) { border: 1px solid var(--border); padding: 8px 12px; text-align: left; overflow-wrap: anywhere; }

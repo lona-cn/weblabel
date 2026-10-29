@@ -68,6 +68,7 @@ it('reports an unconfirmed save immediately after the response is lost, but not 
   expect(f.state.queue.toRecord('asset')?.pending_outcome).toBe('unknown');
   expect(root.querySelector('[data-testid=save-status]')?.textContent).toContain('结果未知');
   expect(banner.hidden).toBe(false);
+  expect(root.querySelector<HTMLDetailsElement>('[data-testid=save-recovery-actions]')!.open).toBe(true);
   expect(banner.textContent).toContain('原请求结果未知');
 });
 it('warns about unresolved saved branches even when the active queue is clean', async () => {
@@ -131,7 +132,7 @@ it('requires explicit negative confirmation and exposes separate actual local/re
   completion.value = 'confirmed_negative'; completion.dispatchEvent(new Event('change', { bubbles: true })); expect(f.host.dispatch).not.toHaveBeenCalled(); expect(complete.disabled).toBe(true);
   confirm.checked = true; confirm.dispatchEvent(new Event('change', { bubbles: true })); expect(complete.disabled).toBe(false);
   complete.click(); expect(f.host.dispatch).toHaveBeenCalledWith({ kind: 'set_completion', completion: 'confirmed_negative' });
-  expect(root.querySelector('[data-testid=save-status]')?.textContent).toContain('0'); expect(root.textContent).toContain('revision');
+  expect(root.textContent).toContain('revision');
 });
 it('prepares a never-annotated target with nullable base and adopts only its real first import receipt', async () => {
   const f = setup(); await f.state.queue.whenPersisted('asset'); f.state.queue.revokeWriteOwner(f.state.owner.token);

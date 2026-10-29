@@ -2,6 +2,10 @@
 [data-testid='datasets-page'] .dataset-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 [data-testid='datasets-page'] .dataset-heading h1 { margin: 0; }
 [data-testid='datasets-page'] .dataset-heading nav { display: flex; flex-wrap: wrap; gap: 0 8px; }
+[data-testid='datasets-page'] .dataset-title-block { min-width: 0; }
+[data-testid='datasets-page'] .dataset-project-context { margin: 8px 0 0; color: var(--muted); }
+[data-testid='datasets-page'] .dataset-project-id { margin: 0; padding: 0; border: 0; }
+[data-testid='datasets-page'] .dataset-project-id summary { padding-inline: 0; min-height: 44px; }
 [data-testid='datasets-page'] .dataset-scope-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 [data-testid='datasets-page'] .dataset-scope-picker label { flex: 1 1 340px; max-width: 720px; margin: 0; }
 [data-testid='datasets-page'] .dataset-scope-picker select { flex: 1 1 240px; width: auto; }
@@ -18,6 +22,8 @@
 [data-testid='datasets-page'] [aria-label='图片与数据划分'] th:first-child { width: 22%; }
 [data-testid='datasets-page'] [aria-label='图片与数据划分'] th:last-child { width: 23%; }
 [data-testid='datasets-page'] [aria-label='冻结确认摘要'] { border-color: var(--accent); }
+[data-testid='datasets-page'] > details[aria-label='分批交付计划'] > summary { min-height: 44px; cursor: pointer; }
+[data-testid='datasets-page'] :is([aria-label='已确认不可变快照历史'], [aria-label='导出作业与下载'], [aria-label='格式损失报告']) { padding: 0; border: 0; background: transparent; }
 @media (max-width: 1099px) {
   [data-testid='datasets-page'] table { table-layout: auto; }
   [data-testid='datasets-page'] [aria-label='图片与数据划分'] :is(th, td) { min-width: 120px; }

@@ -32,8 +32,11 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     viewedSnapshot = null; invalidate(); renderFreezeDetails(); render();
   });
   nav.append(returnRange);
-  const heading = element('div', undefined, 'dataset-heading'); heading.append(title, nav);
-  const steps = element('ol'); steps.setAttribute('aria-label', '数据交付状态'); steps.append(element('li', '1 选择明确范围'), element('li', '2 固定不可变快照'), element('li', '3 检查损失并导出'));
+  const heading = element('div', undefined, 'dataset-heading'), titleBlock = element('div', undefined, 'dataset-title-block');
+  const projectName = element('p', '项目名称读取中…', 'dataset-project-context'); projectName.dataset.testid = 'dataset-project-name';
+  const projectIdentity = details('项目 ID', context.projectId); projectIdentity.className = 'dataset-project-id';
+  titleBlock.append(title, projectName, projectIdentity); heading.append(titleBlock, nav);
+  const steps = element('ol'); steps.setAttribute('aria-label', '数据交付状态'); steps.append(element('li', '选择明确范围'), element('li', '固定不可变快照'), element('li', '检查损失并导出'));
   const error = element('p'); error.setAttribute('role', 'alert'); error.hidden = true; const status = element('p'); status.setAttribute('role', 'status');
   const ontology = element('select'); ontology.dataset.testid = 'dataset-ontology'; options(ontology, [{ value: '', text: '明确选择固定规范版本' }]);
   const read = action('读取图片范围', () => void loadPage(null, 0));
@@ -46,21 +49,24 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   pager.append(previous, pageNumber, next, include, exclude, retry);
   const table = element('table'); table.setAttribute('aria-label', '图片与数据划分'); const head = element('thead'); const header = element('tr'); for (const name of ['图片 / 来源组', '固定修订与审核资格', '范围决定', '明确排除理由', '数据划分', '操作']) header.append(element('th', name)); head.append(header); const body = element('tbody'); table.append(head, body);
   const tableViewport = element('div', undefined, 'dataset-table-viewport'); tableViewport.setAttribute('role', 'region'); tableViewport.setAttribute('aria-label', '图片范围表格（可滚动）'); tableViewport.tabIndex = 0; tableViewport.append(table);
-  const planning = element('section'); planning.setAttribute('aria-label', '分批交付计划'); const seed = element('input'); seed.value = state.seed;
+  const planning = element('details'); planning.setAttribute('aria-label', '分批交付计划'); const seed = element('input'); seed.value = state.seed;
   const previewPlan = action('预览整组划分与分批范围', () => void makePlan()); const confirmPlan = action('确认整组划分', () => {
     if (!canEdit() || busy || !state.plan || state.planConfirmed || state.snapshots.size) return;
     for (const item of state.plan.batches.flat()) { const choice = state.choices.get(item.id); if (choice) state.choices.set(item.id, { ...choice, split: item.split }); }
     state.planConfirmed = true; revision++; freezeConfirmed = false; renderRows(); render();
   });
   const batch = element('select'); const planRoot = element('div');
-  planning.append(element('h2', '划分与分批计划'), element('p', '固定整组权重：训练80% / 验证10% / 测试10%；SHA-256按来源组确定性分配，数量不保证精确比例。每批最多1024项（含排除），每批至少一项纳入。'), field('确定性seed', seed), previewPlan, planRoot, confirmPlan, field('当前交付批次', batch));
+  planning.append(element('summary', '划分与分批计划'), element('p', '固定整组权重：训练80% / 验证10% / 测试10%；SHA-256按来源组确定性分配，数量不保证精确比例。每批最多1024项（含排除），每批至少一项纳入。'), field('确定性seed', seed), previewPlan, planRoot, confirmPlan, field('当前交付批次', batch));
+  let planningNeeded = false;
   const freezeSummary = element('section'); freezeSummary.setAttribute('aria-label', '冻结确认摘要'); const freezeText = element('p'), freezeDetails = element('div');
   const freeze = action('冻结所选修订', () => void freezeSnapshot(), 'snapshot-create'); freeze.className = 'primary'; freezeSummary.append(element('h2', '固定快照 · 冻结确认'), freezeText, freezeDetails, freeze);
   const exports = element('section'); const snapshotText = element('p'); const format = element('select'); format.dataset.testid = 'export-format'; options(format, [{ value: 'native', text: '原生格式（无损）' }, { value: 'yolo', text: 'YOLO' }, { value: 'coco', text: 'COCO' }], state.format);
+  const snapshotReceipt = details('原冻结范围与回执', null), receiptText = snapshotReceipt.querySelector('pre')!;
+  let receiptRequest: string | null = null;
   const exportStart = action('生成导出并检查信息损失', () => void startExport(false), 'export-start');
   const lossRoot = element('div'); const ackInput = element('input'); ackInput.type = 'checkbox'; ackInput.dataset.testid = 'export-loss-ack'; const ackLabel = field('我已阅读并明确接受上述信息损失', ackInput);
   ackLabel.prepend(ackInput);
-  const exportConfirm = action('确认损失并生成导出', () => void startExport(true), 'export-confirm'); exports.append(element('h2', '固定DatasetVersion导出'), snapshotText, field('导出格式', format), exportStart, lossRoot, ackLabel, exportConfirm);
+  const exportConfirm = action('确认损失并生成导出', () => void startExport(true), 'export-confirm'); exports.append(element('h2', '固定DatasetVersion导出'), snapshotText, snapshotReceipt, field('导出格式', format), exportStart, lossRoot, ackLabel, exportConfirm);
   const pendingRoot = element('div'), historyRoot = element('section'), jobsRoot = element('section'); jobsRoot.setAttribute('aria-label', '导出作业与下载');
   historyRoot.setAttribute('aria-label', '已确认不可变快照历史');
   const scopePicker = element('div', undefined, 'dataset-scope-picker'); scopePicker.append(field('类别规范版本', ontology), read);
@@ -79,6 +85,9 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     returnRange.hidden = viewedSnapshot === null; returnRange.disabled = disabled;
     ontology.disabled = disabled || state.snapshots.size > 0; ontology.value = state.ontology; read.disabled = disabled || !state.ontology || state.snapshots.size > 0;
     let included = 0, excluded = 0; for (const choice of state.choices.values()) { if (choice.disposition === 'include') included++; else if (choice.disposition === 'exclude') excluded++; }
+    const needsPlanning = !!state.plan || included + excluded > CAP;
+    if (needsPlanning && !planningNeeded) planning.open = true;
+    planningNeeded = needsPlanning;
     summary.textContent = `已浏览 ${state.visited.size} 张 · 纳入 ${included} · 明确排除 ${excluded} · 范围外 ${state.visited.size - included - excluded}；未浏览图片与范围外图片不会自动纳入或排除。`;
     previous.disabled = disabled || !state.pageIndex; next.disabled = disabled || !page?.next; pageNumber.textContent = `第${state.pageIndex + 1}页`; include.disabled = exclude.disabled = disabled || !page || !!state.snapshots.size; retry.hidden = !failedPage; retry.disabled = disabled;
     seed.disabled = disabled || state.snapshots.size > 0; previewPlan.disabled = disabled || state.snapshots.size > 0 || !selected().length; confirmPlan.hidden = !state.plan; confirmPlan.disabled = disabled || state.planConfirmed || state.snapshots.size > 0; batch.parentElement!.hidden = !state.plan;
@@ -89,20 +98,26 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
     freezeText.textContent = `当前批次${state.batch + 1}：训练${counts.train} · 验证${counts.val} · 测试${counts.test} · 排除${active.filter(choice => choice.disposition === 'exclude').length}；项数预算${active.length}/1024。体积未知；服务端复验资格、分组与96MiB真实ZIP独立上限。${freezeConfirmed ? '已展示冻结确认摘要，再次点击提交当前不可变版本。' : ''}`;
     freeze.textContent = freezeConfirmed ? '确认冻结所选修订' : '冻结所选修订'; freeze.disabled = disabled || !!frozen || !state.ontology || !active.some(choice => choice.disposition === 'include') || active.length > CAP || (!!state.plan && !state.planConfirmed) || active.some(choice => choice.disposition === 'exclude' && !choice.reason.trim());
     exports.hidden = !frozen; snapshotText.textContent = frozen ? `固定DatasetVersion ${frozen.id} · manifest SHA-256 ${frozen.manifest} · 固定规范 ${frozen.ontology}` : '';
+    const request = frozen?.request ?? null;
+    if (receiptRequest !== request) { receiptRequest = request; snapshotReceipt.open = false; receiptText.textContent = request === null ? '' : JSON.stringify(JSON.parse(request), null, 2); }
     format.value = state.format; format.disabled = disabled;
     const existing = frozen ? state.jobs.some(job => job.snapshot === frozen.id && job.format === state.format) : false;
     exportStart.disabled = disabled || !frozen || existing || !!loss;
     lossRoot.replaceChildren(); if (loss) lossRoot.append(lossView(loss.report)); ackLabel.hidden = exportConfirm.hidden = !loss; ackInput.checked = ack; ackInput.disabled = disabled; exportConfirm.disabled = disabled || !ack || !loss || !frozen || loss.snapshot !== frozen.id || loss.format !== state.format;
     pendingRoot.replaceChildren(); for (const intent of state.intents.filter(intent => intent.uncertain)) { const block = element('section'); block.append(element('h3', '原请求核对 · 只读'), details(`原operation ${intent.operationId}`, { kind: intent.kind, path: intent.path, body: JSON.parse(intent.body) }), element('p', '结果未知，禁止创建新请求或改变原载荷；只读观察不能证明原POST唯一归因。'), action('只读核对原请求', () => void reconcile(intent))); pendingRoot.append(block); }
     historyRoot.replaceChildren(element('h2', '已确认不可变快照历史'));
+    let historyCount = 0;
     for (const fixed of [...state.history, ...state.snapshots.values()]) {
+      if (fixed.id === frozen?.id) continue;
+      historyCount++;
       const block = element('section');
       block.append(element('p', `DatasetVersion ${fixed.id} · 固定规范 ${fixed.ontology} · manifest SHA-256 ${fixed.manifest}`), details('原冻结范围与回执', JSON.parse(fixed.request)));
       const inspect = action('查看并导出此固定版本', () => { if (!canEdit() || busy) return; viewedSnapshot = fixed; loss = null; ack = false; render(); });
       inspect.disabled = disabled; block.append(inspect); historyRoot.append(block);
     }
+    historyRoot.hidden = !historyCount;
     renderJobs();
-    for (const row of rowViews.values()) row.update();
+    for (const row of page?.items ?? []) rowViews.get(row.media.asset_revision_id)?.update();
   }
   function beginNewDelivery() {
     if (!canEdit() || busy || state.intents.some(intent => intent.sending)) return;
@@ -215,6 +230,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   }
   function renderJobs() {
     jobsRoot.replaceChildren(element('h2', '导出作业与下载'));
+    jobsRoot.hidden = !state.jobs.length;
     for (const job of state.jobs) { const block = element('section'); block.append(element('p', `已有作业 ${job.id} · 固定DatasetVersion ${job.snapshot} · ${job.format} · ${job.state}`));
       if (job.error) { const message = element('p', job.error); message.setAttribute('role', 'alert'); block.append(message); }
       if (job.downloadConfirmed) { const message = element('p', 'ZIP签名、字节数与SHA-256已校验，已发起下载。'); message.setAttribute('role', 'status'); block.append(message); }
@@ -255,7 +271,7 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   format.addEventListener('change', () => { if (!canEdit() || busy) return; state.format = format.value as Format; loss = null; ack = false; revision++; render(); }, { signal: life.signal });
   ackInput.addEventListener('change', () => { if (current() && !busy) ack = ackInput.checked; render(); }, { signal: life.signal });
   const reads = createAuthorizedReadScope(life.signal, context.session, context.projectId, () => {
-    validScope = false; window.clearTimeout(timer ?? undefined); timer = null; render();
+    validScope = false; projectName.textContent = '项目身份已失效'; window.clearTimeout(timer ?? undefined); timer = null; render();
   });
   life.add(reads.dispose);
   const onSettlement = () => { if (current()) { render(); schedulePoll(); } };
@@ -263,5 +279,14 @@ export function mountDatasetsPage(root: HTMLElement, context: DatasetsPageContex
   life.add(() => { if (timer !== null) { clearTimeout(timer); timer = null; } main.remove(); });
   renderRows(); render(); schedulePoll();
   void api.ontologies(context.projectId, reads.signal).then(page => { if (!current()) return; options(ontology, [{ value: '', text: '明确选择固定规范版本' }, ...page.items.filter(item => item.project_id === context.projectId).map(item => ({ value: item.ontology_version_id, text: `第${item.version_no}版 · ${item.ontology_version_id}` }))], state.ontology); }).catch(cause => { if (current()) showError(cause); });
+  void api.projects(reads.signal).then(page => {
+    if (!current()) return;
+    const project = page.items.find(item => item.project_id === context.projectId);
+    projectName.textContent = project?.name ?? '项目名称暂不可用';
+  }).catch(cause => {
+    if (!current()) return;
+    projectName.textContent = '项目名称读取失败，请按项目 ID 核对。';
+    projectIdentity.append(element('p', failureText(cause)));
+  });
   return life.dispose;
 }

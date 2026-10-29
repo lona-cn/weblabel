@@ -18,15 +18,15 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
   }
   const controller = createProjectController(context.onOpen, scope.current, scope.signal);
   let editorVisible = false, creationStarted = false, shape = '', childDispose: (() => void) | null = null, childProjectId: string | null = null;
-  let creationTrigger: HTMLButtonElement | null = null;
-  function openCreation(trigger: HTMLButtonElement) {
+  function openCreation() {
     if (!scope.current() || create.disabled) return;
-    controller.newProject(); creationStarted = true; creationTrigger = trigger; editorVisible = true; render(); name.control.focus();
+    controller.newProject(); creationStarted = true; editorVisible = true; render(); name.control.focus();
   }
   const heading = el('div', undefined, 'accounts-heading'); heading.append(el('h1', '项目'));
-  const create = button('＋ 新建项目', 'project-create-toggle', scope.signal, () => openCreation(create), true); heading.append(create);
-  const guide = el('section', undefined, 'accounts-delivery-guide'), steps = el('ol', undefined, 'accounts-delivery-steps');
-  guide.append(el('h2', '首次人工交付四步'), steps); steps.setAttribute('aria-label', '首次人工交付四步');
+  const create = button('＋ 新建项目', 'project-create-toggle', scope.signal, openCreation, true); heading.append(create);
+  const guide = el('details', undefined, 'accounts-delivery-guide'), steps = el('ol', undefined, 'accounts-delivery-steps');
+  guide.append(el('summary', '首次人工交付四步'), steps); steps.setAttribute('aria-label', '首次人工交付四步');
+  let guidePopulated: boolean | null = null;
   for (const [index, text] of ['项目规范：定义类别与属性', '导入：图片及已有标注', '标注保存：确认服务端保存', '交付：单图导出或审核后冻结数据集'].entries()) {
     const item = el('li'), number = el('span', String(index + 1), 'accounts-delivery-number'); number.setAttribute('aria-hidden', 'true'); item.append(number, el('span', text)); steps.append(item);
   }
@@ -45,16 +45,13 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
   const empty = el('div', undefined, 'accounts-project-empty'); empty.dataset.testid = 'projects-empty';
   const emptyMessage = el('div'); emptyMessage.setAttribute('role', 'status');
   emptyMessage.append(el('h3', '尚无可访问项目'), el('p', '项目列表已读取，当前账户没有可访问的项目。新建项目后定义类别与属性，再导入图片。'));
-  const emptyCreate = button('新建项目', 'project-empty-create', scope.signal, () => openCreation(emptyCreate), true);
-  empty.append(emptyMessage, emptyCreate);
+  empty.append(emptyMessage);
   const listPanel = el('section', undefined, 'accounts-project-list');
   listPanel.append(el('h2', '项目列表'), listing.wrap, placeholder, loading, empty, reload);
-  const createEntry = button('新建项目与规范（展开）', 'project-create-entry', scope.signal, () => openCreation(createEntry));
-  createEntry.classList.add('accounts-project-create-entry');
   const listArea = el('section');
   const deliveryNotice = el('p', undefined, 'accounts-project-notice');
   deliveryNotice.append(el('span', '单图导出不等于已批准数据集。'), el('span', '团队交付需独立审核，默认禁止自审核。'));
-  listArea.append(guide, deliveryNotice, listPanel, createEntry, viewDraft, el('p', '账号创建仅限平台管理员；项目成员由项目管理员按真实 user_id 管理。', 'accounts-project-roles'));
+  listArea.append(listPanel, guide, deliveryNotice, viewDraft, el('p', '账号创建仅限平台管理员；项目成员由项目管理员按真实 user_id 管理。', 'accounts-project-roles'));
   const platform = el('div'), members = el('div');
   const platformButton = button('平台账号管理', 'platform-accounts-open', scope.signal, () => { if (!scope.current()) return; childDispose?.(); childProjectId = null; members.replaceChildren(); members.hidden = false; childDispose = mountMemberManager(members, { ...context, project: null }); members.scrollIntoView({ block: 'start' }); });
   if (entry.session.platform_admin) platform.append(platformButton);
@@ -67,7 +64,7 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
   const guidelines = textareaField('ontology-guidelines', '标注指南', '最多 65536 UTF-8 字节；发布不会迁移旧图片、任务或草稿。'); guidelines.control.rows = 2; guidelines.control.addEventListener('input', () => controller.edit({ guidelines: guidelines.control.value }), { signal: scope.signal });
   const add = button('＋ 添加类别', 'ontology-add-label', scope.signal, () => { controller.edit({ labels: [...controller.getSnapshot().labels, newLabel()] }); });
   const submit = el('button', '创建项目', 'accounts-primary'); submit.type = 'submit'; submit.dataset.testid = 'project-submit';
-  const back = button('返回项目列表', 'project-editor-back', scope.signal, () => { editorVisible = false; render(); const target = creationTrigger && !creationTrigger.disabled && creationTrigger.offsetParent !== null ? creationTrigger : !create.disabled ? create : !viewDraft.hidden ? viewDraft : reload; target.focus(); });
+  const back = button('返回项目列表', 'project-editor-back', scope.signal, () => { editorVisible = false; render(); const target = !create.disabled ? create : !viewDraft.hidden ? viewDraft : reload; target.focus(); });
   const reconcile = button('只读核对结果', 'project-reconcile', scope.signal, () => { void controller.reconcile(); });
   const actions = el('div', undefined, 'accounts-actions accounts-ontology-actions'); actions.append(back, submit, reconcile);
   const budget = el('p', '', 'accounts-ontology-budget'); budget.dataset.testid = 'ontology-budget';
@@ -166,16 +163,18 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
     if (!scope.current()) return; const s = controller.getSnapshot();
     const populated = s.listingReady && s.projects.length > 0;
     listArea.dataset.listPopulated = String(populated);
-    const noticeNext = populated ? createEntry : listPanel;
-    if (deliveryNotice.nextElementSibling !== noticeNext) listArea.insertBefore(deliveryNotice, noticeNext);
     const frozen = s.busy || !!s.unknown || (!!s.creationDraft && !s.selected) || (!!s.selected && !sessionCanManage(context, s.selected.project_id));
     heading.hidden = editorVisible; listArea.hidden = editorVisible; form.hidden = !editorVisible;
     platform.hidden = editorVisible || !s.listingReady && !s.projects.length;
     members.hidden = platform.hidden || childProjectId !== null && !s.projects.some(project => project.project_id === childProjectId);
     create.disabled = s.busy || !s.listingReady || s.unknown === 'ontology' || !!s.confirmed;
-    createEntry.disabled = emptyCreate.disabled = create.disabled;
     empty.hidden = s.busy || !s.listingReady || !!s.projects.length;
+    const createContainer = empty.hidden ? heading : empty;
+    if (create.parentElement !== createContainer) createContainer.append(create);
+    guide.hidden = !s.listingReady;
+    if (s.listingReady && guidePopulated !== populated) { guidePopulated = populated; guide.open = !populated; }
     viewDraft.hidden = s.listingReady || !creationStarted || !!s.selected || !!s.confirmed;
+    listing.wrap.hidden = !s.projects.length;
     placeholder.hidden = !s.busy || s.listingReady; listing.wrap.setAttribute('aria-busy', String(s.busy && !s.listingReady));
     const listError = !editorVisible && !s.busy && !s.listingReady && !!s.error;
     summary.set(listError ? `项目列表读取失败：${s.error}` : s.error); notice.textContent = s.notice ?? ''; reload.disabled = s.busy;
@@ -187,7 +186,7 @@ export function mountProjectsPage(root: HTMLElement, context: ProjectsPageContex
       const row = el('tr'), actions = el('td'); actions.className = 'accounts-actions';
       const listed = () => scope.current() && controller.getSnapshot().projects.some(item => item.project_id === project.project_id);
       actions.append(button('进入工作台', `project-${project.project_id}-open`, scope.signal, () => { if (listed() && !controller.getSnapshot().busy) context.onOpen(project); }));
-      const configure = button('查看规范', `project-${project.project_id}-ontology`, scope.signal, () => { if (!listed()) return; void controller.configure(project).then(() => { if (listed() && controller.getSnapshot().selected?.project_id === project.project_id) { creationTrigger = null; editorVisible = true; render(); title.tabIndex = -1; title.focus(); } }); }); configure.disabled = s.busy || s.unknown === 'ontology' || !!s.confirmed; actions.append(configure);
+      const configure = button('查看规范', `project-${project.project_id}-ontology`, scope.signal, () => { if (!listed()) return; void controller.configure(project).then(() => { if (listed() && controller.getSnapshot().selected?.project_id === project.project_id) { editorVisible = true; render(); title.tabIndex = -1; title.focus(); } }); }); configure.disabled = s.busy || s.unknown === 'ontology' || !!s.confirmed; actions.append(configure);
       const manage = button('管理成员', `project-${project.project_id}-members`, scope.signal, () => {
         if (!listed() || !sessionCanManage(context, project.project_id)) return; childDispose?.(); childProjectId = project.project_id; members.replaceChildren(); members.hidden = false;
         const memberRoot = el('div'), policyRoot = el('div'); members.append(memberRoot, policyRoot);

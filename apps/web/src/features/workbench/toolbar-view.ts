@@ -7,9 +7,12 @@ import { action, element, labeled, option } from './view-elements';
 
 export function mountToolbarView(root: HTMLElement, state: WorkspaceState, port: EditorPort, signal: AbortSignal): () => void {
   root.setAttribute('role', 'toolbar'); root.setAttribute('aria-label', '标注工具');
+  const tools = element('div', undefined, 'r07-toolbar-group'), edits = element('div', undefined, 'r07-toolbar-group'), drawingGroup = element('div', undefined, 'r07-toolbar-group'), viewport = element('div', undefined, 'r07-toolbar-group');
+  for (const [group, label] of [[tools, '标注工具'], [edits, '编辑所选对象'], [drawingGroup, '绘制类别'], [viewport, '画布取景']] as const) { group.setAttribute('role', 'group'); group.setAttribute('aria-label', label); }
+  root.append(tools, edits, drawingGroup, viewport);
   const buttons = new Map<EditorTool, HTMLButtonElement>();
   for (const [tool, text] of [['select', '选择 V'], ['box', '矩形 B'], ['pan', '平移 H']] as const) {
-    const button = action(text, 'tool-' + tool, signal, () => { if (port.getHost()) state.tools?.set(tool); }); buttons.set(tool, button); root.append(button);
+    const button = action(text, 'tool-' + tool, signal, () => { if (port.getHost()) state.tools?.set(tool); }); buttons.set(tool, button); tools.append(button);
   }
   const undo = action('撤销', 'undo', signal, () => port.dispatch({ kind: 'undo' })), redo = action('重做', 'redo', signal, () => port.dispatch({ kind: 'redo' }));
   const duplicate = action('复制选中', 'duplicate-selected', signal, () => { const ids = selectedIds(state); port.dispatch({ kind: 'duplicate', object_ids: [...ids], new_ids: ids.map(() => crypto.randomUUID()) }); });
@@ -17,7 +20,7 @@ export function mountToolbarView(root: HTMLElement, state: WorkspaceState, port:
   const drawing = element('select'); drawing.dataset.testid = 'drawing-label';
   const zoom = element('output'), minus = action('−', 'zoom-out', signal, () => changeZoom(1 / 1.2)), plus = action('+', 'zoom-in', signal, () => changeZoom(1.2)); minus.setAttribute('aria-label', '缩小'); plus.setAttribute('aria-label', '放大');
   const fit = action('适应图片', 'fit-image', signal, () => port.getReadHost()?.fitImage()), focus = action('聚焦选择', 'focus-selection', signal, () => port.getReadHost()?.focusSelection());
-  root.append(undo, redo, duplicate, remove, labeled('绘制类别', drawing), minus, zoom, plus, fit, focus);
+  edits.append(undo, redo, duplicate, remove); drawingGroup.append(labeled('绘制类别', drawing)); viewport.append(minus, zoom, plus, fit, focus);
   let ontology: OntologyVersion | null = null, renderedHost: WorkspaceState['host'] = null, unsubscribeRendered: (() => void) | null = null;
   function changeZoom(factor: number) {
     const host = port.getReadHost(), viewport = host?.getViewport();
@@ -28,6 +31,7 @@ export function mountToolbarView(root: HTMLElement, state: WorkspaceState, port:
     zoom.textContent = viewport ? Math.round(viewport.scale * 100) + '%' + (stack && stack.count > 1 ? ' · 重叠 ' + ((stack.index ?? 0) + 1) + '/' + stack.count : '') : '缩放未知';
   }
   function update() {
+    root.hidden = state.phase === 'empty' && !state.assets.length;
     const host = port.getHost();
     for (const [tool, button] of buttons) { button.disabled = !host; button.setAttribute('aria-pressed', String(state.tools?.current() === tool)); }
     undo.disabled = !host || !state.canUndo; redo.disabled = !host || !state.canRedo;

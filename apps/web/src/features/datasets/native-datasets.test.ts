@@ -17,6 +17,7 @@ function fixture(total = 3, size = 2) {
   const session = { user_id: 'actor', username: 'actor', platform_admin: false, project_roles: [{ project_id: project, role: 'admin' }] };
   const authListeners = new Set<() => void>();
   const controller: SessionController = { getSnapshot: () => ({ kind: 'authenticated', session, createdUsername: null }), subscribe: listener => { authListeners.add(listener); return () => authListeners.delete(listener); }, login: vi.fn(), bootstrap: vi.fn(), recover: vi.fn(), logout: vi.fn(), refresh: vi.fn(), dispose: vi.fn() };
+  vi.spyOn(api, 'projects').mockResolvedValue({ items: [{ project_id: project, name: '项目 ' + project, description: '', allow_self_review: false, role: 'admin' }], next_cursor: null });
   vi.spyOn(api, 'ontologies').mockResolvedValue({ items: [{ project_id: project, ontology_version_id: ontologyId, version_no: 1, labels: [], guidelines_markdown: '', allow_out_of_bounds: false }], next_cursor: null });
   const heads = vi.spyOn(api, 'projectAnnotationHeads').mockImplementation(async (_project, _ontology, cursor) => { const offset = Number(cursor ?? 0); return { items: rows.slice(offset, offset + size), next_cursor: offset + size < total ? String(offset + size) : null }; });
   const writes: { path: string; body: Record<string, unknown> }[] = [];
@@ -125,10 +126,14 @@ it('freezes immutable revision identities before loss acknowledgement and export
 it('plans and freezes every selected item across 1024-item batches with no omissions or duplicates', async () => {
   const view = fixture(1025, 100); await browse(view);
   for (let page = 0; page < 11; page++) { button(view.root, '纳入本页').click(); if (page < 10) { button(view.root, '下一页').click(); await vi.waitFor(() => expect(view.heads).toHaveBeenCalledTimes(page + 2)); await vi.waitFor(() => expect(button(view.root, '纳入本页').disabled).toBe(false)); } }
+  const planning = view.root.querySelector<HTMLDetailsElement>('[aria-label="分批交付计划"]')!;
+  expect(planning.open).toBe(true);
+  planning.open = false; button(view.root, '上一页').click();
+  expect(planning.open).toBe(false);
+  planning.open = true;
   button(view.root, '预览整组划分与分批范围').click(); await vi.waitFor(() => expect(button(view.root, '确认整组划分').disabled).toBe(false)); button(view.root, '确认整组划分').click();
   testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
   await vi.waitFor(() => expect(testId<HTMLButtonElement>(view.root, 'export-start').disabled).toBe(false)); const firstRequest = JSON.stringify(view.writes[0]);
-  button(view.root, '查看并导出此固定版本').click();
   const batches = [...view.root.querySelectorAll('label')].find(label => label.firstChild?.textContent === '当前交付批次')!.control as HTMLSelectElement; select(batches, '1');
   expect(testId<HTMLButtonElement>(view.root, 'snapshot-create').disabled).toBe(false);
   testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
@@ -154,6 +159,7 @@ it('aborts a pending dataset page on permission revocation and ignores the late 
 it('starts a new explicit delivery range after remount while retaining prior immutable snapshots and ready artifacts', async () => {
   const view = fixture(); const artifact = { export_id: view.jobId, format: 'native', download_url: `/api/exports/${view.jobId}/download`, byte_size: 22, object_sha256: view.digest, loss_report: { losses: [] } };
   vi.spyOn(api, 'job').mockResolvedValue({ job_id: view.jobId, kind: 'dataset_export', state: 'succeeded', progress_completed: 1, progress_total: 1, result: artifact });
+  const exportedRequest = () => JSON.parse(testId(view.root, 'export-format').closest('section')!.querySelector('details pre')!.textContent!) as { items: { annotation_revision_id: string }[] };
   await browse(view); select(testId(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`), 'include'); testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
   await vi.waitFor(() => expect(testId<HTMLButtonElement>(view.root, 'export-start').disabled).toBe(false)); const original = JSON.stringify(view.writes[0]); testId<HTMLButtonElement>(view.root, 'export-start').click();
   await vi.waitFor(() => expect(testId<HTMLButtonElement>(view.root, 'export-status-check').disabled).toBe(false)); testId<HTMLButtonElement>(view.root, 'export-status-check').click();
@@ -162,9 +168,11 @@ it('starts a new explicit delivery range after remount while retaining prior imm
   expect(testId<HTMLSelectElement>(view.root, 'dataset-ontology').disabled).toBe(false); expect(view.root.textContent).toContain(view.jobId); expect(view.root.textContent).toContain(view.digest); expect(testId<HTMLButtonElement>(view.root, 'export-download').disabled).toBe(false);
   view.rows[0].head = { ...view.rows[0].head!, annotation_revision_id: uuid(9999) }; await browse(view); select(testId(view.root, `dataset-disposition-${view.rows[0].media.asset_revision_id}`), 'include');
   button(view.root, '查看并导出此固定版本').click(); expect(testId<HTMLButtonElement>(view.root, 'snapshot-create').disabled).toBe(true);
+  expect(exportedRequest().items[0].annotation_revision_id).toBe(uuid(3000));
   button(view.root, '返回当前交付范围').click(); expect(testId<HTMLButtonElement>(view.root, 'snapshot-create').disabled).toBe(false);
   testId<HTMLButtonElement>(view.root, 'snapshot-create').click(); testId<HTMLButtonElement>(view.root, 'snapshot-create').click();
   await vi.waitFor(() => expect(view.writes.filter(write => write.path.endsWith('/dataset-versions'))).toHaveLength(2));
+  await vi.waitFor(() => expect(exportedRequest().items[0].annotation_revision_id).toBe(uuid(9999)));
   expect(JSON.stringify(view.writes[0])).toBe(original); expect((view.writes.at(-1)!.body.items as { annotation_revision_id: string }[])[0].annotation_revision_id).toBe(uuid(9999));
 });
 it('retains verified download confirmation on the existing dataset job', async () => {

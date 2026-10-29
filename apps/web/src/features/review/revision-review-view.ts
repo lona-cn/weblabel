@@ -36,14 +36,86 @@ export function mountRevisionReviewView(root: HTMLElement, context: { projectId:
     fixedObject.dataset.testid = 'fixed-object-detail'; fixedObject.setAttribute('aria-label', '所选对象只读详情'); sidebar.append(fixedObject);
   }
   const issueHeading = element('h3', '问题与定位'); issueHeading.hidden = issuesRoot.hidden = !!context.detailed && !context.issues.length;
-  sidebar.append(element('h3', '只读对象属性'), objectsRoot, issueHeading, issuesRoot); columns.append(inspection, sidebar);
+  sidebar.append(element('h3', '只读对象属性'), element('p', '序号仅用于当前显示版本；跨版本核对请看对象 ID。'), objectsRoot, issueHeading, issuesRoot); columns.append(inspection, sidebar);
   section.append(element('p', `只读图像 + SVG 投影（不是可编辑 wgpu）。固定版本 ${revision.annotation_revision_id}；新 head 不继承旧批准。`), columns); root.append(section);
   let url: string | null = null, ontology: OntologyVersion | null = null, version: 'before' | 'after' = 'after'; let focused: string | null = null, region: BBox | null = null;
   const before = new Map((parent?.document.objects ?? []).map(object => [object.object_id, object])); const after = new Map(revision.document.objects.map(object => [object.object_id, object]));
   const changed = !parent && context.detailed ? [] : [...new Set([...before.keys(), ...after.keys()])].filter(id => JSON.stringify(before.get(id)) !== JSON.stringify(after.get(id)));
   const changedIds = new Set(changed);
-  const objects = mountReviewList<AnnotationDocument['objects'][number]>(objectsRoot, '审核对象', object => object.object_id, (object, signal) => {
-    const row = element('div'), action = actions(signal); row.append(action(`${ontology?.labels.find(label => label.label_id === object.label_id)?.name ?? object.label_id} · ${object.object_id} · ${!parent && context.detailed ? '无基线' : changedIds.has(object.object_id) ? '变化' : '无变化'}：定位对象`, () => { focused = object.object_id; region = null; paint(); }), details('只读对象属性与几何', object)); return row;
+  type ObjectRow = { object: AnnotationDocument['objects'][number]; name: string; category: string; ordinal: number };
+  const namedVersions = new Map<AnnotationRevision, ObjectRow[]>();
+  function rowsFor(shown: AnnotationRevision): ObjectRow[] {
+    let rows = namedVersions.get(shown);
+    if (!rows) {
+      const names = new Map(ontology!.labels.map(label => [label.label_id, label.name]));
+      rows = shown.document.objects.map((object, index) => {
+        const category = names.get(object.label_id) ?? object.label_id;
+        return { object, category, ordinal: index + 1, name: category + ' #' + (index + 1) };
+      });
+      namedVersions.set(shown, rows);
+    }
+    return rows;
+  }
+  let labelNodes: { row: ObjectRow; node: SVGTextElement }[] = [];
+  function layoutObjectLabels() {
+    if (!life.alive || context.isCurrent?.() === false) return;
+    const svg = graphic.querySelector('svg');
+    if (!svg?.getBoundingClientRect().width || !labelNodes.length) return;
+    const view = svg.viewBox.baseVal, padding = view.height / 175;
+    for (const { row, node } of labelNodes) if (node.textContent !== row.name) node.textContent = row.name;
+    const measured = labelNodes.map(entry => ({ ...entry, bounds: entry.node.getBBox() }));
+    let bandHeight = 1, visible = 0;
+    for (const entry of measured) bandHeight = Math.max(bandHeight, entry.bounds.height + padding * 2);
+    const occupied = new Map<number, { left: number; right: number; top: number; bottom: number }[]>();
+    function place(entry: typeof measured[number]) {
+      const { row, node } = entry;
+      const boxInImage = row.object.geometry;
+      if (boxInImage.x_max <= view.x || boxInImage.x_min >= view.x + view.width || boxInImage.y_max <= view.y || boxInImage.y_min >= view.y + view.height) {
+        node.style.visibility = 'hidden'; return;
+      }
+      let bounds = entry.bounds;
+      const available = view.width - padding * 2;
+      if (bounds.width > available && available > 0) {
+        const characters = Array.from(row.category), suffix = '… #' + row.ordinal;
+        let low = 0, high = characters.length;
+        while (low < high) {
+          const count = Math.ceil((low + high) / 2);
+          node.textContent = characters.slice(0, count).join('') + suffix;
+          if (node.getBBox().width <= available) low = count; else high = count - 1;
+        }
+        node.textContent = characters.slice(0, low).join('') + suffix;
+        bounds = node.getBBox();
+      }
+      const left = Math.max(view.x + padding, Math.min(row.object.geometry.x_min, view.x + view.width - bounds.width - padding));
+      const top = Math.max(view.y + padding, Math.min(bounds.y, view.y + view.height - bounds.height - padding));
+      node.setAttribute('x', String(Number(node.getAttribute('x')) + left - bounds.x));
+      node.setAttribute('y', String(Number(node.getAttribute('y')) + top - bounds.y));
+      const box = { left: left - padding, right: left + bounds.width + padding, top: top - padding, bottom: top + bounds.height + padding };
+      const firstBand = Math.floor(box.top / bandHeight), lastBand = Math.floor(box.bottom / bandHeight);
+      for (let band = firstBand; band <= lastBand; band++) {
+        if (occupied.get(band)?.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) {
+          node.style.visibility = 'hidden'; return;
+        }
+      }
+      node.style.visibility = 'visible'; visible++;
+      for (let band = firstBand; band <= lastBand; band++) {
+        const entries = occupied.get(band);
+        if (entries) entries.push(box); else occupied.set(band, [box]);
+      }
+    }
+    const selected = measured.find(entry => entry.row.object.object_id === focused);
+    if (selected) place(selected);
+    for (const entry of measured) if (entry !== selected) place(entry);
+    status.textContent = `${labelNodes.length} 个对象；完成状态 ${(version === 'before' && parent ? parent : revision).document.completion}。空对象不是已确认负样本。`
+      + (visible < labelNodes.length ? ' 图中只显示当前视野内不重叠的名称；完整对象仍可从列表定位。' : '');
+  }
+  const labelResize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(layoutObjectLabels);
+  labelResize?.observe(graphic); life.add(() => labelResize?.disconnect());
+  const objects = mountReviewList<ObjectRow>(objectsRoot, '审核对象', row => row.object.object_id, ({ object, name }, signal) => {
+    const row = element('div'), action = actions(signal);
+    const locate = action(`${name} · ${!parent && context.detailed ? '无基线' : changedIds.has(object.object_id) ? '变化' : '无变化'}：定位对象`, () => { focused = object.object_id; region = null; paint(); });
+    locate.title = '对象 ID：' + object.object_id;
+    row.append(locate, details('对象 ID、只读属性与几何', object)); return row;
   }, life.signal);
   const issues = mountReviewList<ReviewIssue>(issuesRoot, '审核问题', issue => issue.issue_id, (issue, signal) => {
     const row = element('div'), action = actions(signal); const locate = action('定位问题', () => {
@@ -61,31 +133,34 @@ export function mountRevisionReviewView(root: HTMLElement, context: { projectId:
   controls.append(beforeButton, afterButton, action('检查全图（含无变化区域）', () => { focused = null; region = null; paint(); }));
   function paint() {
     if (!life.alive || context.isCurrent?.() === false || !url || !ontology) return;
-    const shown = version === 'before' && parent ? parent : revision; const svg = mountReadonlyProjection(graphic, shown.document, ontology, url);
+    const shown = version === 'before' && parent ? parent : revision; const rows = rowsFor(shown), svg = mountReadonlyProjection(graphic, shown.document, ontology, url);
     const box = shown.document.objects.find(object => object.object_id === focused)?.geometry ?? region;
     const labelSize = (box ? Math.max(40, box.y_max - box.y_min + 40) : shown.document.coordinate_space.height) / 35;
-    if (context.detailed) for (const [index, object] of shown.document.objects.entries()) {
-      const label = document.createElementNS(NS, 'text');
+    labelNodes = [];
+    if (context.detailed) for (const [index, row] of rows.entries()) {
+      const { object, name } = row, label = document.createElementNS(NS, 'text');
       label.setAttribute('x', String(object.geometry.x_min)); label.setAttribute('y', String(Math.max(labelSize + 2, object.geometry.y_min - 4))); label.setAttribute('font-size', String(labelSize));
-      label.setAttribute('class', 'revision-fixed-label'); label.setAttribute('aria-hidden', 'true'); label.textContent = `${ontology.labels.find(item => item.label_id === object.label_id)?.name ?? object.label_id} · ${object.object_id}`;
-      svg.children[index + 1]?.append(label);
+      label.setAttribute('class', 'revision-fixed-label'); label.setAttribute('aria-hidden', 'true'); label.textContent = name;
+      svg.children[index + 1]?.append(label); labelNodes.push({ row, node: label });
     }
     svg.setAttribute('aria-label', `固定版本 ${shown.annotation_revision_id} 的只读标注投影`);
     if (box) svg.setAttribute('viewBox', `${Math.max(0, box.x_min - 20)} ${Math.max(0, box.y_min - 20)} ${Math.max(40, box.x_max - box.x_min + 40)} ${Math.max(40, box.y_max - box.y_min + 40)}`);
     for (const rect of svg.querySelectorAll('rect')) if (rect.dataset.objectId === focused) { rect.setAttribute('stroke', '#f1c975'); rect.setAttribute('stroke-width', '3'); }
     if (region) { const rect = document.createElementNS(NS, 'rect'); for (const [name, value] of Object.entries({ x: region.x_min, y: region.y_min, width: region.x_max - region.x_min, height: region.y_max - region.y_min })) rect.setAttribute(name, String(value)); rect.setAttribute('fill', 'none'); rect.setAttribute('stroke', '#f1c975'); rect.setAttribute('stroke-width', '3'); rect.setAttribute('vector-effect', 'non-scaling-stroke'); svg.append(rect); }
-    beforeButton.setAttribute('aria-pressed', String(version === 'before')); afterButton.setAttribute('aria-pressed', String(version === 'after')); objects.update(shown.document.objects);
+    beforeButton.setAttribute('aria-pressed', String(version === 'before')); afterButton.setAttribute('aria-pressed', String(version === 'after')); objects.update(rows);
     if (fixedObject) {
       const object = shown.document.objects.find(value => value.object_id === focused);
-      fixedObject.replaceChildren(element('h3', '所选对象 · 只读'));
+      const name = rows.find(row => row.object.object_id === focused)?.name;
+      fixedObject.replaceChildren(element('h3', name ? `${name} · 只读` : '所选对象 · 只读'));
       if (!object) fixedObject.append(element('p', '选择对象以查看此固定版本的属性与 canonical 坐标。'));
       else {
         const values = element('dl'); const label = ontology.labels.find(value => value.label_id === object.label_id);
-        for (const [name, value] of [['对象', object.object_id], ['类别', label?.name ?? object.label_id], ...Object.entries(object.geometry).filter(([key]) => key !== 'type').map(([key, value]) => [key, String(value)]), ...Object.entries(object.attributes).map(([key, value]) => [key, JSON.stringify(value)])]) values.append(element('dt', name), element('dd', value));
+        for (const [name, value] of [['对象 ID', object.object_id], ['类别', label?.name ?? object.label_id], ...Object.entries(object.geometry).filter(([key]) => key !== 'type').map(([key, value]) => [key, String(value)]), ...Object.entries(object.attributes).map(([key, value]) => [key, JSON.stringify(value)])]) values.append(element('dt', name), element('dd', value));
         fixedObject.append(values);
       }
     }
     status.textContent = `${shown.document.objects.length} 个对象；完成状态 ${shown.document.completion}。空对象不是已确认负样本。`;
+    layoutObjectLabels();
   }
   differences.append(element('h3', '固定版本差异'), element('p', `完成状态：${parent?.document.completion ?? '无基线'} → ${revision.document.completion}`));
   if (context.detailed && parent && changed.length) {

@@ -17,12 +17,14 @@ export const COMPLETION_LABELS: Readonly<Record<Completion, string>> = {
 const PHASE: Record<SavePhase, string> = { idle: '无待保存更改', unsaved: '有未保存更改', saved_local: '本地事务已完成，待同步', saving: '正在同步到服务器', synced: '服务器已确认', save_failed: '保存失败，草稿已保留', storage_error: '本地存储失败，当前修改尚未持久保存', paused: '写入已暂停，保留原请求', conflict: '保存结果或版本待核对，自动写入已暂停' };
 export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: EditorPort, recovery: DraftRecovery, signal: AbortSignal): () => void {
   const status = element('p'); status.dataset.testid = 'save-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
-  const receipts = element('p'), error = element('p'); error.setAttribute('role', 'alert');
+  const error = element('p'); error.setAttribute('role', 'alert');
   const certificate = element('details'), certificateValues = element('dl');
   certificateValues.dataset.testid = 'save-certificate';
   certificate.append(element('summary', '保存记录与确认凭证（技术详情）'), certificateValues);
   let lastCertificate: SaveStatusSnapshot | null = null;
   const controls = element('div', undefined, 'r07-button-row');
+  const recoveryActions = element('details'); recoveryActions.dataset.testid = 'save-recovery-actions'; recoveryActions.append(element('summary', '草稿与恢复操作'), controls);
+  let recoveryNeeded = false;
   let busy = false;
   const perform = async (callback: () => Promise<void>) => {
     if (busy || !sessionCurrent(state)) return;
@@ -46,12 +48,12 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     else port.dispatch({ kind: 'set_completion', completion: 'complete' });
     const current = port.scopeGuard(); if (port.canSave()) void perform(() => state.queue.flushExplicit(state.assetId, () => current() && port.canSave()));
   });
-  const diagnostics = element('details'); diagnostics.dataset.testid = 'save-diagnostic'; const diagnosticText = element('pre'); diagnostics.append(element('summary', '保存技术诊断（上次操作）'), diagnosticText);
+  const diagnostics = element('div'); diagnostics.dataset.testid = 'save-diagnostic'; const diagnosticText = element('pre'); diagnostics.append(element('h3', '保存技术诊断（上次操作）'), diagnosticText); certificate.append(diagnostics);
   const recoveryBanner = element('section'); recoveryBanner.dataset.testid = 'recovery-banner';
   const conflictBanner = element('p'); conflictBanner.dataset.testid = 'conflict-banner'; conflictBanner.setAttribute('role', 'status');
   const primary = element('div', undefined, 'r07-save-primary r07-button-row');
   primary.append(save, labeled('完成状态（保存的文档状态）', completion), negativeLabel, complete);
-  root.append(status, conflictBanner, primary, receipts, certificate, recoveryBanner, controls, diagnostics, error);
+  root.append(status, conflictBanner, primary, certificate, recoveryBanner, recoveryActions, error);
   const branchList = element('div'), compare = element('div'), branchActions = element('div', undefined, 'r07-button-row');
   recoveryBanner.append(element('h2', '草稿恢复'), element('p', '明确选择一个本地分支后恢复或使用服务器版本并留档。不会自动选择最新分支，不会自动合并；原记录与来源始终保留。'), branchList, compare, branchActions);
   let chosen: string | null = null, branchRows: readonly DraftBranchEnvelope[] | null = null, lastDocument = state.document, legacyRows = state.legacyRows, differenceIndex = 0;
@@ -87,21 +89,19 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     status.dataset.phase = snapshot.phase; status.dataset.dirty = String(snapshot.dirty);
     if (lastCertificate !== snapshot) {
       lastCertificate = snapshot; certificateValues.replaceChildren();
-      const values: [string, string | number][] = [['local_commit', snapshot.local_commit ? '本地提交凭证' : 'null（无本地提交凭证）']];
+      const values: [string, string | number][] = [['local_generation', snapshot.local_generation], ['synced_generation', snapshot.synced_generation], ['dirty', String(snapshot.dirty)], ['local_commit', snapshot.local_commit ? '本地提交凭证' : 'null（无本地提交凭证）']];
       if (snapshot.local_commit) for (const key of ['draft_id', 'write_token', 'persist_seq', 'edit_seq', 'generation'] as const) values.push(['local_commit.' + key, snapshot.local_commit[key]]);
       values.push(['last_ack', snapshot.last_ack ? '服务器确认凭证' : 'null（无服务器确认）']);
       if (snapshot.last_ack) for (const key of ['revision_id', 'generation', 'at'] as const) values.push(['last_ack.' + key, snapshot.last_ack[key]]);
       for (const [key, value] of values) certificateValues.append(element('dt', key), element('dd', String(value)));
     }
-    receipts.textContent = (snapshot.local_commit ? '✓ 本地事务已持久化 · ' + snapshot.local_commit.draft_id + ' / ' + snapshot.local_commit.write_token + ' · 编辑序号 ' + snapshot.local_commit.edit_seq : '本地事务尚未完成或凭证不可用')
-      + ' ｜ ' + (snapshot.last_ack ? '服务器 ACK：' + snapshot.last_ack.revision_id + ' · 版本 ' + snapshot.last_ack.generation : '服务器尚未确认') + ' ｜ dirty=' + snapshot.dirty;
     conflictBanner.hidden = !snapshot.writes_paused && state.recovery?.kind !== 'conflict' && !unresolved;
     conflictBanner.textContent = record?.pending_outcome === 'unknown' ? '原请求结果未知：后续错误不证明原请求被拒绝。保留 operation、payload、pending、journal；不得换编号或新 lease 包装原请求。' : '版本或原请求待核对；本地草稿已保留，不自动覆盖任一方。';
     save.disabled = busy || !port.canSave() || snapshot.writes_paused;
     retry.disabled = busy || !current || !port.canReconcile() || !(port.canSave() || state.queue.canRetryRetained(state.assetId, () => port.canReconcile()) || state.futureProof);
     rescue.disabled = busy || !current || !snapshot.draft_exportable && !(state.recovery && 'record' in state.recovery);
     keep.disabled = busy || !current || !snapshot.draft_exportable; server.disabled = busy || !state.loaded || !current;
-    if (diagnostics.open && lastDiagnostic !== snapshot) {
+    if (certificate.open && lastDiagnostic !== snapshot) {
       lastDiagnostic = snapshot;
       const branch = state.queue.getDraftBranchSnapshot(state.assetId)?.envelope;
       diagnosticText.textContent = JSON.stringify({ owner: record?.draft_owner ?? null, pending_owner: record?.pending_owner ?? null, generation: record?.generation, base: record?.base_revision_id, local_commit: snapshot.local_commit, last_ack: snapshot.last_ack,
@@ -136,13 +136,21 @@ export function mountSaveView(root: HTMLElement, state: WorkspaceState, port: Ed
     rescueBranch.disabled = busy || !current || !chosen;
     recoveryBanner.hidden = !branchList.childElementCount && !(state.recovery && ['restored', 'conflict', 'unreachable'].includes(state.recovery.kind));
     const retained = hasUnresolvedBranches && !snapshot.dirty && (snapshot.phase === 'idle' || snapshot.phase === 'synced');
-    status.textContent = !state.loaded && !record && snapshot.phase === 'idle' && !snapshot.dirty && !snapshot.last_error && !unresolved && !retained
-      ? state.phase === 'empty' ? '尚未导入图片；没有标注保存记录。' : '尚未载入标注文档；服务器确认状态未知。'
-      : (unresolved ? '保存结果未知，原请求已保留' : retained ? '存在待恢复或救援的本地草稿' : PHASE[snapshot.phase])
-        + (retained ? ' · 当前分支本地版本 ' : ' · 本地版本 ') + snapshot.local_generation + ' / 服务器确认 ' + snapshot.synced_generation;
+    status.dataset.attention = String(retained || unresolved);
+    if (!state.loaded && !record && snapshot.phase === 'idle' && !snapshot.dirty && !snapshot.last_error && !unresolved && !retained) {
+      status.textContent = state.phase === 'empty' ? '尚未导入图片；没有标注保存记录。' : '尚未载入标注文档；服务器确认状态未知。';
+    } else if (unresolved) status.textContent = '保存结果未知，原请求已保留';
+    else if (retained) status.textContent = '存在待恢复或救援的本地草稿';
+    else status.textContent = PHASE[snapshot.phase];
+    primary.hidden = !state.loaded && !record;
+    certificate.hidden = !record && !snapshot.local_commit && !snapshot.last_ack && !snapshot.last_error;
+    recoveryActions.hidden = !state.loaded && !record && !snapshot.draft_exportable && !retained;
+    const needsRecovery = unresolved || retained || snapshot.writes_paused || !!snapshot.last_error;
+    if (needsRecovery && !recoveryNeeded) recoveryActions.open = true;
+    recoveryNeeded = needsRecovery;
   }
   completion.addEventListener('change', () => { if (!port.getHost()) return; negative.checked = false; if (completion.value !== 'confirmed_negative') port.dispatch({ kind: 'set_completion', completion: completion.value as Completion }); update(); }, { signal });
   negative.addEventListener('change', update, { signal });
-  diagnostics.addEventListener('toggle', () => { if (diagnostics.open) { lastDiagnostic = null; update(); } }, { signal });
+  certificate.addEventListener('toggle', () => { if (certificate.open) { lastDiagnostic = null; update(); } }, { signal });
   const unsubscribe = state.subscribe(update); update(); return unsubscribe;
 }

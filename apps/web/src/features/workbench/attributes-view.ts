@@ -77,7 +77,8 @@ export function mountAttributesView(root: HTMLElement, state: WorkspaceState, po
   }
   const apply = action('应用完整几何', 'geometry-apply', signal, commitGeometry), cancel = action('取消几何输入', 'geometry-cancel', signal, resetGeometry);
   geometry.append(element('h3', '几何 · canonical 连续像素'), geometryError, geometryFields, apply, cancel, explanation);
-  root.append(title, info, warning, labeled('类别', category), element('small', '必填表示键必须存在；null、false、空字符串与缺少键不同。默认值不回填已有对象。'), fieldsRoot, other, geometry);
+  const categoryField = labeled('类别', category), rules = element('small', '必填表示键必须存在；null、false、空字符串与缺少键不同。默认值不回填已有对象。');
+  root.append(title, info, warning, categoryField, rules, fieldsRoot, other, geometry);
   const fields = new Map<string, AttributeField>();
   root.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || event.isComposing || composingGeometry) return;
@@ -140,6 +141,8 @@ export function mountAttributesView(root: HTMLElement, state: WorkspaceState, po
       editScope = state.scope; identity = nextIdentity; resetGeometry(); for (const field of fields.values()) { field.dirty = false; field.composing = false; field.baseline = state.scope; field.error.textContent = ''; }
     }
     info.textContent = ids.length ? '已选择 ' + ids.length + ' 个对象；修改包含过滤外和隐藏对象。' : '选择对象后查看属性。';
+    categoryField.hidden = rules.hidden = fieldsRoot.hidden = !objects.length;
+    geometry.hidden = objects.length !== 1; warning.hidden = !ids.length;
     warning.textContent = ids.some(id => state.flags[id]?.locked) ? '选择包含锁定对象，整批禁止修改。' : writable ? '可编辑 · 已解锁' : '只读；请核对权限、任务、保存状态和画布。';
     if (categoryOntology !== ontology) { categoryOntology = ontology ?? null; category.replaceChildren(option('', '选择类别')); for (const label of ontology?.labels ?? []) category.append(option(label.label_id, label.name)); }
     category.value = objects.length && objects.every(object => object.label_id === objects[0].label_id) ? objects[0].label_id : ''; category.disabled = !writable;
