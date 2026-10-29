@@ -13,6 +13,23 @@ import { validateRelease } from '../../scripts/release-manifest.mjs';
 import { ownedReportRoot } from './report-paths.mjs';
 import { nativeLifecycleFixture } from './native-lifecycle-fixture.mjs';
 const fixtureRoot = path.join(root, 'tests/fixtures/active-host-shutdown');
+let preparedConsole;
+export function preparePhysicalConsole(reportDir) {
+  if (preparedConsole) return preparedConsole;
+  assert.equal(process.platform, 'win32', 'Physical console acceptance requires Windows ConPTY');
+  const report = ownedReportRoot(reportDir);
+  const directory = path.join(report, 'runtime', `console-${crypto.randomUUID()}`);
+  fs.mkdirSync(directory, { recursive: true });
+  const assembly = path.join(directory, 'T33Terminal.dll');
+  const powershell = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const result = spawnSync(powershell, ['-NoProfile', '-File', path.join(fixtureRoot, 'conpty.ps1'), '-AssemblyPath', assembly, '-CompileOnly'], {
+    cwd: root, env: { ...process.env, TEMP: directory, TMP: directory, TMPDIR: directory }, shell: false, encoding: 'utf8',
+  });
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  preparedConsole = assembly;
+  return assembly;
+}
 async function freePort() {
   const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const port = server.address().port; const closed = once(server, 'close'); server.close(); await closed; return port;
@@ -34,6 +51,7 @@ export async function activeHostShutdown(mode, release, { reportDir, skipSecurit
   const runDirectory = path.join(report, 'runtime', `${mode}-${crypto.randomUUID()}`); fs.mkdirSync(runDirectory, { recursive: true });
   const data = path.join(runDirectory, '中文 owned data'); fs.mkdirSync(data);
   const fixture = nativeLifecycleFixture(runDirectory);
+  const consoleAssembly = preparePhysicalConsole(report);
   const config = { profile_id: 't33-native-lifecycle', model_id: 'claude-t33-native-lifecycle-fixture', executable: fixture, timeout_ms: 120000, max_tool_turns: 4, max_tool_result_bytes: 65536 };
   const configuration = path.join(runDirectory, 'runtime.json'); jsonFile(configuration, { schema_version: 1, timeout_ms: 120000, providers: [{ provider: 'claude_local', config }] });
   const port = await freePort(), base = `http://127.0.0.1:${port}`;
@@ -43,7 +61,7 @@ export async function activeHostShutdown(mode, release, { reportDir, skipSecurit
   const powershell = path.join(env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
   const readyFile = path.join(runDirectory, 'signal-ready.txt'), resultFile = path.join(runDirectory, 'physical-result.json');
   const quote = value => '"' + value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, '$1$1') + '"';
-  const ptyArgv = [powershell, '-NoProfile', '-File', path.join(fixtureRoot, 'conpty.ps1'), '-CommandLine', argv.map(quote).join(' '), '-ReadyFile', readyFile, '-ResultFile', resultFile];
+  const ptyArgv = [powershell, '-NoProfile', '-File', path.join(fixtureRoot, 'conpty.ps1'), '-AssemblyPath', consoleAssembly, '-CommandLine', argv.map(quote).join(' '), '-ReadyFile', readyFile, '-ResultFile', resultFile];
   if (mode === 'packaged') ptyArgv.push('-Keyboard');
   const terminal = spawn(ptyArgv[0], ptyArgv.slice(1), { cwd: root, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const terminated = new Promise(resolve => terminal.once('close', (code, signal) => resolve({ code, signal })));

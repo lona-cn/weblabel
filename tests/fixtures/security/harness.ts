@@ -69,48 +69,20 @@ export interface SecurityApp extends TestApp {
   extractArchive(bytes: Uint8Array, maximumUncompressedBytes?: number): Promise<Record<string, unknown>>;
   logs(): string;
 }
-// Test-only output seam; set before importing this harness. The router still compiles current source.
-const routerTarget = resolve(root, process.env.WEBLABEL_T29_ROUTER_TARGET_DIR ?? 'target');
+// Compile current fixture sources once per worker, outside behavioral deadlines.
+const routerTarget = resolve(root, process.env.WEBLABEL_T29_ROUTER_TARGET_DIR ?? process.env.CARGO_TARGET_DIR ?? 'target');
 let compiledRouter: string | undefined;
-async function routerBinary(): Promise<string> {
+export function prepareSecurityRouter(): string {
   if (compiledRouter) return compiledRouter;
-  const compilerEnv = { ...process.env };
-  delete compilerEnv.RUSTUP_TOOLCHAIN;
-  const toolchain = execFileSync('rustup', ['show', 'active-toolchain'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim().split(/\s+/, 1)[0]!;
-  compilerEnv.RUSTUP_TOOLCHAIN = toolchain;
-  const compiler = execFileSync('rustup', ['which', 'rustc'], { cwd: root, env: compilerEnv, encoding: 'utf8' }).trim();
-  compilerEnv.RUSTC = compiler;
-  console.log(`T29 repository toolchain: ${toolchain}; compiler: ${compiler}`);
-  const buildArgs = ['build', '--locked', '--manifest-path', join(root, 'Cargo.toml'), '--target-dir', routerTarget, '--config', `build.build-dir=${JSON.stringify(routerTarget)}`, '-p', 'weblabel-api', '--lib', '--message-format=json'];
-  console.log('T29 source-library compile: cargo ' + buildArgs.join(' '));
-  const output = execFileSync('cargo', buildArgs, { cwd: process.env.CARGO_HOME ?? root, env: compilerEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
-  const messages = output.split('\n').filter(line => line.startsWith('{')).map(line => object(JSON.parse(line)));
-  const artifacts = messages.filter(item => item.reason === 'compiler-artifact');
-  const nativePaths = messages.flatMap(item => Array.isArray(item.linked_paths) ? item.linked_paths.filter((path): path is string => typeof path === 'string') : []);
-  const externs: string[] = [];
-  const dependencyDirectories = new Set<string>();
-  for (const artifact of artifacts) {
-    if (!Array.isArray(artifact.filenames)) continue;
-    for (const filename of artifact.filenames) {
-      if (typeof filename === 'string') dependencyDirectories.add(dirname(filename));
-    }
-  }
-  for (const name of ['weblabel_api', 'axum', 'tokio', 'serde_json', 'dataset_formats']) {
-    const artifact = artifacts.find(item => object(item.target).name === name);
-    const filenames = artifact?.filenames;
-    if (!Array.isArray(filenames)) throw new Error(`No current-source compiler artifact ${name}`);
-    const library = filenames.find((file): file is string => typeof file === 'string' && file.endsWith('.rlib'));
-    if (!library) throw new Error(`No current-source library ${name}`);
-    externs.push('--extern', `${name}=${library}`);
-    dependencyDirectories.add(dirname(library));
-  }
-  const binary = join(routerTarget, 'debug', `t29-router-${crypto.randomUUID()}${process.platform === 'win32' ? '.exe' : ''}`);
-  execFileSync(compiler, ['--edition=2021', '--crate-name', 't29_router', join(root, 'tests/fixtures/security/router.rs'), ...Array.from(dependencyDirectories).flatMap(directory => ['-L', `dependency=${directory}`]), ...nativePaths.flatMap(path => ['-L', path]), ...externs, '-o', binary], { cwd: root, env: compilerEnv, stdio: 'inherit' });
+  execFileSync('cargo', ['build', '--locked', '--manifest-path', join(root, 'Cargo.toml'), '--target-dir', routerTarget, '-p', 'weblabel-api', '--example', 'security-router-fixture'], {
+    cwd: root, env: process.env, stdio: 'inherit',
+  });
+  const binary = join(routerTarget, 'debug/examples', process.platform === 'win32' ? 'security-router-fixture.exe' : 'security-router-fixture');
   compiledRouter = binary;
   return binary;
 }
 export async function startSecurityApp(): Promise<SecurityApp> {
-  const binary = await routerBinary();
+  const binary = prepareSecurityRouter();
   const directory = await mkdtemp(join(tmpdir(), 'weblabel-t29-'));
   const child = spawn(binary, [directory], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
   let logs = '';

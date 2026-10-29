@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { buildRelease } from '../../scripts/build.mjs';
-import { activeHostShutdown } from '../support/active-host-shutdown.mjs';
+import { activeHostShutdown, preparePhysicalConsole } from '../support/active-host-shutdown.mjs';
 import { taskReportPath } from '../support/report-paths.mjs';
+import { prepareNativeLifecycleFixture } from '../support/native-lifecycle-fixture.mjs';
 
 let release: string;
 beforeAll(async () => {
@@ -20,6 +21,8 @@ beforeAll(async () => {
     finally { if (original === undefined) delete process.env.RUSTC; else process.env.RUSTC = original; }
   }
   expect(fs.existsSync(path.join(release, 'weblabel.exe'))).toBe(true);
+  prepareNativeLifecycleFixture();
+  preparePhysicalConsole(taskReportPath('T33'));
 }, 600000);
 
 it.each(['direct-api', 'packaged'])('physical Ctrl+C during an authorized %s run reclaims the stubborn owned tree before API termination', async mode => {

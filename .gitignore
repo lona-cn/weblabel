@@ -13,28 +13,19 @@ __pycache__/
 .pytest_cache/
 /services/detector/.venv/
 *.egg-info/
-# Owned disposable Chromium profiles; raw measurements/screenshots remain tracked.
-/reports/T31/runs/*/runtime/
-/reports/T31/pixels/*/runtime/
 
 # Local build output, model weights and disposable browser run markers.
 /apps/web/dist/
 /crates/*/target/
 /services/detector/weights/
-/reports/**/.last-run.json
 # Workstation-local agent configuration; keep it out of source history.
 /.omp/config.yml
 
-# Raw browser network traces may contain session cookies; preserve locally only.
-/reports/T15/defect-repair/2026-10-11T13-21-39-234Z/t15-export-investigation/trace/
-# Disposable export downloads and model-run working directories.
-/reports/T08/commercial-core/c-final-downloads/*
-!/reports/T08/commercial-core/c-final-downloads/weblabel-native-draft.json
-/reports/T08/commercial-core/downloads/weblabel-*.zip
-# Native draft JSON remains tracked as historical rescue evidence.
-/reports/T30/runtime/export-*.zip
-/reports/T30/runtime/model-*/
-/reports/T32/interactive-closure/engineering-0lkUJ2/
-/reports/T35/release-audit-20261011-18172d5/gpu/browser/*/trace.zip
-/reports/T35/release-audit-20261011-18172d5/gpu-debug/browser/*/trace.zip
-/reports/T35/release-audit-20261011-18172d5/downloads/
+# Public history retains curated receipts, not raw local verification evidence.
+/reports/
+
+# Local design-tool settings, workstation hooks and generated diagnostics.
+/.github/hooks/impeccable.json
+/.impeccable/config.json
+/.impeccable/critique/
+/apps/web/.impeccable/live/

@@ -5,9 +5,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { inflateRawSync } from 'node:zlib';
 import { beforeAll, afterAll, expect, it } from 'vitest';
 import { authorize, type Seeded } from '../support/t25-ai';
-import { startSecurityApp, raw, session, text, object, type SecurityApp, type Login } from '../fixtures/security/harness';
+import { prepareSecurityRouter, startSecurityApp, raw, session, text, object, type SecurityApp, type Login } from '../fixtures/security/harness';
 import { hostileZip, highRatioZip, imageBomb } from '../fixtures/security/attacks';
 import { seedSecurity, startSecurityRun as startRunBody, syntheticProfileId } from '../fixtures/security/seed';
+
+prepareSecurityRouter();
 
 let app: SecurityApp;
 let admin: Login;

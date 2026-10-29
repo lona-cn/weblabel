@@ -90,6 +90,7 @@ export async function seed(admin: ApiClient, app: TestApp): Promise<Seeded> {
   const baseUrl=app.base_url;
   const database=new DatabaseSync(database_path_for_test(app));
   try {
+    database.exec('PRAGMA busy_timeout=5000');
     database.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES(?,'mock','weblabel-mock-source-v1','none',?,'ready','mock_only','builtin-mock-1',NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(MOCK_PROFILE,JSON.stringify({image_input:true,tools:false,structured_output:true,bbox_output:true,attributes:true}));
   } finally { database.close(); }
   const project = await admin.request<JsonObject>('POST', '/api/projects', {

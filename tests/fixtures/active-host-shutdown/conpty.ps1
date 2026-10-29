@@ -1,7 +1,7 @@
-param([string]$CommandLine, [string]$ReadyFile, [string]$ResultFile, [switch]$Keyboard, [switch]$Startup)
+param([string]$CommandLine, [string]$ReadyFile, [string]$ResultFile, [switch]$Keyboard, [switch]$Startup, [string]$AssemblyPath, [switch]$CompileOnly)
 $ErrorActionPreference = 'Stop'
 # Adapted from reports/T32/interactive-closure/conpty.ps1; never attaches a user's console.
-Add-Type -TypeDefinition @'
+$source = @'
 using System;
 using System.IO;
 using System.Text;
@@ -90,4 +90,11 @@ public static class T33Terminal {
  }
 }
 '@
+if ($CompileOnly) {
+ if (!$AssemblyPath) { throw 'AssemblyPath is required for compilation' }
+ Add-Type -TypeDefinition $source -OutputAssembly $AssemblyPath
+ exit 0
+}
+if ($AssemblyPath) { Add-Type -Path $AssemblyPath }
+else { Add-Type -TypeDefinition $source }
 exit [T33Terminal]::Run($CommandLine, $ReadyFile, $ResultFile, $Keyboard.IsPresent, $Startup.IsPresent)

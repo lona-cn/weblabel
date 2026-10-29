@@ -36,6 +36,12 @@ export function launch_code_for_test(app: TestApp): Promise<string>;
 
 真实API helper在每个worker首次使用前从当前源代码构建，不以可执行文件已存在替代新源码。Vitest integration的prepare-api setup在行为测试计时外编译，保持原测试deadline；显式WEBLABEL_API_BINARY仍表示调用者选择的可执行文件，不能把任意override当新源码证据。
 
+CI 在行为套件前统一构建 `weblabel`、`native-lifecycle-fixture` 与 `security-router-fixture`。后两者是 Cargo 测试 example，不进入产品发行。独立运行 T29/T30 时同样先在测试收集阶段准备当前源码；T33 在发行准备 hook 中准备原生 fixture。冷编译不占用认证、崩溃回收或物理 Ctrl+C 的行为 deadline，不扩大原有超时，也不以旧可执行文件存在替代编译。T29 优先使用显式 `WEBLABEL_T29_ROUTER_TARGET_DIR`，否则沿用 `CARGO_TARGET_DIR`；原生 fixture 保留调用者的编译 flags、incremental 设置及 `RUSTC_WRAPPER`（包括显式空字符串），避免缓存配置被隐式切换。
+
+Windows 的 ConPTY C# 驱动也先在 T33 准备 hook 编译到本轮项目内报告目录；实际启动只加载该 DLL，产品进程仍使用空 PATH。PowerShell `Add-Type` 冷编译不占用“等待 bootstrap”的 20 秒行为窗口；实际 Windows 控制台 Ctrl+C、原始进程句柄及 120 秒用例 deadline 保持不变。
+
+向仍有后台 worker 的合成数据库直接写入 profile 前，fixture 连接设置 5000 ms 的 SQLite `busy_timeout`，只等待当前写锁释放；不重发业务请求、不吞掉持续锁冲突，也不改变产品事务或权限。
+
 T25测试helper的manual模式仅在debug构建显式设置WEBLABEL_TEST_MANUAL_MODEL_WORKER=1，让故障/脚本fixture拥有排空顺序；background模式运行服务原生模型worker。release忽略该开关。database_path_for_test只返回该helper自己创建的临时数据库路径，不能访问真实项目库。
 
 `launch_code_for_test` 仅读取当前 helper 自建 app 的 stdout 启动码，不调用管理员 helper、不兑换、不记录 code；未知 app 拒绝。首次登录浏览器回归只用 app + 原生 page，不依赖会先初始化的 seededProject/adminPage/as_user。

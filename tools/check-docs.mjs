@@ -9,7 +9,7 @@ import autolinkRule from 'markdown-it/lib/rules_inline/autolink.mjs';
 import { HTML_TAG_RE } from 'markdown-it/lib/common/html_re.mjs';
 
 const scope = 'documentation_structure_only_not_product_verification';
-const entries = ['README.md', 'START_HERE.md', 'START_PROMPT.md', 'PLAN.md', 'AGENTS.md', 'prompts/RESUME.md', 'prompts/TASK_PACKET.md', 'prompts/REVIEW.md', 'reports/index.md'];
+const entries = ['README.md', 'START_HERE.md', 'START_PROMPT.md', 'PLAN.md', 'AGENTS.md', 'PRODUCT.md', 'prompts/RESUME.md', 'prompts/TASK_PACKET.md', 'prompts/REVIEW.md', 'reports/index.md'];
 const types = new Set(['入口', '指南', '参考', '规范', '运行手册', '决策', '计划', '归档']);
 const md = new MarkdownIt({ html: true, linkify: false, typographer: false });
 // Parse unsafe schemes too, so unsupported URLs become explicit diagnostics.

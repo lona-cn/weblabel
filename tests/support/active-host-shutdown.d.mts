@@ -21,4 +21,5 @@ export interface ShutdownEvidence {
     backstop_used_before_observation: boolean;
   };
 }
+export function preparePhysicalConsole(reportDir: string): string;
 export function activeHostShutdown(mode: string, release: string, options: { reportDir: string; skipSecurity?: boolean }): Promise<ShutdownEvidence>;

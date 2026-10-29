@@ -32,6 +32,12 @@
 
 这个结果接受的是目标机器上一轮接近门槛的 T31 观测，不证明重复性、因果提速、Node 崩溃根因、整体 G4、T32 模型渠道或 T35 发布。先前 **8.791 / 8.569 / crash** 失败仍是证据。全局 JSXDEV 样本和重叠的 CanvasView 包含祖先成本，不能归给 100 个标签，也不能直接从 P95 扣除；原 profile 没记录标签数量。见归因修正（私有归档：`reports/T31/committed-profile/main-react-attribution-correction.json`）。
 
+### CI 软件 WebGPU（2026-10-28）
+
+软件设备检查使用 Playwright 的 `channel: 'chromium'`（完整 Chromium 的新 headless），并以 `--use-webgpu-adapter=swiftshader` 选择 Dawn/WebGPU 的 CPU adapter。原 `--use-angle=swiftshader` 只选择 ANGLE/OpenGL 驱动；本机该组合及旧 headless shell 均实际返回无 WebGPU adapter，不能据此宣称软件设备可用。配置依据为 [Playwright 的 headless 区别](https://playwright.dev/docs/browsers#chromium-new-headless-mode)和 [Chromium 的 WebGPU adapter 选择](https://chromium.googlesource.com/chromium/src/+/main/gpu/command_buffer/service/webgpu_decoder_impl.cc)。
+
+本轮独立探针在 Chromium 153.0.8010.12 由实际 Rust/WASM 创建并销毁设备，报告 `BrowserWebGpu / Cpu`，浏览器报告 `google / swiftshader / isFallbackAdapter=true`。这只证明软件设备工程路径，不是硬件、性能、G4 或真实模型通过；`t05-render` 与 `chromium-webgpu` 的硬件启动参数保持不变，历史失败记录也不改写。
+
 <a id="t00-historical-matrix--2026-09-25"></a>
 ## T00 historical matrix — 2026-09-25
 

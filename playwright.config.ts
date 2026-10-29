@@ -47,9 +47,10 @@ export default defineConfig({
     },
   ],
   use: {
+    channel: 'chromium',
     baseURL: 'http://127.0.0.1:5173',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    launchOptions: { args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader'] },
+    launchOptions: { args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'] },
   },
 });

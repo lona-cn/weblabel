@@ -209,6 +209,7 @@ it('T32 engineering authoritative service rejects unauthenticated profiles and u
     const pins = await seed(admin, app);
     const db = new DatabaseSync(database_path_for_test(app));
     try {
+      db.exec('PRAGMA busy_timeout=5000');
       db.prepare("INSERT INTO model_profiles(profile_id,provider_id,model_id,auth_kind,capabilities_json,availability,verification,runtime_version,verified_at,config_json,secret_ref,created_at) VALUES('t32-unconfigured','openai_api','gpt-6-luna','api_key',?,'needs_configuration','not_run',NULL,NULL,'{}',NULL,'2026-10-06T00:00:00Z')").run(JSON.stringify({ image_input: true, tools: true, structured_output: true, bbox_output: false, attributes: true }));
     } finally { db.close(); }
     const original = await admin.request('GET', `/api/assets/${pins.assetRevisionId}/annotation?ontology_version_id=${pins.ontologyId}`);

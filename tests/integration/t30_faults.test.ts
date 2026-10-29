@@ -13,7 +13,9 @@ import type { AnnotationObject } from '../../packages/contracts/generated/Annota
 import type { PersistentApi } from '../support/faults';
 import type { SaveRequest } from '../../packages/contracts/generated/SaveRequest';
 import type { SaveResponse } from '../../packages/contracts/generated/SaveResponse';
-import { nativeLifecycleFixture } from '../support/native-lifecycle-fixture.mjs';
+import { nativeLifecycleFixture, prepareNativeLifecycleFixture } from '../support/native-lifecycle-fixture.mjs';
+
+prepareNativeLifecycleFixture();
 
 function isProcessAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }

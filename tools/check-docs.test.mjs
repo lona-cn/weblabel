@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { checkDocs } from './check-docs.mjs';
 
 const artifacts = fileURLToPath(new URL('../target/test-artifacts/documentation/', import.meta.url));
-const registered = ['README.md', 'START_HERE.md', 'START_PROMPT.md', 'PLAN.md', 'AGENTS.md', 'docs/README.md', 'prompts/RESUME.md', 'prompts/TASK_PACKET.md', 'prompts/REVIEW.md', 'reports/index.md'];
+const registered = ['README.md', 'START_HERE.md', 'START_PROMPT.md', 'PLAN.md', 'AGENTS.md', 'PRODUCT.md', 'docs/README.md', 'prompts/RESUME.md', 'prompts/TASK_PACKET.md', 'prompts/REVIEW.md', 'reports/index.md'];
 function fixture(t) {
   fs.mkdirSync(artifacts, { recursive: true });
   const root = fs.mkdtempSync(path.join(artifacts, 'docs-'));

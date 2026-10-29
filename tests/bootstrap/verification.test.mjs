@@ -54,7 +54,7 @@ test('security skip blocks unpartitioned verification gates before any command',
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('audited nonsecurity verification runs reviewed consumers without claiming the unreviewed suites', () => {
+test('nonsecurity verification refuses stale inputs and never claims full readiness for an incomplete partition', () => {
   const directory = fs.mkdtempSync(taskReportPath('T00', 'nonsecurity-partition-'));
   try {
     const reportDir = path.join(directory, 'report');
@@ -64,15 +64,22 @@ test('audited nonsecurity verification runs reviewed consumers without claiming 
     assert.equal(run.status, 2, run.stderr);
     const result = JSON.parse(fs.readFileSync(path.join(reportDir, 'result.json'), 'utf8'));
     assert.equal(result.status, 'blocked');
-    assert.ok(result.blockers.includes('NONSECURITY_PARTITION_INCOMPLETE'));
-    assert.ok(result.skipped_scope.includes('security'));
+    assert.deepEqual(result.skipped_scope, ['security', 'unaudited_tests', 'model_execution', 'gpu_performance']);
+    assert.equal(result.full_1_0_ready, false);
+    if (result.blockers.includes('NONSECURITY_AUDIT_STALE')) {
+      assert.equal(result.audited_partition.status, 'blocked');
+      assert.deepEqual(result.blockers, ['NONSECURITY_AUDIT_STALE']);
+      assert.deepEqual(result.commands, []);
+      return;
+    }
+    assert.equal(result.audited_partition.status, 'passed');
+    assert.deepEqual(result.blockers, ['NONSECURITY_PARTITION_INCOMPLETE']);
     assert.ok(result.commands.some(row => row.name === 'nonsecurity-geometry' && row.status === 'passed' && row.tests.passed > 0));
     assert.ok(result.commands.some(row => row.name === 'nonsecurity-editor-core' && row.status === 'passed' && row.tests.passed > 0));
     assert.equal(result.commands.filter(row => row.name.startsWith('nonsecurity-domain-') && row.status === 'passed' && row.tests.passed === 1).length, 5);
     assert.equal(result.commands.filter(row => row.name.startsWith('nonsecurity-format-') && row.status === 'passed' && row.tests.passed === 1).length, 8);
     assert.ok(result.commands.some(row => row.name === 'nonsecurity-web' && row.status === 'passed' && row.tests.passed > 0));
     assert.ok(result.commands.every(row => row.status === 'passed'));
-    assert.equal(result.full_1_0_ready, false);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 

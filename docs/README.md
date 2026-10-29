@@ -10,6 +10,8 @@
 
 从[恢复入口](../START_HERE.md)核对状态，按[开发指南](development.md)准备工具、定位模块和选择检查。再读[配置参考](configuration.md)、[架构](architecture.md)、[数据模型](data-model.md)、[共享契约](contracts.md)及[API 参考](api-reference.md)，用[测试装配](testing-contracts.md)与[协作规程](execution.md)完成变更。按[文档治理](documentation-policy.md)同步说明，运行 `pnpm docs:check` 只证明结构。
 
+涉及产品、界面或文案时，先读[产品上下文](../PRODUCT.md)，按已确认的首要用户、工作流与范围作决定；它不替代接口规范或真实验收证据。
+
 ## 维护与验收者路线
 
 按[验收说明](verification.md)选择范围；人工路径用[手工验收](manual-smoke.md)，账户与恢复用[运维](operations.md)/[备份恢复](backup-restore.md)，实际结果查[报告索引](../reports/index.md)。当前任务状态来自 [TASKS.json](../TASKS.json)、[STATUS.json](../STATUS.json)和真实提交，不由本文复制或升级。任务卡出链由 TASKS.json 的 card 列表登记，36 项依赖入口见[实施计划](../PLAN.md#完整任务目录)。
@@ -25,6 +27,7 @@
 | [../START_PROMPT.md](../START_PROMPT.md) | 入口 | 主集成者：仅在空目录初始化 | main | 原初始化要求 | 初始化约束变化 |
 | [../PLAN.md](../PLAN.md) | 计划 | 维护者：确认边界与 DAG | main | 设计目标，不是完成状态 | 范围或批准计划变化 |
 | [../AGENTS.md](../AGENTS.md) | 规范 | 全部工作者：遵守执行约束 | main | 项目安全与协作不变量 | 执行约束变化 |
+| [../PRODUCT.md](../PRODUCT.md) | 参考 | 产品与界面维护者：按确认用户与边界作设计决定 | main | 用户确认的产品事实与现行约束，不是验收结果 | 用户、定位、工作流或产品边界变化 |
 | [README.md](README.md) | 入口 | 三类读者：选择路线与专题 | main | 当前维护目录 | 文档新增、移动或职责变化 |
 | [documentation-policy.md](documentation-policy.md) | 规范 | 作者与审查者：维护和交付文档 | main | 文档治理约束 | 写作、审查或门禁变化 |
 | [getting-started.md](getting-started.md) | 指南 | 操作者：构建登录标注并导出 | wl-backend / wl-web | 当前使用步骤与历史实测边界 | 启动或界面流程变化 |

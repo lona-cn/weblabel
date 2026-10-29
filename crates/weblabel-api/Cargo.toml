@@ -16,6 +16,10 @@ path = "src/bin/weblabel.rs"
 name = "native-lifecycle-fixture"
 path = "../../tests/fixtures/active-host-shutdown/native.rs"
 
+[[example]]
+name = "security-router-fixture"
+path = "../../tests/fixtures/security/router.rs"
+
 [dependencies]
 annotation-domain = { path = "../annotation-domain" }
 dataset-formats = { path = "../dataset-formats" }

@@ -9,7 +9,7 @@ const release = fs.realpathSync(path.resolve(args['--release-dir']));
 validateRelease(release);
 // Tests consume this run's verified bridge without overwriting an older source-tree build.
 Object.assign(process.env, { WEBLABEL_T33_RELEASE: release, WEBLABEL_CARGO_CWD: root, WEBLABEL_WASM_BRIDGE_DIR: path.join(release, 'web/wasm') });
-command(['cargo', 'build', '--locked', '-p', 'weblabel-api', '--bin', 'weblabel']);
+command(['cargo', 'build', '--locked', '-p', 'weblabel-api', '--bin', 'weblabel', '--example', 'native-lifecycle-fixture', '--example', 'security-router-fixture']);
 process.env.WEBLABEL_API_BINARY = path.join(path.resolve(root, process.env.CARGO_TARGET_DIR ?? 'target'), 'debug', process.platform === 'win32' ? 'weblabel.exe' : 'weblabel');
 command(['cargo', 'test', '--workspace', '--locked', '--', '--test-threads=2']);
 command([process.execPath, '--test', 'tests/bootstrap/*.test.mjs', 'tests/contracts-validation.test.mjs', 'tools/check-plan.test.mjs', 'tools/check-docs.test.mjs']);
