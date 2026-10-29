@@ -6,13 +6,15 @@
 
 本次净化增量的[源码来源映射](publication/increment-map.json)与[实际整合验证](publication/increment-verification.json)单独记录。它们不分发原始私有产物，不把工程回归或一次硬件烟测写成模型 live、跨平台或 G4 通过。
 
-本次已发布的[工程预发布 rc.3](https://github.com/lona-cn/weblabel/releases/tag/v0.1.0-rc.3)及其[净化增量与验证记录](publication/rc3-integration.json)绑定不可变 source `8a2ab61`：Release 全部门禁通过，两平台公开下载产物校验与独立持久化烟测通过。后续 main 只有测试、文档和来源记录修复，其 CI 独立记账，不移动 release tag 或替换 assets/image。新增历史审计 harness 仅保留工具源码；原始报告、登录产物、截图和运行目录保持私有。工程预发布不升级 T32/T35/G4 验收。
+已发布的[工程预发布 rc.3](https://github.com/lona-cn/weblabel/releases/tag/v0.1.0-rc.3)及其[净化增量与验证记录](publication/rc3-integration.json)绑定不可变 source `8a2ab61`：对应阶段的 Release 门禁、两平台公开下载产物校验与独立持久化烟测通过。该次净化增量当时仅含测试、文档和来源记录修复；后续原生重构与界面变更见下文，不能继承旧发行的当前版本验收。release tag 和 assets/image 不移动；原始报告、登录产物、截图和运行目录保持私有。工程预发布不升级 T32/T35/G4 验收。
 
 ## 原生 HTML / Rust 重构增量
 
-[原生源码整合记录](publication/native-html-rust-rebuild.json)保留先前公开源码的实际验证范围；[R05 完成记录](publication/r05-accepted.json)记录三项用户豁免、原账本 20/20 与真实六普通图／五同 tensor 路径。保留形状、有限值、输入 hash、raw boxes、类别／阈值与 canonical 几何校验；raw logits 只作诊断，独立 rotate/tensor 未执行、未通过。旋转后处理已修复同一原始角点的 x/y 映射，并以已有真实输出零推理复算十一条路径。[先前数值失败](publication/r05-continuation.json)不改写。R05 与 [R09 源码切换](publication/r09-native-cutover.json)已完成；R10 仍在执行，R11、T32/T35 不升级。独占硬件 GPU 有一次限定范围通过，先前失败和来源差异均保留；不能据此宣称 R10、全部模型或完整发行通过。模型运行来自原私有源目录，不冒充公开 SHA 再次推理；原始数组、nonce 账本、模型、runtime、数据库与日志不公开。
+[原生源码整合记录](publication/native-html-rust-rebuild.json)保留先前公开源码的实际验证范围；[R05 完成记录](publication/r05-accepted.json)记录三项用户豁免、原账本 20/20 与真实六普通图／五同 tensor 路径。保留形状、有限值、输入 hash、raw boxes、类别／阈值与 canonical 几何校验；raw logits 只作诊断，独立 rotate/tensor 未执行、未通过。旋转后处理已修复同一原始角点的 x/y 映射，并以已有真实输出零推理复算十一条路径。[先前数值失败](publication/r05-continuation.json)不改写。R05 与 [R09 源码切换](publication/r09-native-cutover.json)已完成；R10 已按用户批准的精简本地范围完成，R11 独立工程审查已完成并保留未知项，用户已接受该工程交付及明确豁免。T32 blocked、T35 pending 与原完整发行门禁不变。独占硬件 GPU 曾有一次限定范围通过，不能替代当前性能重验；模型运行来自原私有源目录，不冒充公开 SHA 再次推理，原始数组、nonce 账本、模型、runtime、数据库与日志不公开。
 
-[R10 局部回归记录](publication/r10-partial.json)披露完整发行失败、上次公开 CI 两平台构建通过但测试失败，以及原子进程句柄修复的本地真实进程验证。合成角色任务、终态事件与成员表验证只覆盖部分场景；当前公开源码尚未重新执行完整发行。为尊重已记录的安全专题跳过，此次增量提交不触发既有 CI 或自动镜像发布，不修改工作流。
+[R10 范围与历史结果](publication/r10-partial.json)保留完整发行失败、先前公开 CI 两平台构建通过但测试失败，以及本地原生进程和合成界面的实际验证边界。该记录中的工程完成与用户验收不等于完整公开发行通过；安全专题、真实模型、完整视觉矩阵和当前硬件性能的跳过或未知状态均不改写。
+
+[完整源码对齐记录](publication/all-main-20261029.json)将后续本地源码、CI 夹具修复、产品上下文及完成状态补入公开主线；应用源码树与已验证的本地版本一致。原始报告和本机设计工具配置留在本地，既有公开回执保留。本轮只重新执行受影响的本地检查，未主动发起远端全量验收；最终元数据提交保留 `[skip ci]`，不扩大已跳过的安全专题范围或自动发布镜像。
 
 
 ## 当前还卡在哪里
@@ -178,11 +180,20 @@ Web 114/114、types、前端 Vite 构建、实际硬件 Chromium T15 / T24 / T25
 
 ### 原生 HTML/CSS/TypeScript 与 Rust 重构源码
 
+以下描述首次净化集成时的历史状态；当前完成范围以上方“原生 HTML / Rust 重构增量”和 STATUS 为准，不沿用这里的旧进度或旧推理账本余额。
+
 本次向公开 main 集成 R00–R04、R06–R08 的工程源码及 R05 的部分源码，不是完整原生切换或发布验收。默认网页入口仍保留 React；R05 blocked，R09–R11 尚未就绪，T32 blocked / T35 pending 不变。
 
 保留公开基线的 Linux pidfd/subreaper broker、事务连接关闭与 lease/fencing 修复；Windows 原生运行时使用启动前分配的非 breakaway Job 和原始进程句柄。合并复验发现并修复并发终止请求的等待窗口，并保留完整 Host 丢弃后的物理退出断言；崩溃夹具等待期间显式持有 stdin，不降低退出码断言。
 
 检测器唯一账本冻结于 3/20 debits；没有追加推理，也没有重试已取消的 UAC 文件软链接负控。原始报告、日志、截图、数据库、令牌、DLL 和模型工件留在私有项目内归档，不发布私有父提交。源码来源、已运行的公开集成验证及剩余边界见[结构化发布记录](publication/native-html-rust-rebuild.json)。
+
+### CI 测试修复与当前源码对齐
+
+2026-10-28 的本地修复处理了 SQLite profile 夹具写锁、测试内冷编译和缓存设置、ConPTY 编译占用启动窗口、数据集离页行刷新，以及 bootstrap 对失效审查指纹的错误前提；软件 WebGPU 改为完整 Chromium 与 Dawn SwiftShader。原完整 CI 数字只属于其绑定的私有源码，不冒充之后界面修改的全量复跑。
+
+本轮已补入这些尚未发布的源文件，并重新执行文档与 bootstrap 回归、应用和测试类型检查、当前源码原生夹具构建与真实 API 烟测、定向故障回归、物理 Ctrl+C 及软件 WebGPU。物理退出仍使用已有不可变发行与当前夹具，不宣称新构建的完整产品发行；具体数量、原始来源、未选用例和审查范围见[结构化对齐记录](publication/all-main-20261029.json)。
+
 
 ## 维护这份索引
 

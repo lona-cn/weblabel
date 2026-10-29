@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "plan_version": "1.0.0",
-  "application_commit": "0eb232cc859568f229e1efa09a2a71fd4f796bbf",
-  "last_updated_at": "2026-10-26T14:38:50.886674+00:00",
+  "application_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+  "last_updated_at": "2026-10-29T13:44:10.164Z",
   "user_requests": {
     "first_start_login": {
       "status": "done",
@@ -940,11 +940,11 @@
       "release_gate_change": false
     },
     "html_rust_rebuild": {
-      "status": "running",
+      "status": "done",
       "approved_scope": "R00_R11_native_web_rust_single_process",
       "base_commit": "e61f12cd276c7772ea646b5385ad078a7949300e",
       "contract_version": "v1",
-      "report_index": "reports/publication/native-html-rust-rebuild.json",
+      "report_index": "reports/publication/all-main-20261029.json",
       "design_gate": "accepted",
       "product_changes_started": true,
       "model_forwards_used": 20,
@@ -1086,9 +1086,26 @@
             "reports/publication/r05-accepted.json"
           ],
           "waived_controls": [
-            {"id":"R05-B1","decision":"skipped_by_user","proof":"not_executed_not_passed","path_guards_retained":true,"uac_retry_authorized":false},
-            {"id":"R05-N1","decision":"skipped_by_user","proof":"raw_logits_diagnostic_only_not_strict_pass","retained_output_gates_passed":true},
-            {"id":"R05-R1","decision":"skipped_by_user","proof":"independent_rotate_tensor_not_executed_not_passed","actual_rust_image_routes":6,"actual_rust_tensor_routes":5}
+            {
+              "id": "R05-B1",
+              "decision": "skipped_by_user",
+              "proof": "not_executed_not_passed",
+              "path_guards_retained": true,
+              "uac_retry_authorized": false
+            },
+            {
+              "id": "R05-N1",
+              "decision": "skipped_by_user",
+              "proof": "raw_logits_diagnostic_only_not_strict_pass",
+              "retained_output_gates_passed": true
+            },
+            {
+              "id": "R05-R1",
+              "decision": "skipped_by_user",
+              "proof": "independent_rotate_tensor_not_executed_not_passed",
+              "actual_rust_image_routes": 6,
+              "actual_rust_tensor_routes": 5
+            }
           ],
           "blockers": [],
           "original_base_commit": "6afd1fa96d80e49375c755eda96935cb1be1923d",
@@ -1176,7 +1193,9 @@
           "base_commit": "85df761b6e092d8e49824c50f228b6488cfacde6",
           "integrated_commit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd",
           "actualcommit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd",
-          "evidence": ["reports/publication/r09-native-cutover.json"],
+          "evidence": [
+            "reports/publication/r09-native-cutover.json"
+          ],
           "blockers": [],
           "original_base_commit": null,
           "original_integrated_commit": null,
@@ -1184,36 +1203,127 @@
           "evidence_scope": "Source cutover committed publicly; original scoped R09 execution and independent review are inherited from private source and described in the sanitized receipt, not rerun under the public commit."
         },
         "R10": {
-          "status": "running",
+          "status": "done",
           "base_commit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd",
-          "integrated_commit": null,
-          "actualcommit": null,
-          "evidence": ["reports/publication/r09-native-cutover.json", "reports/publication/r10-partial.json"],
+          "integrated_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+          "actualcommit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+          "evidence": [
+            "reports/publication/r10-partial.json",
+            "reports/publication/all-main-20261029.json"
+          ],
           "blockers": [],
-          "original_base_commit": null,
-          "original_integrated_commit": null,
-          "archived_original_evidence": [],
-          "evidence_scope": "Scoped synthetic UI, native process and hardware GPU observations only; an earlier full release and both public CI test lanes failed. Complete R10 acceptance and live channels remain outstanding."
+          "original_base_commit": "c893b8a815d8caef3f8c34ac4923112f4a404eae",
+          "original_integrated_commit": "ad053cfff6e34554532f25e80d94337cdd07eb0f",
+          "archived_original_evidence": [
+            "reports/T35/html-rust-rebuild/R10-scope.json",
+            "reports/T35/html-rust-rebuild/R10-lean-current-result.json",
+            "reports/T35/html-rust-rebuild/R10-lean-main-review.json",
+            "reports/T35/html-rust-rebuild/r10-lean-profile-20261028/result.json",
+            "reports/T35/html-rust-rebuild/R10-native-full-release-result.json",
+            "reports/T35/html-rust-rebuild/R10-native-terminal-member-ui-result.json",
+            "reports/T35/html-rust-rebuild/R10-native-ci-followup.json",
+            "reports/T35/html-rust-rebuild/R10-current-ui-import-result.json",
+            "reports/T35/html-rust-rebuild/R10-current-native-gpu-result.json",
+            "reports/T35/html-rust-rebuild/R10-current-fresh-manual-result.json",
+            "reports/T35/html-rust-rebuild/R10-native-old-default-handoff-result.json",
+            "reports/T35/html-rust-rebuild/R10-current-legacy-handoff-result.json",
+            "reports/T35/html-rust-rebuild/R10-legacy-worktree-cleanup.json",
+            "reports/T35/html-rust-rebuild/R10-save-recovery-before.json",
+            "reports/T35/html-rust-rebuild/R10-save-recovery-after.json",
+            "reports/T35/html-rust-rebuild/R10-save-status-final.json",
+            "reports/T35/html-rust-rebuild/R10-save-fix-native-gpu-result.json",
+            "reports/T35/html-rust-rebuild/R10-save-fix-publication-result.json",
+            "reports/T35/html-rust-rebuild/R10-final-native-backup-result.json",
+            "reports/T35/html-rust-rebuild/R10-completion-retained-status-result.json",
+            "reports/T35/html-rust-rebuild/R10-retained-status-gpu-failure.json",
+            "reports/T35/html-rust-rebuild/R10-retained-status-publication-result.json",
+            "reports/T35/html-rust-rebuild/R10-security-skip-runner-guard-result.json",
+            "reports/T35/html-rust-rebuild/R10-security-skip-runner-publication-result.json",
+            "reports/T35/html-rust-rebuild/r10-gpu-p95-user-waiver.json",
+            "reports/T35/html-rust-rebuild/R10-yolo-confirmed-export-result.json",
+            "reports/T35/html-rust-rebuild/R10-offline-quota-attempt.json",
+            "reports/T35/html-rust-rebuild/r10-u16-u20-user-waiver.json",
+            "reports/T35/html-rust-rebuild/r10-t32-user-skip.json",
+            "reports/T35/html-rust-rebuild/R10-u29-paged-selection-result.json"
+          ],
+          "evidence_scope": "Inherited scoped engineering completion at original_* commits, including user waivers and unknowns; source is integrated by the public commit, not freshly certified as a full release.",
+          "scope": "user_approved_lean_local_verification_only_not_full_release",
+          "original_actualcommit": "ad053cfff6e34554532f25e80d94337cdd07eb0f",
+          "waivers": [
+            {
+              "id": "R10-GPU-2K-COMMITTED-EDIT-P95",
+              "status": "user_waived_not_passed",
+              "evidence": "reports/publication/r10-partial.json",
+              "archived_original_evidence": "reports/T35/html-rust-rebuild/r10-gpu-p95-user-waiver.json"
+            },
+            {
+              "id": "R10-U16-EXPORT-VISUAL-LAYOUT",
+              "status": "user_waived_not_passed",
+              "evidence": "reports/publication/r10-partial.json",
+              "archived_original_evidence": "reports/T35/html-rust-rebuild/r10-u16-u20-user-waiver.json"
+            },
+            {
+              "id": "R10-U20-QUOTA-FAILURE-RECOVERY",
+              "status": "user_waived_not_passed",
+              "evidence": "reports/publication/r10-partial.json",
+              "archived_original_evidence": "reports/T35/html-rust-rebuild/r10-u16-u20-user-waiver.json"
+            },
+            {
+              "id": "T32-REAL-CHANNELS",
+              "status": "user_skipped_not_passed",
+              "evidence": "reports/publication/r10-partial.json",
+              "archived_original_evidence": "reports/T35/html-rust-rebuild/r10-t32-user-skip.json"
+            }
+          ],
+          "full_release_unverified": [
+            "Full-release runner --skip-security blocks before launch because skipped security cases remain unpartitioned; previous export-worker timeout cause unresolved",
+            "The 48-state visual matrix remains incomplete",
+            "Current hardware performance gate, T32 live channels and T35 remain unverified"
+          ]
         },
         "R11": {
-          "status": "pending",
-          "base_commit": null,
-          "integrated_commit": null,
-          "actualcommit": null,
-          "evidence": [],
-          "blockers": [
-            "Dependency R10 is not ready"
+          "status": "done",
+          "base_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+          "integrated_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+          "actualcommit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+          "evidence": [
+            "reports/publication/r10-partial.json",
+            "reports/publication/all-main-20261029.json"
           ],
-          "original_base_commit": null,
-          "original_integrated_commit": null,
-          "archived_original_evidence": [],
-          "evidence_scope": "Inherited original private source-bound acceptance; public integration checks are separately recorded without advancing R05, R09-R11, T32/T35, or live/hardware gates."
+          "blockers": [],
+          "original_base_commit": "7b970b5903623a947d004dc714428dec9bee0ad5",
+          "original_integrated_commit": "9d4fb91ad75b34a425abfbf596c5500b0a96cd03",
+          "archived_original_evidence": [
+            "reports/T35/html-rust-rebuild/R11-independent-scoped-review.json",
+            "reports/T35/html-rust-rebuild/R11-requirement-evidence-index.json",
+            "reports/T35/html-rust-rebuild/R11-ui-action-review.json",
+            "reports/T35/html-rust-rebuild/R11-task-criteria-review.json",
+            "reports/T35/html-rust-rebuild/R11-invariant-review.json",
+            "reports/T35/html-rust-rebuild/R11-local-product-identity.json",
+            "reports/T35/html-rust-rebuild/R11-preview-provenance-result.json",
+            "reports/T35/html-rust-rebuild/R11-preview-publication-result.json",
+            "reports/T35/html-rust-rebuild/r11-preview-regression-format.log",
+            "reports/T35/html-rust-rebuild/r11-preview-historical-format.log"
+          ],
+          "evidence_scope": "Inherited scoped engineering completion at original_* commits, including user waivers and unknowns; source is integrated by the public commit, not freshly certified as a full release.",
+          "scope": "independent_engineering_review_with_explicit_unknowns_and_waivers_not_full_release",
+          "original_actualcommit": "9d4fb91ad75b34a425abfbf596c5500b0a96cd03",
+          "archived_original_limitations": [
+            "Public datasets-page.ts differs from locally smoke-tested source; public runtime has not been built or exercised.",
+            "Bounded old-caller inspection is not proof of every dynamic path; historical and fixture evidence remains classified, not promoted to current runtime proof.",
+            "User-skipped security, live channels, exhaustive visuals and hardware performance remain unverified, not passed."
+          ],
+          "limitations": [
+            "Only source integration and targeted local checks were rerun; no fresh complete public product release or complete acceptance matrix was built or exercised.",
+            "The previous public/local UI source mismatch is resolved by exact apps/web tree identity; this is source coverage, not hardware or cross-platform runtime certification.",
+            "User-waived security, real channels, exhaustive visuals and hardware performance remain unverified, not passed."
+          ]
         }
       },
       "release_gate_change": false,
       "original_private_head": "90e68307a9b338b7821ff22615511d0b9f537bee",
       "preview_catalog_visibility": "private archive; original accepted design evidence is not republished",
-      "evidence_scope": "R00-R09 source cutover and inherited scoped acceptance are recorded separately from current R10 work; R10/R11, T32/T35, live models and full release are not complete.",
+      "evidence_scope": "R00-R11 engineering completion and user acceptance are inherited from original source-bound records with explicit waivers. Current source integration and targeted rechecks are recorded separately; no new full-release, security, live-channel or hardware-performance acceptance is claimed.",
       "integration_verification": {
         "status": "passed",
         "public_base": "e61f12cd276c7772ea646b5385ad078a7949300e",
@@ -1226,7 +1336,65 @@
         "source_binding": "Public source commit; original private task and acceptance provenance preserved separately in original_* and archived_original_evidence fields."
       },
       "original_base_commit": "196f6da536ba6f9a9b6a45bb17cade3a70fd0c4d",
-      "latest_implementation_commit": "6dc8c96fea56390c169d54d11a0cdfb93920c2fd"
+      "latest_implementation_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+      "completion_scope": "R00_R11_engineering_tasks_with_user_waivers_not_full_release",
+      "latest_publication": {
+        "source_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+        "result": "reports/publication/all-main-20261029.json",
+        "scope": "complete_source_reconciliation_not_new_full_release",
+        "private_parent_history_pushed": false,
+        "raw_model_artifacts_pushed": false
+      },
+      "t32_user_skip": {
+        "status": "skipped_by_user_not_passed",
+        "effect": "Do not block independent local R10 work on T32 real-channel evidence; T32 historical status and T35 full-release dependency remain unchanged.",
+        "evidence": "reports/publication/r10-partial.json",
+        "archived_original_evidence": "reports/T35/html-rust-rebuild/r10-t32-user-skip.json"
+      },
+      "archived_latest_r10_evidence": {
+        "latest_r10_scoped_ui_evidence": "reports/T35/html-rust-rebuild/R10-lean-current-result.json",
+        "latest_r10_visual_observation": "reports/T35/html-rust-rebuild/R10-u29-create-receipt-result.json",
+        "latest_r10_nonsecurity_subset": "reports/T35/html-rust-rebuild/r10-lean-profile-verified-20261028/result.json",
+        "latest_r10_safeguard_commit": "7b970b5903623a947d004dc714428dec9bee0ad5",
+        "latest_r10_shared_fixture_scope_deviation": "reports/T35/html-rust-rebuild/R10-shared-fixture-scope-deviation.json"
+      },
+      "current_ui_gpu_performance": "not_measured_after_latest_UI_changes; prior_failure_remains_waived_not_passed"
+    },
+    "github_ci_repair": {
+      "status": "done",
+      "scope": "local_ci_source_repairs_integrated_with_inherited_full_ci_results_and_current_targeted_rechecks_not_remote_ci",
+      "base_commit": "a62718bd06d71b51e247d24b05467402e000bb1a",
+      "actualcommit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+      "contract_version": "v1",
+      "evidence": [
+        "reports/publication/all-main-20261029.json"
+      ],
+      "original_base_commit": "321417a8e31766c6cbfbbaf5162a3a2e48a68a74",
+      "original_actualcommit": "2ee054060f86268beb635b363c39e9a34f10ae80",
+      "archived_original_evidence": [
+        "reports/T00/ci-repair-2026-10-28/verification.json",
+        "reports/T00/ci-repair-2026-10-28/ci.log",
+        "reports/T00/ci-repair-2026-10-28/software-gpu.log",
+        "reports/T00/ci-repair-2026-10-28/review.json",
+        "reports/T00/ci-repair-2026-10-28/delivery.json"
+      ],
+      "inherited_source_checks": {
+        "ci_entrypoint_exit": 0,
+        "rust_passed": 513,
+        "node_bootstrap_contract_plan_passed": 47,
+        "vitest_files": 56,
+        "vitest_passed": 571,
+        "software_webgpu_passed": 1,
+        "typescript_contracts_format_docs": "passed"
+      },
+      "current_source_checks": "reports/publication/all-main-20261029.json",
+      "remote_ci": {
+        "status": "not_observed_for_reconciled_commit",
+        "original_observed_failed_run": 40545332140
+      },
+      "linux_local": "not_run",
+      "model_calls": 0,
+      "release_gate_change": false
     }
   },
   "tasks": {
@@ -2046,6 +2214,14 @@
       "G3": "not_run",
       "G4": "not_run",
       "G5": "not_run"
+    },
+    "user_acceptance": {
+      "state": "accepted_by_user_with_unverified_scope",
+      "recorded_at_utc": "2026-10-28T06:41:07.269513+00:00",
+      "evidence": "reports/publication/r10-partial.json",
+      "remaining_acceptance_tests": "waived_by_user_not_passed",
+      "formal_release_gates": "unchanged_not_passed",
+      "archived_original_evidence": "reports/T35/html-rust-rebuild/user-acceptance-20261028.json"
     }
   },
   "original_application_commit": "04f7e27f6bf2a034152c5fb68fc32711be111f37",
@@ -2064,6 +2240,15 @@
     "evidenceScope": "Task and request results inherit original source-bound private acceptance; integration smoke is recorded separately and does not advance T32/T35 or G4.",
     "incrementVerifiedSourceHead": "0eb232cc859568f229e1efa09a2a71fd4f796bbf",
     "incrementVerification": "reports/publication/increment-verification.json",
-    "incrementMap": "reports/publication/increment-map.json"
+    "incrementMap": "reports/publication/increment-map.json",
+    "latest_source_reconciliation": {
+      "source_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+      "public_base_commit": "a62718bd06d71b51e247d24b05467402e000bb1a",
+      "evidence": "reports/publication/all-main-20261029.json",
+      "original_source_head": "0b1de3a397752714da6fdbcf014f4da852012460",
+      "original_private_history_published": false,
+      "existing_public_receipts_preserved": true,
+      "global_release_status_unchanged": true
+    }
   }
 }

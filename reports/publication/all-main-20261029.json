@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "scope": "complete_source_reconciliation_on_existing_public_history_not_full_release",
+  "recorded_at_utc": "2026-10-29T13:44:10.164Z",
+  "public_base_commit": "a62718bd06d71b51e247d24b05467402e000bb1a",
+  "source_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+  "source_tree": "fd795db4bef736fee732c43621c1f10e8c507f2b",
+  "original_source_backup_commit": "0b1de3a397752714da6fdbcf014f4da852012460",
+  "original_private_history_published": false,
+  "raw_generated_evidence_published": false,
+  "source_coverage": {
+    "tracked_workspace_deltas_classified": 47,
+    "untracked_non_report_entries_classified": 5,
+    "pending_source_and_product_context_files_integrated": 21,
+    "apps_web_tree": "864f420afdfb927e97208d732be4c393f8652bf4",
+    "ui_tree_identical_to_previously_exercised_local_source": true,
+    "product_test_and_workflow_prefixes": [
+      "apps",
+      "crates",
+      "packages",
+      "services",
+      "scripts",
+      "tests",
+      ".github"
+    ],
+    "product_test_and_workflow_prefixes_identical_to_original_source_backup": true,
+    "tools_delta_from_original_source_backup": [
+      "tools/check-docs.mjs",
+      "tools/check-docs.test.mjs"
+    ],
+    "tools_delta_reason": "Register the existing user-confirmed PRODUCT.md and keep documentation validation fixtures complete.",
+    "existing_public_receipts_restored_without_change": 13,
+    "private_generated_report_entries_retained_locally": 13791,
+    "local_design_tooling_and_diagnostic_entries_retained": 4,
+    "ignored_dependency_or_build_entries_examined": 4133,
+    "unexpected_ignored_source_entries": 0,
+    "original_workspace_and_index_preserved": true,
+    "unrelated_user_data_deleted": false
+  },
+  "inherited_acceptance": {
+    "evidence_scope": "Original source-bound private results summarized by the already published R10 receipt; not rerun as current full-release acceptance.",
+    "public_summary": "reports/publication/r10-partial.json",
+    "original_status_sha256": "e9f42eb73630311571e23c041e87617b9165b54f005822cfb3fe0fa66d130fc8",
+    "R10": {
+      "status": "done_lean_local_only",
+      "original_actualcommit": "ad053cfff6e34554532f25e80d94337cdd07eb0f",
+      "full_release_passed": false
+    },
+    "R11": {
+      "status": "done_engineering_review_only",
+      "original_actualcommit": "9d4fb91ad75b34a425abfbf596c5500b0a96cd03",
+      "unknowns_and_waivers_preserved": true
+    },
+    "ci_repair": {
+      "original_actualcommit": "2ee054060f86268beb635b363c39e9a34f10ae80",
+      "original_verification_sha256": "4a5f47ca03e5cbf3a04854b7d70fff597c6c59326131d549a7ba0254b4360b3f",
+      "original_full_ci_result": {
+        "exit_code": 0,
+        "rust_passed": 513,
+        "node_passed": 47,
+        "vitest_files": 56,
+        "vitest_passed": 571,
+        "software_webgpu_passed": 1
+      },
+      "original_result_is_not_current_full_suite_proof": true,
+      "original_packaged_release_source_commit": "09a6b014e71429eac9c0286d7c53395e535cf62d"
+    },
+    "user_acceptance": {
+      "status": "accepted_by_user_with_unverified_scope",
+      "recorded_at_utc": "2026-10-28T06:41:07.269513+00:00",
+      "decision": "The user accepts the current engineering deliverable and waives remaining acceptance testing.",
+      "limitations": "This decision does not convert unexecuted security, live-provider, detector, complete GPU performance, visual matrix or public-product runtime checks into passes. T32 remains blocked/user-skipped, T35 remains pending under its original contract, and the original full-release gates are not marked ready or passed."
+    }
+  },
+  "current_source_validation_before_metadata": {
+    "scope": "Current source content in source_tree; targeted local checks only. Later metadata publication is not a fresh full release.",
+    "node_documentation_tests": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    "node_verification_bootstrap_tests": {
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0,
+      "deliberate_nested_negative_controls": true
+    },
+    "documentation_structure": {
+      "passed": true,
+      "files_checked": 78,
+      "links_checked": 397,
+      "product_verification": false
+    },
+    "typescript": {
+      "application": "passed",
+      "tests": "passed"
+    },
+    "native_current_source_build": {
+      "status": "passed",
+      "offline": true,
+      "targets": [
+        "weblabel",
+        "native-lifecycle-fixture",
+        "security-router-fixture"
+      ]
+    },
+    "router_process_smoke": {
+      "status": "passed",
+      "project_create_status": 201,
+      "project_list_status": 200,
+      "exact_project_identity_observed": true,
+      "external_model_calls": 0
+    },
+    "native_fault_regressions": {
+      "passed": 4,
+      "failed": 0,
+      "not_selected": 3,
+      "scope": "SQLite atomicity/restart plus synthetic native crash, oversized output and descendant reclamation."
+    },
+    "physical_console_regressions": {
+      "passed": 2,
+      "failed": 0,
+      "fixture_source_commit": "7ae14cd947bf85e8b08bfd8ac88f6ea48361345d",
+      "product_release_source_commit": "09a6b014e71429eac9c0286d7c53395e535cf62d",
+      "product_release_input": "Previously downloaded immutable failed-run Windows release; manifest/file hashes validated, not rebuilt as current release.",
+      "security_refusal_cases": "skipped_by_user_not_passed"
+    },
+    "synthetic_profile_regression": {
+      "passed": 1,
+      "failed": 0,
+      "not_selected": 58,
+      "real_model_calls": 0
+    },
+    "software_webgpu": {
+      "passed": 1,
+      "failed": 0,
+      "retries": 0,
+      "backend": "BrowserWebGpu",
+      "device_type": "Cpu",
+      "hardware_or_performance_acceptance": false
+    }
+  },
+  "review": {
+    "kind": "main_session_source_and_publication_review_not_independent_audit",
+    "deterministic_OCR_reviewable_files": 10,
+    "reviewed_files": 10,
+    "skipped_files": 0,
+    "coverage_rate": 1,
+    "additional_manually_reviewed_files": 14,
+    "workstation_config_deletion_reviewed_as_metadata_only": true,
+    "significant_findings": 0
+  },
+  "unchanged_limits": {
+    "T32": "blocked_user_skipped_not_passed",
+    "T35": "pending",
+    "release_state": "not_started",
+    "release_gates": {
+      "G0": "not_run",
+      "G1": "not_run",
+      "G2": "not_run",
+      "G3": "not_run",
+      "G4": "not_run",
+      "G5": "not_run"
+    },
+    "current_hardware_performance": "not_remeasured",
+    "real_model_calls": 0,
+    "additional_detector_forwards": 0,
+    "remote_CI": "not_observed_for_reconciled_commit",
+    "license": "UNLICENSED"
+  }
+}

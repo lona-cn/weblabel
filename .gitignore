@@ -22,7 +22,11 @@ __pycache__/
 /.omp/config.yml
 
 # Public history retains curated receipts, not raw local verification evidence.
-/reports/
+/reports/*
+!/reports/index.md
+!/reports/publication/
+/reports/publication/*
+!/reports/publication/*.json
 
 # Local design-tool settings, workstation hooks and generated diagnostics.
 /.github/hooks/impeccable.json
